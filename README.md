@@ -30,7 +30,7 @@ For **practitioners**, FormulaCode is a practical way to compare optimization wo
 For **researchers**, FormulaCode provides a controlled setting to study agentic performance engineering at repo scale. You can evaluate generalization across diverse repositories (including bespoke scientific repositories never used in any coding benchmark), compare behavior against strong human-written reference solutions, and analyze optimization strategies and failure modes -- e.g., which tools an agent uses, how it prioritizes varying hypotheses, and how those choices correlate with final speedups and correctness.
 
 
-FormulaCode consists of two parts: a [pipeline](https://github.com/formula-code/datasmith) to construct performance optimization tasks, and an [execution harness](https://github.com/formula-code/terminal-bench) that connects a language model to our terminal sandbox. _This repository contains the task generation pipeline._
+FormulaCode consists of two parts: a [pipeline](https://github.com/formula-code/datasmith) to construct performance optimization tasks, and an [execution harness](https://github.com/formula-code/terminal-bench) that connects a language model to our terminal sandbox. _This repository contains the execution harness._
 
 ## Table of Contents
 
