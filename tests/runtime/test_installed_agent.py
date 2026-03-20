@@ -10,6 +10,8 @@ from terminal_bench.agents.installed_agents.abstract_installed_agent import (
 )
 from terminal_bench.terminal.models import TerminalCommand
 
+pytestmark = pytest.mark.docker
+
 # Make fixtures from test_tmux_session available to this module
 pytest_plugins = ["tests.runtime.terminal.test_tmux_session"]
 
