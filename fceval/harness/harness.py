@@ -59,6 +59,7 @@ from fceval.utils.model_names import (
     normalize_model_name_for_pricing,
     normalize_model_name_for_reporting,
 )
+from fceval.utils.pipeline_trace import PipelineTrace
 from fceval.utils.run_lock import (
     MULTI_AGENT_GLOBAL_KWARGS_KEY,
     MULTI_AGENT_LEGACY_CONFIGS_KEY,
@@ -236,8 +237,110 @@ class Harness:
         if not self._is_resuming:
             self._run_path.mkdir(parents=True, exist_ok=True)
 
-        self._init_dataset()
-        self._init_agent_class()
+        self._pipeline_trace = PipelineTrace(
+            self._pipeline_trace_output_path,
+            self._run_id,
+            append=self._is_resuming,
+        )
+        self._trace_pipeline(
+            stage="harness.initialization",
+            status="started",
+            inputs={
+                "dataset": {
+                    "name": self._dataset_name,
+                    "version": self._dataset_version,
+                    "path": self._dataset_path,
+                    "config": self._dataset_config,
+                    "task_ids": self._task_ids,
+                    "exclude_task_ids": self._exclude_task_ids,
+                    "n_tasks": self._n_tasks,
+                    "registry_url": self._registry_url,
+                    "local_registry_path": self._local_registry_path,
+                },
+                "agents": self._agent_configs
+                if self._is_multi_agent
+                else {
+                    "agent_name": self._agent_name,
+                    "agent_import_path": self._agent_import_path,
+                    "model_name": self._model_name,
+                    "agent_kwargs": self._agent_kwargs,
+                },
+                "run": {
+                    "output_path": self._output_path,
+                    "run_id": self._run_id,
+                    "is_resuming": self._is_resuming,
+                    "n_concurrent_trials": self._n_concurrent_trials,
+                    "n_attempts": self._n_attempts,
+                    "remote_build": self._remote_build,
+                    "no_rebuild": self._no_rebuild,
+                    "cleanup": self._cleanup,
+                },
+            },
+            execution={
+                "component": "fceval.harness.harness.Harness.__init__",
+                "operation": "Resolve the dataset and agent configuration.",
+            },
+        )
+
+        try:
+            self._init_dataset()
+        except Exception as exc:
+            self._trace_pipeline(
+                stage="dataset.load",
+                status="failed",
+                execution={
+                    "component": "fceval.dataset.dataset.Dataset",
+                    "operation": "Load, filter, and validate task directories.",
+                },
+                error=exc,
+            )
+            raise
+        self._trace_pipeline(
+            stage="dataset.load",
+            status="completed",
+            outputs={
+                "resolved_path": self._dataset._path,
+                "task_ids": self._dataset.task_ids,
+                "task_count": len(self._dataset.task_ids),
+                "config": self._dataset.config,
+            },
+            execution={
+                "component": "fceval.dataset.dataset.Dataset",
+                "operation": "Load, filter, and validate task directories.",
+            },
+        )
+
+        try:
+            self._init_agent_class()
+        except Exception as exc:
+            self._trace_pipeline(
+                stage="agent.resolve",
+                status="failed",
+                error=exc,
+                execution={
+                    "component": "fceval.agents.agent_factory.AgentFactory",
+                    "operation": "Resolve the configured agent implementation.",
+                },
+            )
+            raise
+        self._trace_pipeline(
+            stage="agent.resolve",
+            status="completed",
+            outputs={
+                "mode": "multi" if self._is_multi_agent else "single",
+                "agent_class": (
+                    None
+                    if self._agent_class is None
+                    else (
+                        f"{self._agent_class.__module__}.{self._agent_class.__name__}"
+                    )
+                ),
+            },
+            execution={
+                "component": "fceval.agents.agent_factory.AgentFactory",
+                "operation": "Resolve the configured agent implementation.",
+            },
+        )
 
         self._livestream = livestream and (
             self._n_concurrent_trials == 1 or len(self._dataset) == 1
@@ -248,6 +351,9 @@ class Harness:
 
         self._init_logger()
         self._dataset.sort_by_duration()
+        self._logger.info(
+            "Structured pipeline trace: %s", self._pipeline_trace_output_path
+        )
 
         if self._is_resuming:
             self._filter_completed_and_cleanup_incomplete_tasks()
@@ -256,6 +362,21 @@ class Harness:
             self._logger.warning(
                 "Livestreaming has been turned off because n_concurrent_trials > 1."
             )
+
+        self._trace_pipeline(
+            stage="harness.initialization",
+            status="completed",
+            outputs={
+                "pipeline_trace_path": self._pipeline_trace_output_path,
+                "run_path": self._run_path,
+                "livestream": self._livestream,
+                "task_execution_order": self._dataset.task_ids,
+            },
+            execution={
+                "component": "fceval.harness.harness.Harness.__init__",
+                "operation": "Finish run initialization and order tasks by duration.",
+            },
+        )
 
     @staticmethod
     def _normalize_multi_agent_configs(
@@ -381,6 +502,45 @@ class Harness:
     @property
     def _run_metadata_output_path(self) -> Path:
         return self._run_path / "run_metadata.json"
+
+    @property
+    def _pipeline_trace_output_path(self) -> Path:
+        return self._run_path / "pipeline_trace.jsonl"
+
+    def _trace_pipeline(
+        self,
+        *,
+        stage: str,
+        status: str,
+        inputs: Any = None,
+        outputs: Any = None,
+        execution: Any = None,
+        task_id: str | None = None,
+        trial_name: str | None = None,
+        error: BaseException | str | None = None,
+    ) -> None:
+        """Append one structured event to the run's unified pipeline trace."""
+        self._pipeline_trace.record(
+            stage=stage,
+            status=status,
+            inputs=inputs,
+            outputs=outputs,
+            execution=execution,
+            task_id=task_id,
+            trial_name=trial_name,
+            error=error,
+        )
+
+    @staticmethod
+    def _trace_file_input(path: Path) -> dict[str, Any]:
+        """Describe a pipeline input file, including its exact text when readable."""
+        file_input: dict[str, Any] = {"path": path, "exists": path.exists()}
+        if path.is_file():
+            try:
+                file_input["content"] = path.read_text(errors="replace")
+            except OSError as exc:
+                file_input["read_error"] = exc
+        return file_input
 
     @property
     def _log_output_path(self) -> Path:
@@ -1399,8 +1559,54 @@ class Harness:
                 history_limit=self._history_limit,
             )
 
+        self._trace_pipeline(
+            stage="terminal.lifecycle",
+            status="started",
+            inputs={
+                "docker_compose": self._trace_file_input(
+                    trial_handler.task_paths.docker_compose_path
+                ),
+                "client_container_name": trial_handler.client_container_name,
+                "client_image_name": trial_handler.client_image_name,
+                "remote_build": self._remote_build,
+                "agent_model_name": multi_agent_model_name,
+                "shared_by_agents": True,
+            },
+            execution={
+                "component": type(terminal).__name__,
+                "operation": (
+                    "Build and start one task container shared sequentially by all "
+                    "configured agents."
+                ),
+            },
+            task_id=trial_handler.task_id,
+            trial_name=trial_handler.trial_name,
+        )
         logger.debug("Starting multi-agent terminal for task %s", trial_handler.task_id)
-        terminal.start()
+        try:
+            terminal.start()
+        except Exception as exc:
+            self._trace_pipeline(
+                stage="terminal.lifecycle",
+                status="failed",
+                task_id=trial_handler.task_id,
+                trial_name=trial_handler.trial_name,
+                error=exc,
+            )
+            raise
+        self._trace_pipeline(
+            stage="terminal.lifecycle",
+            status="ready",
+            outputs={
+                "terminal_class": type(terminal).__name__,
+                "container_name": trial_handler.client_container_name,
+            },
+            execution={
+                "operation": "Expose the shared terminal to the multi-agent loop."
+            },
+            task_id=trial_handler.task_id,
+            trial_name=trial_handler.trial_name,
+        )
 
         try:
             for i, agent_config in enumerate(self._agent_configs):
@@ -1475,9 +1681,59 @@ class Harness:
                 "Stopping multi-agent terminal for task %s", trial_handler.task_id
             )
             terminal.stop()
+            self._trace_pipeline(
+                stage="terminal.lifecycle",
+                status="stopped",
+                outputs={"container_name": trial_handler.client_container_name},
+                execution={"operation": "Stop the shared multi-agent task container."},
+                task_id=trial_handler.task_id,
+                trial_name=trial_handler.trial_name,
+            )
 
         # Merge all agent results into the aggregated trial directory
-        self._merge_agent_results(trial_handler, all_results)
+        self._trace_pipeline(
+            stage="results.merge",
+            status="started",
+            inputs={"agent_results": all_results},
+            execution={
+                "component": "Harness._merge_agent_results",
+                "operation": (
+                    "Deep-merge sequential agent results and aggregate token/cost "
+                    "metrics into the parent trial."
+                ),
+            },
+            task_id=trial_handler.task_id,
+            trial_name=trial_handler.trial_name,
+        )
+        try:
+            self._merge_agent_results(trial_handler, all_results)
+        except Exception as exc:
+            self._trace_pipeline(
+                stage="results.merge",
+                status="failed",
+                task_id=trial_handler.task_id,
+                trial_name=trial_handler.trial_name,
+                error=exc,
+            )
+            raise
+        self._trace_pipeline(
+            stage="results.merge",
+            status="completed",
+            outputs={
+                "merged_result_path": trial_handler.trial_paths.results_path,
+                "merged_result_json": (
+                    trial_handler.trial_paths.results_path.read_text(errors="replace")
+                    if trial_handler.trial_paths.results_path.exists()
+                    else None
+                ),
+            },
+            execution={
+                "component": "Harness._merge_agent_results",
+                "operation": "Persist the aggregate trial result.",
+            },
+            task_id=trial_handler.task_id,
+            trial_name=trial_handler.trial_name,
+        )
 
         # Return the merged result from the aggregated trial directory
         # (or fall back to first agent for compatibility)
@@ -1569,6 +1825,38 @@ class Harness:
 
                 results.setup_started_at = datetime.now(timezone.utc).isoformat()
 
+                setup_timeout_sec = (
+                    self._global_setup_timeout_sec
+                    or trial_handler.task.max_setup_timeout_sec
+                    * self._global_timeout_multiplier
+                )
+                setup_command_path = (
+                    DockerComposeManager.CONTAINER_TEST_DIR
+                    / trial_handler.task_paths.run_setup_path.name
+                )
+                self._trace_pipeline(
+                    stage="setup.execute",
+                    status="started",
+                    inputs={
+                        "script": self._trace_file_input(
+                            trial_handler.task_paths.run_setup_path
+                        ),
+                        "environment_overrides": env_overrides,
+                    },
+                    execution={
+                        "component": "Harness._run_setup",
+                        "operation": (
+                            "Copy the setup script into the task container and run it "
+                            "in a root tmux session."
+                        ),
+                        "command": f"bash {setup_command_path}",
+                        "timeout_seconds": setup_timeout_sec,
+                        "session": "setup",
+                    },
+                    task_id=trial_handler.task_id,
+                    trial_name=trial_handler.trial_name,
+                )
+
                 setup_failure_mode = self._run_setup(
                     terminal=terminal,
                     session=session,
@@ -1581,6 +1869,29 @@ class Harness:
                 post_setup_pane = session.capture_pane(capture_entire=True)
                 trial_handler.trial_paths.post_setup_pane_path.write_text(
                     post_setup_pane
+                )
+                self._trace_pipeline(
+                    stage="setup.execute",
+                    status=(
+                        "completed"
+                        if setup_failure_mode == FailureMode.NONE
+                        else "failed"
+                    ),
+                    outputs={
+                        "failure_mode": setup_failure_mode,
+                        "captured_pane": post_setup_pane,
+                        "captured_pane_path": (
+                            trial_handler.trial_paths.post_setup_pane_path
+                        ),
+                        "started_at": results.setup_started_at,
+                        "ended_at": results.setup_ended_at,
+                    },
+                    execution={
+                        "component": "Harness._run_setup",
+                        "operation": "Wait for the setup command and capture its pane.",
+                    },
+                    task_id=trial_handler.task_id,
+                    trial_name=trial_handler.trial_name,
                 )
                 if (
                     setup_failure_mode != FailureMode.NONE
@@ -1617,13 +1928,58 @@ class Harness:
             pre_agent_pane = session.capture_pane(capture_entire=True)
             trial_handler.trial_paths.pre_agent_pane_path.write_text(pre_agent_pane)
 
-            task_agent = self._create_agent_for_task(
-                trial_handler.task_id,
-                agent_name=agent_name,
-                agent_import_path=agent_import_path,
-                model_name=model_name,
-                per_agent_kwargs=per_agent_kwargs,
+            resolved_agent_label = self._effective_agent_name(
+                agent_name, agent_import_path
             )
+            self._trace_pipeline(
+                stage="agent.execute",
+                status="started",
+                inputs={
+                    "instruction": trial_handler.instruction,
+                    "agent_name": resolved_agent_label,
+                    "agent_import_path": agent_import_path,
+                    "model_name": model_name or self._model_name,
+                    "global_agent_kwargs": self._agent_kwargs,
+                    "per_agent_kwargs": per_agent_kwargs,
+                    "pre_agent_pane": pre_agent_pane,
+                    "pre_agent_pane_path": (
+                        trial_handler.trial_paths.pre_agent_pane_path
+                    ),
+                },
+                execution={
+                    "component": "Harness._create_agent_for_task / Harness._run_agent",
+                    "operation": (
+                        "Instantiate the configured agent and call perform_task with "
+                        "the task instruction and live tmux session."
+                    ),
+                    "session": "agent",
+                    "timeout_seconds": (
+                        self._global_agent_timeout_sec
+                        or trial_handler.task.max_agent_timeout_sec
+                        * self._global_timeout_multiplier
+                    ),
+                },
+                task_id=trial_handler.task_id,
+                trial_name=trial_handler.trial_name,
+            )
+            try:
+                task_agent = self._create_agent_for_task(
+                    trial_handler.task_id,
+                    agent_name=agent_name,
+                    agent_import_path=agent_import_path,
+                    model_name=model_name,
+                    per_agent_kwargs=per_agent_kwargs,
+                )
+            except Exception as exc:
+                self._trace_pipeline(
+                    stage="agent.execute",
+                    status="failed",
+                    outputs={"agent_name": resolved_agent_label},
+                    task_id=trial_handler.task_id,
+                    trial_name=trial_handler.trial_name,
+                    error=exc,
+                )
+                raise
             portkey_metadata, portkey_trace_id = self._build_portkey_context(
                 trial_handler=trial_handler,
                 agent_name=agent_name,
@@ -1646,6 +2002,33 @@ class Harness:
 
             post_agent_pane = session.capture_pane(capture_entire=True)
             trial_handler.trial_paths.post_agent_pane_path.write_text(post_agent_pane)
+
+            self._trace_pipeline(
+                stage="agent.execute",
+                status=(
+                    "completed" if agent_failure_mode == FailureMode.NONE else "failed"
+                ),
+                outputs={
+                    "agent_result": agent_result,
+                    "failure_mode": agent_failure_mode,
+                    "captured_pane": post_agent_pane,
+                    "captured_pane_path": (
+                        trial_handler.trial_paths.post_agent_pane_path
+                    ),
+                    "agent_logging_dir": (trial_handler.trial_paths.agent_logging_dir),
+                    "started_at": results.agent_started_at,
+                    "ended_at": results.agent_ended_at,
+                },
+                execution={
+                    "component": (
+                        f"{type(task_agent).__module__}."
+                        f"{type(task_agent).__name__}.perform_task"
+                    ),
+                    "operation": "Return agent token, cost, marker, and failure data.",
+                },
+                task_id=trial_handler.task_id,
+                trial_name=trial_handler.trial_name,
+            )
 
             if agent_failure_mode == FailureMode.AGENT_TIMEOUT:
                 results.failure_mode = agent_failure_mode
@@ -1686,6 +2069,52 @@ class Harness:
 
             results.test_started_at = datetime.now(timezone.utc).isoformat()
 
+            test_timeout_sec = (
+                self._global_test_timeout_sec
+                or trial_handler.task.max_test_timeout_sec
+                * self._global_timeout_multiplier
+            )
+            test_command_path = (
+                DockerComposeManager.CONTAINER_TEST_DIR
+                / trial_handler.task_paths.run_tests_path.name
+            )
+            test_files = []
+            if trial_handler.task_paths.test_dir.exists():
+                test_files = sorted(
+                    path
+                    for path in trial_handler.task_paths.test_dir.rglob("*")
+                    if path.is_file()
+                )
+            self._trace_pipeline(
+                stage="tests.execute",
+                status="started",
+                inputs={
+                    "script": self._trace_file_input(
+                        trial_handler.task_paths.run_tests_path
+                    ),
+                    "test_files": test_files,
+                    "environment_overrides": env_overrides,
+                    "run_tests_in_same_shell": (
+                        trial_handler.task.run_tests_in_same_shell
+                    ),
+                },
+                execution={
+                    "component": "Harness._run_tests",
+                    "operation": (
+                        "Copy the test harness into the container and run it in tmux."
+                    ),
+                    "command": f"bash {test_command_path}",
+                    "timeout_seconds": test_timeout_sec,
+                    "session": (
+                        "agent"
+                        if trial_handler.task.run_tests_in_same_shell
+                        else "tests"
+                    ),
+                },
+                task_id=trial_handler.task_id,
+                trial_name=trial_handler.trial_name,
+            )
+
             test_failure_mode = self._run_tests(
                 terminal=terminal,
                 session=session,
@@ -1697,6 +2126,29 @@ class Harness:
 
             post_test_pane = session.capture_pane(capture_entire=True)
             trial_handler.trial_paths.post_test_pane_path.write_text(post_test_pane)
+
+            self._trace_pipeline(
+                stage="tests.execute",
+                status=(
+                    "completed" if test_failure_mode == FailureMode.NONE else "failed"
+                ),
+                outputs={
+                    "failure_mode": test_failure_mode,
+                    "captured_pane": post_test_pane,
+                    "captured_pane_path": (
+                        trial_handler.trial_paths.post_test_pane_path
+                    ),
+                    "sessions_path": trial_handler.trial_paths.sessions_path,
+                    "started_at": results.test_started_at,
+                    "ended_at": results.test_ended_at,
+                },
+                execution={
+                    "component": "Harness._run_tests",
+                    "operation": "Wait for the test command and capture its pane.",
+                },
+                task_id=trial_handler.task_id,
+                trial_name=trial_handler.trial_name,
+            )
 
             if not trial_handler.task.disable_asciinema:
                 agent_recording_path = (
@@ -1742,9 +2194,56 @@ class Harness:
                 results.trial_ended_at = datetime.now(timezone.utc).isoformat()
                 return results
 
+            self._trace_pipeline(
+                stage="results.parse",
+                status="started",
+                inputs={
+                    "parser_class": (
+                        f"{type(trial_handler.parser).__module__}."
+                        f"{type(trial_handler.parser).__name__}"
+                    ),
+                    "post_test_pane": post_test_pane,
+                    "post_test_pane_path": (
+                        trial_handler.trial_paths.post_test_pane_path
+                    ),
+                },
+                execution={
+                    "component": "Harness._parse_results",
+                    "operation": (
+                        "Parse the captured test pane into unit-test statuses and "
+                        "benchmark metrics."
+                    ),
+                },
+                task_id=trial_handler.task_id,
+                trial_name=trial_handler.trial_name,
+            )
             parser_results, parse_failure_mode = self._parse_results(
                 trial_handler=trial_handler,
                 post_test_pane=post_test_pane,
+            )
+
+            self._trace_pipeline(
+                stage="results.parse",
+                status=(
+                    "completed" if parse_failure_mode == FailureMode.NONE else "failed"
+                ),
+                outputs={
+                    "parser_results": parser_results,
+                    "parser_extra_metrics": getattr(
+                        trial_handler.parser, "extra_metrics", None
+                    ),
+                    "failure_mode": parse_failure_mode,
+                    "is_resolved": self._is_resolved(parser_results),
+                },
+                execution={
+                    "component": (
+                        f"{type(trial_handler.parser).__module__}."
+                        f"{type(trial_handler.parser).__name__}.parse"
+                    ),
+                    "operation": "Return structured correctness and performance data.",
+                },
+                task_id=trial_handler.task_id,
+                trial_name=trial_handler.trial_name,
             )
 
             if parse_failure_mode != FailureMode.NONE:
@@ -1850,12 +2349,73 @@ class Harness:
                 disable_recording=trial_handler.task.disable_asciinema,
             )
 
-        with terminal_context as terminal:
-            results = self._run_single_agent_trial_terminal(
-                trial_handler=trial_handler,
-                terminal=terminal,
-                results=results,
+        self._trace_pipeline(
+            stage="terminal.lifecycle",
+            status="started",
+            inputs={
+                "docker_compose": self._trace_file_input(
+                    trial_handler.task_paths.docker_compose_path
+                ),
+                "client_container_name": trial_handler.client_container_name,
+                "client_image_name": trial_handler.client_image_name,
+                "remote_build": self._remote_build,
+                "no_rebuild": self._no_rebuild,
+                "cleanup": self._cleanup,
+            },
+            execution={
+                "component": (
+                    "fceval.remote.terminal.spin_up_remote_terminal"
+                    if self._remote_build
+                    else "fceval.terminal.terminal.spin_up_terminal"
+                ),
+                "operation": "Build and start the task execution container.",
+            },
+            task_id=trial_handler.task_id,
+            trial_name=trial_handler.trial_name,
+        )
+        try:
+            with terminal_context as terminal:
+                self._trace_pipeline(
+                    stage="terminal.lifecycle",
+                    status="ready",
+                    outputs={
+                        "terminal_class": type(terminal).__name__,
+                        "container_name": trial_handler.client_container_name,
+                    },
+                    execution={
+                        "component": type(terminal).__name__,
+                        "operation": "Expose a running terminal to the trial.",
+                    },
+                    task_id=trial_handler.task_id,
+                    trial_name=trial_handler.trial_name,
+                )
+                results = self._run_single_agent_trial_terminal(
+                    trial_handler=trial_handler,
+                    terminal=terminal,
+                    results=results,
+                )
+        except Exception as exc:
+            self._trace_pipeline(
+                stage="terminal.lifecycle",
+                status="failed",
+                execution={
+                    "operation": "Build, start, use, or stop the task container.",
+                },
+                task_id=trial_handler.task_id,
+                trial_name=trial_handler.trial_name,
+                error=exc,
             )
+            raise
+        self._trace_pipeline(
+            stage="terminal.lifecycle",
+            status="stopped",
+            outputs={"container_name": trial_handler.client_container_name},
+            execution={
+                "operation": "Stop the task container and collect host-side logs."
+            },
+            task_id=trial_handler.task_id,
+            trial_name=trial_handler.trial_name,
+        )
 
         # Logs are available on host after terminal context exits; refresh
         # token/cost/trajectory metrics from host-side artifacts.
@@ -1912,6 +2472,23 @@ class Harness:
 
     def _write_results(self, results: BenchmarkResults) -> None:
         self._results_output_path.write_text(results.model_dump_json(indent=4))
+        self._trace_pipeline(
+            stage="results.aggregate",
+            status="checkpoint",
+            inputs={"trial_results": results.results},
+            outputs={
+                "benchmark_results": results,
+                "results_path": self._results_output_path,
+                "completed_trial_count": len(results.results),
+            },
+            execution={
+                "component": "Harness._write_results",
+                "operation": (
+                    "Recompute run-level metrics from all completed trial results and "
+                    "persist results.json."
+                ),
+            },
+        )
 
     def _deep_merge(self, base: dict, updates: dict) -> dict:
         """Deep merge two dictionaries, preferring values from updates.
@@ -2734,10 +3311,55 @@ class Harness:
         Returns:
             TrialResults: The results of the trial execution
         """
-        trial_handler = TrialHandler(
+        self._trace_pipeline(
+            stage="trial.load",
+            status="started",
+            inputs={
+                "task_path": task_path,
+                "trial_name": trial_name,
+                "task_yaml": self._trace_file_input(task_path / "task.yaml"),
+            },
+            execution={
+                "component": "fceval.handlers.trial_handler.TrialHandler",
+                "operation": "Load task metadata, paths, instruction, and parser.",
+            },
+            task_id=task_path.name,
             trial_name=trial_name,
-            input_path=task_path,
-            output_path=self._run_path,
+        )
+        try:
+            trial_handler = TrialHandler(
+                trial_name=trial_name,
+                input_path=task_path,
+                output_path=self._run_path,
+            )
+        except Exception as exc:
+            self._trace_pipeline(
+                stage="trial.load",
+                status="failed",
+                task_id=task_path.name,
+                trial_name=trial_name,
+                error=exc,
+            )
+            raise
+
+        self._trace_pipeline(
+            stage="trial.load",
+            status="completed",
+            outputs={
+                "task": trial_handler.task,
+                "instruction": trial_handler.instruction,
+                "parser_class": (
+                    f"{type(trial_handler.parser).__module__}."
+                    f"{type(trial_handler.parser).__name__}"
+                ),
+                "trial_output_path": trial_handler.trial_paths.task_output_path,
+            },
+            execution={
+                "component": "fceval.handlers.trial_handler.TrialHandler",
+                "operation": "Create the per-trial artifact directories.",
+            },
+            task_id=trial_handler.task_id,
+            trial_name=trial_name,
         )
 
         try:
@@ -2745,6 +3367,21 @@ class Harness:
 
             trial_handler.trial_paths.results_path.write_text(
                 trial_results.model_dump_json(indent=4)
+            )
+
+            self._trace_pipeline(
+                stage="trial.execute",
+                status="completed",
+                outputs={
+                    "result": trial_results,
+                    "result_path": trial_handler.trial_paths.results_path,
+                },
+                execution={
+                    "component": "fceval.harness.harness.Harness._run_trial",
+                    "operation": "Execute the configured agent pipeline for one trial.",
+                },
+                task_id=trial_handler.task_id,
+                trial_name=trial_name,
             )
 
             return trial_results
@@ -2759,6 +3396,18 @@ class Harness:
                 task_id=trial_handler.task_id,
                 instruction=trial_handler.instruction,
                 failure_mode=FailureMode.UNKNOWN_AGENT_ERROR,
+            )
+            self._trace_pipeline(
+                stage="trial.execute",
+                status="failed",
+                outputs={"result": trial_results},
+                execution={
+                    "component": "fceval.harness.harness.Harness._run_trial",
+                    "operation": "Execute the configured agent pipeline for one trial.",
+                },
+                task_id=trial_handler.task_id,
+                trial_name=trial_name,
+                error=e,
             )
             return trial_results
 
@@ -2864,6 +3513,24 @@ class Harness:
 
         max_workers = min(len(self._dataset), self._n_concurrent_trials)
 
+        self._trace_pipeline(
+            stage="tasks.dispatch",
+            status="started",
+            inputs={
+                "task_ids": self._dataset.task_ids,
+                "attempts_per_task": self._n_attempts,
+                "max_workers": max_workers,
+                "resuming": self._is_resuming,
+            },
+            execution={
+                "component": "concurrent.futures.ThreadPoolExecutor",
+                "operation": (
+                    "Submit one trial per task attempt and collect results as workers "
+                    "finish."
+                ),
+            },
+        )
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_task = {}
             for task_path in self._dataset:
@@ -2936,6 +3603,15 @@ class Harness:
                             ),
                         )
 
+        self._trace_pipeline(
+            stage="tasks.dispatch",
+            status="completed",
+            outputs={"benchmark_results": results},
+            execution={
+                "component": "Harness._execute_tasks",
+                "operation": "Return all new and resumed trial results.",
+            },
+        )
         return results
 
     def _handle_results_upload(self, results: BenchmarkResults) -> None:
@@ -2973,18 +3649,75 @@ class Harness:
         """
         logger.info("Starting harness run")
         logger.info(f"Run ID: {self._run_id}")
+        self._trace_pipeline(
+            stage="run.execute",
+            status="started",
+            inputs={
+                "run_id": self._run_id,
+                "task_ids": self._dataset.task_ids,
+                "agent_mode": "multi" if self._is_multi_agent else "single",
+                "is_resuming": self._is_resuming,
+            },
+            execution={
+                "component": "fceval.harness.harness.Harness.run",
+                "operation": (
+                    "Persist run configuration, execute trials, aggregate results, "
+                    "and optionally upload artifacts."
+                ),
+            },
+        )
 
-        # Only write metadata and lock files if not resuming
-        if not self._is_resuming:
-            self._write_run_metadata()
-            self._create_run_lock()
+        try:
+            # Only write metadata and lock files if not resuming
+            if not self._is_resuming:
+                self._write_run_metadata()
+                self._create_run_lock()
+                self._trace_pipeline(
+                    stage="run.artifacts",
+                    status="completed",
+                    inputs={"run_lock": self._build_current_run_lock()},
+                    outputs={
+                        "metadata_path": self._run_metadata_output_path,
+                        "lock_path": self._run_lock_path,
+                    },
+                    execution={
+                        "operation": (
+                            "Persist reproducible run metadata and the resolved lock."
+                        )
+                    },
+                )
 
-        results = self._execute_tasks()
+            results = self._execute_tasks()
 
-        # Only update metadata on end if not resuming
-        if not self._is_resuming:
-            self._update_metadata_on_end(results=results)
+            # Only update metadata on end if not resuming
+            if not self._is_resuming:
+                self._update_metadata_on_end(results=results)
 
-        self._handle_results_upload(results)
+            self._handle_results_upload(results)
+        except Exception as exc:
+            self._trace_pipeline(
+                stage="run.execute",
+                status="failed",
+                outputs={
+                    "results_path": self._results_output_path,
+                    "metadata_path": self._run_metadata_output_path,
+                },
+                error=exc,
+            )
+            raise
 
+        self._trace_pipeline(
+            stage="run.execute",
+            status="completed",
+            outputs={
+                "benchmark_results": results,
+                "results_path": self._results_output_path,
+                "metadata_path": self._run_metadata_output_path,
+                "pipeline_trace_path": self._pipeline_trace_output_path,
+            },
+            execution={
+                "component": "fceval.harness.harness.Harness.run",
+                "operation": "Return the completed benchmark result set.",
+            },
+        )
         return results

@@ -10,7 +10,7 @@ benchmark，而是用一个 FormulaCode task 看清楚：配置如何进入 CLI�
 
 1. `nop:nop`：不修改代码，用来得到未优化基线。
 2. `oracle:oracle`：执行 task 自带的 `solution.sh` 或 `solution.yaml`。
-3. `claude-code:claude-haiku-4-5-20251001`：在 task 容器内安装 Claude Code，
+3. `claude-code:claude-haiku-4-5-20251001`：使用 task 镜像中预装的 Claude Code，
    再让 Haiku 完成 task。
 
 Claude Code 条目还设置了：
@@ -18,13 +18,14 @@ Claude Code 条目还设置了：
 ```json
 {
   "base_url": "https://api.buzzgw.com",
-  "version": "latest"
+  "version": "2.1.228"
 }
 ```
 
 因此当前链路会从项目根目录的 `.env` 读取 `ANTHROPIC_API_KEY`，把
-`https://api.buzzgw.com` 作为 Anthropic API base URL，并在容器中安装最新版
-`@anthropic-ai/claude-code`。`.env` 已被 `.gitignore` 忽略，不应提交。
+`https://api.buzzgw.com` 作为 Anthropic API base URL，并要求使用固定的
+`@anthropic-ai/claude-code@2.1.228`。NetworkX task 在镜像构建阶段预装该版本，
+运行阶段只校验并复用。`.env` 已被 `.gitignore` 忽略，不应提交。
 
 ## 2. 运行前检查
 
@@ -39,7 +40,7 @@ test -n "$ANTHROPIC_API_KEY" || grep -q '^ANTHROPIC_API_KEY=' .env
 说明：
 
 - eval 本身在 Docker 容器里运行；宿主机上是否已经安装 `claude` 不是必要条件。
-- 容器首次构建以及容器内安装 Claude Code 都需要网络。
+- NetworkX 容器首次构建需要网络；构建完成后，Claude Code 不再于运行阶段安装。
 - `fc-eval` 会自动调用 `dotenv.load_dotenv()`，所以把 key 放在项目根目录 `.env`
   即可，不要求事先 `source .env`。
 - 不要打印 `.env`，也不要把 key 写进 JSON 配置或命令行。
@@ -99,7 +100,7 @@ Harness.run()
 同一个 task 容器内依次执行
   1. nop         → 不改代码          → run-tests.sh → parser → agent-1 results
   2. oracle      → 执行 solution.sh  → run-tests.sh → parser → agent-2 results
-  3. claude-code → 安装并运行 Claude → run-tests.sh → parser → agent-3 results
+  3. claude-code → 校验并运行 Claude → run-tests.sh → parser → agent-3 results
                   │
                   ▼
 合并结果
@@ -148,7 +149,7 @@ uv run fc-eval run --dataset formulacode --agent oracle --model oracle \
 uv run fc-eval run --dataset formulacode \
   --agent claude-code --model claude-haiku-4-5-20251001 \
   --agent-kwarg base_url=https://api.buzzgw.com \
-  --agent-kwarg version=latest \
+  --agent-kwarg version=2.1.228 \
   --task-id networkx_networkx_1 --n-concurrent 1 --run-id flow-claude
 ```
 
@@ -167,6 +168,7 @@ find "runs/$RUN_ID" -maxdepth 4 -type f | sort
 ```text
 runs/<run-id>/
 ├── fc.lock
+├── pipeline_trace.jsonl
 ├── run_metadata.json
 ├── run.log
 ├── results.json
@@ -189,14 +191,44 @@ runs/<run-id>/
         └── agent-logs/                   # agent 轨迹（如果 agent 产生）
 ```
 
+`pipeline_trace.jsonl` 是真实执行期间持续刷新的统一数据流水线。每一行都是一个
+独立 JSON 事件，固定包含：
+
+- `stage` / `status`：当前步骤及开始、完成、失败或 checkpoint 状态。
+- `inputs`：该步骤实际消费的配置、脚本、instruction、pane 或上游结果。
+- `outputs`：该步骤产生的 pane、agent result、parser result 或聚合结果。
+- `execution`：执行组件、命令、tmux session、timeout 和处理方式。
+- `task_id` / `trial_name`：并发运行时用于把事件归属到具体 trial。
+
+事件覆盖 `dataset.load`、`agent.resolve`、`tasks.dispatch`、`trial.load`、
+`terminal.lifecycle`、`setup.execute`、`agent.execute`、`tests.execute`、
+`results.parse`、`results.merge`、`results.aggregate` 和 `run.execute`。文件采用
+JSONL 而不是 JSON 数组，因此运行意外中断时，已经完成的步骤仍然可以直接读取；
+resume 会在原文件末尾继续追加。常见 API key、token、password、Authorization
+和 Bearer 凭据会在写入前脱敏。
+
+实时查看全部事件：
+
+```bash
+tail -f "runs/$RUN_ID/pipeline_trace.jsonl" | jq .
+```
+
+只查看每一步的输入、输出和执行方式：
+
+```bash
+jq -c '{sequence,stage,status,task_id,inputs,outputs,execution,error}' \
+  "runs/$RUN_ID/pipeline_trace.jsonl"
+```
+
 推荐按这个顺序阅读结果：
 
-1. `run_metadata.json`：这次究竟跑了哪个 dataset、task、agent/model。
-2. 顶层 `results.json`：run 总结、成功率、总 cost、每个 task 的合并结果。
-3. 三个 `.agent-N-*` 目录内的 `results.json`：逐 agent 对比。
-4. 某个 agent 的 `panes/post-test.txt`：理解测试或 parser 失败的原始依据。
-5. `commands.txt` 和 `sessions/*.cast`：还原 agent 实际执行过程。
-6. `fc.lock`：精确复现实验或理解 resume 判断使用的锁定配置。
+1. `pipeline_trace.jsonl`：逐步查看真实输入、输出和执行方式。
+2. `run_metadata.json`：这次究竟跑了哪个 dataset、task、agent/model。
+3. 顶层 `results.json`：run 总结、成功率、总 cost、每个 task 的合并结果。
+4. 三个 `.agent-N-*` 目录内的 `results.json`：逐 agent 对比。
+5. 某个 agent 的 `panes/post-test.txt`：理解测试或 parser 失败的原始依据。
+6. `commands.txt` 和 `sessions/*.cast`：还原 agent 实际执行过程。
+7. `fc.lock`：精确复现实验或理解 resume 判断使用的锁定配置。
 
 快速提取关键字段（需要 `jq`）：
 

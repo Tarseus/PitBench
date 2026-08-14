@@ -218,6 +218,20 @@ class TestHarnessInitialization:
                 assert harness._livestream is False
                 assert not harness._is_resuming  # Should be False for fresh runs
 
+                trace_path = temp_path / run_id / "pipeline_trace.jsonl"
+                trace_events = [
+                    json.loads(line)
+                    for line in trace_path.read_text().splitlines()
+                    if line
+                ]
+                assert [event["stage"] for event in trace_events] == [
+                    "harness.initialization",
+                    "dataset.load",
+                    "agent.resolve",
+                    "harness.initialization",
+                ]
+                assert trace_events[-1]["status"] == "completed"
+
     def test_from_lock_uses_multi_agent_run_spec(self):
         lock = RunLock(
             lockfile_version="2.0",
