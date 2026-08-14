@@ -91,6 +91,17 @@ class TestSimpleAgentTemplates:
         variables = agent._get_template_variables()
         assert variables == {"version": "latest"}
 
+    def test_claude_code_template_skips_matching_preinstalled_version(self):
+        agent_file = inspect.getfile(ClaudeCodeAgent)
+        template_path = Path(agent_file).parent / "claude-code-setup.sh.j2"
+
+        result = render_setup_script(template_path, {"version": "2.1.228"})
+
+        assert 'EXPECTED_CLAUDE_VERSION="2.1.228"' in result
+        assert "command -v claude" in result
+        assert "return 0" in result
+        assert "@anthropic-ai/claude-code@2.1.228" in result
+
 
 class TestPromptTemplateRendering:
     """Test prompt template rendering functionality."""

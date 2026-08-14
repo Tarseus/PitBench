@@ -1,5 +1,21 @@
 #!/bin/bash
 
+set -eo pipefail
+
+EXPECTED_CLAUDE_VERSION="{{ version }}"
+
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+    source "$HOME/.nvm/nvm.sh"
+fi
+
+if command -v claude >/dev/null 2>&1; then
+    INSTALLED_CLAUDE_VERSION="$(claude --version | awk '{print $1}')"
+    if [ "$INSTALLED_CLAUDE_VERSION" = "$EXPECTED_CLAUDE_VERSION" ]; then
+        echo "Using preinstalled Claude Code $INSTALLED_CLAUDE_VERSION"
+        return 0
+    fi
+fi
+
 apt-get update
 apt-get install -y curl
 
@@ -10,4 +26,4 @@ source "$HOME/.nvm/nvm.sh"
 nvm install 22
 npm -v
 
-npm install -g @anthropic-ai/claude-code@{{ version }} 
+npm install -g @anthropic-ai/claude-code@{{ version }}
