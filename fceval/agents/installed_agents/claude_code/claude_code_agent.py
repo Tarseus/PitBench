@@ -30,9 +30,16 @@ class ClaudeCodeAgent(AbstractInstalledAgent):
         "Agent",
     ]
 
-    def __init__(self, model_name: str | None = None, *args, **kwargs):
+    def __init__(
+        self,
+        model_name: str | None = None,
+        base_url: str | None = None,
+        *args,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self._model_name = model_name
+        self._base_url = base_url
         self._version = kwargs.get("version", "latest")
 
     @property
@@ -77,6 +84,8 @@ class ClaudeCodeAgent(AbstractInstalledAgent):
         else:
             # Use standard Anthropic API
             env["ANTHROPIC_API_KEY"] = os.environ["ANTHROPIC_API_KEY"]
+            if self._base_url:
+                env["ANTHROPIC_BASE_URL"] = self._base_url
 
         # Set model if specified
         if self._model_name:

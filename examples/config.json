@@ -8,7 +8,11 @@
     "model": "oracle"
   },
   {
-    "agent": "<YOUR AGENT HERE>",
-    "model": "<YOUR MODEL HERE>"
+    "agent": "claude-code",
+    "model": "claude-haiku-4-5-20251001",
+    "agent_kwargs": {
+      "base_url": "https://api.buzzgw.com",
+      "version": "latest"
+    }
   }
 ]
