@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import inspect
 import json
 import logging
 import math
@@ -541,6 +543,152 @@ class Harness:
             except OSError as exc:
                 file_input["read_error"] = exc
         return file_input
+
+    @staticmethod
+    def _trace_artifact(path: Path, *, include_text: bool = True) -> dict[str, Any]:
+        """Describe an output artifact without attempting to decode binaries."""
+        artifact: dict[str, Any] = {"path": path, "exists": path.exists()}
+        if not path.is_file():
+            return artifact
+        try:
+            payload = path.read_bytes()
+        except OSError as exc:
+            artifact["read_error"] = exc
+            return artifact
+        artifact.update(
+            {
+                "size_bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        )
+        if include_text:
+            try:
+                artifact["content"] = payload.decode("utf-8")
+            except UnicodeDecodeError:
+                artifact["content"] = None
+        return artifact
+
+    @staticmethod
+    def _formulacode_task_contract(task_path: Path) -> dict[str, Any] | None:
+        """Return the persisted FormulaCode task contract, if this is such a task."""
+        config_path = task_path / "tests" / "config.json"
+        if not config_path.is_file():
+            return None
+        try:
+            config = json.loads(config_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        required_fields = (
+            "task_id",
+            "base_commit",
+            "patch",
+            "instructions",
+            "image_name",
+            "container_name",
+            "gt_hash",
+        )
+        if not {"base_commit", "patch", "instructions"}.issubset(config):
+            return None
+        return {
+            "record": {field: config.get(field) for field in required_fields},
+            "materialized_files": {
+                name: Harness._trace_file_input(task_path / name)
+                for name in (
+                    "Dockerfile",
+                    "docker-compose.yaml",
+                    "task.yaml",
+                    "solution.sh",
+                    "run-setup.sh",
+                    "run-tests.sh",
+                    "profile.sh",
+                )
+            },
+            "record_source": Harness._trace_file_input(config_path),
+        }
+
+    @staticmethod
+    def _formulacode_parser_source(parser: Any) -> dict[str, Any] | None:
+        """Expose the parser implementation that defines this task's metric."""
+        if not type(parser).__module__.startswith("fceval.parsers.formulacode"):
+            return None
+        try:
+            return Harness._trace_file_input(Path(inspect.getfile(type(parser))))
+        except (OSError, TypeError):
+            return None
+
+    def _trace_formulacode_evaluation_artifacts(
+        self,
+        *,
+        trial_handler: TrialHandler,
+        agent_model_name: str,
+        test_failure_mode: FailureMode,
+    ) -> None:
+        """Trace the concrete candidate and performance artifacts FormulaCode made.
+
+        ``run-tests.sh`` captures the candidate patch *before* resetting the repo,
+        then writes ASV and snapshot outputs under the shared sessions directory.
+        This event makes those otherwise implicit shell boundaries auditable.
+        """
+        sessions_path = trial_handler.trial_paths.sessions_path
+        # Multi-agent trials share one terminal, whose /logs mount belongs to the
+        # parent trial. The per-agent TrialHandler is only for result bookkeeping.
+        # Resolve that shared directory before reading the concrete shell outputs.
+        if ".agent-" in trial_handler.trial_name:
+            parent_trial_name = trial_handler.trial_name.split(".agent-", 1)[0]
+            shared_sessions_path = (
+                trial_handler.trial_paths.task_output_path.parent
+                / parent_trial_name
+                / "sessions"
+            )
+            if shared_sessions_path.is_dir():
+                sessions_path = shared_sessions_path
+        patch_path = sessions_path / f"agent_solution_{agent_model_name}.patch"
+        profile_prefix = sessions_path / f"postrun_{agent_model_name}"
+        artifacts = {
+            "candidate_patch_before_reset": self._trace_artifact(patch_path),
+            "asv_archive": self._trace_artifact(
+                profile_prefix.with_suffix(".tar.gz"), include_text=False
+            ),
+            "asv_run_log": self._trace_artifact(profile_prefix.with_suffix(".asv.log")),
+            "asv_coverage_log": self._trace_artifact(
+                profile_prefix.with_suffix(".cover.log")
+            ),
+            "snapshot_summary": self._trace_artifact(
+                sessions_path / f"summary_{agent_model_name}.json"
+            ),
+            "pytest_result": self._trace_artifact(sessions_path / "test_results.json"),
+        }
+        self._trace_pipeline(
+            stage="formulacode.evaluation_artifacts",
+            status=("completed" if test_failure_mode == FailureMode.NONE else "failed"),
+            inputs={
+                "base_commit": self._formulacode_task_contract(
+                    trial_handler.task_paths.input_path
+                )["record"]["base_commit"],
+                "candidate_capture_protocol": (
+                    "git diff against base commit, reset repository, then git apply "
+                    "the captured candidate patch before profile/test/snapshot"
+                ),
+                "profile_protocol": {
+                    "runner": "ASV",
+                    "cpu_limit": 1,
+                    "rounds": 4,
+                    "append_samples": True,
+                    "coverage": "ASV discovery plus per-benchmark coverage",
+                },
+            },
+            outputs=artifacts,
+            execution={
+                "component": "adapters.formulacode.template.run-tests.sh / profile.sh",
+                "operation": (
+                    "Collect the exact files emitted by candidate capture, ASV, "
+                    "pytest, and snapshot verification."
+                ),
+                "sessions_path": sessions_path,
+            },
+            task_id=trial_handler.task_id,
+            trial_name=trial_handler.trial_name,
+        )
 
     @property
     def _log_output_path(self) -> Path:
@@ -2150,6 +2298,23 @@ class Harness:
                 trial_name=trial_handler.trial_name,
             )
 
+            artifact_agent_model_name = (
+                agent_model_name_override
+                or model_name
+                or self._model_name
+                or resolved_agent_label
+            )
+            task_input_path = getattr(trial_handler.task_paths, "input_path", None)
+            if (
+                isinstance(task_input_path, Path)
+                and self._formulacode_task_contract(task_input_path) is not None
+            ):
+                self._trace_formulacode_evaluation_artifacts(
+                    trial_handler=trial_handler,
+                    agent_model_name=artifact_agent_model_name,
+                    test_failure_mode=test_failure_mode,
+                )
+
             if not trial_handler.task.disable_asciinema:
                 agent_recording_path = (
                     trial_handler.trial_paths.sessions_path / recording_filename
@@ -2202,6 +2367,9 @@ class Harness:
                         f"{type(trial_handler.parser).__module__}."
                         f"{type(trial_handler.parser).__name__}"
                     ),
+                    "metric_implementation": self._formulacode_parser_source(
+                        trial_handler.parser
+                    ),
                     "post_test_pane": post_test_pane,
                     "post_test_pane_path": (
                         trial_handler.trial_paths.post_test_pane_path
@@ -2231,6 +2399,24 @@ class Harness:
                     "parser_results": parser_results,
                     "parser_extra_metrics": getattr(
                         trial_handler.parser, "extra_metrics", None
+                    ),
+                    "acceptance_inputs": (
+                        {
+                            key: getattr(trial_handler.parser, "extra_metrics", {}).get(
+                                key
+                            )
+                            for key in (
+                                "speedup_percentage",
+                                "pytest_failed",
+                                "snapshot_failed",
+                                "test_failed",
+                                "test_error",
+                                "snapshot_pass_to_fail",
+                            )
+                        }
+                        if self._formulacode_parser_source(trial_handler.parser)
+                        is not None
+                        else None
                     ),
                     "failure_mode": parse_failure_mode,
                     "is_resolved": self._is_resolved(parser_results),
@@ -3361,6 +3547,35 @@ class Harness:
             task_id=trial_handler.task_id,
             trial_name=trial_name,
         )
+        formulacode_contract = self._formulacode_task_contract(task_path)
+        if formulacode_contract is not None:
+            self._trace_pipeline(
+                stage="formulacode.task_contract",
+                status="materialized",
+                inputs={
+                    "adapter": "adapters.formulacode.adapter.FormulaCodeAdapter",
+                    "record": formulacode_contract["record"],
+                },
+                outputs={
+                    "task_directory": task_path,
+                    "materialized_files": formulacode_contract["materialized_files"],
+                    "record_source": formulacode_contract["record_source"],
+                },
+                execution={
+                    "operation": (
+                        "Read the persisted FormulaCode record and the task files "
+                        "that the adapter rendered from it."
+                    ),
+                    "required_record_fields": [
+                        "base_commit",
+                        "patch",
+                        "instructions",
+                        "image_name or container_name",
+                    ],
+                },
+                task_id=trial_handler.task_id,
+                trial_name=trial_name,
+            )
 
         try:
             trial_results = self._run_trial(trial_handler)

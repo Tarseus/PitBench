@@ -9,10 +9,6 @@ from rich import print as rich_print
 from rich.table import Table
 from typer import Argument, Option, Typer
 
-from fceval.cli.fceval.debug_checker.debug_checker import DebugChecker
-from fceval.cli.fceval.quality_checker.quality_checker import QualityChecker
-from fceval.cli.fceval.quality_checker.task_fixer import TaskFixer
-from fceval.cli.fork_wizard import ForkWizard
 from fceval.cli.wizard import Wizard
 from fceval.handlers.trial_handler import TaskDifficulty, TrialHandler
 from fceval.terminal.docker_compose_manager import DockerComposeManager
@@ -232,6 +228,8 @@ def fork(
     ] = None,
 ):
     """Starts an interactive wizard to fork a task."""
+    from fceval.cli.fork_wizard import ForkWizard
+
     wizard = ForkWizard(
         tasks_dir,
         source_task_id=source_task_id,
@@ -444,6 +442,8 @@ def check(
         return
 
     task_dir = tasks_dir / task_id
+    from fceval.cli.fceval.quality_checker.quality_checker import QualityChecker
+
     checker = QualityChecker(
         task_dir,
         model_name,
@@ -479,6 +479,8 @@ def check(
 
     # If --fix flag is used, run the TaskFixer
     if fix:
+        from fceval.cli.fceval.quality_checker.task_fixer import TaskFixer
+
         rich_print("\n[yellow]🔧 Running automatic task fixer...[/yellow]")
         fixer = TaskFixer(task_dir, result)
         fixer.fix()
@@ -512,6 +514,8 @@ def debug(
     """Debug task failures and analyze instruction sufficiency."""
 
     try:
+        from fceval.cli.fceval.debug_checker.debug_checker import DebugChecker
+
         checker = DebugChecker(
             task_id=task_id,
             model_name=model_name,

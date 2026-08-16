@@ -92,6 +92,13 @@ echo "Agent solution patch saved to: $PATCH_PATH"
 # Reset repo state for benchmarking
 reset_repo_state {{ base_commit }}
 
+# Restore the agent's captured changes before profiling and verification.  The
+# reset above removes them; without this step every post-run ASV archive
+# measures the baseline commit rather than the candidate solution.
+if [ -s "$PATCH_PATH" ]; then
+    git apply --whitespace=nowarn "$PATCH_PATH"
+fi
+
 
 # # run the profile script
 LOG_DIR="${T_BENCH_CONTAINER_LOGS_PATH:-/logs}"
@@ -108,8 +115,6 @@ cat > formulacode_testrunner.py << 'EOF'
 {{ pytest_runner }}
 EOF
 
-pip install -U git+https://github.com/formula-code/snapshot-tester.git
-
 if [[ "${T_BENCH_AGENT_MODEL_NAME}" == *nop* ]]; then
     snapshot-tool capture --snapshot-dir "/logs/.snapshots" $BENCHMARK_DIR
 fi
@@ -121,7 +126,6 @@ fi
 snapshot-tool verify --snapshot-dir "/logs/.snapshots" --summary "/logs/summary_${T_BENCH_AGENT_MODEL_NAME}.json" $BENCHMARK_DIR
 
 {%- if run_pytest %}
-pip install -U jinja2
 cat > jinja_patch_plugin_pandas.py << 'PY'
     import importlib, pathlib
 

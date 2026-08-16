@@ -135,3 +135,79 @@ def test_trial_pipeline_records_stage_inputs_and_outputs(tmp_path: Path) -> None
     assert "must-not-leak" not in harness._pipeline_trace.path.read_text()
     assert completed.is_resolved is True
     assert terminal.closed_sessions == ["tests", "agent", "setup"]
+
+
+def test_formulacode_trace_records_materialized_contract_and_artifacts(
+    tmp_path: Path,
+) -> None:
+    task_dir = tmp_path / "networkx_networkx_1"
+    (task_dir / "tests").mkdir(parents=True)
+    (task_dir / "tests" / "config.json").write_text(
+        json.dumps(
+            {
+                "task_id": "networkx_networkx_1",
+                "base_commit": "base-sha",
+                "gt_hash": "merge-sha",
+                "patch": "diff --git a/a.py b/a.py",
+                "instructions": "Make it faster.",
+                "image_name": "formulacode/all:networkx",
+            }
+        )
+    )
+    for name in (
+        "Dockerfile",
+        "docker-compose.yaml",
+        "task.yaml",
+        "solution.sh",
+        "run-setup.sh",
+        "run-tests.sh",
+        "profile.sh",
+    ):
+        (task_dir / name).write_text(f"content of {name}\n")
+
+    contract = Harness._formulacode_task_contract(task_dir)
+    assert contract is not None
+    assert contract["record"]["base_commit"] == "base-sha"
+    assert contract["materialized_files"]["Dockerfile"]["content"].startswith(
+        "content"
+    )
+
+    parent_trial_name = "trial-1"
+    trial_paths = TrialPaths(
+        tmp_path / "runs", "networkx_networkx_1", f"{parent_trial_name}.agent-1-nop"
+    )
+    trial_paths.mkdir()
+    shared_trial_paths = TrialPaths(
+        tmp_path / "runs", "networkx_networkx_1", parent_trial_name
+    )
+    shared_trial_paths.mkdir()
+    sessions = shared_trial_paths.sessions_path
+    agent_model_name = "agent-1-nop:nop"
+    (sessions / f"agent_solution_{agent_model_name}.patch").write_text("diff")
+    (sessions / f"postrun_{agent_model_name}.tar.gz").write_bytes(b"tar")
+    (sessions / f"postrun_{agent_model_name}.asv.log").write_text("asv output")
+    (sessions / f"postrun_{agent_model_name}.cover.log").write_text("coverage")
+    (sessions / f"summary_{agent_model_name}.json").write_text('{"passed": 1}')
+    (sessions / "test_results.json").write_text('{"results": {"exit_code": 0}}')
+
+    harness = Harness.__new__(Harness)
+    harness._pipeline_trace = PipelineTrace(tmp_path / "pipeline.jsonl", "run-1")
+    trial_handler = SimpleNamespace(
+        task_id="networkx_networkx_1",
+        trial_name=f"{parent_trial_name}.agent-1-nop",
+        task_paths=SimpleNamespace(input_path=task_dir),
+        trial_paths=trial_paths,
+    )
+    harness._trace_formulacode_evaluation_artifacts(
+        trial_handler=trial_handler,
+        agent_model_name=agent_model_name,
+        test_failure_mode=FailureMode.NONE,
+    )
+
+    event = json.loads(harness._pipeline_trace.path.read_text())
+    assert event["stage"] == "formulacode.evaluation_artifacts"
+    assert event["inputs"]["base_commit"] == "base-sha"
+    assert event["outputs"]["candidate_patch_before_reset"]["content"] == "diff"
+    assert event["outputs"]["asv_archive"]["sha256"]
+    assert event["outputs"]["snapshot_summary"]["content"] == '{"passed": 1}'
+    assert event["execution"]["sessions_path"] == str(sessions)

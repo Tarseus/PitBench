@@ -1,5 +1,15 @@
 from fceval.agents.base_agent import BaseAgent
-from fceval.harness.harness import Harness
-from fceval.harness.models import BenchmarkResults
 
 __all__ = ["Harness", "BenchmarkResults", "BaseAgent"]
+
+
+def __getattr__(name: str):
+    if name == "Harness":
+        from fceval.harness.harness import Harness
+
+        return Harness
+    if name == "BenchmarkResults":
+        from fceval.harness.models import BenchmarkResults
+
+        return BenchmarkResults
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
