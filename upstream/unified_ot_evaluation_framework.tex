@@ -1,0 +1,348 @@
+% !TeX program = xelatex
+% !TeX encoding = UTF-8
+\documentclass[11pt,a4paper]{ctexart}
+\usepackage[a4paper,margin=2.25cm]{geometry}
+\usepackage{amsmath,amssymb,mathtools,bm}
+\usepackage{booktabs,array}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=black,urlcolor=blue,citecolor=black}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.35em}
+\setlist[itemize]{leftmargin=2em,itemsep=0.25em,topsep=0.25em}
+\definecolor{mainblue}{RGB}{43,92,145}
+\definecolor{lightblue}{RGB}{236,244,252}
+\definecolor{lightgreen}{RGB}{236,248,240}
+\definecolor{lightorange}{RGB}{253,244,232}
+\definecolor{lightgray}{RGB}{246,246,246}
+
+\title{\textbf{一个统一的组合优化算法评价框架}\\[0.35em]
+\large 用 Optimal Transport 同时描述泛化性、性能与随机性}
+\author{PitBench Methodology Note}
+\date{2026 年 8 月}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+本文给出一个简洁的统一视角：把组合优化算法看成一个带随机性的映射，它把实例分布映射成解或求解轨迹的分布。Optimal Transport（OT）的主要作用不是直接定义“泛化性”，而是为实例分布和输出分布提供可比较的几何结构。由此，\textbf{实例分布之间的 OT 距离}用于量化 distribution shift，\textbf{相对于最优解 anchor 的输出距离}用于量化性能，而\textbf{固定实例下输出分布的离散程度}用于量化算法随机性。三者因此可以在同一套概率与距离框架中描述。
+\end{abstract}
+
+\section{核心思想}
+
+设组合优化实例属于空间 $\mathcal X$。算法记为 $A$。由于随机种子、并行调度、随机化启发式等因素，同一个实例上运行算法并不一定得到完全相同的求解过程，因此写成
+\[
+\tau = A(x;\xi),
+\]
+其中 $x\in\mathcal X$ 是实例，$\xi$ 表示算法内部随机性，$\tau$ 表示一次完整的求解轨迹（trajectory）。
+
+我们再用一个特征映射
+\[
+\phi:\tau\mapsto y\in\mathcal Y
+\]
+把求解轨迹变成真正用于评价的对象。例如 $y$ 可以包含：
+\[
+\bigl(g(t_1),\ldots,g(t_K),\ \text{time-to-target},\ \text{nodes},\ \text{proof statistics}\bigr),
+\]
+其中 $g(t)$ 可以是相对于最优值的 gap 曲线。
+
+因此，给定实例 $x$ 后，算法并不是产生一个确定的点，而是产生一个条件分布
+\[
+K_A(\mathrm dy\mid x).
+\]
+这个对象可以理解为：\textbf{固定实例 $x$，重复运行算法时，输出 $y$ 会如何分布。}
+
+若实例本身来自某个经验总体 $P$，则算法在整个实例总体上诱导出输出分布
+\[
+Q_A^P(\mathrm dy)
+=
+\int_{\mathcal X} K_A(\mathrm dy\mid x)\,P(\mathrm dx).
+\]
+于是算法可以抽象为
+\[
+\boxed{P\xrightarrow{\quad A,\,\xi\quad}Q_A^P.}
+\]
+这就是统一框架的基本对象。
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[>=Latex,node distance=2.0cm]
+\node[draw,rounded corners,fill=lightblue,minimum width=3.2cm,minimum height=1.05cm] (P) {实例分布 $P$};
+\node[draw,rounded corners,fill=lightgreen,right=3.6cm of P,minimum width=3.6cm,minimum height=1.05cm] (Q) {输出分布 $Q_A^P$};
+\draw[->,very thick,mainblue] (P) -- node[above]{随机算法 $A(\cdot;\xi)$} (Q);
+\node[below=0.45cm of P,align=center] {经验实例总体\\$\sum_i a_i\delta_{x_i}$};
+\node[below=0.45cm of Q,align=center] {解 / 轨迹 / 性能特征\\的概率分布};
+\end{tikzpicture}
+\caption{算法被视为从实例总体到输出总体的随机映射。}
+\end{figure}
+
+\section{为什么需要 OT：给“变化”一个距离}
+
+真实 benchmark 中，我们通常只有有限实例
+\[
+x_1,\ldots,x_n,
+\]
+并不需要假设它们来自高斯分布，也不需要假设实例空间形成光滑流形。最自然的表示是经验测度
+\[
+\widehat P=\sum_{i=1}^n a_i\delta_{x_i},
+\qquad a_i\ge 0,\quad \sum_i a_i=1.
+\]
+另一组实例同样写成
+\[
+\widehat Q=\sum_{j=1}^m b_j\delta_{x'_j}.
+\]
+
+如果已经定义了单个实例之间的 ground distance
+\[
+d_{\mathcal X}(x,x'),
+\]
+那么 $p$-Wasserstein 距离定义为
+\[
+W_p(\widehat P,\widehat Q)
+=
+\left[
+\min_{\pi\in\Pi(a,b)}
+\sum_{i=1}^n\sum_{j=1}^m
+\pi_{ij}\,d_{\mathcal X}(x_i,x'_j)^p
+\right]^{1/p},
+\]
+其中 $\pi_{ij}$ 表示把多少概率质量从 $x_i$ 搬到 $x'_j$，并满足
+\[
+\sum_j\pi_{ij}=a_i,
+\qquad
+\sum_i\pi_{ij}=b_j,
+\qquad
+\pi_{ij}\ge 0.
+\]
+
+因此 OT 的语义非常直接：
+\[
+\boxed{\text{把一个实例总体变成另一个实例总体，最少需要搬运多少“概率质量 $\times$ 距离”？}}
+\]
+
+OT 在这里提供的是一个\textbf{distribution-shift geometry}。它本身不是“泛化性”，而是告诉我们实例分布到底改变了多少。
+
+\section{三件事如何进入同一个框架}
+
+\subsection{泛化性：实例分布改变后，算法性能恶化多少？}
+
+设 $P$ 是开发/训练时的实例总体，$Q$ 是另一个测试总体。输入侧的变化量由
+\[
+W_{\mathcal X}(P,Q)
+\]
+描述。
+
+为了评价算法本身，需要先定义一个相对于最优解的 loss。设实例 $x$ 的最优解或最优行为对应 anchor
+\[
+y^*(x).
+\]
+给定距离 $d_{\mathcal Y}$，定义算法在总体 $P$ 上的 oracle-relative risk：
+\[
+L_A(P)
+=
+\mathbb E_{x\sim P}
+\mathbb E_{Y\sim K_A(\cdot\mid x)}
+\bigl[d_{\mathcal Y}(Y,y^*(x))\bigr].
+\]
+
+那么一个最简单的 distributional sensitivity 是
+\[
+\boxed{
+R_A(P,Q)
+=
+\frac{|L_A(P)-L_A(Q)|}{W_{\mathcal X}(P,Q)}
+}
+\]
+（当分母非零时）。它表达：\textbf{实例总体移动单位距离时，算法相对于最优解的性能变化有多大。}
+
+这里有一个重要原则：
+\[
+W_{\mathcal Y}(Q_A^P,Q_A^Q)\ \text{小}
+\]
+\textbf{并不自动意味着泛化好。} 因为实例变化以后，真正的最优解结构本身也可能应该发生很大变化。泛化性应关注的是\textbf{oracle-relative performance 是否稳定}，而不是要求输出“不变化”。
+
+\subsection{性能：算法离最优 anchor 有多远？}
+
+固定一个实例 $x$。算法输出是分布 $K_A(\cdot\mid x)$，最优解 anchor 可以写成一个 Dirac 测度
+\[
+\delta_{y^*(x)}.
+\]
+于是可以定义
+\[
+\boxed{
+\mathrm{Perf}_A(x)
+=
+W_{\mathcal Y}
+\bigl(K_A(\cdot\mid x),\delta_{y^*(x)}\bigr)
+}
+\]
+或更直接地使用期望距离
+\[
+\mathrm{Perf}_A(x)
+=
+\mathbb E_{Y\sim K_A(\cdot\mid x)}
+[d_{\mathcal Y}(Y,y^*(x))].
+\]
+越小表示算法越接近最优。
+
+对于 anytime solver，可以把输出定义为整条最优性 gap 曲线，例如
+\[
+g_x(t)
+=
+\frac{f_x(t)-f^*(x)}{s(x)},
+\]
+其中 $f^*(x)$ 是最优目标值，$s(x)$ 是归一化尺度。此时 $g_x(t)=0$ 就是统一的最优 anchor。
+
+\subsection{随机性：固定实例时，输出分布有多分散？}
+
+随机性必须在\textbf{固定实例}后测量，否则实例异质性会和算法随机性混在一起。
+
+给定 $x$，独立运行两次算法：
+\[
+Y,Y'\overset{\mathrm{iid}}{\sim}K_A(\cdot\mid x).
+\]
+一个简单的随机性/不稳定性指标是
+\[
+\boxed{
+S_A(x)
+=
+\frac12
+\mathbb E\bigl[d_{\mathcal Y}(Y,Y')^2\bigr].
+}
+\]
+若 $S_A(x)$ 很小，则不同 seed 得到的行为相近；若很大，则算法对 seed 或其他随机源高度敏感。
+
+在一个实例总体 $P$ 上，可以进一步聚合：
+\[
+S_A(P)=\mathbb E_{x\sim P}[S_A(x)].
+\]
+
+因此，随机性并不是额外附加的指标，而是由同一个条件输出分布
+\[
+K_A(\cdot\mid x)
+\]
+自然给出。
+
+\section{统一图景}
+
+三类评价可以放进同一个图中：
+
+\begin{figure}[htbp]
+\centering
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}[>=Latex,node distance=2.0cm]
+\node[draw,rounded corners,fill=lightblue,minimum width=3.2cm,minimum height=1cm] (P) {实例总体 $P$};
+\node[draw,rounded corners,fill=lightblue,below=2.2cm of P,minimum width=3.2cm,minimum height=1cm] (Q) {实例总体 $Q$};
+\node[draw,rounded corners,fill=lightgreen,right=4.3cm of P,minimum width=3.5cm,minimum height=1cm] (AP) {$Q_A^P$};
+\node[draw,rounded corners,fill=lightgreen,right=4.3cm of Q,minimum width=3.5cm,minimum height=1cm] (AQ) {$Q_A^Q$};
+\node[draw,rounded corners,fill=lightorange,right=3.8cm of AP,minimum width=3.1cm,minimum height=1cm] (OP) {oracle $Q_*^P$};
+\node[draw,rounded corners,fill=lightorange,right=3.8cm of AQ,minimum width=3.1cm,minimum height=1cm] (OQ) {oracle $Q_*^Q$};
+
+\draw[->,very thick,mainblue] (P) -- node[above]{$A,\xi$} (AP);
+\draw[->,very thick,mainblue] (Q) -- node[above]{$A,\xi$} (AQ);
+\draw[<->,thick] (P) -- node[left,align=center]{$W_{\mathcal X}(P,Q)$\\实例分布变化} (Q);
+\draw[<->,thick] (AP) -- node[above]{performance} (OP);
+\draw[<->,thick] (AQ) -- node[above]{performance} (OQ);
+\draw[<->,dashed,thick] (AP) -- node[right,align=center]{输出变化\\（描述性）} (AQ);
+\end{tikzpicture}%
+}
+\caption{统一框架：输入侧 OT 描述 distribution shift；输出相对 oracle 的距离描述性能；固定实例下输出条件分布的 dispersion 描述随机性。}
+\end{figure}
+
+因此三件事可以概括为：
+\[
+\boxed{
+\begin{aligned}
+\text{Performance: }&\quad
+\mathbb E_{x\sim P}W_{\mathcal Y}
+\bigl(K_A(\cdot\mid x),\delta_{y^*(x)}\bigr),\\[0.4em]
+\text{Randomness: }&\quad
+\mathbb E_{x\sim P}\frac12\mathbb E[d_{\mathcal Y}(Y,Y')^2\mid x],\\[0.4em]
+\text{Generalization: }&\quad
+\text{oracle-relative performance 随 }W_{\mathcal X}(P,Q)\text{ 的变化规律。}
+\end{aligned}}
+\]
+
+\section{OT 在输入侧与输出侧分别做什么}
+
+为了避免概念混淆，可以区分两种 OT：
+
+\begin{center}
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.2cm} >{\raggedright\arraybackslash}p{5.1cm} >{\raggedright\arraybackslash}p{5.1cm}}
+\toprule
+ & 输入侧 OT & 输出侧 OT \\
+\midrule
+比较对象 & 两个实例或实例总体 & 两个解 / 轨迹 / 输出分布 \\
+核心问题 & instance distribution 改变了多少？ & solver behavior 改变了多少？ \\
+主要用途 & 泛化、distribution shift、DRO & 性能差异、行为差异、随机性描述 \\
+关键前提 & instance ground metric 有意义 & output/trajectory representation 有意义 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+其中，单个复杂实例内部是否需要使用所谓 Inner OT，是一个\textbf{可选的 ground-metric 构造方法}，不是统一框架成立的前提。Outer OT 才直接对应“两个实例总体之间的距离”。
+
+\section{与 PitBench 的关系：评价 patch 的泛化}
+
+如果 $B$ 是 base solver，$A$ 是经过 agent 或 human patch 后的 solver，可以定义 patch 在实例 $x$ 上的期望收益
+\[
+\Delta_{A/B}(x)
+=
+L_B(x)-L_A(x).
+\]
+总体 $P$ 上的平均收益为
+\[
+G_{A/B}(P)
+=
+\mathbb E_{x\sim P}[\Delta_{A/B}(x)].
+\]
+于是 patch 的泛化问题变成：
+\[
+\boxed{
+W_{\mathcal X}(P,Q)\ \text{增大时，}\ G_{A/B}(Q)\ \text{还能保留多少？}
+}
+\]
+这比只报告一个 dev/test speedup 更丰富，因为它试图回答：\textbf{patch 的收益随着实例分布偏移究竟如何衰减。}
+
+如果未来 ground geometry 被可靠验证，还可以进一步定义 Wasserstein ball
+\[
+\mathcal U_\varepsilon(P)
+=
+\{Q:W_{\mathcal X}(Q,P)\le \varepsilon\}
+\]
+以及最坏情况下的 retained gain
+\[
+G_{A/B}^{\mathrm{rob}}(\varepsilon)
+=
+\inf_{Q\in\mathcal U_\varepsilon(P)}G_{A/B}(Q).
+\]
+这时 $\varepsilon$ 就有明确含义：允许实例总体在所定义的 geometry 中移动多远。
+
+\section{最重要的边界条件}
+
+这套框架的价值在于统一，而不是强迫所有对象都使用 OT。需要保留以下边界：
+
+\begin{itemize}
+\item OT 不自动给出正确的 ground metric；实例表示如果与 solver response 无关，Wasserstein 距离也没有评价意义。
+\item 泛化性不是“输出分布变化越小越好”。实例改变时，正确的最优解本身也可能必须显著改变。
+\item 随机性必须条件于固定实例测量，否则会把 instance heterogeneity 错当成 solver stochasticity。
+\item optimal anchor 描述的是 problem-level quality；human patch 则是 software-engineering reference，两者含义不同。
+\item 对真实 benchmark，应优先使用经验测度，不需要先假设分布可参数化，也不需要假设实例空间形成光滑流形。
+\end{itemize}
+
+\section{一句话总结}
+
+\begin{center}
+\fcolorbox{mainblue}{lightblue}{%
+\begin{minipage}{0.91\textwidth}
+\centering
+\textbf{把算法视为从经验实例分布到随机解/轨迹分布的 stochastic mapping。}\\[0.4em]
+输入侧 OT 给出 distribution shift 的 geometry；最优解 anchor 给出绝对性能参照；固定实例下的条件输出分布给出算法随机性。由此，performance、stability 和 distributional generalization 可以在同一个概率与距离框架中被统一描述。
+\end{minipage}}
+\end{center}
+
+\end{document}
