@@ -1,0 +1,67 @@
+schema_version: "1.0"
+task_id: pyvrp_1173
+split: metric_dev_patches
+event:
+  repository: PyVRP/PyVRP
+  pr_number: 1173
+  base_commit: 54240787022514c8180ffa78e981164f321ece2f
+  human_commit: 7c83f4377f5a4572a982c3bc719a557897f2af60
+  pr_created_at: 2026-08-13T09:32:06Z
+  pr_merged_at: 2026-08-13T10:09:58Z
+  title: Guard the delta cost check
+  url: https://github.com/PyVRP/PyVRP/pull/1173
+task_type: solver_search
+problem_family: cvrp
+optimization_scope: local_search_delta_evaluation
+instruction: >-
+  Improve local-search throughput without changing accepted moves, feasibility, or
+  objective semantics. Use the visible development instances to validate the change.
+information_regime: issue_context
+repository:
+  clone_url: https://github.com/PyVRP/PyVRP.git
+  language: cpp_python
+  plugin: pitbench.repositories.pyvrp:PyVRPRepositoryPlugin
+references:
+  human_patch:
+    uri: private://human_patches/pyvrp_1173.patch
+    sha256: 7fc57904f51f2b3a87f6135e3b85e1fa8bc41f986899bbe5e9e965ed948a5ae9
+  oracle:
+    kind: known_optimum
+    source: private://oracles/cvrp.json
+    objective_sense: minimize
+evaluation:
+  family_plugin: pitbench.families.cvrp:CVRPFamily
+  budgets_sec: [1.0, 5.0, 10.0]
+  solver_seeds: [0, 1, 2, 3, 4]
+  threads: 1
+  verifier: cvrp_independent
+  validation_build:
+    compiler: gcc
+    flags: [-O1, -g]
+    sanitizers: [address, undefined]
+  performance_build:
+    compiler: gcc
+    flags: [-O3, -DNDEBUG]
+populations:
+  - name: agent_dev
+    kind: agent_dev
+    manifest: manifests/populations/pyvrp_1173_dev.yaml
+    size: 10
+    randomness: {instance_seed: 117300, coordinate_seed: 117301, demand_seed: 117302}
+  - name: judge_id
+    kind: judge_id
+    manifest: private://hidden_instances/pyvrp_1173/judge_id.yaml
+    size: 100
+    randomness: {instance_seed: 117310, coordinate_seed: 117311, demand_seed: 117312}
+  - name: spatial_clustered
+    kind: judge_shift
+    manifest: private://hidden_instances/pyvrp_1173/spatial_clustered.yaml
+    size: 100
+    shift: spatial_clustered
+    randomness: {instance_seed: 117310, coordinate_seed: 117321, demand_seed: 117312}
+  - name: capacity_tight
+    kind: judge_shift
+    manifest: private://hidden_instances/pyvrp_1173/capacity_tight.yaml
+    size: 100
+    shift: capacity_tight
+    randomness: {instance_seed: 117310, coordinate_seed: 117311, demand_seed: 117322}

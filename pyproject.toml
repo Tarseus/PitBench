@@ -1,0 +1,63 @@
+[project]
+name = "pitbench"
+version = "0.1.0"
+description = "Evaluation infrastructure for coding agents improving CO solvers."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.37.13",
+    "docker>=7.1.0",
+    "jinja2>=3.1.0",
+    "litellm>=1.67.5",
+    "numpy>=2.0.0",
+    "pandas>=2.2.0",
+    "portkey-ai>=1.14.4",
+    "pydantic>=2.10.5",
+    "pyarrow>=17.0.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.0",
+    "ruamel-yaml>=0.18.10",
+    "sqlalchemy>=2.0.25",
+    "tabulate>=0.9.0",
+    "tenacity>=9.0.0",
+    "typer>=0.16.0",
+]
+
+[project.scripts]
+fc-eval = "fceval.cli.fceval.main:app"
+pitbench = "pitbench.cli.main:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.4",
+    "pytest-cov>=6.0.0",
+    "pytest-timeout>=2.4.0",
+    "ruff>=0.13.0",
+    "toml>=0.10.2",
+]
+
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["fceval*", "pitbench*", "adapters*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "docker: tests requiring Docker",
+    "external: tests requiring private task assets or upstream repositories",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+exclude = ["upstream"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["fceval", "pitbench", "adapters"]
+

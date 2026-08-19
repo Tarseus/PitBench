@@ -1,0 +1,9 @@
+schema_version: "1.0"
+visibility: agent
+format: cp_sat_java_model_spec_json
+generator:
+  kind: repeated_constants_cumulative
+  count: 5
+  intervals: [100, 250, 500, 1000]
+  constant_reuse_factor: [4, 8, 16]
+  randomness: {instance_seed: 247800}

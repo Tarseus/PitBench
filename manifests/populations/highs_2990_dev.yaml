@@ -1,0 +1,9 @@
+schema_version: "1.0"
+visibility: agent
+format: lp
+generator:
+  kind: single_machine_scheduling_mip
+  count: 5
+  jobs: [20, 40, 80]
+  horizon_factor: [1.1, 1.5]
+  randomness: {instance_seed: 299000}

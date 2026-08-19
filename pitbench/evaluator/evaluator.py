@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+from collections import Counter
+from pathlib import Path
+
+from fceval.evaluation import EvaluationRequest, Evaluator
+from pitbench.evaluator.artifacts import artifact_ref
+from pitbench.evaluator.docker_judge import DockerJudge
+from pitbench.evaluator.judge import FixtureJudge, JudgePlan, LocalProcessJudge
+from pitbench.evaluator.patch_policy import PatchPolicy, PatchPolicyResult
+from pitbench.evaluator.storage import ObservationStore
+from pitbench.evaluator.validity import evaluator_validity
+from pitbench.schema.evaluation import (
+    ArtifactManifest,
+    EvaluationResult,
+    EvaluationSummary,
+)
+from pitbench.schema.task import PitBenchTask
+
+
+class PitBenchEvaluator(Evaluator):
+    name = "pitbench"
+    version = "1"
+
+    def evaluate(self, request: EvaluationRequest) -> EvaluationResult:
+        config = request.evaluator_config
+        manifest_path = Path(config["manifest_path"])
+        task = PitBenchTask.from_yaml(manifest_path)
+        if task.task_id != request.task_id:
+            raise ValueError("task ID does not match evaluator manifest")
+
+        patch_exists = request.candidate_patch_path.is_file()
+        policy = (
+            PatchPolicy().inspect(request.candidate_patch_path)
+            if patch_exists
+            else PatchPolicyResult(accepted=False, violations=["patch missing"])
+        )
+        fixture_mode = bool(config.get("fixture_mode", False))
+        validity = evaluator_validity(
+            patch_exists=patch_exists,
+            policy_passed=policy.accepted,
+            fixture_mode=fixture_mode,
+        )
+        if not validity.accepted:
+            observations = []
+        elif fixture_mode:
+            limit = int(config.get("fixture_instances_per_population", 2))
+            observations = FixtureJudge().run(JudgePlan.fixture(task, limit))
+        else:
+            required = ("base_repository", "private_root")
+            missing = [key for key in required if key not in config]
+            if missing:
+                raise ValueError(f"real judge missing configuration: {missing}")
+            if config.get("unsafe_local_judge", False):
+                observations = LocalProcessJudge(
+                    task=task,
+                    base_repository=Path(config["base_repository"]),
+                    private_root=Path(config["private_root"]),
+                    candidate_patch=request.candidate_patch_path,
+                    output_dir=request.output_dir,
+                ).run()
+            else:
+                image = config.get("judge_image") or task.repository.judge_image
+                if not image:
+                    raise ValueError("real judge requires a pinned judge_image")
+                observations = DockerJudge(
+                    image=image,
+                    manifest_path=manifest_path,
+                    base_repository=Path(config["base_repository"]),
+                    private_root=Path(config["private_root"]),
+                    candidate_patch=request.candidate_patch_path,
+                    output_dir=request.output_dir,
+                    cpus=float(config.get("judge_cpus", 1.0)),
+                    memory=str(config.get("judge_memory", "8g")),
+                ).run()
+
+        parquet_path = request.output_dir / "trials.parquet"
+        ObservationStore.write(parquet_path, observations)
+        counts = Counter(item.code_state for item in observations)
+        artifacts = ArtifactManifest(
+            candidate_patch=(
+                artifact_ref(
+                    request.candidate_patch_path,
+                    root=request.output_dir,
+                    media_type="text/x-diff",
+                )
+                if patch_exists
+                else None
+            ),
+            observations=artifact_ref(
+                parquet_path,
+                root=request.output_dir,
+                media_type="application/vnd.apache.parquet",
+            ),
+        )
+        return EvaluationResult(
+            task_id=task.task_id,
+            validity=validity,
+            observations=observations,
+            artifacts=artifacts,
+            summary=EvaluationSummary(
+                observation_count=len(observations),
+                valid_observation_count=sum(item.valid for item in observations),
+                counts_by_state=dict(counts),
+            ),
+        )

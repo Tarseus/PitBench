@@ -1,0 +1,11 @@
+schema_version: "1.0"
+visibility: agent
+format: normalized_cvrp_json
+generator:
+  kind: euclidean_cvrp
+  count: 10
+  customers: [50, 100, 200]
+  coordinate_distribution: uniform
+  demand_distribution: uniform_integer
+  capacity_ratio: 0.18
+  randomness: {instance_seed: 25500, coordinate_seed: 25501, demand_seed: 25502}

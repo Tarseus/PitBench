@@ -1,0 +1,10 @@
+schema_version: "1.0"
+visibility: agent
+format: normalized_bin_packing_json
+generator:
+  kind: bin_packing
+  count: 5
+  items: [50, 100, 250]
+  capacity: 100
+  weight_distribution: uniform_integer
+  randomness: {instance_seed: 67100}

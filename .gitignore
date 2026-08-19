@@ -25,3 +25,11 @@ __pycache__/
 *.synctex*
 *.xdv
 
+
+# Private judge inputs and generated evaluation data
+private/*
+!private/README.md
+results/
+/dataset/
+*.parquet
+*.egg-info/
