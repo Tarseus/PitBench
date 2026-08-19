@@ -69,7 +69,7 @@ uv run pitbench tasks materialize-dev --output dataset/dev
 uv run fc-eval runs create \
   --dataset-path dataset/dev \
   --agent codex \
-  --model gpt-5.6-sol \
+  --model gpt-5.6-terra \
   --n-concurrent 1
 ```
 
