@@ -16,9 +16,7 @@ class AgentFactory:
         AgentName.AIDER.value: (
             "fceval.agents.installed_agents.aider.aider_agent:AiderAgent"
         ),
-        AgentName.CODEX.value: (
-            "fceval.agents.installed_agents.codex.codex_agent:CodexAgent"
-        ),
+        AgentName.CODEX.value: ("fceval.agents.codex_mcp_agent:CodexMCPAgent"),
         AgentName.MCP_TERMINUS.value: (
             "fceval.agents.mcp_agents.mcp_terminus:MCPTerminus"
         ),

@@ -51,6 +51,33 @@ uv run pytest -q tests/unit/pitbench
 uv run pytest -q tests/unit -m 'not docker'
 ```
 
+## Codex agent with a ChatGPT subscription
+
+PitBench runs Codex on the host while exposing only a loopback MCP command surface
+for the assigned, network-disabled task container. Log in and install the isolated
+runner once:
+
+```bash
+codex login
+sudo scripts/install-codex-runner.sh
+```
+
+Re-run the installer after upgrading Codex because it copies the pinned executables.
+
+```bash
+uv run pitbench tasks materialize-dev --output dataset/dev
+uv run fc-eval runs create \
+  --dataset-path dataset/dev \
+  --agent codex \
+  --model gpt-5.6-sol \
+  --n-concurrent 1
+```
+
+The runner passes subscription authentication through standard input into a
+temporary directory, removes it after the run, and executes as `pitbench-codex`, a
+dedicated system user without Docker socket access. No API key or auth file is
+mounted into the task container.
+
 Materialized tasks expose the same agent-side developer interface:
 
 ```bash

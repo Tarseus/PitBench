@@ -125,6 +125,10 @@ class BaseAgent(ABC):
         template_path = Path(self.prompt_template)
         return render_prompt_template(template_path, instruction)
 
+    def cancel(self) -> None:
+        """Cancel in-flight work after a harness timeout."""
+        return None
+
     @abstractmethod
     def perform_task(
         self,

@@ -1331,6 +1331,14 @@ class Harness:
             return result, result.failure_mode
 
         except asyncio.TimeoutError:
+            try:
+                agent.cancel()
+            except Exception as cancel_error:
+                self._logger.warning(
+                    "Failed to cancel timed-out agent for task %s: %s",
+                    trial_handler.task_id,
+                    cancel_error,
+                )
             self._logger.warning(
                 f"Agent timed out after "
                 f"{agent_timeout_sec}s for task "
