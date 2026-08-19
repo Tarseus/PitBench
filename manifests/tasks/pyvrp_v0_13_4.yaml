@@ -1,0 +1,61 @@
+schema_version: "2.0"
+task_id: pyvrp_v0_13_4
+split: development
+release:
+  repository: PyVRP/PyVRP
+  version: "0.13.4"
+  tag: v0.13.4
+  base_commit: 18815548d04a90a0e5eea2a0bed53a81ea9d2d49
+  released_at: 2026-05-20T11:44:49Z
+  url: https://github.com/PyVRP/PyVRP/releases/tag/v0.13.4
+task_type: solver_search
+problem_family: cvrp
+optimization_scope: local_search_and_search_efficiency
+instruction: >-
+  Improve solver performance while preserving feasibility, objective semantics, and
+  accepted solution behavior. Use only the visible development instances.
+information_regime: snapshot_only
+repository:
+  clone_url: https://github.com/PyVRP/PyVRP.git
+  language: cpp_python
+  plugin: pitbench.repositories.pyvrp:PyVRPRepositoryPlugin
+oracle:
+    kind: known_optimum
+    source: private://oracles/cvrp.json
+    objective_sense: minimize
+evaluation:
+  family_plugin: pitbench.families.cvrp:CVRPFamily
+  budgets_sec: [1.0, 5.0, 10.0]
+  solver_seeds: [0, 1, 2, 3, 4]
+  threads: 1
+  verifier: cvrp_independent
+  validation_build:
+    compiler: gcc
+    flags: [-O1, -g]
+    sanitizers: [address, undefined]
+  performance_build:
+    compiler: gcc
+    flags: [-O3, -DNDEBUG]
+populations:
+  - name: agent_dev
+    kind: agent_dev
+    manifest: manifests/populations/pyvrp_v0_13_4_dev.yaml
+    size: 10
+    randomness: {instance_seed: 13400, coordinate_seed: 13401, demand_seed: 13402}
+  - name: judge_id
+    kind: judge_id
+    manifest: private://hidden_instances/pyvrp_v0_13_4/judge_id.yaml
+    size: 100
+    randomness: {instance_seed: 13410, coordinate_seed: 13411, demand_seed: 13412}
+  - name: spatial_clustered
+    kind: judge_shift
+    manifest: private://hidden_instances/pyvrp_v0_13_4/spatial_clustered.yaml
+    size: 100
+    shift: spatial_clustered
+    randomness: {instance_seed: 13410, coordinate_seed: 13421, demand_seed: 13412}
+  - name: capacity_tight
+    kind: judge_shift
+    manifest: private://hidden_instances/pyvrp_v0_13_4/capacity_tight.yaml
+    size: 100
+    shift: capacity_tight
+    randomness: {instance_seed: 13410, coordinate_seed: 13411, demand_seed: 13422}

@@ -10,7 +10,7 @@ The original project is preserved unchanged under [`upstream/`](upstream/).
 The generic `fceval` Harness only creates an environment, runs an agent, captures a
 binary candidate patch, calls an evaluator plugin, and stores its opaque result plus
 cost/trajectory metadata. It does not know about solver gaps, speedups, workloads,
-ASV, human patches, or distribution metrics.
+ASV or distribution metrics.
 
 PitBench records the raw grid
 
@@ -18,28 +18,27 @@ PitBench records the raw grid
 task × code_state × population × instance × solver_seed × budget
 ```
 
-where `code_state` is `base`, `human`, or `agent`. Validity is separate from
-performance. Human patches live in private evaluator storage and are distinct from
-problem-level optimum/BKS oracles.
+where `code_state` is `base` or `agent`. Validity is separate from performance.
+Problem-level optimum/BKS oracles anchor solution quality; they are not code
+references.
 
 A production evaluation destroys the agent environment and launches a fresh,
 network-disabled judge container from a digest-pinned image. Hidden instances,
-human patches, independent verifiers, and oracle data are mounted only there.
+independent verifiers, and oracle data are mounted only there.
 `fixture_mode` is explicit, deterministic, and cannot be reported as a real solver
 result.
 
-## Implemented PR tasks
+## Implemented release snapshots
 
-- `pyvrp_1173`: PyVRP local-search throughput, CVRP search track.
-- `vroom_255`: VROOM routing hot-path micro-optimizations, heuristic track.
-- `highs_2990`: HiGHS scheduling separator, exact MIP track.
-- `choco_671`: Choco bin-packing propagator, CP track.
-- `ortools_2478`: OR-Tools CP-SAT Java constant reuse, model-build auxiliary track.
+- `pyvrp_v0_13_4`: PyVRP v0.13.4, CVRP search track.
+- `vroom_v1_15_0`: VROOM v1.15.0, heuristic routing track.
+- `highs_v1_15_1`: HiGHS v1.15.1, exact MIP track.
+- `choco_v6_0_1`: Choco v6.0.1, CP track.
+- `ortools_v9_15`: OR-Tools v9.15, model-build auxiliary track.
 
-Every task has a historical event, full base/human commit IDs, task-level split,
-information regime, repository/family plugins, separate private human/oracle
-references, build protocols, explicit RNG dimensions, and agent-dev/hidden
-population definitions. Human patch hashes are pinned in the manifests.
+Every task fixes a public release tag to its full commit SHA and declares a
+snapshot-only information regime, repository/family plugins, build protocols,
+explicit RNG dimensions, and agent-dev/hidden population definitions.
 
 ## Commands
 
@@ -65,7 +64,8 @@ pitbench diff
 
 `tasks smoke` validates the full evaluator/storage contract with synthetic fixture
 observations. It does not execute the public solvers. Real evaluation additionally
-requires time-censored repository snapshots, private assets, immutable Java runners
+requires time-censored repository snapshots, private hidden assets, immutable Java
+runners
 for the Choco/OR-Tools tracks, and digest-pinned repository judge images.
 
 ## Layout
@@ -80,7 +80,7 @@ pitbench/families/      independent CVRP and private MIP/CP verifier contracts
 pitbench/metrics/       quality, stability, gain, and aggregation
 pitbench/distribution/  research-only population discrepancy layer
 manifests/              public task and agent-development population definitions
-private/                ignored evaluator-only assets; never agent-mounted
+private/                hidden instances, verifiers, and oracle data
 upstream/               untouched fc-eval legacy/reference implementation
 ```
 

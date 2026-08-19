@@ -14,13 +14,13 @@ def _git(repository: Path, *args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=repository, text=True).strip()
 
 
-def test_materialized_task_has_no_human_solution_or_hidden_assets(
+def test_materialized_release_task_has_no_hidden_assets(
     tmp_path: Path,
 ) -> None:
     record = next(
         item
         for item in TaskCatalog(ROOT).records()
-        if item.task.task_id == "pyvrp_1173"
+        if item.task.task_id == "pyvrp_v0_13_4"
     )
     source = tmp_path / "source"
     source.mkdir()
@@ -33,23 +33,17 @@ def test_materialized_task_has_no_human_solution_or_hidden_assets(
     local_base = _git(source, "rev-parse", "HEAD")
 
     task = record.task.model_copy(deep=True)
-    task.event.base_commit = local_base
-    task.event.human_commit = "f" * 40
+    task.release.base_commit = local_base
     local_manifest = tmp_path / "manifest.yaml"
     payload = yaml.safe_load(record.manifest_path.read_text())
-    payload["event"]["base_commit"] = local_base
-    payload["event"]["human_commit"] = "f" * 40
+    payload["release"]["base_commit"] = local_base
     local_manifest.write_text(yaml.safe_dump(payload, sort_keys=False))
 
     local_record = record.__class__(local_manifest, task)
     adapter = PitBenchAdapter(ROOT, ROOT / "private")
     adapter.catalog.validate_all = lambda: [local_record]
     censored = tmp_path / "censored"
-    GitSnapshot(
-        clone_url=str(source),
-        base_commit=local_base,
-        forbidden_commits=("f" * 40,),
-    ).create(censored)
+    GitSnapshot(clone_url=str(source), base_commit=local_base).create(censored)
     destination = tmp_path / "materialized"
     adapter.materialize(
         task.task_id,
@@ -67,7 +61,7 @@ def test_materialized_task_has_no_human_solution_or_hidden_assets(
     assert (destination / "agent_bin/pitbench").stat().st_mode & 0o111
     assert (destination / "agent_config.json").is_file()
     assert (destination / "agent_tooling/pitbench/agent_cli.py").is_file()
-    assert "human_patches" not in (destination / "Dockerfile").read_text()
+    assert "private://" not in (destination / "Dockerfile").read_text()
     assert "COPY agent_bin/pitbench /usr/local/bin/pitbench" in (
         destination / "Dockerfile"
     ).read_text()

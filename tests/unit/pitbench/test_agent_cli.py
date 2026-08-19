@@ -91,4 +91,3 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
         if path.is_file()
     )
     assert "private://" not in visible
-    assert record.task.event.human_commit not in visible

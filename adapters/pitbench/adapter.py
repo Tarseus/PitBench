@@ -67,8 +67,7 @@ class PitBenchAdapter:
         if repository_source is None:
             GitSnapshot(
                 clone_url=task.repository.clone_url,
-                base_commit=task.event.base_commit,
-                forbidden_commits=(task.event.human_commit,),
+                base_commit=task.release.base_commit,
             ).create(repository, task_dir / "agent_repo.bundle")
         else:
             shutil.copytree(repository_source, repository)
@@ -98,8 +97,8 @@ class PitBenchAdapter:
         head = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=repository, text=True
         ).strip()
-        if head != task.event.base_commit:
-            raise ValueError(f"repository HEAD {head} != {task.event.base_commit}")
+        if head != task.release.base_commit:
+            raise ValueError(f"repository HEAD {head} != {task.release.base_commit}")
         refs = subprocess.check_output(
             ["git", "for-each-ref", "--format=%(refname)"],
             cwd=repository,
@@ -110,14 +109,6 @@ class PitBenchAdapter:
         ).splitlines()
         if refs or remotes:
             raise ValueError("repository source is not time-censored")
-        future = subprocess.run(
-            ["git", "cat-file", "-e", f"{task.event.human_commit}^{{commit}}"],
-            cwd=repository,
-            check=False,
-            capture_output=True,
-        )
-        if future.returncode == 0:
-            raise ValueError("repository exposes the human commit")
 
     def _write_task_yaml(
         self,

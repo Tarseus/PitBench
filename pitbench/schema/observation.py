@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 class CodeState(str, Enum):
     BASE = "base"
-    HUMAN = "human"
     AGENT = "agent"
 
 

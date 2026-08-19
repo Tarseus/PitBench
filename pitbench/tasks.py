@@ -44,10 +44,10 @@ class TaskCatalog:
 
     def validate(self, record: TaskRecord) -> None:
         task = record.task
-        if len(task.event.base_commit) != 40 or len(task.event.human_commit) != 40:
-            raise TaskValidationError(f"{task.task_id}: commits must be full SHA-1s")
-        if task.event.pr_merged_at < task.event.pr_created_at:
-            raise TaskValidationError(f"{task.task_id}: merge predates creation")
+        if len(task.release.base_commit) != 40:
+            raise TaskValidationError(
+                f"{task.task_id}: release commit must be a full SHA-1"
+            )
         RepositoryPluginRegistry.load(task.repository.plugin)
         ProblemFamilyRegistry.load(task.evaluation.family_plugin)
 

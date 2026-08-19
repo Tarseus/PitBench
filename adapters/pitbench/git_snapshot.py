@@ -16,7 +16,6 @@ class GitSnapshot:
 
     clone_url: str
     base_commit: str
-    forbidden_commits: tuple[str, ...] = ()
 
     @staticmethod
     def _run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -80,15 +79,6 @@ class GitSnapshot:
         unexpected = [line for line in refs.stdout.splitlines() if line.strip()]
         if unexpected:
             raise GitSnapshotError(f"snapshot contains named refs: {unexpected}")
-        for commit in self.forbidden_commits:
-            visible = subprocess.run(
-                ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
-                cwd=repository,
-                check=False,
-                capture_output=True,
-            )
-            if visible.returncode == 0:
-                raise GitSnapshotError(f"future commit is visible: {commit}")
 
 
 def clone_bundle(bundle: Path, destination: Path) -> Path:

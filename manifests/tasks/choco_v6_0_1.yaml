@@ -1,0 +1,50 @@
+schema_version: "2.0"
+task_id: choco_v6_0_1
+split: benchmark
+release:
+  repository: chocoteam/choco-solver
+  version: "6.0.1"
+  tag: v6.0.1
+  base_commit: 05e356a859cc3363453ae1cfc5d8f2118264f005
+  released_at: 2026-05-21T12:40:31Z
+  url: https://github.com/chocoteam/choco-solver/releases/tag/v6.0.1
+task_type: exact_solver
+problem_family: cp
+optimization_scope: constraint_propagation_efficiency
+instruction: >-
+  Improve constraint-solver performance while preserving feasibility and solution
+  semantics. Use only the visible development instances.
+information_regime: snapshot_only
+repository:
+  clone_url: https://github.com/chocoteam/choco-solver.git
+  language: java
+  plugin: pitbench.repositories.choco:ChocoRepositoryPlugin
+oracle:
+  kind: solver_certificate
+  source: private://oracles/bin_packing.json
+  objective_sense: minimize
+evaluation:
+  family_plugin: pitbench.families.external:CPFamily
+  budgets_sec: [5.0, 20.0]
+  solver_seeds: [0, 1, 2]
+  threads: 1
+  verifier: private://oracles/verifiers/bin_packing_solution
+  validation_build: {flags: [-ea]}
+  performance_build: {flags: [-server]}
+populations:
+  - name: agent_dev
+    kind: agent_dev
+    manifest: manifests/populations/choco_v6_0_1_dev.yaml
+    size: 5
+    randomness: {instance_seed: 60100}
+  - name: judge_id
+    kind: judge_id
+    manifest: private://hidden_instances/choco_v6_0_1/judge_id.yaml
+    size: 30
+    randomness: {instance_seed: 60110}
+  - name: capacity_shift
+    kind: judge_shift
+    manifest: private://hidden_instances/choco_v6_0_1/capacity_shift.yaml
+    size: 30
+    shift: bin_capacity_distribution
+    randomness: {instance_seed: 60120}

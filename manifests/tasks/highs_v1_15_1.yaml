@@ -1,0 +1,50 @@
+schema_version: "2.0"
+task_id: highs_v1_15_1
+split: benchmark
+release:
+  repository: ERGO-Code/HiGHS
+  version: "1.15.1"
+  tag: v1.15.1
+  base_commit: 04024d701f79feb8e2f18bc3df0dffc04ef05088
+  released_at: 2026-07-02T11:25:02Z
+  url: https://github.com/ERGO-Code/HiGHS/releases/tag/v1.15.1
+task_type: exact_solver
+problem_family: mip
+optimization_scope: mip_search_efficiency
+instruction: >-
+  Improve exact-solver performance while preserving feasibility, certificates, and
+  objective semantics. Use only the visible development instances.
+information_regime: snapshot_only
+repository:
+  clone_url: https://github.com/ERGO-Code/HiGHS.git
+  language: cpp
+  plugin: pitbench.repositories.highs:HighsRepositoryPlugin
+oracle:
+  kind: solver_certificate
+  source: private://oracles/miplib.json
+  objective_sense: minimize
+evaluation:
+  family_plugin: pitbench.families.external:MIPFamily
+  budgets_sec: [10.0, 30.0]
+  solver_seeds: [0, 1, 2]
+  threads: 1
+  verifier: private://oracles/verifiers/mip_solution
+  validation_build: {compiler: gcc, flags: [-O1, -g], sanitizers: [address, undefined]}
+  performance_build: {compiler: gcc, flags: [-O3, -DNDEBUG]}
+populations:
+  - name: agent_dev
+    kind: agent_dev
+    manifest: manifests/populations/highs_v1_15_1_dev.yaml
+    size: 5
+    randomness: {instance_seed: 115100}
+  - name: judge_id
+    kind: judge_id
+    manifest: private://hidden_instances/highs_v1_15_1/judge_id.yaml
+    size: 30
+    randomness: {instance_seed: 115110}
+  - name: non_scheduling_mip
+    kind: judge_shift
+    manifest: private://hidden_instances/highs_v1_15_1/non_scheduling_mip.yaml
+    size: 30
+    shift: non_scheduling_structure
+    randomness: {instance_seed: 115120}

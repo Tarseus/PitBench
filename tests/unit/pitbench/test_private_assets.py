@@ -7,10 +7,10 @@ from pitbench.evaluator.private_assets import PrivateAssetError, PrivateAssetRes
 
 
 def test_private_asset_hash_is_verified(tmp_path: Path) -> None:
-    patch = tmp_path / "human.patch"
-    patch.write_bytes(b"trusted")
+    asset = tmp_path / "oracle.json"
+    asset.write_bytes(b"trusted")
     expected = hashlib.sha256(b"trusted").hexdigest()
     resolver = PrivateAssetResolver(tmp_path)
-    assert resolver.resolve("private://human.patch", expected) == patch
+    assert resolver.resolve("private://oracle.json", expected) == asset
     with pytest.raises(PrivateAssetError, match="hash mismatch"):
-        resolver.resolve("private://human.patch", "0" * 64)
+        resolver.resolve("private://oracle.json", "0" * 64)

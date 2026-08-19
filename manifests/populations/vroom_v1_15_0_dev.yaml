@@ -4,8 +4,8 @@ format: normalized_cvrp_json
 generator:
   kind: euclidean_cvrp
   count: 10
-  customers: [100, 250, 500]
+  customers: [50, 100, 200]
   coordinate_distribution: uniform
   demand_distribution: uniform_integer
-  capacity_ratio: 0.15
-  randomness: {instance_seed: 117300, coordinate_seed: 117301, demand_seed: 117302}
+  capacity_ratio: 0.18
+  randomness: {instance_seed: 11500, coordinate_seed: 11501, demand_seed: 11502}

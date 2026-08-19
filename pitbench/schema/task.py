@@ -25,15 +25,12 @@ class ProblemFamily(str, Enum):
 
 class InformationRegime(str, Enum):
     SNAPSHOT_ONLY = "snapshot_only"
-    ISSUE_CONTEXT = "issue_context"
-    ISSUE_PLUS_PRE_PR_HISTORY = "issue_plus_pre_pr_history"
-    RICH_DEVELOPER_CONTEXT = "rich_developer_context"
 
 
 class TaskSplit(str, Enum):
-    METRIC_DEV = "metric_dev_patches"
-    METRIC_VALIDATION = "metric_validation_patches"
-    BENCHMARK_TEST = "benchmark_test_patches"
+    DEVELOPMENT = "development"
+    VALIDATION = "validation"
+    BENCHMARK = "benchmark"
 
 
 class PopulationKind(str, Enum):
@@ -42,14 +39,12 @@ class PopulationKind(str, Enum):
     JUDGE_SHIFT = "judge_shift"
 
 
-class HistoricalEvent(BaseModel):
+class ReleaseSnapshot(BaseModel):
     repository: str
-    pr_number: int = Field(gt=0)
+    version: str
+    tag: str
     base_commit: str = Field(min_length=7)
-    human_commit: str = Field(min_length=7)
-    pr_created_at: datetime
-    pr_merged_at: datetime
-    title: str
+    released_at: datetime
     url: str
 
 
@@ -61,17 +56,6 @@ class RepositorySpec(BaseModel):
     judge_image: str | None = None
 
 
-class HumanReference(BaseModel):
-    uri: str
-    sha256: str | None = None
-
-    @model_validator(mode="after")
-    def require_private_uri(self) -> Self:
-        if not self.uri.startswith("private://"):
-            raise ValueError("human patch must use a private:// URI")
-        return self
-
-
 class OracleReference(BaseModel):
     kind: Literal[
         "known_optimum",
@@ -81,11 +65,6 @@ class OracleReference(BaseModel):
     ]
     source: str
     objective_sense: Literal["minimize", "maximize"] | None = None
-
-
-class References(BaseModel):
-    human_patch: HumanReference
-    oracle: OracleReference
 
 
 class RandomnessSpec(BaseModel):
@@ -131,17 +110,17 @@ class EvaluationProtocol(BaseModel):
 
 
 class PitBenchTask(BaseModel):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["2.0"] = "2.0"
     task_id: str
     split: TaskSplit
-    event: HistoricalEvent
+    release: ReleaseSnapshot
     task_type: TaskType
     problem_family: ProblemFamily
     optimization_scope: str
     instruction: str
     information_regime: InformationRegime
     repository: RepositorySpec
-    references: References
+    oracle: OracleReference
     evaluation: EvaluationProtocol
     populations: list[PopulationSpec]
 

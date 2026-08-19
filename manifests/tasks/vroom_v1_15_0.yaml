@@ -1,0 +1,50 @@
+schema_version: "2.0"
+task_id: vroom_v1_15_0
+split: validation
+release:
+  repository: VROOM-Project/vroom
+  version: "1.15.0"
+  tag: v1.15.0
+  base_commit: 43dd7d0b8b560431eb555bf335cf4797eb7343c4
+  released_at: 2026-03-12T13:35:16Z
+  url: https://github.com/VROOM-Project/vroom/releases/tag/v1.15.0
+task_type: heuristic_solver
+problem_family: cvrp
+optimization_scope: routing_search_efficiency
+instruction: >-
+  Improve routing solver performance while preserving feasibility and objective
+  semantics. Use only the visible development instances.
+information_regime: snapshot_only
+repository:
+  clone_url: https://github.com/VROOM-Project/vroom.git
+  language: cpp
+  plugin: pitbench.repositories.vroom:VroomRepositoryPlugin
+oracle:
+    kind: best_known_solution
+    source: private://oracles/cvrp.json
+    objective_sense: minimize
+evaluation:
+  family_plugin: pitbench.families.cvrp:CVRPFamily
+  budgets_sec: [1.0, 5.0, 10.0]
+  solver_seeds: [0]
+  threads: 1
+  verifier: cvrp_independent
+  validation_build: {compiler: gcc, flags: [-O1, -g], sanitizers: [address, undefined]}
+  performance_build: {compiler: gcc, flags: [-O3, -DNDEBUG]}
+populations:
+  - name: agent_dev
+    kind: agent_dev
+    manifest: manifests/populations/vroom_v1_15_0_dev.yaml
+    size: 10
+    randomness: {instance_seed: 11500, coordinate_seed: 11501, demand_seed: 11502}
+  - name: judge_id
+    kind: judge_id
+    manifest: private://hidden_instances/vroom_v1_15_0/judge_id.yaml
+    size: 100
+    randomness: {instance_seed: 11510, coordinate_seed: 11511, demand_seed: 11512}
+  - name: demand_skewed
+    kind: judge_shift
+    manifest: private://hidden_instances/vroom_v1_15_0/demand_skewed.yaml
+    size: 100
+    shift: demand_skewed
+    randomness: {instance_seed: 11510, coordinate_seed: 11511, demand_seed: 11522}

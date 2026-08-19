@@ -6,20 +6,22 @@ from pitbench.tasks import TaskCatalog
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_catalog_contains_five_verified_pr_tasks() -> None:
+def test_catalog_contains_five_release_snapshots() -> None:
     records = TaskCatalog(ROOT).validate_all()
     assert {record.task.task_id for record in records} == {
-        "pyvrp_1173",
-        "vroom_255",
-        "highs_2990",
-        "choco_671",
-        "ortools_2478",
+        "pyvrp_v0_13_4",
+        "vroom_v1_15_0",
+        "highs_v1_15_1",
+        "choco_v6_0_1",
+        "ortools_v9_15",
     }
 
 
-def test_private_references_never_enter_visible_population_manifests() -> None:
+def test_release_identity_and_private_judge_assets() -> None:
     for record in TaskCatalog(ROOT).validate_all():
-        assert record.task.references.human_patch.uri.startswith("private://")
+        assert record.task.release.tag.startswith("v")
+        assert len(record.task.release.base_commit) == 40
+        assert record.task.information_regime.value == "snapshot_only"
         for population in record.task.populations:
             if population.kind == PopulationKind.AGENT_DEV:
                 assert not population.manifest.startswith("private://")
@@ -32,7 +34,7 @@ def test_randomness_is_explicit_and_crn_dimensions_are_separate() -> None:
     pyvrp = next(
         record.task
         for record in TaskCatalog(ROOT).records()
-        if record.task.task_id == "pyvrp_1173"
+        if record.task.task_id == "pyvrp_v0_13_4"
     )
     by_name = {population.name: population for population in pyvrp.populations}
     identity = by_name["judge_id"].randomness

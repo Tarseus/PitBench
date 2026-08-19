@@ -7,4 +7,4 @@ generator:
   items: [50, 100, 250]
   capacity: 100
   weight_distribution: uniform_integer
-  randomness: {instance_seed: 67100}
+  randomness: {instance_seed: 60100}

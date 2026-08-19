@@ -1,7 +1,7 @@
 # Private evaluator storage
 
 This directory is never mounted into an agent container. Local installations place
-human patches, hidden populations, independent verifiers, and oracle data here using
+hidden populations, independent verifiers, and oracle data here using
 the paths referenced by `private://` task URIs.
 
 Everything below this README is gitignored. A production judge must verify hashes and

@@ -88,7 +88,6 @@ class FixtureJudge:
 
     _STATE_FACTOR = {
         CodeState.BASE: 1.0,
-        CodeState.HUMAN: 0.70,
         CodeState.AGENT: 0.82,
     }
 
@@ -135,7 +134,6 @@ class FixtureJudge:
         if task.task_type in {TaskType.MODEL_BUILD, TaskType.PRESOLVE}:
             variables = {
                 CodeState.BASE: 9011,
-                CodeState.HUMAN: 1003,
                 CodeState.AGENT: 1200,
             }[state]
             return RunObservation(
@@ -196,14 +194,7 @@ class LocalProcessJudge:
         )
 
     def _state_patch(self, state: CodeState) -> Path | None:
-        if state == CodeState.BASE:
-            return None
-        if state == CodeState.HUMAN:
-            return self.resolver.resolve(
-                self.task.references.human_patch.uri,
-                self.task.references.human_patch.sha256,
-            )
-        return self.candidate_patch
+        return None if state == CodeState.BASE else self.candidate_patch
 
     def _workspace(self, state: CodeState, root: Path, build_kind: BuildKind) -> Path:
         root.mkdir(parents=True, exist_ok=True)
