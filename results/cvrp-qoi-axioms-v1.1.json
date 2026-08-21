@@ -1,0 +1,634 @@
+{
+  "axioms": {
+    "1_solver_independence": {
+      "declared_solver_independent_axis_fraction": 1.0,
+      "passed": true,
+      "solver_annotation_max_delta": 0.0
+    },
+    "2_semantic_invariance": {
+      "equivalence_distance_median_iqr": 4.799782057145158e-17,
+      "equivalence_unrelated_ratio": 7.519377622058643e-17,
+      "passed": true,
+      "transformations": [
+        "translation",
+        "rotation",
+        "reflection",
+        "relabeling"
+      ],
+      "unrelated_distance_median_iqr": 0.6383217200137212
+    },
+    "3_scale_sensitivity": {
+      "customer_count_exact": true,
+      "log_ratio_spearman": 1.0,
+      "passed": true,
+      "scale_descriptor": "customer_count",
+      "sizes": [
+        50,
+        100,
+        200,
+        500
+      ]
+    },
+    "4_structure_scale_separability": {
+      "controlled_direction_pass_fraction": 1.0,
+      "core_defined_fraction_gate": true,
+      "experimental_axes": [
+        "demand_spatial_quadrupole_coupling"
+      ],
+      "leaking_structural_axes": [],
+      "passed": true,
+      "required_scale_stable_axis_fraction": 1.0,
+      "scale_conditioned_axes": [
+        "demand_mean_fraction",
+        "demand_cv",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "mst_edge_mean_n_corrected",
+        "convex_hull_area_ratio"
+      ],
+      "scale_stable_axis_fraction": 1.0,
+      "scope": "struct_core_role_only_no_unified_geometry_claim",
+      "stable_structural_axes": [
+        "fleet_fill_ratio",
+        "volume_lb_customers_per_route",
+        "max_demand_fraction",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "demand_depot_radial_pearson",
+        "demand_depot_radial_weighted_ratio"
+      ],
+      "structure_shift_customer_count_max_delta": 0.0
+    },
+    "5_unit_representation_robustness": {
+      "excluded_raw_unit_axes": [
+        "capacity",
+        "total_demand",
+        "pairwise_distance_median"
+      ],
+      "passed": true,
+      "unit_robust_axes": [
+        "customer_count",
+        "capacity_volume_lower_bound",
+        "fleet_fill_ratio",
+        "volume_lb_customers_per_route",
+        "max_demand_fraction",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "demand_depot_radial_pearson",
+        "demand_depot_radial_weighted_ratio",
+        "demand_mean_fraction",
+        "demand_cv",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "mst_edge_mean_n_corrected",
+        "convex_hull_area_ratio",
+        "demand_spatial_quadrupole_coupling"
+      ],
+      "unit_robust_axis_max_error_iqr": 1.0459337719903686e-14
+    },
+    "6_no_circular_learned_semantics": {
+      "learned_from_target_solver": false,
+      "passed": true,
+      "solver_annotation_max_delta": 0.0,
+      "solver_runs_used": 0
+    },
+    "7_version_freezing": {
+      "calibration_fingerprint": "86e6dda347900784f9762f28735e5161080df19026aebd31ba3ea93b798f6f68",
+      "current_spec_fingerprint": "5c099976c936e502f42ea13aadb0b611ee2927a26f34ec0028a10a924bdfe549",
+      "deterministic_repeat_identical": true,
+      "observations_match_pinned_fingerprint": true,
+      "passed": true,
+      "pinned_spec_fingerprint": "5c099976c936e502f42ea13aadb0b611ee2927a26f34ec0028a10a924bdfe549",
+      "qoi_spec_fingerprint_frozen": true,
+      "spec_matches_pinned_fingerprint": true,
+      "version_has_pinned_fingerprint": true
+    },
+    "8_falsifiability": {
+      "controlled_direction_count": 7,
+      "cost_weight_sensitivity": "not_applicable_no_combined_weighted_cost",
+      "negative_controls": [
+        "equivalence",
+        "unit",
+        "unrelated"
+      ],
+      "passed": true,
+      "thresholds_frozen_in_artifact": true
+    }
+  },
+  "axis_diagnostics": {
+    "capacity": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "raw",
+      "scale_leakage_median_iqr": 0.017204301075268817,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "demand units",
+      "unit_max_error_iqr": 7.27741935483871,
+      "unit_robust": null,
+      "unrelated_change_median_iqr": 0.3397849462365592
+    },
+    "capacity_volume_lower_bound": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "scale",
+      "scale_leakage_median_iqr": 2.5,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "routes",
+      "unit_max_error_iqr": 0.0,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.6666666666666666
+    },
+    "convex_hull_area_ratio": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 3.74780347067985e-15,
+      "role": "scale_conditioned",
+      "scale_leakage_median_iqr": 0.42260697241261785,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 2.6770024790570354e-15,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 1.9588693117696692
+    },
+    "customer_count": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "scale",
+      "scale_leakage_median_iqr": 1.5,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "customers",
+      "unit_max_error_iqr": 0.0,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.0
+    },
+    "demand_cv": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 1.6457938340191112e-15,
+      "role": "scale_conditioned",
+      "scale_leakage_median_iqr": 0.3532729491889318,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 1.6457938340191112e-15,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 1.9535307083076807
+    },
+    "demand_depot_radial_pearson": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 1.920737732110695e-16,
+      "role": "struct_core",
+      "scale_leakage_median_iqr": 0.059953643746116,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "correlation",
+      "unit_max_error_iqr": 3.84147546422139e-16,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.09973778838986334
+    },
+    "demand_depot_radial_weighted_ratio": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 4.706489012092922e-15,
+      "role": "struct_core",
+      "scale_leakage_median_iqr": 0.07383337728253345,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 6.275318682790563e-15,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.08965338405237867
+    },
+    "demand_mean_fraction": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "scale_conditioned",
+      "scale_leakage_median_iqr": 0.006009350012088998,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 1.5200218377542448e-16,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.6254328368749695
+    },
+    "demand_spatial_quadrupole_coupling": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 3.598245991080156e-15,
+      "role": "experimental",
+      "scale_leakage_median_iqr": 0.41556147951323696,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 1.799122995540078e-15,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.3777777278230786
+    },
+    "depot_distance_iqr_normalized": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 1.4737755843082073e-15,
+      "role": "struct_core",
+      "scale_leakage_median_iqr": 0.10074707601137384,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 8.187642135045597e-16,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 1.0809088643343836
+    },
+    "depot_distance_mean_normalized": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 3.1340347649240526e-16,
+      "role": "struct_core",
+      "scale_leakage_median_iqr": 0.007915498075289955,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 4.701052147386079e-16,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 2.0887016885441514
+    },
+    "fleet_fill_ratio": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "struct_core",
+      "scale_leakage_median_iqr": 0.04574707679653907,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 0.0,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.040978259484306105
+    },
+    "max_demand_fraction": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "struct_core",
+      "scale_leakage_median_iqr": 0.03843567028260425,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 0.0,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.6799071385927069
+    },
+    "mst_edge_mean_n_corrected": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 4.940940131047137e-15,
+      "role": "scale_conditioned",
+      "scale_leakage_median_iqr": 0.26215057570507605,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 7.411410196570705e-15,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 3.9029791228626554
+    },
+    "nearest_neighbor_clark_evans_ratio": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 4.196570614275297e-15,
+      "role": "scale_conditioned",
+      "scale_leakage_median_iqr": 0.6553161390408239,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 4.196570614275297e-15,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 2.9459343372128095
+    },
+    "nearest_neighbor_iqr_clark_evans_ratio": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 2.0918675439807372e-14,
+      "role": "scale_conditioned",
+      "scale_leakage_median_iqr": 0.43817874738047285,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 1.0459337719903686e-14,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 1.4481551659545846
+    },
+    "pairwise_distance_median": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 1.0752402733978464e-15,
+      "role": "raw",
+      "scale_leakage_median_iqr": 0.09065645451250076,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "coordinate units",
+      "unit_max_error_iqr": 38.19692638916349,
+      "unit_robust": null,
+      "unrelated_change_median_iqr": 1.5070425058485295
+    },
+    "total_demand": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "raw",
+      "scale_leakage_median_iqr": 1.5766376250403356,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "demand units",
+      "unit_max_error_iqr": 7.213939980638916,
+      "unit_robust": null,
+      "unrelated_change_median_iqr": 0.05356566634398193
+    },
+    "volume_lb_customers_per_route": {
+      "defined_fraction": 1.0,
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "struct_core",
+      "scale_leakage_median_iqr": 0.0,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "customers per route",
+      "unit_max_error_iqr": 0.0,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.380952380952381
+    }
+  },
+  "claim_scope": "axis_definition_and_role_contract_only; no_unified_geometry_is_defined_or_validated",
+  "conclusion": "Validated",
+  "controlled_directions": [
+    {
+      "correct_direction_fraction": {
+        "capacity_volume_lower_bound": 1.0,
+        "max_demand_fraction": 1.0,
+        "volume_lb_customers_per_route": 1.0
+      },
+      "name": "capacity_pressure",
+      "oriented_median_effect_iqr": {
+        "capacity_volume_lower_bound": 1.0,
+        "max_demand_fraction": 1.014443411848076,
+        "volume_lb_customers_per_route": 1.0
+      },
+      "passed": true,
+      "responsive_axes": [
+        "capacity_volume_lower_bound",
+        "max_demand_fraction",
+        "volume_lb_customers_per_route"
+      ],
+      "scale_axis_max_delta": 0.0,
+      "source_level": "capacity_ratio=0.30",
+      "target_axes": [
+        "capacity_volume_lower_bound",
+        "max_demand_fraction",
+        "volume_lb_customers_per_route"
+      ],
+      "target_level": "capacity_ratio=0.08"
+    },
+    {
+      "correct_direction_fraction": {
+        "mst_edge_mean_n_corrected": 1.0,
+        "nearest_neighbor_clark_evans_ratio": 1.0
+      },
+      "name": "cluster_spread",
+      "oriented_median_effect_iqr": {
+        "mst_edge_mean_n_corrected": 4.291056742723451,
+        "nearest_neighbor_clark_evans_ratio": 2.619394992619215
+      },
+      "passed": true,
+      "responsive_axes": [
+        "nearest_neighbor_clark_evans_ratio",
+        "mst_edge_mean_n_corrected"
+      ],
+      "scale_axis_max_delta": 0.0,
+      "source_level": "cluster_spread=3",
+      "target_axes": [
+        "nearest_neighbor_clark_evans_ratio",
+        "mst_edge_mean_n_corrected"
+      ],
+      "target_level": "cluster_spread=24"
+    },
+    {
+      "correct_direction_fraction": {
+        "demand_cv": 1.0
+      },
+      "name": "demand_dispersion",
+      "oriented_median_effect_iqr": {
+        "demand_cv": 1.8247328968582361
+      },
+      "passed": true,
+      "responsive_axes": [
+        "demand_cv"
+      ],
+      "scale_axis_max_delta": 0.0,
+      "source_level": "uniform_integer",
+      "target_axes": [
+        "demand_cv"
+      ],
+      "target_level": "bimodal"
+    },
+    {
+      "correct_direction_fraction": {
+        "demand_depot_radial_pearson": 1.0,
+        "demand_depot_radial_weighted_ratio": 1.0
+      },
+      "name": "demand_location_coupling",
+      "oriented_median_effect_iqr": {
+        "demand_depot_radial_pearson": 2.24312747053776,
+        "demand_depot_radial_weighted_ratio": 2.563784098108303
+      },
+      "passed": true,
+      "responsive_axes": [
+        "demand_depot_radial_pearson",
+        "demand_depot_radial_weighted_ratio"
+      ],
+      "scale_axis_max_delta": 0.0,
+      "source_level": "depot_anticorrelated",
+      "target_axes": [
+        "demand_depot_radial_pearson",
+        "demand_depot_radial_weighted_ratio"
+      ],
+      "target_level": "depot_correlated"
+    },
+    {
+      "correct_direction_fraction": {
+        "depot_distance_mean_normalized": 1.0
+      },
+      "name": "depot_position",
+      "oriented_median_effect_iqr": {
+        "depot_distance_mean_normalized": 1.0420224221176522
+      },
+      "passed": true,
+      "responsive_axes": [
+        "depot_distance_mean_normalized"
+      ],
+      "scale_axis_max_delta": 0.0,
+      "source_level": "center",
+      "target_axes": [
+        "depot_distance_mean_normalized"
+      ],
+      "target_level": "corner"
+    },
+    {
+      "correct_direction_fraction": {
+        "demand_spatial_quadrupole_coupling": 1.0
+      },
+      "name": "non_radial_coupling",
+      "oriented_median_effect_iqr": {
+        "demand_spatial_quadrupole_coupling": 4.509147240874111
+      },
+      "passed": true,
+      "responsive_axes": [
+        "demand_spatial_quadrupole_coupling"
+      ],
+      "scale_axis_max_delta": 0.0,
+      "source_level": "quadrant_permuted",
+      "target_axes": [
+        "demand_spatial_quadrupole_coupling"
+      ],
+      "target_level": "quadrant"
+    },
+    {
+      "correct_direction_fraction": {
+        "volume_lb_customers_per_route": 1.0
+      },
+      "name": "route_size",
+      "oriented_median_effect_iqr": {
+        "volume_lb_customers_per_route": 0.8666666666666667
+      },
+      "passed": true,
+      "responsive_axes": [
+        "volume_lb_customers_per_route"
+      ],
+      "scale_axis_max_delta": 0.0,
+      "source_level": "r=5",
+      "target_axes": [
+        "volume_lb_customers_per_route"
+      ],
+      "target_level": "r=20"
+    }
+  ],
+  "kind": "cvrp_instance_qoi_axiom_validation",
+  "panel_fingerprint": "649294da23e5eb56a9fee312b80bdb762513969e1b0cb750d6bff1dc721e140a",
+  "preregistration": {
+    "claim_scope": "axis_definition_and_role_contract_only; no_unified_geometry_is_defined_or_validated",
+    "methodology_axioms": [
+      "1_solver_independence",
+      "2_semantic_invariance",
+      "3_scale_sensitivity",
+      "4_structure_scale_separability",
+      "5_unit_representation_robustness",
+      "6_no_circular_learned_semantics",
+      "7_version_freezing",
+      "8_falsifiability"
+    ],
+    "panel": {
+      "calibration_fingerprint": "86e6dda347900784f9762f28735e5161080df19026aebd31ba3ea93b798f6f68",
+      "calibration_namespace": "cvrp-qoi-axiom-calibration-v1.1",
+      "calibration_size": 128,
+      "seeds": [
+        2003,
+        2011,
+        2027,
+        2039,
+        2053,
+        2069,
+        2081,
+        2089,
+        2111,
+        2129,
+        2141,
+        2153,
+        2161,
+        2179,
+        2203,
+        2213,
+        2221,
+        2237,
+        2267,
+        2273,
+        2281,
+        2293,
+        2309,
+        2333,
+        2341,
+        2357,
+        2371,
+        2381,
+        2393,
+        2411,
+        2423,
+        2441
+      ],
+      "sizes": [
+        50,
+        100,
+        200,
+        500
+      ]
+    },
+    "thresholds": {
+      "controlled_direction_fraction_min": 0.75,
+      "controlled_direction_pass_fraction_min": 0.8,
+      "controlled_effect_median_iqr_min": 0.5,
+      "equivalence_unrelated_ratio_max": 0.05,
+      "numerical_standardized_tolerance": 1e-09,
+      "scale_leakage_median_iqr_max": 0.25,
+      "scale_monotonicity_spearman_min": 0.99,
+      "scale_stable_axis_fraction_min": 0.75,
+      "unrelated_distance_median_iqr_min": 0.5
+    },
+    "unit_policy": {
+      "experimental_axes": [
+        "demand_spatial_quadrupole_coupling"
+      ],
+      "raw_unit_axes_reported_but_excluded_from_invariance_gate": [
+        "capacity",
+        "total_demand",
+        "pairwise_distance_median"
+      ],
+      "scale_conditioned_axes": [
+        "demand_mean_fraction",
+        "demand_cv",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "mst_edge_mean_n_corrected",
+        "convex_hull_area_ratio"
+      ],
+      "unit_robust_axes": [
+        "customer_count",
+        "capacity_volume_lower_bound",
+        "fleet_fill_ratio",
+        "volume_lb_customers_per_route",
+        "max_demand_fraction",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "demand_depot_radial_pearson",
+        "demand_depot_radial_weighted_ratio",
+        "demand_mean_fraction",
+        "demand_cv",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "mst_edge_mean_n_corrected",
+        "convex_hull_area_ratio",
+        "demand_spatial_quadrupole_coupling"
+      ]
+    }
+  },
+  "production_geometry_changed": false,
+  "qoi_spec_fingerprint": "5c099976c936e502f42ea13aadb0b611ee2927a26f34ec0028a10a924bdfe549",
+  "qoi_spec_name": "cvrp-instance-qoi",
+  "qoi_spec_version": "1.1",
+  "schema_version": "1.1",
+  "solver_runs_created": 0,
+  "solver_runs_used": 0
+}

@@ -9,7 +9,11 @@ from pitbench.distribution.transforms import (
     translate_cvrp,
 )
 from pitbench.instances import make_euclidean_cvrp_instance
-from pitbench.qoi.cvrp import CVRP_INSTANCE_QOI, extract_cvrp_instance_qoi
+from pitbench.qoi.cvrp import (
+    CVRP_INSTANCE_QOI,
+    CVRP_INSTANCE_QOI_V1_0,
+    extract_cvrp_instance_qoi,
+)
 from pitbench.qoi.schema import InstanceQoIObservation
 
 
@@ -26,9 +30,14 @@ def test_cvrp_instance_qoi_is_complete_and_versioned() -> None:
     assert set(observation.values) == {axis.name for axis in CVRP_INSTANCE_QOI.axes}
     assert observation.spec_fingerprint == CVRP_INSTANCE_QOI.fingerprint()
     assert observation.values["customer_count"] == 20
-    assert observation.values["vehicle_lower_bound"] >= 1
+    assert observation.values["capacity_volume_lower_bound"] >= 1
     assert 0 < observation.values["fleet_fill_ratio"] <= 1
     assert all(value == value for value in observation.values.values())
+    assert set(observation.axis_defined) == set(observation.values)
+
+    legacy = extract_cvrp_instance_qoi(instance, spec_version="1.0")
+    assert legacy.spec_fingerprint == CVRP_INSTANCE_QOI_V1_0.fingerprint()
+    assert legacy.values["vehicle_lower_bound"] >= 1
 
 
 def test_cvrp_instance_qoi_has_declared_semantic_invariances() -> None:
@@ -72,6 +81,10 @@ def test_cvrp_instance_qoi_has_declared_semantic_invariances() -> None:
 
 def test_instance_qoi_rejects_values_not_declared_by_spec() -> None:
     with pytest.raises(ValueError, match="missing="):
-        InstanceQoIObservation.from_values(
-            "bad", CVRP_INSTANCE_QOI, {"extra": 1.0}
-        )
+        InstanceQoIObservation.from_values("bad", CVRP_INSTANCE_QOI, {"extra": 1.0})
+
+
+def test_published_v1_fingerprint_is_unchanged() -> None:
+    assert CVRP_INSTANCE_QOI_V1_0.fingerprint() == (
+        "f924d33c1a81754934fb8f97c9ba27b62c04312025a9cb6f33820687a87f14c0"
+    )

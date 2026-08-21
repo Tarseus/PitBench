@@ -27,6 +27,14 @@ class QoIShape(str, Enum):
     EVENT = "event"
 
 
+class QoIRole(str, Enum):
+    RAW = "raw"
+    SCALE = "scale"
+    STRUCT_CORE = "struct_core"
+    SCALE_CONDITIONED = "scale_conditioned"
+    EXPERIMENTAL = "experimental"
+
+
 class QoIAxis(BaseModel):
     name: str
     description: str
@@ -34,6 +42,7 @@ class QoIAxis(BaseModel):
     kind: QoIKind
     shape: QoIShape = QoIShape.SCALAR
     solver_independent: bool
+    role: QoIRole | None = None
 
 
 class _QoISpec(BaseModel):
@@ -47,10 +56,14 @@ class _QoISpec(BaseModel):
         names = [axis.name for axis in self.axes]
         if not names or len(names) != len(set(names)):
             raise ValueError("QoI axes must be non-empty and unique")
+        if self.version != "1.0" and any(axis.role is None for axis in self.axes):
+            raise ValueError("post-v1.0 QoI schema axes must declare a role")
         return self
 
     def fingerprint(self) -> str:
-        payload = self.model_dump(mode="json")
+        # ``role`` was added after v1.0. Excluding absent optional fields preserves
+        # the already-published v1.0 fingerprint byte-for-byte.
+        payload = self.model_dump(mode="json", exclude_none=True)
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode()).hexdigest()
 
@@ -69,10 +82,16 @@ class InstanceQoIObservation(BaseModel):
     spec_version: str
     spec_fingerprint: str
     values: dict[str, float] = Field(min_length=1)
+    axis_defined: dict[str, bool] = Field(default_factory=dict)
 
     @classmethod
     def from_values(
-        cls, instance_id: str, spec: InstanceQoISpec, values: dict[str, float]
+        cls,
+        instance_id: str,
+        spec: InstanceQoISpec,
+        values: dict[str, float],
+        *,
+        axis_defined: dict[str, bool] | None = None,
     ) -> "InstanceQoIObservation":
         expected = {axis.name for axis in spec.axes}
         if set(values) != expected:
@@ -81,10 +100,19 @@ class InstanceQoIObservation(BaseModel):
             raise ValueError(
                 f"QoI values disagree with spec: missing={missing}, extra={extra}"
             )
+        defined = axis_defined or {name: True for name in expected}
+        if set(defined) != expected:
+            missing = sorted(expected - set(defined))
+            extra = sorted(set(defined) - expected)
+            raise ValueError(
+                "QoI defined flags disagree with spec: "
+                f"missing={missing}, extra={extra}"
+            )
         return cls(
             instance_id=instance_id,
             spec_name=spec.name,
             spec_version=spec.version,
             spec_fingerprint=spec.fingerprint(),
             values=values,
+            axis_defined=defined,
         )

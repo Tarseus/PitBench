@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import random
@@ -7,6 +8,153 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+_UCHOA_DEMAND_FAMILIES = {
+    "unitary",
+    "small_large_variance",
+    "small_small_variance",
+    "large_large_variance",
+    "large_small_variance",
+    "quadrant",
+    "quadrant_permuted",
+    "many_small_few_large",
+}
+
+
+def _stream_seed(namespace: str, seed: int) -> int:
+    digest = hashlib.sha256(f"{namespace}:{seed}".encode()).digest()
+    return int.from_bytes(digest[:8], "big")
+
+
+def _uchoa_customer_coordinates(
+    customers: int, coordinate_seed: int, mode: str
+) -> list[list[float]]:
+    random_rng = random.Random(_stream_seed("uchoa-random", coordinate_seed))
+    random_points = [
+        [random_rng.uniform(0, 100), random_rng.uniform(0, 100)]
+        for _ in range(customers)
+    ]
+    cluster_rng = random.Random(_stream_seed("uchoa-cluster", coordinate_seed))
+    cluster_count = 3 + cluster_rng.randrange(6)
+    centers = [
+        [cluster_rng.uniform(10, 90), cluster_rng.uniform(10, 90)]
+        for _ in range(cluster_count)
+    ]
+    clustered_points = []
+    for index in range(customers):
+        center_x, center_y = centers[index % cluster_count]
+        radius = cluster_rng.expovariate(1 / 7.5)
+        angle = cluster_rng.uniform(0, 2 * math.pi)
+        clustered_points.append(
+            [
+                min(100.0, max(0.0, center_x + radius * math.cos(angle))),
+                min(100.0, max(0.0, center_y + radius * math.sin(angle))),
+            ]
+        )
+    if mode == "R":
+        return random_points
+    if mode == "C":
+        return clustered_points
+    if mode == "RC":
+        return [
+            clustered_points[index] if index % 2 == 0 else random_points[index]
+            for index in range(customers)
+        ]
+    raise ValueError(f"unknown Uchoa customer positioning: {mode}")
+
+
+def _uchoa_demands(
+    coordinates: list[list[float]], demand_seed: int, family: str
+) -> list[int]:
+    if family not in _UCHOA_DEMAND_FAMILIES:
+        raise ValueError(f"unknown Uchoa demand family: {family}")
+    rng = random.Random(_stream_seed("uchoa-demand", demand_seed))
+    uniforms = [rng.random() for _ in coordinates]
+
+    def discrete(low: int, high: int, value: float) -> int:
+        return low + min(int(value * (high - low + 1)), high - low)
+
+    if family == "unitary":
+        return [1] * len(coordinates)
+    if family == "small_large_variance":
+        return [discrete(1, 10, value) for value in uniforms]
+    if family == "small_small_variance":
+        return [discrete(5, 10, value) for value in uniforms]
+    if family == "large_large_variance":
+        return [discrete(1, 100, value) for value in uniforms]
+    if family == "large_small_variance":
+        return [discrete(50, 100, value) for value in uniforms]
+    if family == "many_small_few_large":
+        return [
+            discrete(1, 10, value / 0.85)
+            if value < 0.85
+            else discrete(50, 100, (value - 0.85) / 0.15)
+            for value in uniforms
+        ]
+    quadrant = [
+        discrete(1, 50, value) if ((x >= 50) == (y >= 50)) else discrete(51, 100, value)
+        for (x, y), value in zip(coordinates, uniforms, strict=True)
+    ]
+    if family == "quadrant":
+        return quadrant
+    permutation_rng = random.Random(
+        _stream_seed("uchoa-demand-permutation", demand_seed)
+    )
+    permutation = list(range(len(quadrant)))
+    permutation_rng.shuffle(permutation)
+    return [quadrant[index] for index in permutation]
+
+
+def make_uchoa_cvrp_instance(
+    *,
+    name: str,
+    customers: int,
+    coordinate_seed: int,
+    demand_seed: int,
+    depot_positioning: str,
+    customer_positioning: str,
+    demand_family: str,
+    route_size: float,
+) -> dict[str, Any]:
+    """Generate a deterministic Uchoa-X-style instance from shared latent streams."""
+
+    if customers <= 0:
+        raise ValueError("customers must be positive")
+    if route_size <= 0:
+        raise ValueError("route_size must be positive")
+    customer_coordinates = _uchoa_customer_coordinates(
+        customers, coordinate_seed, customer_positioning
+    )
+    if depot_positioning == "C":
+        depot_coordinates = [50.0, 50.0]
+    elif depot_positioning == "E":
+        depot_coordinates = [0.0, 0.0]
+    elif depot_positioning == "R":
+        depot_rng = random.Random(_stream_seed("uchoa-depot", coordinate_seed))
+        depot_coordinates = [depot_rng.uniform(0, 100), depot_rng.uniform(0, 100)]
+    else:
+        raise ValueError(f"unknown Uchoa depot positioning: {depot_positioning}")
+    customer_demands = _uchoa_demands(customer_coordinates, demand_seed, demand_family)
+    capacity = max(
+        max(customer_demands),
+        math.ceil(route_size * sum(customer_demands) / customers),
+    )
+    return {
+        "name": name,
+        "depot": 0,
+        "coordinates": [depot_coordinates, *customer_coordinates],
+        "demands": [0, *customer_demands],
+        "capacity": capacity,
+        "generator_attributes": {
+            "family": "uchoa_x_style",
+            "depot_positioning": depot_positioning,
+            "customer_positioning": customer_positioning,
+            "demand_family": demand_family,
+            "requested_route_size": route_size,
+            "coordinate_seed": coordinate_seed,
+            "demand_seed": demand_seed,
+        },
+    }
 
 
 def _choice(values: list[int], index: int) -> int:

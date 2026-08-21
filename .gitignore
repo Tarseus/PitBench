@@ -31,6 +31,13 @@ private/*
 !private/README.md
 results/*
 !results/cvrp-qoi-axioms-v1.json
+!results/cvrp-qoi-axioms-v1.1.json
+!results/cvrp-qoi-uchoa-construct-v1.1.json
+!results/cvrp-qoi-paired-response-v1.json
+!results/cvrp-qoi-single-axis-pilot-v1.json
+!results/cvrp-qoi-v2-conditioned-matching-candidate.0.json
+!results/cvrp-rq3-stability-distribution-v1.json
+!results/cvrp-rq4-confounding-recovery-v1.json
 !results/cvrp-qoi-research-summary-v1.json
 /dataset/
 *.parquet

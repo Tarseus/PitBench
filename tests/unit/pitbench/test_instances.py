@@ -2,8 +2,14 @@ import json
 from pathlib import Path
 
 from pitbench.families.cvrp import CVRPFamily
-from pitbench.instances import make_euclidean_cvrp_instance, materialize_population
-from pitbench.qoi.cvrp import extract_cvrp_instance_qoi
+from pitbench.instances import (
+    CVRP_QOI_V1_0_AXIS_SPECIFICATIONS,
+    InterventionStatus,
+    build_exact_single_qoi_panel,
+    make_euclidean_cvrp_instance,
+    materialize_population,
+)
+from pitbench.qoi.cvrp import CVRP_INSTANCE_QOI_V1_0, extract_cvrp_instance_qoi
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -58,8 +64,8 @@ def test_cvrp_generator_supports_depot_and_demand_location_coupling() -> None:
     correlated_qoi = extract_cvrp_instance_qoi(correlated)
     anticorrelated_qoi = extract_cvrp_instance_qoi(anticorrelated)
 
-    assert correlated_qoi.values["demand_depot_correlation"] > 0.8
-    assert anticorrelated_qoi.values["demand_depot_correlation"] < -0.8
+    assert correlated_qoi.values["demand_depot_radial_pearson"] > 0.8
+    assert anticorrelated_qoi.values["demand_depot_radial_pearson"] < -0.8
     assert correlated["coordinates"] == anticorrelated["coordinates"]
     assert sorted(correlated["demands"]) == sorted(anticorrelated["demands"])
 
@@ -83,3 +89,28 @@ def test_cvrp_generator_legacy_defaults_are_explicitly_backward_compatible() -> 
     )
 
     assert implicit == explicit
+
+
+def test_cvrp_axis_catalog_covers_the_frozen_sixteen_qois() -> None:
+    assert tuple(item.qoi_name for item in CVRP_QOI_V1_0_AXIS_SPECIFICATIONS) == tuple(
+        axis.name for axis in CVRP_INSTANCE_QOI_V1_0.axes
+    )
+    assert {
+        item.qoi_name
+        for item in CVRP_QOI_V1_0_AXIS_SPECIFICATIONS
+        if item.intervention_status == InterventionStatus.EXACT_SINGLE_QOI
+    } == {"demand_cv", "pairwise_distance_median"}
+
+
+def test_exact_cvrp_axis_panel_changes_only_its_declared_qoi() -> None:
+    panel = build_exact_single_qoi_panel((101, 202))
+
+    assert len(panel) == 4
+    for case in panel:
+        source = extract_cvrp_instance_qoi(case.source, spec_version="1.0").values
+        target = extract_cvrp_instance_qoi(case.target, spec_version="1.0").values
+        changed = {
+            name for name in source if not abs(source[name] - target[name]) <= 1e-9
+        }
+        assert changed == {case.target_qoi}
+        assert case.realized_qoi_delta > 0

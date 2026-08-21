@@ -1,0 +1,4456 @@
+{
+  "axis_effects": {
+    "demand_cv": {
+      "estimand": "matched target-minus-source mean",
+      "metrics": {
+        "best_observed_gap": {
+          "cluster_bootstrap_95_lower": 0.0,
+          "cluster_bootstrap_95_upper": 0.0,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": 0.0
+        },
+        "cpu_time_sec": {
+          "cluster_bootstrap_95_lower": -0.07725694444444445,
+          "cluster_bootstrap_95_upper": 0.006944444444444444,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": -0.035590277777777776
+        },
+        "feasible": {
+          "cluster_bootstrap_95_lower": 0.0,
+          "cluster_bootstrap_95_upper": 0.0,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": 0.0
+        },
+        "iterations": {
+          "cluster_bootstrap_95_lower": 153.22222222222223,
+          "cluster_bootstrap_95_upper": 319.6666666666667,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": 234.72222222222223
+        },
+        "normalized_solver_objective": {
+          "cluster_bootstrap_95_lower": 0.20306656280229074,
+          "cluster_bootstrap_95_upper": 0.45327357768368487,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": 0.3191045986893141
+        },
+        "primal_integral": {
+          "cluster_bootstrap_95_lower": 0.00014589940598966483,
+          "cluster_bootstrap_95_upper": 0.0008162037922910801,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": 0.00045232732348715274
+        },
+        "target_hit": {
+          "cluster_bootstrap_95_lower": 0.0,
+          "cluster_bootstrap_95_upper": 0.0,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": 0.0
+        },
+        "time_to_target_or_budget_sec": {
+          "cluster_bootstrap_95_lower": 0.005205677772108983,
+          "cluster_bootstrap_95_upper": 0.01334408888780874,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": 0.009118122221682116
+        },
+        "wall_time_sec": {
+          "cluster_bootstrap_95_lower": -0.0047932999966886,
+          "cluster_bootstrap_95_upper": 0.0006948222249371207,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": -0.0019730222193174995
+        }
+      },
+      "qoi_delta_by_generator_seed": {
+        "101": 0.5,
+        "211": 0.5,
+        "307": 0.5,
+        "401": 0.5,
+        "503": 0.5,
+        "601": 0.5
+      }
+    },
+    "pairwise_distance_median": {
+      "estimand": "matched target-minus-source mean",
+      "metrics": {
+        "best_observed_gap": {
+          "cluster_bootstrap_95_lower": -0.0017589484564695306,
+          "cluster_bootstrap_95_upper": 0.0025152580781072896,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": 0.000268044038767977
+        },
+        "cpu_time_sec": {
+          "cluster_bootstrap_95_lower": -0.03298611111111111,
+          "cluster_bootstrap_95_upper": 0.028645833333333332,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": -0.0026041666666666665
+        },
+        "feasible": {
+          "cluster_bootstrap_95_lower": 0.0,
+          "cluster_bootstrap_95_upper": 0.0,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": 0.0
+        },
+        "iterations": {
+          "cluster_bootstrap_95_lower": -44.333333333333336,
+          "cluster_bootstrap_95_upper": -18.61111111111111,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": -31.5
+        },
+        "normalized_solver_objective": {
+          "cluster_bootstrap_95_lower": -0.08652263940381605,
+          "cluster_bootstrap_95_upper": 0.12747080711969694,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": 0.012480196369554738
+        },
+        "primal_integral": {
+          "cluster_bootstrap_95_lower": -0.003417275877697356,
+          "cluster_bootstrap_95_upper": 0.0030996784620864605,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": -0.00015879870780544786
+        },
+        "target_hit": {
+          "cluster_bootstrap_95_lower": -0.3333333333333333,
+          "cluster_bootstrap_95_upper": 0.0,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": -0.1111111111111111
+        },
+        "time_to_target_or_budget_sec": {
+          "cluster_bootstrap_95_lower": -0.018217983338723168,
+          "cluster_bootstrap_95_upper": 0.11774446666095173,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": 0.04091993332905178
+        },
+        "wall_time_sec": {
+          "cluster_bootstrap_95_lower": -0.004703899993425391,
+          "cluster_bootstrap_95_upper": 0.003280405558244739,
+          "generator_seed_clusters": 6,
+          "paired_run_count": 18,
+          "target_minus_source_mean": -0.0010302555512882667
+        }
+      },
+      "qoi_delta_by_generator_seed": {
+        "101": 51.660562288759195,
+        "211": 52.47892518884007,
+        "307": 51.41756870017416,
+        "401": 55.34718903330766,
+        "503": 52.064405980520746,
+        "601": 45.48595447029187
+      }
+    }
+  },
+  "conclusion_scope": "Identification pilot on exact synthetic fixtures; not evidence for a unified geometry or for compound QoIs.",
+  "design": {
+    "bootstrap_repetitions": 2000,
+    "budget_sec": 0.5,
+    "common_random_numbers": true,
+    "generator_seeds": [
+      101,
+      211,
+      307,
+      401,
+      503,
+      601
+    ],
+    "matched_solver_seeds": true,
+    "peak_rss": "not available from the in-process Windows pilot",
+    "qoi_spec_version": "1.0",
+    "reference_budget_sec": 2.0,
+    "reference_policy": "minimum of the independent longer-budget reference and fixed-budget evaluation runs, per pair level",
+    "reference_solver_seed": 97,
+    "solver_seeds": [
+      0,
+      1,
+      2
+    ]
+  },
+  "kind": "cvrp_exact_single_qoi_solver_pilot",
+  "reference_runs": [
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.4375,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 3888,
+      "level": "source",
+      "pair_id": "pairwise_distance_median-101",
+      "solver_objective": 1358.0,
+      "solver_seed": 97,
+      "target_qoi": "pairwise_distance_median",
+      "trajectory": [
+        {
+          "objective": 1476.0,
+          "time_sec": 0.0007707999902777374
+        },
+        {
+          "objective": 1452.0,
+          "time_sec": 0.006608799987589009
+        },
+        {
+          "objective": 1445.0,
+          "time_sec": 0.007724199997028336
+        },
+        {
+          "objective": 1439.0,
+          "time_sec": 0.008811499996227212
+        },
+        {
+          "objective": 1405.0,
+          "time_sec": 0.011778399988543242
+        },
+        {
+          "objective": 1387.0,
+          "time_sec": 0.015734899992821738
+        },
+        {
+          "objective": 1386.0,
+          "time_sec": 0.01684259998728521
+        },
+        {
+          "objective": 1385.0,
+          "time_sec": 0.1383464999962598
+        },
+        {
+          "objective": 1382.0,
+          "time_sec": 0.28352989999984857
+        },
+        {
+          "objective": 1376.0,
+          "time_sec": 0.28531339998880867
+        },
+        {
+          "objective": 1371.0,
+          "time_sec": 0.4135556999972323
+        },
+        {
+          "objective": 1362.0,
+          "time_sec": 0.4173006999917561
+        },
+        {
+          "objective": 1361.0,
+          "time_sec": 0.8011084999889135
+        },
+        {
+          "objective": 1358.0,
+          "time_sec": 1.0847761999903014
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1359.2829487096433,
+      "wall_time_sec": 2.0212580999941565
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.75,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 3789,
+      "level": "target",
+      "pair_id": "pairwise_distance_median-101",
+      "solver_objective": 2708.0,
+      "solver_seed": 97,
+      "target_qoi": "pairwise_distance_median",
+      "trajectory": [
+        {
+          "objective": 2936.0,
+          "time_sec": 0.00012560001050587744
+        },
+        {
+          "objective": 2789.0,
+          "time_sec": 0.0017866000125650316
+        },
+        {
+          "objective": 2770.0,
+          "time_sec": 0.023282300011487678
+        },
+        {
+          "objective": 2766.0,
+          "time_sec": 0.028554500007885508
+        },
+        {
+          "objective": 2762.0,
+          "time_sec": 0.051726600009715185
+        },
+        {
+          "objective": 2743.0,
+          "time_sec": 0.055628900008741766
+        },
+        {
+          "objective": 2731.0,
+          "time_sec": 0.4113772999990033
+        },
+        {
+          "objective": 2721.0,
+          "time_sec": 0.4136146000091685
+        },
+        {
+          "objective": 2720.0,
+          "time_sec": 1.1507511000090744
+        },
+        {
+          "objective": 2714.0,
+          "time_sec": 1.159715600006166
+        },
+        {
+          "objective": 2708.0,
+          "time_sec": 1.4281609000026947
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2712.0628109037775,
+      "wall_time_sec": 2.025970700007747
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.6875,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 3749,
+      "level": "source",
+      "pair_id": "pairwise_distance_median-211",
+      "solver_objective": 1428.0,
+      "solver_seed": 97,
+      "target_qoi": "pairwise_distance_median",
+      "trajectory": [
+        {
+          "objective": 1532.0,
+          "time_sec": 0.0003209999995306134
+        },
+        {
+          "objective": 1530.0,
+          "time_sec": 0.0018602000054670498
+        },
+        {
+          "objective": 1480.0,
+          "time_sec": 0.0039194999990286306
+        },
+        {
+          "objective": 1439.0,
+          "time_sec": 0.004839899993385188
+        },
+        {
+          "objective": 1438.0,
+          "time_sec": 0.005492900003446266
+        },
+        {
+          "objective": 1433.0,
+          "time_sec": 0.010969599999953061
+        },
+        {
+          "objective": 1431.0,
+          "time_sec": 0.11726090000593103
+        },
+        {
+          "objective": 1430.0,
+          "time_sec": 0.4399371000035899
+        },
+        {
+          "objective": 1429.0,
+          "time_sec": 0.8394009000039659
+        },
+        {
+          "objective": 1428.0,
+          "time_sec": 0.8424710999970557
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1431.66468491,
+      "wall_time_sec": 2.0198602999880677
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.703125,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 3672,
+      "level": "target",
+      "pair_id": "pairwise_distance_median-211",
+      "solver_objective": 2855.0,
+      "solver_seed": 97,
+      "target_qoi": "pairwise_distance_median",
+      "trajectory": [
+        {
+          "objective": 3062.0,
+          "time_sec": 0.000139000010676682
+        },
+        {
+          "objective": 3018.0,
+          "time_sec": 0.0013726000033784658
+        },
+        {
+          "objective": 2975.0,
+          "time_sec": 0.0036574000114342198
+        },
+        {
+          "objective": 2942.0,
+          "time_sec": 0.004970800000592135
+        },
+        {
+          "objective": 2925.0,
+          "time_sec": 0.017627699999138713
+        },
+        {
+          "objective": 2909.0,
+          "time_sec": 0.019574500009184703
+        },
+        {
+          "objective": 2888.0,
+          "time_sec": 0.024638500006403774
+        },
+        {
+          "objective": 2886.0,
+          "time_sec": 0.026547700006631203
+        },
+        {
+          "objective": 2882.0,
+          "time_sec": 0.13047990000632126
+        },
+        {
+          "objective": 2866.0,
+          "time_sec": 0.13481339999998454
+        },
+        {
+          "objective": 2859.0,
+          "time_sec": 0.24380969999765512
+        },
+        {
+          "objective": 2857.0,
+          "time_sec": 0.2541703000024427
+        },
+        {
+          "objective": 2855.0,
+          "time_sec": 0.6114920000109123
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2856.5539417357986,
+      "wall_time_sec": 2.0296997999976156
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.875,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 3929,
+      "level": "source",
+      "pair_id": "pairwise_distance_median-307",
+      "solver_objective": 1438.0,
+      "solver_seed": 97,
+      "target_qoi": "pairwise_distance_median",
+      "trajectory": [
+        {
+          "objective": 1543.0,
+          "time_sec": 0.00014319999900180846
+        },
+        {
+          "objective": 1479.0,
+          "time_sec": 0.001689899989287369
+        },
+        {
+          "objective": 1445.0,
+          "time_sec": 0.0028901999903609976
+        },
+        {
+          "objective": 1441.0,
+          "time_sec": 0.06856420000258368
+        },
+        {
+          "objective": 1439.0,
+          "time_sec": 0.12772689999837894
+        },
+        {
+          "objective": 1438.0,
+          "time_sec": 0.45183179999003187
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1437.6364061370273,
+      "wall_time_sec": 2.026223199995002
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 1.0,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 3855,
+      "level": "target",
+      "pair_id": "pairwise_distance_median-307",
+      "solver_objective": 2868.0,
+      "solver_seed": 97,
+      "target_qoi": "pairwise_distance_median",
+      "trajectory": [
+        {
+          "objective": 3176.0,
+          "time_sec": 0.00010040000779554248
+        },
+        {
+          "objective": 3004.0,
+          "time_sec": 0.0061311000026762486
+        },
+        {
+          "objective": 2977.0,
+          "time_sec": 0.01020740000240039
+        },
+        {
+          "objective": 2935.0,
+          "time_sec": 0.011393199994927272
+        },
+        {
+          "objective": 2923.0,
+          "time_sec": 0.018584500008728355
+        },
+        {
+          "objective": 2915.0,
+          "time_sec": 0.07551039999816567
+        },
+        {
+          "objective": 2910.0,
+          "time_sec": 0.08121070000925101
+        },
+        {
+          "objective": 2909.0,
+          "time_sec": 0.1064232000062475
+        },
+        {
+          "objective": 2898.0,
+          "time_sec": 0.12234990000433754
+        },
+        {
+          "objective": 2889.0,
+          "time_sec": 0.17829700000584126
+        },
+        {
+          "objective": 2885.0,
+          "time_sec": 0.36356260000320617
+        },
+        {
+          "objective": 2870.0,
+          "time_sec": 0.40365100000053644
+        },
+        {
+          "objective": 2868.0,
+          "time_sec": 0.45048270000552293
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2872.1520600483445,
+      "wall_time_sec": 2.0189672999986215
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.921875,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 3786,
+      "level": "source",
+      "pair_id": "pairwise_distance_median-401",
+      "solver_objective": 1486.0,
+      "solver_seed": 97,
+      "target_qoi": "pairwise_distance_median",
+      "trajectory": [
+        {
+          "objective": 1587.0,
+          "time_sec": 0.0001041999930748716
+        },
+        {
+          "objective": 1519.0,
+          "time_sec": 0.0019780000002356246
+        },
+        {
+          "objective": 1492.0,
+          "time_sec": 0.0042895999940810725
+        },
+        {
+          "objective": 1491.0,
+          "time_sec": 0.4097624999994878
+        },
+        {
+          "objective": 1490.0,
+          "time_sec": 0.7741873999912059
+        },
+        {
+          "objective": 1488.0,
+          "time_sec": 0.7825319999974454
+        },
+        {
+          "objective": 1486.0,
+          "time_sec": 1.3953372999967542
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1489.4262648794822,
+      "wall_time_sec": 2.026599000004353
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.75,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 3564,
+      "level": "target",
+      "pair_id": "pairwise_distance_median-401",
+      "solver_objective": 2971.0,
+      "solver_seed": 97,
+      "target_qoi": "pairwise_distance_median",
+      "trajectory": [
+        {
+          "objective": 3114.0,
+          "time_sec": 9.90999978967011e-05
+        },
+        {
+          "objective": 3004.0,
+          "time_sec": 0.004073499992955476
+        },
+        {
+          "objective": 2978.0,
+          "time_sec": 0.009485100003075786
+        },
+        {
+          "objective": 2976.0,
+          "time_sec": 0.8872348000004422
+        },
+        {
+          "objective": 2973.0,
+          "time_sec": 0.8888611000002129
+        },
+        {
+          "objective": 2971.0,
+          "time_sec": 0.9816790000040783
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2971.2271992728206,
+      "wall_time_sec": 2.018553600006271
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.84375,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 3892,
+      "level": "source",
+      "pair_id": "pairwise_distance_median-503",
+      "solver_objective": 1407.0,
+      "solver_seed": 97,
+      "target_qoi": "pairwise_distance_median",
+      "trajectory": [
+        {
+          "objective": 1490.0,
+          "time_sec": 9.699999645818025e-05
+        },
+        {
+          "objective": 1467.0,
+          "time_sec": 0.0011765000090235844
+        },
+        {
+          "objective": 1442.0,
+          "time_sec": 0.01662370000849478
+        },
+        {
+          "objective": 1439.0,
+          "time_sec": 0.019112399997538887
+        },
+        {
+          "objective": 1435.0,
+          "time_sec": 0.030420800001593307
+        },
+        {
+          "objective": 1418.0,
+          "time_sec": 0.06176209999830462
+        },
+        {
+          "objective": 1416.0,
+          "time_sec": 0.217380600006436
+        },
+        {
+          "objective": 1415.0,
+          "time_sec": 0.25493130000540987
+        },
+        {
+          "objective": 1411.0,
+          "time_sec": 0.5865447999967728
+        },
+        {
+          "objective": 1410.0,
+          "time_sec": 0.8318839999992633
+        },
+        {
+          "objective": 1408.0,
+          "time_sec": 1.4566862000065157
+        },
+        {
+          "objective": 1407.0,
+          "time_sec": 1.641375799998059
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1417.8921061284304,
+      "wall_time_sec": 2.0259459000080824
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.84375,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 3704,
+      "level": "target",
+      "pair_id": "pairwise_distance_median-503",
+      "solver_objective": 2839.0,
+      "solver_seed": 97,
+      "target_qoi": "pairwise_distance_median",
+      "trajectory": [
+        {
+          "objective": 3105.0,
+          "time_sec": 0.0001446999958716333
+        },
+        {
+          "objective": 3015.0,
+          "time_sec": 0.002085599990095943
+        },
+        {
+          "objective": 2943.0,
+          "time_sec": 0.003754499994101934
+        },
+        {
+          "objective": 2926.0,
+          "time_sec": 0.011891499991179444
+        },
+        {
+          "objective": 2885.0,
+          "time_sec": 0.01408199999423232
+        },
+        {
+          "objective": 2883.0,
+          "time_sec": 0.018177399993874133
+        },
+        {
+          "objective": 2875.0,
+          "time_sec": 0.026450899997144006
+        },
+        {
+          "objective": 2870.0,
+          "time_sec": 0.09396989998640493
+        },
+        {
+          "objective": 2861.0,
+          "time_sec": 0.1660062999872025
+        },
+        {
+          "objective": 2851.0,
+          "time_sec": 0.3052280999982031
+        },
+        {
+          "objective": 2848.0,
+          "time_sec": 0.8219650999963051
+        },
+        {
+          "objective": 2840.0,
+          "time_sec": 0.9591843999951379
+        },
+        {
+          "objective": 2839.0,
+          "time_sec": 1.5834085999958916
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2837.4170442896198,
+      "wall_time_sec": 2.0183479999977862
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.875,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 3789,
+      "level": "source",
+      "pair_id": "pairwise_distance_median-601",
+      "solver_objective": 1316.0,
+      "solver_seed": 97,
+      "target_qoi": "pairwise_distance_median",
+      "trajectory": [
+        {
+          "objective": 1384.0,
+          "time_sec": 0.0001429999974789098
+        },
+        {
+          "objective": 1373.0,
+          "time_sec": 0.00675760000012815
+        },
+        {
+          "objective": 1357.0,
+          "time_sec": 0.013117299997247756
+        },
+        {
+          "objective": 1342.0,
+          "time_sec": 0.014689199990243651
+        },
+        {
+          "objective": 1339.0,
+          "time_sec": 0.11144659999990836
+        },
+        {
+          "objective": 1327.0,
+          "time_sec": 0.18587879999540746
+        },
+        {
+          "objective": 1323.0,
+          "time_sec": 0.35296949998883065
+        },
+        {
+          "objective": 1321.0,
+          "time_sec": 0.6831174999970244
+        },
+        {
+          "objective": 1320.0,
+          "time_sec": 0.9702116999978898
+        },
+        {
+          "objective": 1318.0,
+          "time_sec": 0.9758718999946723
+        },
+        {
+          "objective": 1317.0,
+          "time_sec": 1.0577472999866586
+        },
+        {
+          "objective": 1316.0,
+          "time_sec": 1.770229699992342
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1312.7161682182616,
+      "wall_time_sec": 2.0195449000020744
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.8125,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 3807,
+      "level": "target",
+      "pair_id": "pairwise_distance_median-601",
+      "solver_objective": 2628.0,
+      "solver_seed": 97,
+      "target_qoi": "pairwise_distance_median",
+      "trajectory": [
+        {
+          "objective": 2690.0,
+          "time_sec": 0.00010859999747481197
+        },
+        {
+          "objective": 2686.0,
+          "time_sec": 0.0015213999868137762
+        },
+        {
+          "objective": 2682.0,
+          "time_sec": 0.00760509999236092
+        },
+        {
+          "objective": 2676.0,
+          "time_sec": 0.00893109999014996
+        },
+        {
+          "objective": 2673.0,
+          "time_sec": 0.00999479999882169
+        },
+        {
+          "objective": 2652.0,
+          "time_sec": 0.02096979999623727
+        },
+        {
+          "objective": 2638.0,
+          "time_sec": 0.023842399998102337
+        },
+        {
+          "objective": 2628.0,
+          "time_sec": 0.35267799999564886
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2627.3301218754136,
+      "wall_time_sec": 2.0278470999910496
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.859375,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 6522,
+      "level": "source",
+      "pair_id": "demand_cv-101",
+      "solver_objective": 1108.0,
+      "solver_seed": 97,
+      "target_qoi": "demand_cv",
+      "trajectory": [
+        {
+          "objective": 1116.0,
+          "time_sec": 0.0005271999980323017
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.015931200003251433
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 2.020318099996075
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.765625,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 6871,
+      "level": "target",
+      "pair_id": "demand_cv-101",
+      "solver_objective": 1142.0,
+      "solver_seed": 97,
+      "target_qoi": "demand_cv",
+      "trajectory": [
+        {
+          "objective": 1203.0,
+          "time_sec": 0.000378700002329424
+        },
+        {
+          "objective": 1146.0,
+          "time_sec": 0.0021249999990686774
+        },
+        {
+          "objective": 1142.0,
+          "time_sec": 0.01908969999931287
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1147.454797034201,
+      "wall_time_sec": 2.018358800007263
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.8125,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 6592,
+      "level": "source",
+      "pair_id": "demand_cv-211",
+      "solver_objective": 1108.0,
+      "solver_seed": 97,
+      "target_qoi": "demand_cv",
+      "trajectory": [
+        {
+          "objective": 1116.0,
+          "time_sec": 0.0006522999901790172
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.001916900000651367
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 2.0338060000067344
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.8125,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 7951,
+      "level": "target",
+      "pair_id": "demand_cv-211",
+      "solver_objective": 1164.0,
+      "solver_seed": 97,
+      "target_qoi": "demand_cv",
+      "trajectory": [
+        {
+          "objective": 1242.0,
+          "time_sec": 0.0007791999960318208
+        },
+        {
+          "objective": 1229.0,
+          "time_sec": 0.002816699998220429
+        },
+        {
+          "objective": 1164.0,
+          "time_sec": 0.0050802000041585416
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1170.492955323931,
+      "wall_time_sec": 2.0168419999972684
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.78125,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 6561,
+      "level": "source",
+      "pair_id": "demand_cv-307",
+      "solver_objective": 1108.0,
+      "solver_seed": 97,
+      "target_qoi": "demand_cv",
+      "trajectory": [
+        {
+          "objective": 1208.0,
+          "time_sec": 0.000345199994626455
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.0008516999951098114
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.9560042039147,
+      "wall_time_sec": 2.018583999990369
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.734375,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 6622,
+      "level": "target",
+      "pair_id": "demand_cv-307",
+      "solver_objective": 1128.0,
+      "solver_seed": 97,
+      "target_qoi": "demand_cv",
+      "trajectory": [
+        {
+          "objective": 1192.0,
+          "time_sec": 0.0002787000121315941
+        },
+        {
+          "objective": 1128.0,
+          "time_sec": 0.004381300008390099
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1134.5699125608921,
+      "wall_time_sec": 2.007922699995106
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.71875,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 6499,
+      "level": "source",
+      "pair_id": "demand_cv-401",
+      "solver_objective": 1108.0,
+      "solver_seed": 97,
+      "target_qoi": "demand_cv",
+      "trajectory": [
+        {
+          "objective": 1108.0,
+          "time_sec": 0.0004000999906565994
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.9560042039147,
+      "wall_time_sec": 2.016732999996748
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.671875,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 7176,
+      "level": "target",
+      "pair_id": "demand_cv-401",
+      "solver_objective": 1144.0,
+      "solver_seed": 97,
+      "target_qoi": "demand_cv",
+      "trajectory": [
+        {
+          "objective": 1199.0,
+          "time_sec": 0.00033680000342428684
+        },
+        {
+          "objective": 1180.0,
+          "time_sec": 0.0066783999936887994
+        },
+        {
+          "objective": 1144.0,
+          "time_sec": 0.017465099997934885
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1149.5239942379867,
+      "wall_time_sec": 2.0170629000058398
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.796875,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 6622,
+      "level": "source",
+      "pair_id": "demand_cv-503",
+      "solver_objective": 1108.0,
+      "solver_seed": 97,
+      "target_qoi": "demand_cv",
+      "trajectory": [
+        {
+          "objective": 1206.0,
+          "time_sec": 0.0003276999923400581
+        },
+        {
+          "objective": 1116.0,
+          "time_sec": 0.000865399997564964
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.007336299997405149
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.9560042039147,
+      "wall_time_sec": 2.009479400003329
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.734375,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 6563,
+      "level": "target",
+      "pair_id": "demand_cv-503",
+      "solver_objective": 1116.0,
+      "solver_seed": 97,
+      "target_qoi": "demand_cv",
+      "trajectory": [
+        {
+          "objective": 1215.0,
+          "time_sec": 0.0002074999938486144
+        },
+        {
+          "objective": 1164.0,
+          "time_sec": 0.002093199989758432
+        },
+        {
+          "objective": 1116.0,
+          "time_sec": 0.004197599992039613
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1123.1131088325874,
+      "wall_time_sec": 2.0170835000026273
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.796875,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 6497,
+      "level": "source",
+      "pair_id": "demand_cv-601",
+      "solver_objective": 1108.0,
+      "solver_seed": 97,
+      "target_qoi": "demand_cv",
+      "trajectory": [
+        {
+          "objective": 1116.0,
+          "time_sec": 0.0005565999890677631
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.0019226999866077676
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 2.018850199994631
+    },
+    {
+      "budget_sec": 2.0,
+      "cpu_time_sec": 0.859375,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 6496,
+      "level": "target",
+      "pair_id": "demand_cv-601",
+      "solver_objective": 1130.0,
+      "solver_seed": 97,
+      "target_qoi": "demand_cv",
+      "trajectory": [
+        {
+          "objective": 1210.0,
+          "time_sec": 0.0007104999967850745
+        },
+        {
+          "objective": 1134.0,
+          "time_sec": 0.001596099988091737
+        },
+        {
+          "objective": 1130.0,
+          "time_sec": 0.030058799995458685
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1137.4036736762991,
+      "wall_time_sec": 2.0108913000003668
+    }
+  ],
+  "runs": [
+    {
+      "best_observed_gap": 0.0029455081001472753,
+      "best_observed_reference": 1358.0,
+      "cpu_time_sec": 0.140625,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 930,
+      "level": "source",
+      "normalized_solver_objective": 26.364405257283796,
+      "pair_id": "pairwise_distance_median-101",
+      "pairwise_distance_median": 51.660562288759195,
+      "primal_integral": 0.008480201773968696,
+      "qoi_value": 51.660562288759195,
+      "solver_objective": 1362.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.03152570000384003,
+      "trajectory": [
+        {
+          "objective": 1435.0,
+          "time_sec": 0.0008776000031502917
+        },
+        {
+          "objective": 1408.0,
+          "time_sec": 0.016193900009966455
+        },
+        {
+          "objective": 1401.0,
+          "time_sec": 0.01760160000412725
+        },
+        {
+          "objective": 1394.0,
+          "time_sec": 0.02879560001019854
+        },
+        {
+          "objective": 1365.0,
+          "time_sec": 0.03152570000384003
+        },
+        {
+          "objective": 1362.0,
+          "time_sec": 0.31919680000282824
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1362.7324927112027,
+      "wall_time_sec": 0.526698599991505
+    },
+    {
+      "best_observed_gap": 0.0066273932253313695,
+      "best_observed_reference": 1358.0,
+      "cpu_time_sec": 0.203125,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 897,
+      "level": "source",
+      "normalized_solver_objective": 26.46119088598161,
+      "pair_id": "pairwise_distance_median-101",
+      "pairwise_distance_median": 51.660562288759195,
+      "primal_integral": 0.012328981009719343,
+      "qoi_value": 51.660562288759195,
+      "solver_objective": 1367.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.20688729999528732,
+      "trajectory": [
+        {
+          "objective": 1462.0,
+          "time_sec": 0.00017070000467356294
+        },
+        {
+          "objective": 1453.0,
+          "time_sec": 0.004503599993768148
+        },
+        {
+          "objective": 1452.0,
+          "time_sec": 0.005815700002131052
+        },
+        {
+          "objective": 1446.0,
+          "time_sec": 0.007457500003511086
+        },
+        {
+          "objective": 1410.0,
+          "time_sec": 0.024994599996716715
+        },
+        {
+          "objective": 1393.0,
+          "time_sec": 0.026356999995186925
+        },
+        {
+          "objective": 1383.0,
+          "time_sec": 0.03282279999984894
+        },
+        {
+          "objective": 1374.0,
+          "time_sec": 0.04910150000068825
+        },
+        {
+          "objective": 1367.0,
+          "time_sec": 0.20688729999528732
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1365.9275204001608,
+      "wall_time_sec": 0.5295046999963233
+    },
+    {
+      "best_observed_gap": 0.003681885125184094,
+      "best_observed_reference": 1358.0,
+      "cpu_time_sec": 0.296875,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 847,
+      "level": "source",
+      "normalized_solver_objective": 26.38376238302336,
+      "pair_id": "pairwise_distance_median-101",
+      "pairwise_distance_median": 51.660562288759195,
+      "primal_integral": 0.011925733882957174,
+      "qoi_value": 51.660562288759195,
+      "solver_objective": 1363.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.3771073000098113,
+      "trajectory": [
+        {
+          "objective": 1398.0,
+          "time_sec": 0.0008931000047596171
+        },
+        {
+          "objective": 1393.0,
+          "time_sec": 0.0015544000052614138
+        },
+        {
+          "objective": 1389.0,
+          "time_sec": 0.023022499997750856
+        },
+        {
+          "objective": 1379.0,
+          "time_sec": 0.025015400009579025
+        },
+        {
+          "objective": 1375.0,
+          "time_sec": 0.04778730000543874
+        },
+        {
+          "objective": 1374.0,
+          "time_sec": 0.15841280001041014
+        },
+        {
+          "objective": 1372.0,
+          "time_sec": 0.16346190001058858
+        },
+        {
+          "objective": 1363.0,
+          "time_sec": 0.3771073000098113
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1363.3265366651456,
+      "wall_time_sec": 0.5283333000115817
+    },
+    {
+      "best_observed_gap": 0.013663220088626292,
+      "best_observed_reference": 2708.0,
+      "cpu_time_sec": 0.28125,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 875,
+      "level": "target",
+      "normalized_solver_objective": 26.5676550775492,
+      "pair_id": "pairwise_distance_median-101",
+      "pairwise_distance_median": 103.32112457751839,
+      "primal_integral": 0.02152237702610141,
+      "qoi_value": 103.32112457751839,
+      "solver_objective": 2745.0,
+      "solver_seed": 0,
+      "target_hit": false,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.5,
+      "trajectory": [
+        {
+          "objective": 2863.0,
+          "time_sec": 0.001990999997360632
+        },
+        {
+          "objective": 2807.0,
+          "time_sec": 0.002828700002282858
+        },
+        {
+          "objective": 2798.0,
+          "time_sec": 0.015952100002323277
+        },
+        {
+          "objective": 2770.0,
+          "time_sec": 0.02608979999786243
+        },
+        {
+          "objective": 2762.0,
+          "time_sec": 0.09988829999929294
+        },
+        {
+          "objective": 2751.0,
+          "time_sec": 0.19896300000254996
+        },
+        {
+          "objective": 2746.0,
+          "time_sec": 0.21126729999377858
+        },
+        {
+          "objective": 2745.0,
+          "time_sec": 0.4817490999994334
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2748.3993898064646,
+      "wall_time_sec": 0.5272294000023976
+    },
+    {
+      "best_observed_gap": 0.0103397341211226,
+      "best_observed_reference": 2708.0,
+      "cpu_time_sec": 0.1875,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 852,
+      "level": "target",
+      "normalized_solver_objective": 26.480548011721172,
+      "pair_id": "pairwise_distance_median-101",
+      "pairwise_distance_median": 103.32112457751839,
+      "primal_integral": 0.015473617735659145,
+      "qoi_value": 103.32112457751839,
+      "solver_objective": 2736.0,
+      "solver_seed": 1,
+      "target_hit": false,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.5,
+      "trajectory": [
+        {
+          "objective": 2901.0,
+          "time_sec": 0.00023960000544320792
+        },
+        {
+          "objective": 2798.0,
+          "time_sec": 0.0017188000056194142
+        },
+        {
+          "objective": 2793.0,
+          "time_sec": 0.0033374000049661845
+        },
+        {
+          "objective": 2778.0,
+          "time_sec": 0.023775199995725416
+        },
+        {
+          "objective": 2767.0,
+          "time_sec": 0.025067199996556155
+        },
+        {
+          "objective": 2756.0,
+          "time_sec": 0.02627099999517668
+        },
+        {
+          "objective": 2743.0,
+          "time_sec": 0.2162287999963155
+        },
+        {
+          "objective": 2742.0,
+          "time_sec": 0.33647239999845624
+        },
+        {
+          "objective": 2740.0,
+          "time_sec": 0.3374796999996761
+        },
+        {
+          "objective": 2738.0,
+          "time_sec": 0.35243030000128783
+        },
+        {
+          "objective": 2736.0,
+          "time_sec": 0.35317299999587703
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2737.3591065532482,
+      "wall_time_sec": 0.5197554000042146
+    },
+    {
+      "best_observed_gap": 0.004431314623338257,
+      "best_observed_reference": 2708.0,
+      "cpu_time_sec": 0.171875,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 878,
+      "level": "target",
+      "normalized_solver_objective": 26.32569100580467,
+      "pair_id": "pairwise_distance_median-101",
+      "pairwise_distance_median": 103.32112457751839,
+      "primal_integral": 0.01428603188974012,
+      "qoi_value": 103.32112457751839,
+      "solver_objective": 2720.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.2708929999935208,
+      "trajectory": [
+        {
+          "objective": 2932.0,
+          "time_sec": 0.0010117999918293208
+        },
+        {
+          "objective": 2838.0,
+          "time_sec": 0.002449699997669086
+        },
+        {
+          "objective": 2779.0,
+          "time_sec": 0.003809499990893528
+        },
+        {
+          "objective": 2768.0,
+          "time_sec": 0.005222499996307306
+        },
+        {
+          "objective": 2758.0,
+          "time_sec": 0.09941290000278968
+        },
+        {
+          "objective": 2744.0,
+          "time_sec": 0.20156679999490734
+        },
+        {
+          "objective": 2720.0,
+          "time_sec": 0.2708929999935208
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2722.675727635848,
+      "wall_time_sec": 0.5291419000132009
+    },
+    {
+      "best_observed_gap": 0.0014005602240896359,
+      "best_observed_reference": 1428.0,
+      "cpu_time_sec": 0.25,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 924,
+      "level": "source",
+      "normalized_solver_objective": 27.249033680744994,
+      "pair_id": "pairwise_distance_median-211",
+      "pairwise_distance_median": 52.47892518884007,
+      "primal_integral": 0.006994556173462427,
+      "qoi_value": 52.47892518884007,
+      "solver_objective": 1430.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.036781400005565956,
+      "trajectory": [
+        {
+          "objective": 1488.0,
+          "time_sec": 0.001149300005636178
+        },
+        {
+          "objective": 1450.0,
+          "time_sec": 0.015323300001909956
+        },
+        {
+          "objective": 1445.0,
+          "time_sec": 0.01602850000199396
+        },
+        {
+          "objective": 1443.0,
+          "time_sec": 0.035486699998728
+        },
+        {
+          "objective": 1440.0,
+          "time_sec": 0.036781400005565956
+        },
+        {
+          "objective": 1437.0,
+          "time_sec": 0.08669180001015775
+        },
+        {
+          "objective": 1435.0,
+          "time_sec": 0.13951710000401363
+        },
+        {
+          "objective": 1433.0,
+          "time_sec": 0.14038589999836404
+        },
+        {
+          "objective": 1431.0,
+          "time_sec": 0.14192900000489317
+        },
+        {
+          "objective": 1430.0,
+          "time_sec": 0.4743858000001637
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1433.391021616579,
+      "wall_time_sec": 0.5268734999990556
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1428.0,
+      "cpu_time_sec": 0.171875,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 862,
+      "level": "source",
+      "normalized_solver_objective": 27.210923144128568,
+      "pair_id": "pairwise_distance_median-211",
+      "pairwise_distance_median": 52.47892518884007,
+      "primal_integral": 0.006161349728283328,
+      "qoi_value": 52.47892518884007,
+      "solver_objective": 1428.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.0297668999992311,
+      "trajectory": [
+        {
+          "objective": 1520.0,
+          "time_sec": 0.0005433000042103231
+        },
+        {
+          "objective": 1513.0,
+          "time_sec": 0.004245000003720634
+        },
+        {
+          "objective": 1503.0,
+          "time_sec": 0.006915300007676706
+        },
+        {
+          "objective": 1476.0,
+          "time_sec": 0.010924900008831173
+        },
+        {
+          "objective": 1456.0,
+          "time_sec": 0.012261199997738004
+        },
+        {
+          "objective": 1454.0,
+          "time_sec": 0.020525200001429766
+        },
+        {
+          "objective": 1452.0,
+          "time_sec": 0.0236499000020558
+        },
+        {
+          "objective": 1442.0,
+          "time_sec": 0.0297668999992311
+        },
+        {
+          "objective": 1436.0,
+          "time_sec": 0.03329640001174994
+        },
+        {
+          "objective": 1434.0,
+          "time_sec": 0.08677039999747649
+        },
+        {
+          "objective": 1428.0,
+          "time_sec": 0.37915870000142604
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1429.4546552801041,
+      "wall_time_sec": 0.5271295999991708
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1428.0,
+      "cpu_time_sec": 0.21875,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 857,
+      "level": "source",
+      "normalized_solver_objective": 27.210923144128568,
+      "pair_id": "pairwise_distance_median-211",
+      "pairwise_distance_median": 52.47892518884007,
+      "primal_integral": 0.0040382885084150315,
+      "qoi_value": 52.47892518884007,
+      "solver_objective": 1428.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.06323089999204967,
+      "trajectory": [
+        {
+          "objective": 1484.0,
+          "time_sec": 0.000301499996567145
+        },
+        {
+          "objective": 1475.0,
+          "time_sec": 0.0030555999983334914
+        },
+        {
+          "objective": 1468.0,
+          "time_sec": 0.006292899997788481
+        },
+        {
+          "objective": 1461.0,
+          "time_sec": 0.00840059999609366
+        },
+        {
+          "objective": 1459.0,
+          "time_sec": 0.01082089998817537
+        },
+        {
+          "objective": 1453.0,
+          "time_sec": 0.02943589999631513
+        },
+        {
+          "objective": 1438.0,
+          "time_sec": 0.06323089999204967
+        },
+        {
+          "objective": 1435.0,
+          "time_sec": 0.1180739999981597
+        },
+        {
+          "objective": 1433.0,
+          "time_sec": 0.11926419999508653
+        },
+        {
+          "objective": 1428.0,
+          "time_sec": 0.11997079999127891
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1429.0901507748283,
+      "wall_time_sec": 0.5263173999992432
+    },
+    {
+      "best_observed_gap": 0.0031523642732049035,
+      "best_observed_reference": 2855.0,
+      "cpu_time_sec": 0.171875,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 846,
+      "level": "target",
+      "normalized_solver_objective": 27.28714421736142,
+      "pair_id": "pairwise_distance_median-211",
+      "pairwise_distance_median": 104.95785037768015,
+      "primal_integral": 0.011519986552428111,
+      "qoi_value": 104.95785037768015,
+      "solver_objective": 2864.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.0846534000011161,
+      "trajectory": [
+        {
+          "objective": 2980.0,
+          "time_sec": 0.002266700001200661
+        },
+        {
+          "objective": 2953.0,
+          "time_sec": 0.003692300000693649
+        },
+        {
+          "objective": 2919.0,
+          "time_sec": 0.004718500000308268
+        },
+        {
+          "objective": 2909.0,
+          "time_sec": 0.07841180000104941
+        },
+        {
+          "objective": 2889.0,
+          "time_sec": 0.08353430000715889
+        },
+        {
+          "objective": 2877.0,
+          "time_sec": 0.0846534000011161
+        },
+        {
+          "objective": 2864.0,
+          "time_sec": 0.15584030000900384
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2864.662760677123,
+      "wall_time_sec": 0.5196546000079252
+    },
+    {
+      "best_observed_gap": 0.0035026269702276708,
+      "best_observed_reference": 2855.0,
+      "cpu_time_sec": 0.078125,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 829,
+      "level": "target",
+      "normalized_solver_objective": 27.296671851515526,
+      "pair_id": "pairwise_distance_median-211",
+      "pairwise_distance_median": 104.95785037768015,
+      "primal_integral": 0.005647513359595879,
+      "qoi_value": 104.95785037768015,
+      "solver_objective": 2865.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.02825220000522677,
+      "trajectory": [
+        {
+          "objective": 3030.0,
+          "time_sec": 0.00022270000772550702
+        },
+        {
+          "objective": 2944.0,
+          "time_sec": 0.0031642999965697527
+        },
+        {
+          "objective": 2922.0,
+          "time_sec": 0.02640610000526067
+        },
+        {
+          "objective": 2866.0,
+          "time_sec": 0.02825220000522677
+        },
+        {
+          "objective": 2865.0,
+          "time_sec": 0.029802100005326793
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2864.760077544683,
+      "wall_time_sec": 0.5191980000090552
+    },
+    {
+      "best_observed_gap": 0.0024518388791593695,
+      "best_observed_reference": 2855.0,
+      "cpu_time_sec": 0.21875,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 853,
+      "level": "target",
+      "normalized_solver_objective": 27.268088949053208,
+      "pair_id": "pairwise_distance_median-211",
+      "pairwise_distance_median": 104.95785037768015,
+      "primal_integral": 0.014542224937338375,
+      "qoi_value": 104.95785037768015,
+      "solver_objective": 2862.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.23190669999166857,
+      "trajectory": [
+        {
+          "objective": 3101.0,
+          "time_sec": 0.0003687999997055158
+        },
+        {
+          "objective": 3047.0,
+          "time_sec": 0.0015051999944262207
+        },
+        {
+          "objective": 3012.0,
+          "time_sec": 0.004738399991765618
+        },
+        {
+          "objective": 2998.0,
+          "time_sec": 0.007915399997727945
+        },
+        {
+          "objective": 2973.0,
+          "time_sec": 0.028133599989814684
+        },
+        {
+          "objective": 2962.0,
+          "time_sec": 0.039337399997748435
+        },
+        {
+          "objective": 2936.0,
+          "time_sec": 0.04175360000226647
+        },
+        {
+          "objective": 2901.0,
+          "time_sec": 0.04312719999870751
+        },
+        {
+          "objective": 2893.0,
+          "time_sec": 0.22986219999438617
+        },
+        {
+          "objective": 2887.0,
+          "time_sec": 0.2307062999898335
+        },
+        {
+          "objective": 2882.0,
+          "time_sec": 0.23190669999166857
+        },
+        {
+          "objective": 2878.0,
+          "time_sec": 0.3343726000020979
+        },
+        {
+          "objective": 2864.0,
+          "time_sec": 0.4003128999902401
+        },
+        {
+          "objective": 2862.0,
+          "time_sec": 0.4416247999906773
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2861.482268351267,
+      "wall_time_sec": 0.5284115000104066
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1438.0,
+      "cpu_time_sec": 0.15625,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 928,
+      "level": "source",
+      "normalized_solver_objective": 27.967094445582553,
+      "pair_id": "pairwise_distance_median-307",
+      "pairwise_distance_median": 51.41756870017416,
+      "primal_integral": 0.00668401668064464,
+      "qoi_value": 51.41756870017416,
+      "solver_objective": 1438.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.01405440000235103,
+      "trajectory": [
+        {
+          "objective": 1582.0,
+          "time_sec": 0.0012452999944798648
+        },
+        {
+          "objective": 1533.0,
+          "time_sec": 0.0031072999991010875
+        },
+        {
+          "objective": 1522.0,
+          "time_sec": 0.004310500007704832
+        },
+        {
+          "objective": 1520.0,
+          "time_sec": 0.005247399996733293
+        },
+        {
+          "objective": 1509.0,
+          "time_sec": 0.0061274000036064535
+        },
+        {
+          "objective": 1463.0,
+          "time_sec": 0.013055600007646717
+        },
+        {
+          "objective": 1452.0,
+          "time_sec": 0.01405440000235103
+        },
+        {
+          "objective": 1438.0,
+          "time_sec": 0.15440460000536405
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1438.8022291530867,
+      "wall_time_sec": 0.5281609000085155
+    },
+    {
+      "best_observed_gap": 0.0006954102920723226,
+      "best_observed_reference": 1438.0,
+      "cpu_time_sec": 0.28125,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 844,
+      "level": "source",
+      "normalized_solver_objective": 27.98654305089937,
+      "pair_id": "pairwise_distance_median-307",
+      "pairwise_distance_median": 51.41756870017416,
+      "primal_integral": 0.009766238946922612,
+      "qoi_value": 51.41756870017416,
+      "solver_objective": 1439.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.19745620001049247,
+      "trajectory": [
+        {
+          "objective": 1512.0,
+          "time_sec": 0.0011698000016622245
+        },
+        {
+          "objective": 1501.0,
+          "time_sec": 0.002541600013501011
+        },
+        {
+          "objective": 1489.0,
+          "time_sec": 0.003996500003268011
+        },
+        {
+          "objective": 1475.0,
+          "time_sec": 0.005661100003635511
+        },
+        {
+          "objective": 1474.0,
+          "time_sec": 0.037075100000947714
+        },
+        {
+          "objective": 1464.0,
+          "time_sec": 0.06734780000988394
+        },
+        {
+          "objective": 1463.0,
+          "time_sec": 0.06805350001377519
+        },
+        {
+          "objective": 1461.0,
+          "time_sec": 0.08313770001404919
+        },
+        {
+          "objective": 1458.0,
+          "time_sec": 0.09618800001044292
+        },
+        {
+          "objective": 1454.0,
+          "time_sec": 0.09972530000959523
+        },
+        {
+          "objective": 1445.0,
+          "time_sec": 0.19745620001049247
+        },
+        {
+          "objective": 1439.0,
+          "time_sec": 0.22694910000427626
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1438.6923889488999,
+      "wall_time_sec": 0.529964999994263
+    },
+    {
+      "best_observed_gap": 0.004172461752433936,
+      "best_observed_reference": 1438.0,
+      "cpu_time_sec": 0.15625,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 908,
+      "level": "source",
+      "normalized_solver_objective": 28.083786077483452,
+      "pair_id": "pairwise_distance_median-307",
+      "pairwise_distance_median": 51.41756870017416,
+      "primal_integral": 0.008157261326838309,
+      "qoi_value": 51.41756870017416,
+      "solver_objective": 1444.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.048930599994491786,
+      "trajectory": [
+        {
+          "objective": 1523.0,
+          "time_sec": 0.000727599996025674
+        },
+        {
+          "objective": 1485.0,
+          "time_sec": 0.008598399988841265
+        },
+        {
+          "objective": 1469.0,
+          "time_sec": 0.018919299996923655
+        },
+        {
+          "objective": 1467.0,
+          "time_sec": 0.0450769000017317
+        },
+        {
+          "objective": 1465.0,
+          "time_sec": 0.045722199996816926
+        },
+        {
+          "objective": 1454.0,
+          "time_sec": 0.047542599990265444
+        },
+        {
+          "objective": 1452.0,
+          "time_sec": 0.048930599994491786
+        },
+        {
+          "objective": 1448.0,
+          "time_sec": 0.05036969999491703
+        },
+        {
+          "objective": 1447.0,
+          "time_sec": 0.06035919999703765
+        },
+        {
+          "objective": 1444.0,
+          "time_sec": 0.0623046999971848
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1444.4781907152064,
+      "wall_time_sec": 0.5298562000098173
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 2868.0,
+      "cpu_time_sec": 0.234375,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 927,
+      "level": "target",
+      "normalized_solver_objective": 27.889300024315286,
+      "pair_id": "pairwise_distance_median-307",
+      "pairwise_distance_median": 102.83513740034832,
+      "primal_integral": 0.0026031029914294545,
+      "qoi_value": 102.83513740034832,
+      "solver_objective": 2868.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.003877899987855926,
+      "trajectory": [
+        {
+          "objective": 2949.0,
+          "time_sec": 0.0011633999965852126
+        },
+        {
+          "objective": 2888.0,
+          "time_sec": 0.003877899987855926
+        },
+        {
+          "objective": 2868.0,
+          "time_sec": 0.01269509999838192
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2872.7760465261954,
+      "wall_time_sec": 0.5273477000009734
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 2868.0,
+      "cpu_time_sec": 0.234375,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 844,
+      "level": "target",
+      "normalized_solver_objective": 27.889300024315286,
+      "pair_id": "pairwise_distance_median-307",
+      "pairwise_distance_median": 102.83513740034832,
+      "primal_integral": 0.006795377406642209,
+      "qoi_value": 102.83513740034832,
+      "solver_objective": 2868.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.12161190000188071,
+      "trajectory": [
+        {
+          "objective": 3038.0,
+          "time_sec": 0.0008121999999275431
+        },
+        {
+          "objective": 2989.0,
+          "time_sec": 0.002205100012361072
+        },
+        {
+          "objective": 2957.0,
+          "time_sec": 0.013441700008115731
+        },
+        {
+          "objective": 2908.0,
+          "time_sec": 0.016395400001783855
+        },
+        {
+          "objective": 2902.0,
+          "time_sec": 0.01717240001016762
+        },
+        {
+          "objective": 2900.0,
+          "time_sec": 0.02572290001262445
+        },
+        {
+          "objective": 2896.0,
+          "time_sec": 0.12161190000188071
+        },
+        {
+          "objective": 2889.0,
+          "time_sec": 0.12294770000153221
+        },
+        {
+          "objective": 2871.0,
+          "time_sec": 0.20692790001339745
+        },
+        {
+          "objective": 2868.0,
+          "time_sec": 0.32847760000731796
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2872.1520600483473,
+      "wall_time_sec": 0.5207959000108531
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 2868.0,
+      "cpu_time_sec": 0.21875,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 869,
+      "level": "target",
+      "normalized_solver_objective": 27.889300024315286,
+      "pair_id": "pairwise_distance_median-307",
+      "pairwise_distance_median": 102.83513740034832,
+      "primal_integral": 0.001836555493679992,
+      "qoi_value": 102.83513740034832,
+      "solver_objective": 2868.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.012231699991389178,
+      "trajectory": [
+        {
+          "objective": 2929.0,
+          "time_sec": 0.000381199992261827
+        },
+        {
+          "objective": 2924.0,
+          "time_sec": 0.007608799991430715
+        },
+        {
+          "objective": 2894.0,
+          "time_sec": 0.012231699991389178
+        },
+        {
+          "objective": 2871.0,
+          "time_sec": 0.023752599998260848
+        },
+        {
+          "objective": 2868.0,
+          "time_sec": 0.20409579999977723
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2872.7760465261968,
+      "wall_time_sec": 0.5181984000082593
+    },
+    {
+      "best_observed_gap": 0.002018842530282638,
+      "best_observed_reference": 1486.0,
+      "cpu_time_sec": 0.171875,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 889,
+      "level": "source",
+      "normalized_solver_objective": 26.902901954134062,
+      "pair_id": "pairwise_distance_median-401",
+      "pairwise_distance_median": 55.34718903330766,
+      "primal_integral": 0.011590242389996766,
+      "qoi_value": 55.34718903330766,
+      "solver_objective": 1489.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.05349469999782741,
+      "trajectory": [
+        {
+          "objective": 1575.0,
+          "time_sec": 0.0008595999970566481
+        },
+        {
+          "objective": 1500.0,
+          "time_sec": 0.05349469999782741
+        },
+        {
+          "objective": 1497.0,
+          "time_sec": 0.07359230000292882
+        },
+        {
+          "objective": 1494.0,
+          "time_sec": 0.1968615000077989
+        },
+        {
+          "objective": 1489.0,
+          "time_sec": 0.21744500000204425
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1492.84128078151,
+      "wall_time_sec": 0.5265213999955449
+    },
+    {
+      "best_observed_gap": 0.004710632570659489,
+      "best_observed_reference": 1486.0,
+      "cpu_time_sec": 0.140625,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 838,
+      "level": "source",
+      "normalized_solver_objective": 26.97517301378251,
+      "pair_id": "pairwise_distance_median-401",
+      "pairwise_distance_median": 55.34718903330766,
+      "primal_integral": 0.01098860834413324,
+      "qoi_value": 55.34718903330766,
+      "solver_objective": 1493.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.04736660000344273,
+      "trajectory": [
+        {
+          "objective": 1586.0,
+          "time_sec": 0.0014236999995773658
+        },
+        {
+          "objective": 1547.0,
+          "time_sec": 0.004542900001979433
+        },
+        {
+          "objective": 1527.0,
+          "time_sec": 0.0064830000046640635
+        },
+        {
+          "objective": 1526.0,
+          "time_sec": 0.008022599999094382
+        },
+        {
+          "objective": 1496.0,
+          "time_sec": 0.04736660000344273
+        },
+        {
+          "objective": 1495.0,
+          "time_sec": 0.09501150000141934
+        },
+        {
+          "objective": 1493.0,
+          "time_sec": 0.43021130000124685
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1495.9239188154793,
+      "wall_time_sec": 0.5268280000018422
+    },
+    {
+      "best_observed_gap": 0.0013458950201884253,
+      "best_observed_reference": 1486.0,
+      "cpu_time_sec": 0.171875,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 871,
+      "level": "source",
+      "normalized_solver_objective": 26.88483418922195,
+      "pair_id": "pairwise_distance_median-401",
+      "pairwise_distance_median": 55.34718903330766,
+      "primal_integral": 0.008775135657335174,
+      "qoi_value": 55.34718903330766,
+      "solver_objective": 1488.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.05098020000150427,
+      "trajectory": [
+        {
+          "objective": 1592.0,
+          "time_sec": 0.0009395999950356781
+        },
+        {
+          "objective": 1568.0,
+          "time_sec": 0.0024362999974982813
+        },
+        {
+          "objective": 1536.0,
+          "time_sec": 0.005115100007969886
+        },
+        {
+          "objective": 1512.0,
+          "time_sec": 0.04202239999722224
+        },
+        {
+          "objective": 1501.0,
+          "time_sec": 0.04958370000531431
+        },
+        {
+          "objective": 1500.0,
+          "time_sec": 0.05098020000150427
+        },
+        {
+          "objective": 1494.0,
+          "time_sec": 0.14508610000484623
+        },
+        {
+          "objective": 1489.0,
+          "time_sec": 0.24536090000765398
+        },
+        {
+          "objective": 1488.0,
+          "time_sec": 0.29886379999516066
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1487.811055152275,
+      "wall_time_sec": 0.5265453999891179
+    },
+    {
+      "best_observed_gap": 0.0026926960619320095,
+      "best_observed_reference": 2971.0,
+      "cpu_time_sec": 0.171875,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 867,
+      "level": "target",
+      "normalized_solver_objective": 26.91193583659012,
+      "pair_id": "pairwise_distance_median-401",
+      "pairwise_distance_median": 110.69437806661531,
+      "primal_integral": 0.008281178738535842,
+      "qoi_value": 110.69437806661531,
+      "solver_objective": 2979.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.042331800010288134,
+      "trajectory": [
+        {
+          "objective": 3099.0,
+          "time_sec": 0.0015506000054301694
+        },
+        {
+          "objective": 3032.0,
+          "time_sec": 0.0044535000051837415
+        },
+        {
+          "objective": 3031.0,
+          "time_sec": 0.0070663000078639016
+        },
+        {
+          "objective": 2999.0,
+          "time_sec": 0.042331800010288134
+        },
+        {
+          "objective": 2986.0,
+          "time_sec": 0.04728349999641068
+        },
+        {
+          "objective": 2981.0,
+          "time_sec": 0.22351270000217482
+        },
+        {
+          "objective": 2979.0,
+          "time_sec": 0.2505089000042062
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2980.5556346387066,
+      "wall_time_sec": 0.5297668999992311
+    },
+    {
+      "best_observed_gap": 0.0003365870077415012,
+      "best_observed_reference": 2971.0,
+      "cpu_time_sec": 0.265625,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 839,
+      "level": "target",
+      "normalized_solver_objective": 26.84869865939773,
+      "pair_id": "pairwise_distance_median-401",
+      "pairwise_distance_median": 110.69437806661531,
+      "primal_integral": 0.005187886167556337,
+      "qoi_value": 110.69437806661531,
+      "solver_objective": 2972.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.026553399991826154,
+      "trajectory": [
+        {
+          "objective": 3081.0,
+          "time_sec": 0.0013952000008430332
+        },
+        {
+          "objective": 3024.0,
+          "time_sec": 0.00660049999714829
+        },
+        {
+          "objective": 3020.0,
+          "time_sec": 0.019955399999162182
+        },
+        {
+          "objective": 3009.0,
+          "time_sec": 0.02391910000005737
+        },
+        {
+          "objective": 2990.0,
+          "time_sec": 0.026553399991826154
+        },
+        {
+          "objective": 2973.0,
+          "time_sec": 0.09096609998960048
+        },
+        {
+          "objective": 2972.0,
+          "time_sec": 0.44483919999038335
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2973.0990230292764,
+      "wall_time_sec": 0.5197528999997303
+    },
+    {
+      "best_observed_gap": 0.0006731740154830024,
+      "best_observed_reference": 2971.0,
+      "cpu_time_sec": 0.1875,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 856,
+      "level": "target",
+      "normalized_solver_objective": 26.857732541853785,
+      "pair_id": "pairwise_distance_median-401",
+      "pairwise_distance_median": 110.69437806661531,
+      "primal_integral": 0.0056674539140296005,
+      "qoi_value": 110.69437806661531,
+      "solver_objective": 2973.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.011599299992667511,
+      "trajectory": [
+        {
+          "objective": 3124.0,
+          "time_sec": 0.0008900999964680523
+        },
+        {
+          "objective": 3079.0,
+          "time_sec": 0.0065279999980703
+        },
+        {
+          "objective": 3078.0,
+          "time_sec": 0.008360099993296899
+        },
+        {
+          "objective": 3068.0,
+          "time_sec": 0.009890899993479252
+        },
+        {
+          "objective": 2993.0,
+          "time_sec": 0.011599299992667511
+        },
+        {
+          "objective": 2985.0,
+          "time_sec": 0.1395496000041021
+        },
+        {
+          "objective": 2973.0,
+          "time_sec": 0.21027729999332223
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2973.6147661436853,
+      "wall_time_sec": 0.5281542000011541
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1406.0,
+      "cpu_time_sec": 0.15625,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 970,
+      "level": "source",
+      "normalized_solver_objective": 27.005013761724996,
+      "pair_id": "pairwise_distance_median-503",
+      "pairwise_distance_median": 52.064405980520746,
+      "primal_integral": 0.007927717064756696,
+      "qoi_value": 52.064405980520746,
+      "solver_objective": 1406.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.022949999998672865,
+      "trajectory": [
+        {
+          "objective": 1455.0,
+          "time_sec": 0.0011577999975997955
+        },
+        {
+          "objective": 1454.0,
+          "time_sec": 0.003831599999102764
+        },
+        {
+          "objective": 1450.0,
+          "time_sec": 0.004988799992133863
+        },
+        {
+          "objective": 1445.0,
+          "time_sec": 0.00859469998977147
+        },
+        {
+          "objective": 1440.0,
+          "time_sec": 0.00966889999108389
+        },
+        {
+          "objective": 1435.0,
+          "time_sec": 0.012229599989950657
+        },
+        {
+          "objective": 1426.0,
+          "time_sec": 0.01336559999617748
+        },
+        {
+          "objective": 1413.0,
+          "time_sec": 0.022949999998672865
+        },
+        {
+          "objective": 1410.0,
+          "time_sec": 0.4733483000018168
+        },
+        {
+          "objective": 1406.0,
+          "time_sec": 0.4967781000013929
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1417.1319293193758,
+      "wall_time_sec": 0.5279696999932639
+    },
+    {
+      "best_observed_gap": 0.001422475106685633,
+      "best_observed_reference": 1406.0,
+      "cpu_time_sec": 0.28125,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 876,
+      "level": "source",
+      "normalized_solver_objective": 27.043427721556753,
+      "pair_id": "pairwise_distance_median-503",
+      "pairwise_distance_median": 52.064405980520746,
+      "primal_integral": 0.008143571686457676,
+      "qoi_value": 52.064405980520746,
+      "solver_objective": 1408.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.06176549999509007,
+      "trajectory": [
+        {
+          "objective": 1518.0,
+          "time_sec": 0.00018489999638404697
+        },
+        {
+          "objective": 1476.0,
+          "time_sec": 0.0031251000036718324
+        },
+        {
+          "objective": 1443.0,
+          "time_sec": 0.013502200003131293
+        },
+        {
+          "objective": 1440.0,
+          "time_sec": 0.02074150000407826
+        },
+        {
+          "objective": 1424.0,
+          "time_sec": 0.024462500005029142
+        },
+        {
+          "objective": 1416.0,
+          "time_sec": 0.06176549999509007
+        },
+        {
+          "objective": 1414.0,
+          "time_sec": 0.3687657999980729
+        },
+        {
+          "objective": 1408.0,
+          "time_sec": 0.37059389999194536
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1420.0621230065512,
+      "wall_time_sec": 0.5298371999961091
+    },
+    {
+      "best_observed_gap": 0.007823613086770981,
+      "best_observed_reference": 1406.0,
+      "cpu_time_sec": 0.3125,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 908,
+      "level": "source",
+      "normalized_solver_objective": 27.21629054079966,
+      "pair_id": "pairwise_distance_median-503",
+      "pairwise_distance_median": 52.064405980520746,
+      "primal_integral": 0.013593847090158158,
+      "qoi_value": 52.064405980520746,
+      "solver_objective": 1417.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.14430520001042169,
+      "trajectory": [
+        {
+          "objective": 1482.0,
+          "time_sec": 0.0012980000028619543
+        },
+        {
+          "objective": 1480.0,
+          "time_sec": 0.0036625000066123903
+        },
+        {
+          "objective": 1434.0,
+          "time_sec": 0.011425600008806214
+        },
+        {
+          "objective": 1427.0,
+          "time_sec": 0.02142840001033619
+        },
+        {
+          "objective": 1420.0,
+          "time_sec": 0.14430520001042169
+        },
+        {
+          "objective": 1419.0,
+          "time_sec": 0.19548270000086632
+        },
+        {
+          "objective": 1417.0,
+          "time_sec": 0.22080700000515208
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1427.2282988923944,
+      "wall_time_sec": 0.5284027000016067
+    },
+    {
+      "best_observed_gap": 0.0028178936245156746,
+      "best_observed_reference": 2839.0,
+      "cpu_time_sec": 0.234375,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 867,
+      "level": "target",
+      "normalized_solver_objective": 27.34113591025287,
+      "pair_id": "pairwise_distance_median-503",
+      "pairwise_distance_median": 104.12881196104149,
+      "primal_integral": 0.008139440079568433,
+      "qoi_value": 104.12881196104149,
+      "solver_objective": 2847.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.09022440000262577,
+      "trajectory": [
+        {
+          "objective": 2932.0,
+          "time_sec": 0.0007640999974682927
+        },
+        {
+          "objective": 2895.0,
+          "time_sec": 0.015181299997493625
+        },
+        {
+          "objective": 2888.0,
+          "time_sec": 0.02360200000111945
+        },
+        {
+          "objective": 2871.0,
+          "time_sec": 0.06364269999903627
+        },
+        {
+          "objective": 2858.0,
+          "time_sec": 0.09022440000262577
+        },
+        {
+          "objective": 2855.0,
+          "time_sec": 0.09345939999911934
+        },
+        {
+          "objective": 2852.0,
+          "time_sec": 0.17756969999754801
+        },
+        {
+          "objective": 2851.0,
+          "time_sec": 0.28446850000182167
+        },
+        {
+          "objective": 2847.0,
+          "time_sec": 0.34409889999369625
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2845.108734702005,
+      "wall_time_sec": 0.5268696999992244
+    },
+    {
+      "best_observed_gap": 0.0017611835153222965,
+      "best_observed_reference": 2839.0,
+      "cpu_time_sec": 0.234375,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 874,
+      "level": "target",
+      "normalized_solver_objective": 27.312325440379052,
+      "pair_id": "pairwise_distance_median-503",
+      "pairwise_distance_median": 104.12881196104149,
+      "primal_integral": 0.004976462200132282,
+      "qoi_value": 104.12881196104149,
+      "solver_objective": 2844.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.022325800004182383,
+      "trajectory": [
+        {
+          "objective": 2924.0,
+          "time_sec": 0.0007468999974662438
+        },
+        {
+          "objective": 2891.0,
+          "time_sec": 0.0024806000001262873
+        },
+        {
+          "objective": 2890.0,
+          "time_sec": 0.01806570000189822
+        },
+        {
+          "objective": 2869.0,
+          "time_sec": 0.019636099998024292
+        },
+        {
+          "objective": 2863.0,
+          "time_sec": 0.022325800004182383
+        },
+        {
+          "objective": 2850.0,
+          "time_sec": 0.09466050000628456
+        },
+        {
+          "objective": 2844.0,
+          "time_sec": 0.10505009999906179
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2842.5033111632706,
+      "wall_time_sec": 0.5326714999973774
+    },
+    {
+      "best_observed_gap": 0.004579077139837971,
+      "best_observed_reference": 2839.0,
+      "cpu_time_sec": 0.125,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 853,
+      "level": "target",
+      "normalized_solver_objective": 27.389153360042563,
+      "pair_id": "pairwise_distance_median-503",
+      "pairwise_distance_median": 104.12881196104149,
+      "primal_integral": 0.011473639809305316,
+      "qoi_value": 104.12881196104149,
+      "solver_objective": 2852.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.20757559999765363,
+      "trajectory": [
+        {
+          "objective": 3047.0,
+          "time_sec": 0.0013229000032879412
+        },
+        {
+          "objective": 2970.0,
+          "time_sec": 0.0047233000077540055
+        },
+        {
+          "objective": 2940.0,
+          "time_sec": 0.00609460000123363
+        },
+        {
+          "objective": 2896.0,
+          "time_sec": 0.007290499997907318
+        },
+        {
+          "objective": 2869.0,
+          "time_sec": 0.019590900003095157
+        },
+        {
+          "objective": 2861.0,
+          "time_sec": 0.20757559999765363
+        },
+        {
+          "objective": 2858.0,
+          "time_sec": 0.21341740000934806
+        },
+        {
+          "objective": 2852.0,
+          "time_sec": 0.43485940000391565
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2850.625935440816,
+      "wall_time_sec": 0.5265855000034207
+    },
+    {
+      "best_observed_gap": 0.008358662613981762,
+      "best_observed_reference": 1316.0,
+      "cpu_time_sec": 0.171875,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 950,
+      "level": "source",
+      "normalized_solver_objective": 29.173840924162647,
+      "pair_id": "pairwise_distance_median-601",
+      "pairwise_distance_median": 45.48595447029187,
+      "primal_integral": 0.010095181619830033,
+      "qoi_value": 45.48595447029187,
+      "solver_objective": 1327.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.0029467000131262466,
+      "trajectory": [
+        {
+          "objective": 1362.0,
+          "time_sec": 0.0008185000042431056
+        },
+        {
+          "objective": 1327.0,
+          "time_sec": 0.0029467000131262466
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1326.0424706334613,
+      "wall_time_sec": 0.5179119999957038
+    },
+    {
+      "best_observed_gap": 0.001519756838905775,
+      "best_observed_reference": 1316.0,
+      "cpu_time_sec": 0.234375,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 880,
+      "level": "source",
+      "normalized_solver_objective": 28.975977647359738,
+      "pair_id": "pairwise_distance_median-601",
+      "pairwise_distance_median": 45.48595447029187,
+      "primal_integral": 0.003740141358075091,
+      "qoi_value": 45.48595447029187,
+      "solver_objective": 1318.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.007878400007029995,
+      "trajectory": [
+        {
+          "objective": 1348.0,
+          "time_sec": 0.0002651000104378909
+        },
+        {
+          "objective": 1322.0,
+          "time_sec": 0.007878400007029995
+        },
+        {
+          "objective": 1320.0,
+          "time_sec": 0.22856460000912193
+        },
+        {
+          "objective": 1318.0,
+          "time_sec": 0.22932850000506733
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1317.840047760895,
+      "wall_time_sec": 0.5223900999990292
+    },
+    {
+      "best_observed_gap": 0.00303951367781155,
+      "best_observed_reference": 1316.0,
+      "cpu_time_sec": 0.21875,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 904,
+      "level": "source",
+      "normalized_solver_objective": 29.01994726442705,
+      "pair_id": "pairwise_distance_median-601",
+      "pairwise_distance_median": 45.48595447029187,
+      "primal_integral": 0.0131631120083343,
+      "qoi_value": 45.48595447029187,
+      "solver_objective": 1320.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.19615450000856072,
+      "trajectory": [
+        {
+          "objective": 1375.0,
+          "time_sec": 0.0009136000007856637
+        },
+        {
+          "objective": 1353.0,
+          "time_sec": 0.03576720001001377
+        },
+        {
+          "objective": 1352.0,
+          "time_sec": 0.03665430001274217
+        },
+        {
+          "objective": 1339.0,
+          "time_sec": 0.07694490000721999
+        },
+        {
+          "objective": 1337.0,
+          "time_sec": 0.17724480001197662
+        },
+        {
+          "objective": 1320.0,
+          "time_sec": 0.19615450000856072
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1318.3650458819443,
+      "wall_time_sec": 0.529185100007453
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 2628.0,
+      "cpu_time_sec": 0.140625,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 857,
+      "level": "target",
+      "normalized_solver_objective": 28.88803841322511,
+      "pair_id": "pairwise_distance_median-601",
+      "pairwise_distance_median": 90.97190894058375,
+      "primal_integral": 0.007022278540776323,
+      "qoi_value": 90.97190894058375,
+      "solver_objective": 2628.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.013611000002129003,
+      "trajectory": [
+        {
+          "objective": 2755.0,
+          "time_sec": 0.0007225000008475035
+        },
+        {
+          "objective": 2744.0,
+          "time_sec": 0.002144600002793595
+        },
+        {
+          "objective": 2727.0,
+          "time_sec": 0.0034082000056514516
+        },
+        {
+          "objective": 2714.0,
+          "time_sec": 0.007456100007402711
+        },
+        {
+          "objective": 2692.0,
+          "time_sec": 0.00971870000648778
+        },
+        {
+          "objective": 2688.0,
+          "time_sec": 0.012131900002714247
+        },
+        {
+          "objective": 2649.0,
+          "time_sec": 0.013611000002129003
+        },
+        {
+          "objective": 2640.0,
+          "time_sec": 0.19318940000084694
+        },
+        {
+          "objective": 2639.0,
+          "time_sec": 0.2501553000038257
+        },
+        {
+          "objective": 2638.0,
+          "time_sec": 0.39211729999806266
+        },
+        {
+          "objective": 2628.0,
+          "time_sec": 0.40676969999913126
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2627.7636293856244,
+      "wall_time_sec": 0.5602861000079429
+    },
+    {
+      "best_observed_gap": 0.002663622526636225,
+      "best_observed_reference": 2628.0,
+      "cpu_time_sec": 0.265625,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 832,
+      "level": "target",
+      "normalized_solver_objective": 28.964985243092908,
+      "pair_id": "pairwise_distance_median-601",
+      "pairwise_distance_median": 90.97190894058375,
+      "primal_integral": 0.010120952512712847,
+      "qoi_value": 90.97190894058375,
+      "solver_objective": 2635.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.15708959999028593,
+      "trajectory": [
+        {
+          "objective": 2802.0,
+          "time_sec": 0.000789400000940077
+        },
+        {
+          "objective": 2722.0,
+          "time_sec": 0.0025668000016594306
+        },
+        {
+          "objective": 2692.0,
+          "time_sec": 0.011914799993974157
+        },
+        {
+          "objective": 2675.0,
+          "time_sec": 0.04327509998984169
+        },
+        {
+          "objective": 2636.0,
+          "time_sec": 0.15708959999028593
+        },
+        {
+          "objective": 2635.0,
+          "time_sec": 0.4367848999972921
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2636.0571061798855,
+      "wall_time_sec": 0.5178568999981508
+    },
+    {
+      "best_observed_gap": 0.0015220700152207,
+      "best_observed_reference": 2628.0,
+      "cpu_time_sec": 0.265625,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 898,
+      "level": "target",
+      "normalized_solver_objective": 28.932008030292423,
+      "pair_id": "pairwise_distance_median-601",
+      "pairwise_distance_median": 90.97190894058375,
+      "primal_integral": 0.004599729154558953,
+      "qoi_value": 90.97190894058375,
+      "solver_objective": 2632.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "pairwise_distance_median",
+      "time_to_target_or_budget_sec": 0.005403600007412024,
+      "trajectory": [
+        {
+          "objective": 2765.0,
+          "time_sec": 0.0007496000034734607
+        },
+        {
+          "objective": 2724.0,
+          "time_sec": 0.002771200001006946
+        },
+        {
+          "objective": 2719.0,
+          "time_sec": 0.0033620000031078234
+        },
+        {
+          "objective": 2702.0,
+          "time_sec": 0.004325700007029809
+        },
+        {
+          "objective": 2653.0,
+          "time_sec": 0.005403600007412024
+        },
+        {
+          "objective": 2636.0,
+          "time_sec": 0.011155999993206933
+        },
+        {
+          "objective": 2635.0,
+          "time_sec": 0.08531850000144914
+        },
+        {
+          "objective": 2632.0,
+          "time_sec": 0.4776925000041956
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 2632.3569520317506,
+      "wall_time_sec": 0.5182096999924397
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.265625,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 1457,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-101",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0007180902458238164,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0012666999973589554,
+      "trajectory": [
+        {
+          "objective": 1208.0,
+          "time_sec": 0.00026899999647866935
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.0012666999973589554
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.9560042039152,
+      "wall_time_sec": 0.508939499995904
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.3125,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 1416,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-101",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0012904223732230849,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0018789000023389235,
+      "trajectory": [
+        {
+          "objective": 1206.0,
+          "time_sec": 0.0005324999947333708
+        },
+        {
+          "objective": 1181.0,
+          "time_sec": 0.001178899998194538
+        },
+        {
+          "objective": 1116.0,
+          "time_sec": 0.0018789000023389235
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.003183499997248873
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 0.5187622999947052
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.15625,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 1451,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-101",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0014999610109638006,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0006880000000819564,
+      "trajectory": [
+        {
+          "objective": 1116.0,
+          "time_sec": 0.0006880000000819564
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.009272299997974187
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 0.5186821999959648
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1142.0,
+      "cpu_time_sec": 0.15625,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 1599,
+      "level": "target",
+      "normalized_solver_objective": 12.42332221715442,
+      "pair_id": "demand_cv-101",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.001145840472429208,
+      "qoi_value": 0.5,
+      "solver_objective": 1142.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.006569899996975437,
+      "trajectory": [
+        {
+          "objective": 1201.0,
+          "time_sec": 0.00028780000866390765
+        },
+        {
+          "objective": 1159.0,
+          "time_sec": 0.0054976000101305544
+        },
+        {
+          "objective": 1142.0,
+          "time_sec": 0.006569899996975437
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1147.454797034201,
+      "wall_time_sec": 0.5106224000046495
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1142.0,
+      "cpu_time_sec": 0.140625,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 1575,
+      "level": "target",
+      "normalized_solver_objective": 12.42332221715442,
+      "pair_id": "demand_cv-101",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0015747147256401637,
+      "qoi_value": 0.5,
+      "solver_objective": 1142.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0037872000102652237,
+      "trajectory": [
+        {
+          "objective": 1167.0,
+          "time_sec": 0.0006985000072745606
+        },
+        {
+          "objective": 1146.0,
+          "time_sec": 0.0037872000102652237
+        },
+        {
+          "objective": 1142.0,
+          "time_sec": 0.009851599999819882
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1147.4547970342007,
+      "wall_time_sec": 0.5201096999953734
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1142.0,
+      "cpu_time_sec": 0.078125,
+      "feasible": true,
+      "generator_seed": 101,
+      "iterations": 1504,
+      "level": "target",
+      "normalized_solver_objective": 12.42332221715442,
+      "pair_id": "demand_cv-101",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.002787953082613986,
+      "qoi_value": 0.5,
+      "solver_objective": 1142.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.011272500007180497,
+      "trajectory": [
+        {
+          "objective": 1210.0,
+          "time_sec": 0.0008134000090649351
+        },
+        {
+          "objective": 1201.0,
+          "time_sec": 0.005916900001466274
+        },
+        {
+          "objective": 1142.0,
+          "time_sec": 0.011272500007180497
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1147.454797034201,
+      "wall_time_sec": 0.5182432000001427
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.046875,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 1473,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-211",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0006259999936446548,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0003129999968223274,
+      "trajectory": [
+        {
+          "objective": 1108.0,
+          "time_sec": 0.0003129999968223274
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 0.5170122999988962
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.203125,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 1463,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-211",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0017475198535332691,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0007642999989911914,
+      "trajectory": [
+        {
+          "objective": 1116.0,
+          "time_sec": 0.0007642999989911914
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.015924499995890073
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 0.5089328999893041
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.15625,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 1461,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-211",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0016614000196568668,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0008307000098284334,
+      "trajectory": [
+        {
+          "objective": 1108.0,
+          "time_sec": 0.0008307000098284334
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.9560042039147,
+      "wall_time_sec": 0.5081923000107054
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1164.0,
+      "cpu_time_sec": 0.21875,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 1828,
+      "level": "target",
+      "normalized_solver_objective": 12.662650666171404,
+      "pair_id": "demand_cv-211",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0024166690643526345,
+      "qoi_value": 0.5,
+      "solver_objective": 1164.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0312978000001749,
+      "trajectory": [
+        {
+          "objective": 1199.0,
+          "time_sec": 0.00019439999596215785
+        },
+        {
+          "objective": 1197.0,
+          "time_sec": 0.012440699996659532
+        },
+        {
+          "objective": 1169.0,
+          "time_sec": 0.0312978000001749
+        },
+        {
+          "objective": 1164.0,
+          "time_sec": 0.05716080000274815
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1170.4929553239313,
+      "wall_time_sec": 0.5174669999978505
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1164.0,
+      "cpu_time_sec": 0.171875,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 1905,
+      "level": "target",
+      "normalized_solver_objective": 12.662650666171404,
+      "pair_id": "demand_cv-211",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0015508275105729154,
+      "qoi_value": 0.5,
+      "solver_objective": 1164.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.008547899997211061,
+      "trajectory": [
+        {
+          "objective": 1199.0,
+          "time_sec": 0.0005517000099644065
+        },
+        {
+          "objective": 1192.0,
+          "time_sec": 0.005767299997387454
+        },
+        {
+          "objective": 1164.0,
+          "time_sec": 0.008547899997211061
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1170.532483769886,
+      "wall_time_sec": 0.5159871000068961
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1164.0,
+      "cpu_time_sec": 0.171875,
+      "feasible": true,
+      "generator_seed": 211,
+      "iterations": 1828,
+      "level": "target",
+      "normalized_solver_objective": 12.662650666171404,
+      "pair_id": "demand_cv-211",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0012906018905955708,
+      "qoi_value": 0.5,
+      "solver_objective": 1164.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.005526099994312972,
+      "trajectory": [
+        {
+          "objective": 1192.0,
+          "time_sec": 0.0005275000003166497
+        },
+        {
+          "objective": 1179.0,
+          "time_sec": 0.005307600004016422
+        },
+        {
+          "objective": 1164.0,
+          "time_sec": 0.005526099994312972
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1170.4929553239315,
+      "wall_time_sec": 0.5073441000131425
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.265625,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 1493,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-307",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.001442030304990329,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.007608499989146367,
+      "trajectory": [
+        {
+          "objective": 1224.0,
+          "time_sec": 0.00025859999004751444
+        },
+        {
+          "objective": 1170.0,
+          "time_sec": 0.0013078999909339473
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.007608499989146367
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 0.5167131000052905
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.171875,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 1543,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-307",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0014736707621112817,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0013346000050660223,
+      "trajectory": [
+        {
+          "objective": 1208.0,
+          "time_sec": 0.0006519000016851351
+        },
+        {
+          "objective": 1116.0,
+          "time_sec": 0.0013346000050660223
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.004564400005619973
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.9560042039147,
+      "wall_time_sec": 0.5191546999994898
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.140625,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 1498,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-307",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.00109215306665745,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0014166000037221238,
+      "trajectory": [
+        {
+          "objective": 1208.0,
+          "time_sec": 0.00042979999852832407
+        },
+        {
+          "objective": 1116.0,
+          "time_sec": 0.0014166000037221238
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.005185900008655153
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 0.5172403999895323
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1128.0,
+      "cpu_time_sec": 0.171875,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 1875,
+      "level": "target",
+      "normalized_solver_objective": 12.2710222950527,
+      "pair_id": "demand_cv-307",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0014540517843264016,
+      "qoi_value": 0.5,
+      "solver_objective": 1128.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.013704700002563186,
+      "trajectory": [
+        {
+          "objective": 1212.0,
+          "time_sec": 0.00019190000602975488
+        },
+        {
+          "objective": 1192.0,
+          "time_sec": 0.0021421999990707263
+        },
+        {
+          "objective": 1148.0,
+          "time_sec": 0.006881900000735186
+        },
+        {
+          "objective": 1128.0,
+          "time_sec": 0.013704700002563186
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1134.5699125608917,
+      "wall_time_sec": 0.508644200002891
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1128.0,
+      "cpu_time_sec": 0.140625,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 1651,
+      "level": "target",
+      "normalized_solver_objective": 12.2710222950527,
+      "pair_id": "demand_cv-307",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0015151131121959398,
+      "qoi_value": 0.5,
+      "solver_objective": 1128.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.01161570000112988,
+      "trajectory": [
+        {
+          "objective": 1174.0,
+          "time_sec": 0.0005268999957479537
+        },
+        {
+          "objective": 1148.0,
+          "time_sec": 0.002003999994485639
+        },
+        {
+          "objective": 1128.0,
+          "time_sec": 0.01161570000112988
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1134.569912560892,
+      "wall_time_sec": 0.5069594999949913
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1128.0,
+      "cpu_time_sec": 0.125,
+      "feasible": true,
+      "generator_seed": 307,
+      "iterations": 1563,
+      "level": "target",
+      "normalized_solver_objective": 12.2710222950527,
+      "pair_id": "demand_cv-307",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.001825960648028553,
+      "qoi_value": 0.5,
+      "solver_objective": 1128.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.007243700005346909,
+      "trajectory": [
+        {
+          "objective": 1226.0,
+          "time_sec": 0.00049560000479687
+        },
+        {
+          "objective": 1192.0,
+          "time_sec": 0.0016405000060331076
+        },
+        {
+          "objective": 1128.0,
+          "time_sec": 0.007243700005346909
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1134.569912560892,
+      "wall_time_sec": 0.5178008000075351
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.234375,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 1492,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-401",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0008285418653458068,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0011858999932883307,
+      "trajectory": [
+        {
+          "objective": 1206.0,
+          "time_sec": 0.00033939999411813915
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.0011858999932883307
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 0.5190943000052357
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.203125,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 1478,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-401",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.001308050543945686,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0005926000012550503,
+      "trajectory": [
+        {
+          "objective": 1116.0,
+          "time_sec": 0.0005926000012550503
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.00909999999566935
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 0.5193750000034925
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.171875,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 1502,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-401",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0010426319393393203,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.000988400002825074,
+      "trajectory": [
+        {
+          "objective": 1255.0,
+          "time_sec": 0.00046179999480955303
+        },
+        {
+          "objective": 1170.0,
+          "time_sec": 0.0007326999912038445
+        },
+        {
+          "objective": 1116.0,
+          "time_sec": 0.000988400002825074
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.002271899997140281
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 0.5082736000040313
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1144.0,
+      "cpu_time_sec": 0.234375,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 1808,
+      "level": "target",
+      "normalized_solver_objective": 12.445079348883237,
+      "pair_id": "demand_cv-401",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0012288608249819062,
+      "qoi_value": 0.5,
+      "solver_objective": 1144.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.013061399993603118,
+      "trajectory": [
+        {
+          "objective": 1268.0,
+          "time_sec": 0.0001632999919820577
+        },
+        {
+          "objective": 1180.0,
+          "time_sec": 0.0007515000033890828
+        },
+        {
+          "objective": 1144.0,
+          "time_sec": 0.013061399993603118
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1149.5239942379865,
+      "wall_time_sec": 0.508750200009672
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1144.0,
+      "cpu_time_sec": 0.140625,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 1874,
+      "level": "target",
+      "normalized_solver_objective": 12.445079348883237,
+      "pair_id": "demand_cv-401",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0013405171324135867,
+      "qoi_value": 0.5,
+      "solver_objective": 1144.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.004387599998153746,
+      "trajectory": [
+        {
+          "objective": 1257.0,
+          "time_sec": 0.000450999999884516
+        },
+        {
+          "objective": 1185.0,
+          "time_sec": 0.0016930999991018325
+        },
+        {
+          "objective": 1144.0,
+          "time_sec": 0.004387599998153746
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1149.5239942379867,
+      "wall_time_sec": 0.516201300008106
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1144.0,
+      "cpu_time_sec": 0.125,
+      "feasible": true,
+      "generator_seed": 401,
+      "iterations": 1846,
+      "level": "target",
+      "normalized_solver_objective": 12.445079348883237,
+      "pair_id": "demand_cv-401",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0012557091014803684,
+      "qoi_value": 0.5,
+      "solver_objective": 1144.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0045707000099355355,
+      "trajectory": [
+        {
+          "objective": 1201.0,
+          "time_sec": 0.0004211000050418079
+        },
+        {
+          "objective": 1144.0,
+          "time_sec": 0.0045707000099355355
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1149.5239942379867,
+      "wall_time_sec": 0.5079416999942623
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.15625,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 1493,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-503",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0007274267090348332,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0003569999971659854,
+      "trajectory": [
+        {
+          "objective": 1116.0,
+          "time_sec": 0.0003569999971659854
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.0012867999903392047
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.9560042039152,
+      "wall_time_sec": 0.5193825000023935
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.234375,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 1489,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-503",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0013255999947432429,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0006627999973716214,
+      "trajectory": [
+        {
+          "objective": 1108.0,
+          "time_sec": 0.0006627999973716214
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 0.5159571999975014
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.21875,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 1439,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-503",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0015028476544247354,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0013657999952556565,
+      "trajectory": [
+        {
+          "objective": 1208.0,
+          "time_sec": 0.0006843000010121614
+        },
+        {
+          "objective": 1116.0,
+          "time_sec": 0.0013657999952556565
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.002143699995940551
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 0.517997999995714
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1116.0,
+      "cpu_time_sec": 0.1875,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 1884,
+      "level": "target",
+      "normalized_solver_objective": 12.1404795046798,
+      "pair_id": "demand_cv-503",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0019800475035015056,
+      "qoi_value": 0.5,
+      "solver_objective": 1116.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.014549500003340654,
+      "trajectory": [
+        {
+          "objective": 1233.0,
+          "time_sec": 0.00022450000687967986
+        },
+        {
+          "objective": 1203.0,
+          "time_sec": 0.001087500000721775
+        },
+        {
+          "objective": 1148.0,
+          "time_sec": 0.006952399999136105
+        },
+        {
+          "objective": 1116.0,
+          "time_sec": 0.014549500003340654
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1123.1131088325874,
+      "wall_time_sec": 0.5111812999966787
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1116.0,
+      "cpu_time_sec": 0.125,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 1633,
+      "level": "target",
+      "normalized_solver_objective": 12.1404795046798,
+      "pair_id": "demand_cv-503",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.002944982796114632,
+      "qoi_value": 0.5,
+      "solver_objective": 1116.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.028951599990250543,
+      "trajectory": [
+        {
+          "objective": 1148.0,
+          "time_sec": 0.0006613000005017966
+        },
+        {
+          "objective": 1116.0,
+          "time_sec": 0.028951599990250543
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1123.1131088325874,
+      "wall_time_sec": 0.5081375000008848
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1116.0,
+      "cpu_time_sec": 0.125,
+      "feasible": true,
+      "generator_seed": 503,
+      "iterations": 1615,
+      "level": "target",
+      "normalized_solver_objective": 12.1404795046798,
+      "pair_id": "demand_cv-503",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0023836772217633085,
+      "qoi_value": 0.5,
+      "solver_objective": 1116.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.012547299993457273,
+      "trajectory": [
+        {
+          "objective": 1217.0,
+          "time_sec": 0.0006083999905968085
+        },
+        {
+          "objective": 1210.0,
+          "time_sec": 0.00265650000073947
+        },
+        {
+          "objective": 1179.0,
+          "time_sec": 0.0032128999882843345
+        },
+        {
+          "objective": 1164.0,
+          "time_sec": 0.005325499994796701
+        },
+        {
+          "objective": 1148.0,
+          "time_sec": 0.007060899995849468
+        },
+        {
+          "objective": 1116.0,
+          "time_sec": 0.012547299993457273
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1123.1131088325874,
+      "wall_time_sec": 0.5171044000016991
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.140625,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 1487,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-601",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0016241718606018066,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0019365000043762848,
+      "trajectory": [
+        {
+          "objective": 1180.0,
+          "time_sec": 0.0006702000100631267
+        },
+        {
+          "objective": 1116.0,
+          "time_sec": 0.0019365000043762848
+        },
+        {
+          "objective": 1108.0,
+          "time_sec": 0.010191000008489937
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.9560042039147,
+      "wall_time_sec": 0.5187707000004593
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.265625,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 1499,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-601",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0016102000081446022,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0008051000040723011,
+      "trajectory": [
+        {
+          "objective": 1108.0,
+          "time_sec": 0.0008051000040723011
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.956004203915,
+      "wall_time_sec": 0.5097542000003159
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1108.0,
+      "cpu_time_sec": 0.125,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 1463,
+      "level": "source",
+      "normalized_solver_objective": 12.053450977764532,
+      "pair_id": "demand_cv-601",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0014626000192947686,
+      "qoi_value": 0.0,
+      "solver_objective": 1108.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0007313000096473843,
+      "trajectory": [
+        {
+          "objective": 1108.0,
+          "time_sec": 0.0007313000096473843
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1112.9560042039147,
+      "wall_time_sec": 0.5165306999988388
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1130.0,
+      "cpu_time_sec": 0.265625,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 1577,
+      "level": "target",
+      "normalized_solver_objective": 12.292779426781518,
+      "pair_id": "demand_cv-601",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.001811607075346205,
+      "qoi_value": 0.5,
+      "solver_objective": 1130.0,
+      "solver_seed": 0,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.004297999999835156,
+      "trajectory": [
+        {
+          "objective": 1206.0,
+          "time_sec": 0.0006207999977050349
+        },
+        {
+          "objective": 1134.0,
+          "time_sec": 0.004297999999835156
+        },
+        {
+          "objective": 1130.0,
+          "time_sec": 0.014944700000341982
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1137.403673676299,
+      "wall_time_sec": 0.5163048000104027
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1130.0,
+      "cpu_time_sec": 0.09375,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 1666,
+      "level": "target",
+      "normalized_solver_objective": 12.292779426781518,
+      "pair_id": "demand_cv-601",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.0013416761034312536,
+      "qoi_value": 0.5,
+      "solver_objective": 1130.0,
+      "solver_seed": 1,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0062830999959260225,
+      "trajectory": [
+        {
+          "objective": 1206.0,
+          "time_sec": 0.0005520999984582886
+        },
+        {
+          "objective": 1144.0,
+          "time_sec": 0.0014221000019460917
+        },
+        {
+          "objective": 1130.0,
+          "time_sec": 0.0062830999959260225
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1137.4036736762991,
+      "wall_time_sec": 0.5165258999913931
+    },
+    {
+      "best_observed_gap": 0.0,
+      "best_observed_reference": 1130.0,
+      "cpu_time_sec": 0.15625,
+      "feasible": true,
+      "generator_seed": 601,
+      "iterations": 1591,
+      "level": "target",
+      "normalized_solver_objective": 12.292779426781518,
+      "pair_id": "demand_cv-601",
+      "pairwise_distance_median": 91.92388155425118,
+      "primal_integral": 0.001276399998459965,
+      "qoi_value": 0.5,
+      "solver_objective": 1130.0,
+      "solver_seed": 2,
+      "target_hit": true,
+      "target_qoi": "demand_cv",
+      "time_to_target_or_budget_sec": 0.0006381999992299825,
+      "trajectory": [
+        {
+          "objective": 1130.0,
+          "time_sec": 0.0006381999992299825
+        }
+      ],
+      "verification_detail": "independent CVRP verification passed",
+      "verified_objective": 1137.4036736762991,
+      "wall_time_sec": 0.5179264000034891
+    }
+  ],
+  "schema_version": "1.0",
+  "solver": {
+    "name": "PyVRP",
+    "threads": 1,
+    "version": "0.13.4"
+  }
+}

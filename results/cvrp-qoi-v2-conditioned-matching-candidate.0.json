@@ -1,0 +1,783 @@
+{
+  "claim_scope": "Solver-free definition and hidden-pair recovery for v2-candidate.0 only; this does not freeze v2.0 or validate solver-response effects.",
+  "conclusion": "Supported with treatment-specific incremental value for v2-candidate.0",
+  "generator_seed": 20260821,
+  "kind": "cvrp_v2_experiment_conditioned_matching_validation",
+  "matching_axis_policy": {
+    "affected_blocks_excluded_from_conditioned_cost": true,
+    "block_weighting": "equal_blocks_equal_axes_within_block",
+    "conditional_role": "scale_conditioned",
+    "excluded_roles": [
+      "raw",
+      "experimental"
+    ],
+    "normalization": "pooled_median_mad_with_iqr_fallback"
+  },
+  "matching_blocks": {
+    "capacity_route": [
+      "capacity_volume_lower_bound",
+      "volume_lb_customers_per_route",
+      "fleet_fill_ratio",
+      "demand_mean_fraction",
+      "max_demand_fraction"
+    ],
+    "clustering": [
+      "dbscan_cluster_fraction",
+      "dbscan_cluster_size_cv",
+      "dbscan_outlier_fraction",
+      "dbscan_core_fraction",
+      "dbscan_within_cluster_distance_cv",
+      "dbscan_max_cluster_demand_fraction"
+    ],
+    "coupling": [
+      "demand_depot_radial_pearson",
+      "demand_spatial_quadrupole_coupling",
+      "demand_local_sparsity_spearman"
+    ],
+    "demand_shape": [
+      "demand_cv"
+    ],
+    "depot_geometry": [
+      "depot_centroid_distance_normalized",
+      "depot_distance_mean_normalized",
+      "depot_distance_iqr_normalized",
+      "depot_as_nearest_neighbor_fraction"
+    ],
+    "global_geometry": [
+      "pairwise_distance_cv",
+      "distinct_distance_fraction_3dp"
+    ],
+    "local_geometry": [
+      "nearest_neighbor_clark_evans_ratio",
+      "nearest_neighbor_iqr_clark_evans_ratio",
+      "two_nearest_neighbor_angle_median"
+    ],
+    "mst_topology": [
+      "mst_total_length_n_corrected",
+      "mst_edge_cv",
+      "mst_leaf_fraction",
+      "mst_depth_mean_n_corrected"
+    ],
+    "scale": [
+      "customer_count"
+    ],
+    "shape": [
+      "convex_hull_area_ratio",
+      "convex_hull_perimeter_ratio",
+      "convex_hull_fraction"
+    ]
+  },
+  "pair_count_per_treatment": 48,
+  "panel_fingerprint": "a4adc822ae29a35ec486bc8c8afb3927ac90e713f1018e58c286c860aa74cd18",
+  "qoi_spec_fingerprint": "86c6050c00a6ce077f12f26844bf256bb45fe19fccdd93af6b288462fd597f4f",
+  "qoi_spec_status": "candidate.0_not_frozen",
+  "qoi_spec_version": "2.0-candidate.0",
+  "schema_version": "2.0",
+  "solver_runs_created": 0,
+  "solver_runs_used": 0,
+  "summary": {
+    "mean_conditioned_ot_confounder_distance": 0.17090694134433512,
+    "mean_conditioned_ot_pair_recovery": 0.9409722222222222,
+    "mean_confounder_distance_reduction": 0.09294013338518205,
+    "mean_pair_recovery_gain": 0.08333333333333333,
+    "mean_unconditioned_ot_confounder_distance": 0.2638470747295172,
+    "mean_unconditioned_ot_pair_recovery": 0.8576388888888888,
+    "treatment_count": 6,
+    "treatments_with_no_pair_recovery_loss": 6,
+    "treatments_with_no_worse_confounding": 6,
+    "treatments_with_strict_recovery_gain_and_no_worse_confounding": 2
+  },
+  "treatments": {
+    "customer_count": {
+      "active_confounder_axes": [
+        "capacity_volume_lower_bound",
+        "volume_lb_customers_per_route",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "max_demand_fraction",
+        "demand_cv",
+        "pairwise_distance_cv",
+        "depot_centroid_distance_normalized",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "depot_as_nearest_neighbor_fraction",
+        "demand_depot_radial_pearson"
+      ],
+      "active_treatment_profile_axes": [
+        "customer_count",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "two_nearest_neighbor_angle_median",
+        "mst_total_length_n_corrected",
+        "mst_edge_cv",
+        "mst_leaf_fraction",
+        "mst_depth_mean_n_corrected",
+        "convex_hull_area_ratio",
+        "convex_hull_perimeter_ratio",
+        "convex_hull_fraction",
+        "dbscan_cluster_fraction",
+        "dbscan_outlier_fraction",
+        "dbscan_core_fraction",
+        "dbscan_within_cluster_distance_cv",
+        "dbscan_max_cluster_demand_fraction"
+      ],
+      "active_unconditioned_axes": [
+        "customer_count",
+        "capacity_volume_lower_bound",
+        "volume_lb_customers_per_route",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "max_demand_fraction",
+        "demand_cv",
+        "pairwise_distance_cv",
+        "depot_centroid_distance_normalized",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "depot_as_nearest_neighbor_fraction",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "two_nearest_neighbor_angle_median",
+        "mst_total_length_n_corrected",
+        "mst_edge_cv",
+        "mst_leaf_fraction",
+        "convex_hull_area_ratio",
+        "convex_hull_perimeter_ratio",
+        "convex_hull_fraction",
+        "demand_depot_radial_pearson"
+      ],
+      "affected_blocks": [
+        "scale",
+        "local_geometry",
+        "mst_topology",
+        "shape",
+        "clustering"
+      ],
+      "confounder_blocks": [
+        "capacity_route",
+        "demand_shape",
+        "global_geometry",
+        "depot_geometry",
+        "coupling"
+      ],
+      "methods": {
+        "conditioned_greedy": {
+          "mean_confounder_distance": 1.0649013527175883,
+          "mean_treatment_distance": 1.765690354807713,
+          "p95_confounder_distance": 2.8345890301485697,
+          "pair_recovery_rate": 0.7083333333333334,
+          "recovered_pair_count": 34,
+          "treatment_distance_retention": 1.037082225599838
+        },
+        "conditioned_ot": {
+          "mean_confounder_distance": 0.9901018783562493,
+          "mean_treatment_distance": 1.7728542517771528,
+          "p95_confounder_distance": 2.363187088406494,
+          "pair_recovery_rate": 0.7291666666666666,
+          "recovered_pair_count": 35,
+          "treatment_distance_retention": 1.0412899566965192
+        },
+        "oracle_crn": {
+          "mean_confounder_distance": 1.0943652313622239,
+          "mean_treatment_distance": 1.7025557966596672,
+          "p95_confounder_distance": 2.5304154037051996,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "unconditioned_greedy": {
+          "mean_confounder_distance": 1.0698047634743917,
+          "mean_treatment_distance": 1.7405833623176294,
+          "p95_confounder_distance": 2.8345890301485697,
+          "pair_recovery_rate": 0.7291666666666666,
+          "recovered_pair_count": 35,
+          "treatment_distance_retention": 1.0223355767444278
+        },
+        "unconditioned_ot": {
+          "mean_confounder_distance": 1.0204855906535761,
+          "mean_treatment_distance": 1.7312339415990954,
+          "p95_confounder_distance": 2.527033170860847,
+          "pair_recovery_rate": 0.7291666666666666,
+          "recovered_pair_count": 35,
+          "treatment_distance_retention": 1.0168441733279423
+        }
+      },
+      "source_level": "n=80",
+      "target_level": "n=160"
+    },
+    "customer_positioning": {
+      "active_confounder_axes": [
+        "customer_count",
+        "capacity_volume_lower_bound",
+        "volume_lb_customers_per_route",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "max_demand_fraction",
+        "demand_cv"
+      ],
+      "active_treatment_profile_axes": [
+        "pairwise_distance_cv",
+        "distinct_distance_fraction_3dp",
+        "depot_centroid_distance_normalized",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "depot_as_nearest_neighbor_fraction",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "two_nearest_neighbor_angle_median",
+        "mst_total_length_n_corrected",
+        "mst_edge_cv",
+        "mst_leaf_fraction",
+        "mst_depth_mean_n_corrected",
+        "convex_hull_area_ratio",
+        "convex_hull_perimeter_ratio",
+        "convex_hull_fraction",
+        "dbscan_cluster_fraction",
+        "dbscan_outlier_fraction",
+        "dbscan_core_fraction",
+        "dbscan_within_cluster_distance_cv",
+        "dbscan_max_cluster_demand_fraction",
+        "demand_depot_radial_pearson",
+        "demand_spatial_quadrupole_coupling",
+        "demand_local_sparsity_spearman"
+      ],
+      "active_unconditioned_axes": [
+        "customer_count",
+        "capacity_volume_lower_bound",
+        "volume_lb_customers_per_route",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "max_demand_fraction",
+        "demand_cv",
+        "pairwise_distance_cv",
+        "depot_centroid_distance_normalized",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "depot_as_nearest_neighbor_fraction",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "two_nearest_neighbor_angle_median",
+        "mst_total_length_n_corrected",
+        "mst_edge_cv",
+        "mst_leaf_fraction",
+        "convex_hull_area_ratio",
+        "convex_hull_perimeter_ratio",
+        "convex_hull_fraction",
+        "demand_depot_radial_pearson"
+      ],
+      "affected_blocks": [
+        "global_geometry",
+        "depot_geometry",
+        "local_geometry",
+        "mst_topology",
+        "shape",
+        "clustering",
+        "coupling"
+      ],
+      "confounder_blocks": [
+        "scale",
+        "capacity_route",
+        "demand_shape"
+      ],
+      "methods": {
+        "conditioned_greedy": {
+          "mean_confounder_distance": 0.03533976970976121,
+          "mean_treatment_distance": 2.529565689483258,
+          "p95_confounder_distance": 0.22974365222942433,
+          "pair_recovery_rate": 0.9166666666666666,
+          "recovered_pair_count": 44,
+          "treatment_distance_retention": 1.0058489720549375
+        },
+        "conditioned_ot": {
+          "mean_confounder_distance": 0.03533976970976121,
+          "mean_treatment_distance": 2.529565689483258,
+          "p95_confounder_distance": 0.22974365222942433,
+          "pair_recovery_rate": 0.9166666666666666,
+          "recovered_pair_count": 44,
+          "treatment_distance_retention": 1.0058489720549375
+        },
+        "oracle_crn": {
+          "mean_confounder_distance": 0.036004208464135976,
+          "mean_treatment_distance": 2.5148563648828763,
+          "p95_confounder_distance": 0.2636852583166452,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "unconditioned_greedy": {
+          "mean_confounder_distance": 1.6021511019034105,
+          "mean_treatment_distance": 2.5763378755557063,
+          "p95_confounder_distance": 3.1070755539069066,
+          "pair_recovery_rate": 0.10416666666666667,
+          "recovered_pair_count": 5,
+          "treatment_distance_retention": 1.0244473249173789
+        },
+        "unconditioned_ot": {
+          "mean_confounder_distance": 0.5064492055425392,
+          "mean_treatment_distance": 2.4446631904288836,
+          "p95_confounder_distance": 1.4313764771793278,
+          "pair_recovery_rate": 0.5,
+          "recovered_pair_count": 24,
+          "treatment_distance_retention": 0.9720885950250834
+        }
+      },
+      "source_level": "R",
+      "target_level": "C"
+    },
+    "demand_dispersion": {
+      "active_confounder_axes": [
+        "customer_count",
+        "pairwise_distance_cv",
+        "depot_centroid_distance_normalized",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "depot_as_nearest_neighbor_fraction",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "two_nearest_neighbor_angle_median",
+        "mst_total_length_n_corrected",
+        "mst_edge_cv",
+        "mst_leaf_fraction",
+        "convex_hull_area_ratio",
+        "convex_hull_perimeter_ratio",
+        "convex_hull_fraction"
+      ],
+      "active_treatment_profile_axes": [
+        "capacity_volume_lower_bound",
+        "volume_lb_customers_per_route",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "max_demand_fraction",
+        "demand_cv",
+        "dbscan_cluster_fraction",
+        "dbscan_outlier_fraction",
+        "dbscan_core_fraction",
+        "dbscan_within_cluster_distance_cv",
+        "dbscan_max_cluster_demand_fraction",
+        "demand_depot_radial_pearson",
+        "demand_spatial_quadrupole_coupling",
+        "demand_local_sparsity_spearman"
+      ],
+      "active_unconditioned_axes": [
+        "customer_count",
+        "capacity_volume_lower_bound",
+        "volume_lb_customers_per_route",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "max_demand_fraction",
+        "demand_cv",
+        "pairwise_distance_cv",
+        "depot_centroid_distance_normalized",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "depot_as_nearest_neighbor_fraction",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "two_nearest_neighbor_angle_median",
+        "mst_total_length_n_corrected",
+        "mst_edge_cv",
+        "mst_leaf_fraction",
+        "convex_hull_area_ratio",
+        "convex_hull_perimeter_ratio",
+        "convex_hull_fraction",
+        "demand_depot_radial_pearson"
+      ],
+      "affected_blocks": [
+        "capacity_route",
+        "demand_shape",
+        "clustering",
+        "coupling"
+      ],
+      "confounder_blocks": [
+        "scale",
+        "global_geometry",
+        "depot_geometry",
+        "local_geometry",
+        "mst_topology",
+        "shape"
+      ],
+      "methods": {
+        "conditioned_greedy": {
+          "mean_confounder_distance": 0.0,
+          "mean_treatment_distance": 1.2037518759628236,
+          "p95_confounder_distance": 0.0,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "conditioned_ot": {
+          "mean_confounder_distance": 0.0,
+          "mean_treatment_distance": 1.2037518759628236,
+          "p95_confounder_distance": 0.0,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "oracle_crn": {
+          "mean_confounder_distance": 0.0,
+          "mean_treatment_distance": 1.2037518759628236,
+          "p95_confounder_distance": 0.0,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "unconditioned_greedy": {
+          "mean_confounder_distance": 0.12986228710743433,
+          "mean_treatment_distance": 1.2581961916096756,
+          "p95_confounder_distance": 1.0630629204061888,
+          "pair_recovery_rate": 0.8958333333333334,
+          "recovered_pair_count": 43,
+          "treatment_distance_retention": 1.045228852169642
+        },
+        "unconditioned_ot": {
+          "mean_confounder_distance": 0.0,
+          "mean_treatment_distance": 1.2037518759628236,
+          "p95_confounder_distance": 0.0,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        }
+      },
+      "source_level": "small_small_variance",
+      "target_level": "small_large_variance"
+    },
+    "depot_positioning": {
+      "active_confounder_axes": [
+        "customer_count",
+        "capacity_volume_lower_bound",
+        "volume_lb_customers_per_route",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "max_demand_fraction",
+        "demand_cv",
+        "pairwise_distance_cv",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "two_nearest_neighbor_angle_median",
+        "mst_total_length_n_corrected",
+        "mst_edge_cv",
+        "mst_leaf_fraction",
+        "convex_hull_area_ratio",
+        "convex_hull_perimeter_ratio",
+        "convex_hull_fraction"
+      ],
+      "active_treatment_profile_axes": [
+        "depot_centroid_distance_normalized",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "depot_as_nearest_neighbor_fraction",
+        "demand_depot_radial_pearson",
+        "demand_spatial_quadrupole_coupling",
+        "demand_local_sparsity_spearman"
+      ],
+      "active_unconditioned_axes": [
+        "customer_count",
+        "capacity_volume_lower_bound",
+        "volume_lb_customers_per_route",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "max_demand_fraction",
+        "demand_cv",
+        "pairwise_distance_cv",
+        "depot_centroid_distance_normalized",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "depot_as_nearest_neighbor_fraction",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "two_nearest_neighbor_angle_median",
+        "mst_total_length_n_corrected",
+        "mst_edge_cv",
+        "mst_leaf_fraction",
+        "convex_hull_area_ratio",
+        "convex_hull_perimeter_ratio",
+        "convex_hull_fraction",
+        "demand_depot_radial_pearson"
+      ],
+      "affected_blocks": [
+        "depot_geometry",
+        "coupling"
+      ],
+      "confounder_blocks": [
+        "scale",
+        "capacity_route",
+        "demand_shape",
+        "global_geometry",
+        "local_geometry",
+        "mst_topology",
+        "shape",
+        "clustering"
+      ],
+      "methods": {
+        "conditioned_greedy": {
+          "mean_confounder_distance": 0.0,
+          "mean_treatment_distance": 1.6150899590667869,
+          "p95_confounder_distance": 0.0,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "conditioned_ot": {
+          "mean_confounder_distance": 0.0,
+          "mean_treatment_distance": 1.6150899590667869,
+          "p95_confounder_distance": 0.0,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "oracle_crn": {
+          "mean_confounder_distance": 0.0,
+          "mean_treatment_distance": 1.6150899590667869,
+          "p95_confounder_distance": 0.0,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "unconditioned_greedy": {
+          "mean_confounder_distance": 0.23107191293286103,
+          "mean_treatment_distance": 1.7025864008086453,
+          "p95_confounder_distance": 1.0591875130654262,
+          "pair_recovery_rate": 0.7291666666666666,
+          "recovered_pair_count": 35,
+          "treatment_distance_retention": 1.0541743456769521
+        },
+        "unconditioned_ot": {
+          "mean_confounder_distance": 0.05614765218098741,
+          "mean_treatment_distance": 1.6484515471050762,
+          "p95_confounder_distance": 0.6358025757916176,
+          "pair_recovery_rate": 0.9166666666666666,
+          "recovered_pair_count": 44,
+          "treatment_distance_retention": 1.0206561794598525
+        }
+      },
+      "source_level": "C",
+      "target_level": "E"
+    },
+    "quadrant_coupling": {
+      "active_confounder_axes": [
+        "customer_count",
+        "capacity_volume_lower_bound",
+        "volume_lb_customers_per_route",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "max_demand_fraction",
+        "demand_cv",
+        "pairwise_distance_cv",
+        "depot_centroid_distance_normalized",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "depot_as_nearest_neighbor_fraction",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "two_nearest_neighbor_angle_median",
+        "mst_total_length_n_corrected",
+        "mst_edge_cv",
+        "mst_leaf_fraction",
+        "convex_hull_area_ratio",
+        "convex_hull_perimeter_ratio",
+        "convex_hull_fraction"
+      ],
+      "active_treatment_profile_axes": [
+        "dbscan_cluster_fraction",
+        "dbscan_outlier_fraction",
+        "dbscan_core_fraction",
+        "dbscan_within_cluster_distance_cv",
+        "dbscan_max_cluster_demand_fraction",
+        "demand_depot_radial_pearson",
+        "demand_spatial_quadrupole_coupling",
+        "demand_local_sparsity_spearman"
+      ],
+      "active_unconditioned_axes": [
+        "customer_count",
+        "capacity_volume_lower_bound",
+        "volume_lb_customers_per_route",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "max_demand_fraction",
+        "demand_cv",
+        "pairwise_distance_cv",
+        "depot_centroid_distance_normalized",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "depot_as_nearest_neighbor_fraction",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "two_nearest_neighbor_angle_median",
+        "mst_total_length_n_corrected",
+        "mst_edge_cv",
+        "mst_leaf_fraction",
+        "convex_hull_area_ratio",
+        "convex_hull_perimeter_ratio",
+        "convex_hull_fraction",
+        "demand_depot_radial_pearson"
+      ],
+      "affected_blocks": [
+        "clustering",
+        "coupling"
+      ],
+      "confounder_blocks": [
+        "scale",
+        "capacity_route",
+        "demand_shape",
+        "global_geometry",
+        "depot_geometry",
+        "local_geometry",
+        "mst_topology",
+        "shape"
+      ],
+      "methods": {
+        "conditioned_greedy": {
+          "mean_confounder_distance": 2.1047978175185259e-16,
+          "mean_treatment_distance": 1.492773927730074,
+          "p95_confounder_distance": 1.239286451237831e-15,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "conditioned_ot": {
+          "mean_confounder_distance": 2.1047978175185259e-16,
+          "mean_treatment_distance": 1.492773927730074,
+          "p95_confounder_distance": 1.239286451237831e-15,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "oracle_crn": {
+          "mean_confounder_distance": 2.1047978175185259e-16,
+          "mean_treatment_distance": 1.492773927730074,
+          "p95_confounder_distance": 1.239286451237831e-15,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "unconditioned_greedy": {
+          "mean_confounder_distance": 2.1047978175185259e-16,
+          "mean_treatment_distance": 1.492773927730074,
+          "p95_confounder_distance": 1.239286451237831e-15,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "unconditioned_ot": {
+          "mean_confounder_distance": 2.1047978175185259e-16,
+          "mean_treatment_distance": 1.492773927730074,
+          "p95_confounder_distance": 1.239286451237831e-15,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        }
+      },
+      "source_level": "quadrant_permuted",
+      "target_level": "quadrant"
+    },
+    "route_size": {
+      "active_confounder_axes": [
+        "customer_count",
+        "demand_cv",
+        "pairwise_distance_cv",
+        "depot_centroid_distance_normalized",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "depot_as_nearest_neighbor_fraction",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "two_nearest_neighbor_angle_median",
+        "mst_total_length_n_corrected",
+        "mst_edge_cv",
+        "mst_leaf_fraction",
+        "convex_hull_area_ratio",
+        "convex_hull_perimeter_ratio",
+        "convex_hull_fraction",
+        "demand_depot_radial_pearson"
+      ],
+      "active_treatment_profile_axes": [
+        "capacity_volume_lower_bound",
+        "volume_lb_customers_per_route",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "max_demand_fraction"
+      ],
+      "active_unconditioned_axes": [
+        "customer_count",
+        "capacity_volume_lower_bound",
+        "volume_lb_customers_per_route",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "max_demand_fraction",
+        "demand_cv",
+        "pairwise_distance_cv",
+        "depot_centroid_distance_normalized",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "depot_as_nearest_neighbor_fraction",
+        "nearest_neighbor_clark_evans_ratio",
+        "nearest_neighbor_iqr_clark_evans_ratio",
+        "two_nearest_neighbor_angle_median",
+        "mst_total_length_n_corrected",
+        "mst_edge_cv",
+        "mst_leaf_fraction",
+        "convex_hull_area_ratio",
+        "convex_hull_perimeter_ratio",
+        "convex_hull_fraction",
+        "demand_depot_radial_pearson"
+      ],
+      "affected_blocks": [
+        "capacity_route"
+      ],
+      "confounder_blocks": [
+        "scale",
+        "demand_shape",
+        "global_geometry",
+        "depot_geometry",
+        "local_geometry",
+        "mst_topology",
+        "shape",
+        "clustering",
+        "coupling"
+      ],
+      "methods": {
+        "conditioned_greedy": {
+          "mean_confounder_distance": 0.0,
+          "mean_treatment_distance": 4.705236481023814,
+          "p95_confounder_distance": 0.0,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "conditioned_ot": {
+          "mean_confounder_distance": 0.0,
+          "mean_treatment_distance": 4.705236481023814,
+          "p95_confounder_distance": 0.0,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "oracle_crn": {
+          "mean_confounder_distance": 0.0,
+          "mean_treatment_distance": 4.705236481023814,
+          "p95_confounder_distance": 0.0,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        },
+        "unconditioned_greedy": {
+          "mean_confounder_distance": 0.24418169728733083,
+          "mean_treatment_distance": 4.699419459203159,
+          "p95_confounder_distance": 1.1971358375052066,
+          "pair_recovery_rate": 0.7916666666666666,
+          "recovered_pair_count": 38,
+          "treatment_distance_retention": 0.9987637131854871
+        },
+        "unconditioned_ot": {
+          "mean_confounder_distance": 0.0,
+          "mean_treatment_distance": 4.705236481023814,
+          "p95_confounder_distance": 0.0,
+          "pair_recovery_rate": 1.0,
+          "recovered_pair_count": 48,
+          "treatment_distance_retention": 1.0
+        }
+      },
+      "source_level": "5",
+      "target_level": "20"
+    }
+  }
+}

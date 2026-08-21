@@ -2,7 +2,66 @@
 
 更新时间：2026-08-21
 
-当前结论：**Falsified（当前统一 QoI geometry 实例化） / Promising（axis-conditioned response 主线）**
+当前结论：**Falsified（v1.0 unified ground geometry 强主张） / Promising（axis-conditioned intervention 主线）**
+
+## 0. QoI schema v1.1 定义与角色验证
+
+QoI schema v1.1 已作为独立版本实现并冻结，没有修改或覆盖 v1.0 artifact。
+v1.1 为每个实例轴增加 `raw`、`scale`、`struct_core`、
+`scale_conditioned` 或 `experimental` role，并完成以下定义变更：
+
+- Clark–Evans nearest-neighbor normalization；
+- 带 `sqrt(n)` correction 的 MST edge mean；
+- convex-hull area ratio；
+- 明确命名的 capacity-volume route lower bound 和 radial coupling；
+- `max_demand_fraction`、volume-LB route size 和非径向 quadrupole coupling；
+- Uchoa-X-style C/E/R、R/C/RC、七种 demand family 和 route-size CRN generator。
+
+这里不定义新的 “geometry v1.1”，也不把所有 QoI 合并成统一距离。v1.0 对 unified
+ground geometry 的 **Falsified** 结论原样保留。v1.1 只验证定义和 role contract：
+`struct_core` 轴接受跨规模稳定性检查；以下有限样本或规模条件轴明确归入
+`scale_conditioned`，因此不再被误当成统一的 scale-free geometry：
+
+- `convex_hull_area_ratio`
+- `demand_cv`
+- `mst_edge_mean_n_corrected`
+- `nearest_neighbor_clark_evans_ratio`
+- `nearest_neighbor_iqr_clark_evans_ratio`
+
+`demand_mean_fraction` 同样属于 `scale_conditioned`，非径向 quadrupole coupling 属于
+`experimental`。32 个 untouched confirmation seeds 上，七个受控方向（包括
+non-radial coupling 与 route size）分别验证；Axiom 4 仅表示 `struct_core` role contract，
+不构成 unified geometry 的验证或 solver 全局 gate。
+
+paired solver gate 已改为逐 treatment 准入：`scale`、`depot`、`customer_structure`、
+`demand_dispersion`、`non_radial_coupling`、`route_size` 各自依赖对应的受控轴证据。
+某个轴失败只阻止该 treatment，不阻止其他已验证 treatment。代码中同时保留了 CRN
+treatment panel、trajectory outcomes、RQ3 Wasserstein orbit dispersion 和 RQ4
+greedy/exact-OT recovery primitives。
+
+冻结结果位于 `results/cvrp-qoi-axioms-v1.1.json`。实际 Uchoa-X 外部验证入口为：
+
+```bash
+uv run pitbench qoi validate-uchoa-construct \
+  --manifest path/to/uchoa-x-metadata.yaml \
+  --output results/cvrp-qoi-uchoa-construct-v1.1.json
+```
+
+仓库目前没有附带实际 Uchoa-X 数据，因此尚未伪造 external-validation artifact，也未越过
+“先 external construct validation、后 solver experiment”的顺序启动真实 solver runs。
+这不是 geometry gate 的失败。外部数据未随仓库提供时，该命令不会创建占位或合成的
+external-validation artifact。
+manifest 中每个条目必须包含实际 instance path 和冻结的原始 benchmark metadata：
+
+```yaml
+instances:
+  - id: X-n101-k25
+    path: instances/X-n101-k25.json
+    depot_positioning: C
+    customer_positioning: R
+    demand_family: quadrant
+    route_size: 5.0
+```
 
 ## 1. 报告目的
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -28,8 +29,20 @@ def write_result(
     valid: bool,
     objective: float | None = None,
     error: str | None = None,
+    cpu_started: float | None = None,
     **metrics: Any,
 ) -> None:
+    if cpu_started is not None:
+        metrics.setdefault("cpu_time_sec", time.process_time() - cpu_started)
+    try:
+        import resource
+
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        metrics.setdefault(
+            "peak_rss_bytes", int(peak if sys.platform == "darwin" else peak * 1024)
+        )
+    except (ImportError, OSError):
+        pass
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(

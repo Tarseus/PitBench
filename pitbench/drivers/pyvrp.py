@@ -37,6 +37,7 @@ def _vrplib(instance: dict, path: Path) -> None:
 def main() -> None:
     args = parser().parse_args()
     started = time.perf_counter()
+    cpu_started = time.process_time()
     instance = json.loads(args.instance.read_text())
     args.trajectory.parent.mkdir(parents=True, exist_ok=True)
     args.trajectory.write_text("")
@@ -56,9 +57,7 @@ def main() -> None:
         write_solution(args.output, {"routes": routes})
         elapsed = 0.0
         incumbent = float("inf")
-        for runtime, datum in zip(
-            result.stats.runtimes, result.stats, strict=True
-        ):
+        for runtime, datum in zip(result.stats.runtimes, result.stats, strict=True):
             elapsed += runtime
             if datum.best_feas and datum.best_cost < incumbent:
                 incumbent = float(datum.best_cost)
@@ -74,13 +73,20 @@ def main() -> None:
         write_result(
             args.output,
             started=started,
+            cpu_started=cpu_started,
             valid=True,
             objective=objective,
             iterations=result.num_iterations,
             solver_runtime_sec=result.runtime,
         )
     except Exception as exc:
-        write_result(args.output, started=started, valid=False, error=str(exc))
+        write_result(
+            args.output,
+            started=started,
+            cpu_started=cpu_started,
+            valid=False,
+            error=str(exc),
+        )
         raise
 
 

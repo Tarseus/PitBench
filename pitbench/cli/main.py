@@ -6,11 +6,20 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+import yaml
 
 from adapters.pitbench.adapter import PitBenchAdapter
 from fceval.evaluation import EvaluationRequest
+from pitbench.distribution.cvrp_v2_matching import (
+    run_cvrp_v2_matching_validation,
+)
 from pitbench.distribution.qoi_axiom_validation import (
     run_cvrp_qoi_axiom_validation,
+)
+from pitbench.distribution.single_qoi_response import run_pyvrp_single_qoi_pilot
+from pitbench.distribution.uchoa_construct_validation import (
+    UchoaConstructCase,
+    run_uchoa_construct_validation,
 )
 from pitbench.evaluator.evaluator import PitBenchEvaluator
 from pitbench.instances import materialize_population
@@ -132,9 +141,22 @@ def validate_cvrp_qoi_axioms(
         int,
         typer.Option(min=8, help="Solver-free designs used for robust axis scales"),
     ] = 128,
+    qoi_version: Annotated[
+        str,
+        typer.Option(help="Frozen CVRP instance QoI version (1.0 or 1.1)"),
+    ] = "1.1",
 ) -> None:
     """Validate methodology axioms 1--8 against CVRP instance QoIs."""
-    report = run_cvrp_qoi_axiom_validation(calibration_size=calibration_size)
+    if output.exists():
+        raise typer.BadParameter(
+            "refusing to overwrite an existing QoI result artifact", param_hint="output"
+        )
+    namespace = f"cvrp-qoi-axiom-calibration-v{qoi_version}"
+    report = run_cvrp_qoi_axiom_validation(
+        calibration_size=calibration_size,
+        calibration_namespace=namespace,
+        qoi_version=qoi_version,
+    )
     payload = report.as_dict()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -142,14 +164,167 @@ def validate_cvrp_qoi_axioms(
         json.dumps(
             {
                 "conclusion": report.conclusion,
+                "claim_scope": report.claim_scope,
                 "axioms": {
-                    name: evidence["passed"]
-                    for name, evidence in report.axioms.items()
+                    name: evidence["passed"] for name, evidence in report.axioms.items()
                 },
                 "artifact": str(output),
                 "solver_runs_used": report.solver_runs_used,
                 "solver_runs_created": report.solver_runs_created,
                 "production_geometry_changed": report.production_geometry_changed,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+@qoi_app.command("validate-uchoa-construct")
+def validate_uchoa_construct(
+    manifest: Annotated[
+        Path,
+        typer.Option(help="YAML manifest for locally provisioned Uchoa-X instances"),
+    ],
+    output: Annotated[Path, typer.Option(help="New JSON construct report path")],
+    permutations: Annotated[
+        int, typer.Option(min=1, help="Label permutations per primary contrast")
+    ] = 4_999,
+) -> None:
+    """Run solver-free construct validation against actual Uchoa-X metadata."""
+
+    if output.exists():
+        raise typer.BadParameter(
+            "refusing to overwrite an existing QoI result artifact", param_hint="output"
+        )
+    payload = yaml.safe_load(manifest.read_text())
+    cases = []
+    for item in payload["instances"]:
+        path = Path(item["path"])
+        if not path.is_absolute():
+            path = manifest.parent / path
+        cases.append(
+            UchoaConstructCase(
+                instance_id=item["id"],
+                instance=json.loads(path.read_text()),
+                depot_positioning=item["depot_positioning"],
+                customer_positioning=item["customer_positioning"],
+                demand_family=item["demand_family"],
+                route_size=float(item["route_size"]),
+            )
+        )
+    report = run_uchoa_construct_validation(cases, permutations=permutations)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(report.as_dict(), indent=2, sort_keys=True) + "\n")
+    typer.echo(
+        json.dumps(
+            {
+                "conclusion": report.conclusion,
+                "artifact": str(output),
+                "solver_runs_used": 0,
+                "solver_runs_created": 0,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+@qoi_app.command("validate-cvrp-v2-matching")
+def validate_cvrp_v2_matching(
+    output: Annotated[
+        Path,
+        typer.Option(help="New JSON CVRP v2 matching report path"),
+    ],
+    pair_count: Annotated[
+        int,
+        typer.Option(min=4, help="Hidden CRN pairs per treatment"),
+    ] = 48,
+    generator_seed: Annotated[
+        int,
+        typer.Option(help="Deterministic Uchoa-style panel seed"),
+    ] = 20_260_821,
+) -> None:
+    """Validate treatment-conditioned matching with CVRP QoI v2-candidate.0."""
+
+    if output.exists():
+        raise typer.BadParameter(
+            "refusing to overwrite an existing QoI result artifact", param_hint="output"
+        )
+    report = run_cvrp_v2_matching_validation(
+        pair_count=pair_count,
+        generator_seed=generator_seed,
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(report.as_dict(), indent=2, sort_keys=True) + "\n")
+    typer.echo(
+        json.dumps(
+            {
+                "artifact": str(output),
+                "conclusion": report.conclusion,
+                "summary": report.summary,
+                "solver_runs_used": report.solver_runs_used,
+                "solver_runs_created": report.solver_runs_created,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+@qoi_app.command("run-cvrp-single-qoi-pilot")
+def run_cvrp_single_qoi_pilot(
+    output: Annotated[Path, typer.Option(help="New JSON pilot artifact path")],
+    budget_sec: Annotated[
+        float, typer.Option(min=0.01, help="Fixed PyVRP budget per run")
+    ] = 0.5,
+    reference_budget_sec: Annotated[
+        float, typer.Option(min=0.02, help="Longer reference budget per pair level")
+    ] = 2.0,
+    generator_seeds: Annotated[
+        str, typer.Option(help="Comma-separated unique generator seeds")
+    ] = "101,211,307,401,503,601",
+    solver_seeds: Annotated[
+        str, typer.Option(help="Comma-separated matched PyVRP seeds")
+    ] = "0,1,2",
+    bootstrap_repetitions: Annotated[
+        int, typer.Option(min=100, help="Generator-cluster bootstrap repetitions")
+    ] = 2_000,
+) -> None:
+    """Run exact single-v1.0-QoI interventions with matched solver seeds."""
+
+    if output.exists():
+        raise typer.BadParameter(
+            "refusing to overwrite an existing QoI result artifact", param_hint="output"
+        )
+
+    def parse_seeds(value: str) -> tuple[int, ...]:
+        try:
+            seeds = tuple(
+                int(item.strip()) for item in value.split(",") if item.strip()
+            )
+        except ValueError as exc:
+            raise typer.BadParameter("seeds must be comma-separated integers") from exc
+        if not seeds or len(set(seeds)) != len(seeds):
+            raise typer.BadParameter("seeds must be non-empty and unique")
+        return seeds
+
+    report = run_pyvrp_single_qoi_pilot(
+        generator_seeds=parse_seeds(generator_seeds),
+        solver_seeds=parse_seeds(solver_seeds),
+        budget_sec=budget_sec,
+        reference_budget_sec=reference_budget_sec,
+        bootstrap_repetitions=bootstrap_repetitions,
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(report.as_dict(), indent=2, sort_keys=True) + "\n")
+    typer.echo(
+        json.dumps(
+            {
+                "artifact": str(output),
+                "axes": list(report.axis_effects),
+                "reference_runs": len(report.reference_runs),
+                "runs": len(report.runs),
+                "solver": report.solver,
             },
             indent=2,
             sort_keys=True,

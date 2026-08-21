@@ -1,9 +1,7 @@
 """Solver-free, axis-level validation of the CVRP instance QoI specification.
 
-This module tests the ground-geometry axioms from the methodology without first
-combining the QoI axes into a universal distance.  The result therefore says
-which coordinates are safe invariants, which respond to controlled structural
-directions, and which leak computational scale.
+The v1.1 report validates axis definitions and role contracts.  It deliberately
+does not combine the axes into, or claim to validate, a unified geometry.
 """
 
 from __future__ import annotations
@@ -24,26 +22,92 @@ from pitbench.distribution.transforms import (
     rotate_cvrp,
     translate_cvrp,
 )
-from pitbench.instances import make_euclidean_cvrp_instance
+from pitbench.instances import make_euclidean_cvrp_instance, make_uchoa_cvrp_instance
 from pitbench.qoi.cvrp import (
     CVRP_INSTANCE_QOI,
     CVRP_INSTANCE_QOI_PINNED_FINGERPRINTS,
+    CVRP_INSTANCE_QOI_V1_0,
+    CVRP_INSTANCE_QOI_V1_1,
     extract_cvrp_instance_qoi,
 )
-from pitbench.qoi.schema import InstanceQoIObservation, InstanceQoISpec
+from pitbench.qoi.schema import InstanceQoIObservation, InstanceQoISpec, QoIRole
 
-RAW_UNIT_AXES = (
-    "capacity",
-    "total_demand",
-    "pairwise_distance_median",
+RAW_UNIT_AXES = tuple(
+    axis.name for axis in CVRP_INSTANCE_QOI.axes if axis.role == QoIRole.RAW
 )
-SCALE_AXES = ("customer_count",)
+SCALE_AXES = tuple(
+    axis.name for axis in CVRP_INSTANCE_QOI.axes if axis.role == QoIRole.SCALE
+)
 STRUCTURAL_AXES = tuple(
+    axis.name for axis in CVRP_INSTANCE_QOI.axes if axis.role == QoIRole.STRUCT_CORE
+)
+SCALE_CONDITIONED_AXES = tuple(
     axis.name
     for axis in CVRP_INSTANCE_QOI.axes
-    if axis.name not in {*RAW_UNIT_AXES, *SCALE_AXES}
+    if axis.role == QoIRole.SCALE_CONDITIONED
 )
-UNIT_ROBUST_AXES = (*SCALE_AXES, *STRUCTURAL_AXES)
+EXPERIMENTAL_AXES = tuple(
+    axis.name for axis in CVRP_INSTANCE_QOI.axes if axis.role == QoIRole.EXPERIMENTAL
+)
+UNIT_ROBUST_AXES = (
+    *SCALE_AXES,
+    *STRUCTURAL_AXES,
+    *SCALE_CONDITIONED_AXES,
+    *EXPERIMENTAL_AXES,
+)
+
+LEGACY_V1_0_SEEDS = (
+    101,
+    211,
+    307,
+    401,
+    503,
+    601,
+    701,
+    809,
+    907,
+    1009,
+    1103,
+    1201,
+    1301,
+    1409,
+    1511,
+    1601,
+)
+V1_1_CONFIRMATION_SEEDS = (
+    2003,
+    2011,
+    2027,
+    2039,
+    2053,
+    2069,
+    2081,
+    2089,
+    2111,
+    2129,
+    2141,
+    2153,
+    2161,
+    2179,
+    2203,
+    2213,
+    2221,
+    2237,
+    2267,
+    2273,
+    2281,
+    2293,
+    2309,
+    2333,
+    2341,
+    2357,
+    2371,
+    2381,
+    2393,
+    2411,
+    2423,
+    2441,
+)
 
 
 @dataclass(frozen=True)
@@ -79,6 +143,7 @@ class CVRPQoIAxiomReport:
     schema_version: str
     kind: str
     conclusion: str
+    claim_scope: str
     qoi_spec_name: str
     qoi_spec_version: str
     qoi_spec_fingerprint: str
@@ -138,7 +203,7 @@ def _version_freezing_evidence(
     }
 
 
-_DIRECTIONS = (
+_DIRECTIONS_V1_0 = (
     _DirectionSpec(
         name="capacity_pressure",
         source_level="capacity_ratio=0.30",
@@ -182,6 +247,97 @@ _DIRECTIONS = (
     ),
 )
 
+_DIRECTIONS_V1_1 = (
+    _DirectionSpec(
+        name="capacity_pressure",
+        source_level="capacity_ratio=0.30",
+        target_level="capacity_ratio=0.08",
+        target_axes=(
+            "capacity_volume_lower_bound",
+            "max_demand_fraction",
+            "volume_lb_customers_per_route",
+        ),
+        signs=(1, 1, -1),
+    ),
+    _DirectionSpec(
+        name="cluster_spread",
+        source_level="cluster_spread=3",
+        target_level="cluster_spread=24",
+        target_axes=(
+            "nearest_neighbor_clark_evans_ratio",
+            "mst_edge_mean_n_corrected",
+        ),
+        signs=(1, 1),
+    ),
+    _DirectionSpec(
+        name="demand_dispersion",
+        source_level="uniform_integer",
+        target_level="bimodal",
+        target_axes=("demand_cv",),
+        signs=(1,),
+    ),
+    _DirectionSpec(
+        name="demand_location_coupling",
+        source_level="depot_anticorrelated",
+        target_level="depot_correlated",
+        target_axes=(
+            "demand_depot_radial_pearson",
+            "demand_depot_radial_weighted_ratio",
+        ),
+        signs=(1, 1),
+    ),
+    _DirectionSpec(
+        name="depot_position",
+        source_level="center",
+        target_level="corner",
+        target_axes=("depot_distance_mean_normalized",),
+        signs=(1,),
+    ),
+    _DirectionSpec(
+        name="non_radial_coupling",
+        source_level="quadrant_permuted",
+        target_level="quadrant",
+        target_axes=("demand_spatial_quadrupole_coupling",),
+        signs=(1,),
+    ),
+    _DirectionSpec(
+        name="route_size",
+        source_level="r=5",
+        target_level="r=20",
+        target_axes=("volume_lb_customers_per_route",),
+        signs=(1,),
+    ),
+)
+
+
+def _spec(version: str) -> InstanceQoISpec:
+    if version == "1.0":
+        return CVRP_INSTANCE_QOI_V1_0
+    if version == "1.1":
+        return CVRP_INSTANCE_QOI_V1_1
+    raise ValueError(f"unsupported CVRP QoI spec version: {version}")
+
+
+def _roles(version: str) -> tuple[tuple[str, ...], ...]:
+    spec = _spec(version)
+    if version == "1.0":
+        raw = ("capacity", "total_demand", "pairwise_distance_median")
+        scale = ("customer_count",)
+        structural = tuple(
+            axis.name for axis in spec.axes if axis.name not in {*raw, *scale}
+        )
+        return raw, scale, structural, (), ()
+    return tuple(
+        tuple(axis.name for axis in spec.axes if axis.role == role)
+        for role in (
+            QoIRole.RAW,
+            QoIRole.SCALE,
+            QoIRole.STRUCT_CORE,
+            QoIRole.SCALE_CONDITIONED,
+            QoIRole.EXPERIMENTAL,
+        )
+    )
+
 
 def _canonical_hash(value: Any) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
@@ -221,8 +377,12 @@ def _spearman(left: Sequence[float], right: Sequence[float]) -> float:
     return float(np.corrcoef(left_ranks, right_ranks)[0, 1])
 
 
-def _observe(instance: Mapping[str, Any], instance_id: str) -> InstanceQoIObservation:
-    return extract_cvrp_instance_qoi(instance, instance_id=instance_id)
+def _observe(
+    instance: Mapping[str, Any], instance_id: str, spec_version: str
+) -> InstanceQoIObservation:
+    return extract_cvrp_instance_qoi(
+        instance, instance_id=instance_id, spec_version=spec_version
+    )
 
 
 def _instance(
@@ -253,8 +413,7 @@ def _instance(
 def _unit_scaled(instance: Mapping[str, Any]) -> dict[str, Any]:
     result = dict(instance)
     result["coordinates"] = [
-        [float(x) * 10.0, float(y) * 10.0]
-        for x, y in instance["coordinates"]
+        [float(x) * 10.0, float(y) * 10.0] for x, y in instance["coordinates"]
     ]
     result["demands"] = [float(value) * 10.0 for value in instance["demands"]]
     result["capacity"] = float(instance["capacity"]) * 10.0
@@ -262,7 +421,7 @@ def _unit_scaled(instance: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _robust_scales(
-    *, calibration_size: int, calibration_namespace: str
+    *, calibration_size: int, calibration_namespace: str, spec_version: str
 ) -> tuple[dict[str, float], str]:
     customer_counts = (50, 100, 200)
     capacity_ratios = (0.08, 0.15, 0.30)
@@ -281,9 +440,7 @@ def _robust_scales(
         parameters = {
             "name": f"{calibration_namespace}-{index:04d}",
             "customers": customer_counts[index % len(customer_counts)],
-            "coordinate_seed": _seed(
-                calibration_namespace, "coordinates", index
-            ),
+            "coordinate_seed": _seed(calibration_namespace, "coordinates", index),
             "demand_seed": _seed(calibration_namespace, "demands", index),
             "capacity_ratio": capacity_ratios[
                 (index // len(customer_counts)) % len(capacity_ratios)
@@ -292,9 +449,7 @@ def _robust_scales(
                 index % len(coordinate_distributions)
             ],
             "cluster_count": 4,
-            "cluster_spread": cluster_spreads[
-                (index * 2) % len(cluster_spreads)
-            ],
+            "cluster_spread": cluster_spreads[(index * 2) % len(cluster_spreads)],
             "depot_mode": depot_modes[(index * 2) % len(depot_modes)],
             "demand_distribution": demand_distributions[
                 (index * 3) % len(demand_distributions)
@@ -305,11 +460,15 @@ def _robust_scales(
             _observe(
                 make_euclidean_cvrp_instance(**parameters),
                 str(parameters["name"]),
+                spec_version,
             )
         )
     scales: dict[str, float] = {}
-    for axis in (item.name for item in CVRP_INSTANCE_QOI.axes):
-        values = np.asarray([item.values[axis] for item in observations], dtype=float)
+    for axis in (item.name for item in _spec(spec_version).axes):
+        values = np.asarray(
+            [item.values[axis] for item in observations if item.axis_defined[axis]],
+            dtype=float,
+        )
         iqr = float(np.quantile(values, 0.75) - np.quantile(values, 0.25))
         scales[axis] = iqr if iqr > np.finfo(float).eps else 1.0
     fingerprint = _canonical_hash(
@@ -324,7 +483,7 @@ def _robust_scales(
 
 
 def _build_pairs(
-    seeds: Sequence[int], sizes: Sequence[int]
+    seeds: Sequence[int], sizes: Sequence[int], spec_version: str
 ) -> tuple[
     list[_Pair],
     dict[str, list[tuple[InstanceQoIObservation, InstanceQoIObservation]]],
@@ -332,10 +491,13 @@ def _build_pairs(
     pairs: list[_Pair] = []
     directions: dict[
         str, list[tuple[InstanceQoIObservation, InstanceQoIObservation]]
-    ] = {item.name: [] for item in _DIRECTIONS}
+    ] = {
+        item.name: []
+        for item in (_DIRECTIONS_V1_0 if spec_version == "1.0" else _DIRECTIONS_V1_1)
+    }
     for seed in seeds:
         base_instance = _instance(seed=seed, name=f"base-{seed}")
-        base = _observe(base_instance, f"base-{seed}")
+        base = _observe(base_instance, f"base-{seed}", spec_version)
         transformed = {
             "translate": translate_cvrp(base_instance, dx=37.0, dy=-19.0),
             "rotate": rotate_cvrp(base_instance, radians=0.731),
@@ -348,7 +510,9 @@ def _build_pairs(
                     kind="equivalence",
                     pair_id=f"equivalence-{seed}-{transform_name}",
                     left=base,
-                    right=_observe(instance, f"equivalence-{seed}-{transform_name}"),
+                    right=_observe(
+                        instance, f"equivalence-{seed}-{transform_name}", spec_version
+                    ),
                 )
             )
         pairs.append(
@@ -356,15 +520,33 @@ def _build_pairs(
                 kind="unit",
                 pair_id=f"unit-{seed}",
                 left=base,
-                right=_observe(_unit_scaled(base_instance), f"unit-{seed}"),
+                right=_observe(
+                    _unit_scaled(base_instance), f"unit-{seed}", spec_version
+                ),
             )
         )
+        if spec_version == "1.1":
+            scale_instances = {
+                size: make_uchoa_cvrp_instance(
+                    name=f"scale-{seed}-{size}",
+                    customers=size,
+                    coordinate_seed=seed,
+                    demand_seed=seed + 10_000,
+                    depot_positioning="C",
+                    customer_positioning="R",
+                    demand_family="small_large_variance",
+                    route_size=10,
+                )
+                for size in sizes
+            }
+        else:
+            scale_instances = {
+                size: _instance(seed=seed, name=f"scale-{seed}-{size}", customers=size)
+                for size in sizes
+            }
         scale_observations = {
-            size: _observe(
-                _instance(seed=seed, name=f"scale-{seed}-{size}", customers=size),
-                f"scale-{seed}-{size}",
-            )
-            for size in sizes
+            size: _observe(instance, f"scale-{seed}-{size}", spec_version)
+            for size, instance in scale_instances.items()
         }
         for low, high in combinations(sizes, 2):
             pairs.append(
@@ -388,6 +570,7 @@ def _build_pairs(
                 demand_distribution="bimodal",
             ),
             f"unrelated-{seed}",
+            spec_version,
         )
         pairs.append(
             _Pair(
@@ -454,11 +637,60 @@ def _build_pairs(
                 ),
             ),
         }
+        if spec_version == "1.1":
+            direction_instances.update(
+                {
+                    "non_radial_coupling": (
+                        make_uchoa_cvrp_instance(
+                            name=f"coupling-permuted-{seed}",
+                            customers=200,
+                            coordinate_seed=seed,
+                            demand_seed=seed + 100_000,
+                            depot_positioning="C",
+                            customer_positioning="R",
+                            demand_family="quadrant_permuted",
+                            route_size=10,
+                        ),
+                        make_uchoa_cvrp_instance(
+                            name=f"coupling-quadrant-{seed}",
+                            customers=200,
+                            coordinate_seed=seed,
+                            demand_seed=seed + 100_000,
+                            depot_positioning="C",
+                            customer_positioning="R",
+                            demand_family="quadrant",
+                            route_size=10,
+                        ),
+                    ),
+                    "route_size": (
+                        make_uchoa_cvrp_instance(
+                            name=f"route-size-5-{seed}",
+                            customers=200,
+                            coordinate_seed=seed,
+                            demand_seed=seed + 100_000,
+                            depot_positioning="C",
+                            customer_positioning="R",
+                            demand_family="small_large_variance",
+                            route_size=5,
+                        ),
+                        make_uchoa_cvrp_instance(
+                            name=f"route-size-20-{seed}",
+                            customers=200,
+                            coordinate_seed=seed,
+                            demand_seed=seed + 100_000,
+                            depot_positioning="C",
+                            customer_positioning="R",
+                            demand_family="small_large_variance",
+                            route_size=20,
+                        ),
+                    ),
+                }
+            )
         for name, (source, target) in direction_instances.items():
             directions[name].append(
                 (
-                    _observe(source, f"{name}-source-{seed}"),
-                    _observe(target, f"{name}-target-{seed}"),
+                    _observe(source, f"{name}-source-{seed}", spec_version),
+                    _observe(target, f"{name}-target-{seed}", spec_version),
                 )
             )
     return pairs, directions
@@ -471,11 +703,16 @@ def _standardized_distance(
     axes: Sequence[str],
     scales: Mapping[str, float],
 ) -> float:
+    defined_axes = [
+        axis for axis in axes if left.axis_defined[axis] and right.axis_defined[axis]
+    ]
+    if not defined_axes:
+        raise ValueError("standardized distance has no jointly defined axes")
     return float(
         np.mean(
             [
                 abs(right.values[axis] - left.values[axis]) / scales[axis]
-                for axis in axes
+                for axis in defined_axes
             ]
         )
     )
@@ -488,9 +725,10 @@ def _controlled_results(
     *,
     scales: Mapping[str, float],
     thresholds: QoIAxiomThresholds,
+    direction_specs: Sequence[_DirectionSpec],
 ) -> tuple[ControlledDirectionResult, ...]:
     results = []
-    for spec in _DIRECTIONS:
+    for spec in direction_specs:
         pairs = directions[spec.name]
         effects: dict[str, float] = {}
         fractions: dict[str, float] = {}
@@ -529,30 +767,18 @@ def _controlled_results(
 
 def run_cvrp_qoi_axiom_validation(
     *,
-    seeds: Sequence[int] = (
-        101,
-        211,
-        307,
-        401,
-        503,
-        601,
-        701,
-        809,
-        907,
-        1009,
-        1103,
-        1201,
-        1301,
-        1409,
-        1511,
-        1601,
-    ),
+    seeds: Sequence[int] | None = None,
     sizes: Sequence[int] = (50, 100, 200, 500),
     calibration_size: int = 128,
-    calibration_namespace: str = "cvrp-qoi-axiom-calibration-v1",
+    calibration_namespace: str | None = None,
     thresholds: QoIAxiomThresholds = QoIAxiomThresholds(),
+    qoi_version: str = "1.1",
 ) -> CVRPQoIAxiomReport:
     """Validate methodology axioms 1--8 against the frozen CVRP QoI spec."""
+    if seeds is None:
+        seeds = LEGACY_V1_0_SEEDS if qoi_version == "1.0" else V1_1_CONFIRMATION_SEEDS
+    if calibration_namespace is None:
+        calibration_namespace = f"cvrp-qoi-axiom-calibration-v{qoi_version}"
     if len(seeds) < 2 or len(set(seeds)) != len(seeds):
         raise ValueError("at least two unique panel seeds are required")
     if len(sizes) < 3 or tuple(sorted(set(sizes))) != tuple(sizes):
@@ -560,18 +786,34 @@ def run_cvrp_qoi_axiom_validation(
     if calibration_size < 8:
         raise ValueError("calibration_size must be at least eight")
 
+    spec = _spec(qoi_version)
+    raw_axes, scale_axes, structural_axes, conditioned_axes, experimental_axes = _roles(
+        qoi_version
+    )
+    unit_robust_axes = (
+        *scale_axes,
+        *structural_axes,
+        *conditioned_axes,
+        *experimental_axes,
+    )
+    direction_specs = _DIRECTIONS_V1_0 if qoi_version == "1.0" else _DIRECTIONS_V1_1
+
     scales, calibration_fingerprint = _robust_scales(
         calibration_size=calibration_size,
         calibration_namespace=calibration_namespace,
+        spec_version=qoi_version,
     )
-    pairs, directions = _build_pairs(seeds, sizes)
+    pairs, directions = _build_pairs(seeds, sizes, qoi_version)
     by_kind = {
         kind: [pair for pair in pairs if pair.kind == kind]
         for kind in ("equivalence", "unit", "scale", "unrelated")
     }
 
+    all_observations = [
+        observation for pair in pairs for observation in (pair.left, pair.right)
+    ]
     axis_diagnostics: dict[str, dict[str, Any]] = {}
-    for axis_spec in CVRP_INSTANCE_QOI.axes:
+    for axis_spec in spec.axes:
         axis = axis_spec.name
         equivalence_errors = [
             abs(pair.right.values[axis] - pair.left.values[axis]) / scales[axis]
@@ -593,12 +835,18 @@ def run_cvrp_qoi_axiom_validation(
             "unit": axis_spec.unit,
             "solver_independent_declared": axis_spec.solver_independent,
             "role": (
-                "raw_unit"
-                if axis in RAW_UNIT_AXES
+                axis_spec.role.value
+                if axis_spec.role is not None
+                else "raw_unit"
+                if axis in raw_axes
                 else "scale"
-                if axis in SCALE_AXES
+                if axis in scale_axes
                 else "structure"
             ),
+            "defined_fraction": sum(
+                observation.axis_defined[axis] for observation in all_observations
+            )
+            / len(all_observations),
             "equivalence_max_error_iqr": max(equivalence_errors),
             "unit_max_error_iqr": max(unit_errors),
             "scale_leakage_median_iqr": _median(scale_changes),
@@ -607,26 +855,25 @@ def run_cvrp_qoi_axiom_validation(
             <= thresholds.numerical_standardized_tolerance,
             "unit_robust": (
                 None
-                if axis in RAW_UNIT_AXES
+                if axis in raw_axes
                 else max(unit_errors) <= thresholds.numerical_standardized_tolerance
             ),
             "scale_stable": (
                 None
-                if axis not in STRUCTURAL_AXES
-                else _median(scale_changes)
-                <= thresholds.scale_leakage_median_iqr_max
+                if axis not in structural_axes
+                else _median(scale_changes) <= thresholds.scale_leakage_median_iqr_max
             ),
         }
 
     equivalence_distances = [
         _standardized_distance(
-            pair.left, pair.right, axes=STRUCTURAL_AXES, scales=scales
+            pair.left, pair.right, axes=structural_axes, scales=scales
         )
         for pair in by_kind["equivalence"]
     ]
     unrelated_distances = [
         _standardized_distance(
-            pair.left, pair.right, axes=STRUCTURAL_AXES, scales=scales
+            pair.left, pair.right, axes=structural_axes, scales=scales
         )
         for pair in by_kind["unrelated"]
     ]
@@ -642,8 +889,10 @@ def run_cvrp_qoi_axiom_validation(
         "iterations": 123_456,
         "solver_status": "synthetic-annotation",
     }
-    annotation_left = _observe(annotated, "annotation-left")
-    annotation_right = _observe(annotated_with_outcomes, "annotation-right")
+    annotation_left = _observe(annotated, "annotation-left", qoi_version)
+    annotation_right = _observe(
+        annotated_with_outcomes, "annotation-right", qoi_version
+    )
     annotation_max_delta = max(
         abs(annotation_left.values[axis] - annotation_right.values[axis])
         for axis in annotation_left.values
@@ -652,8 +901,7 @@ def run_cvrp_qoi_axiom_validation(
     scale_magnitudes = [
         abs(
             math.log(
-                pair.right.values["customer_count"]
-                / pair.left.values["customer_count"]
+                pair.right.values["customer_count"] / pair.left.values["customer_count"]
             )
         )
         for pair in by_kind["scale"]
@@ -676,24 +924,24 @@ def run_cvrp_qoi_axiom_validation(
 
     stable_structural_axes = tuple(
         axis
-        for axis in STRUCTURAL_AXES
+        for axis in structural_axes
         if axis_diagnostics[axis]["scale_stable"] is True
     )
-    scale_stable_fraction = len(stable_structural_axes) / len(STRUCTURAL_AXES)
+    scale_stable_fraction = len(stable_structural_axes) / len(structural_axes)
     controlled = _controlled_results(
-        directions, scales=scales, thresholds=thresholds
+        directions,
+        scales=scales,
+        thresholds=thresholds,
+        direction_specs=direction_specs,
     )
     controlled_pass_fraction = sum(item.passed for item in controlled) / len(controlled)
     structure_scale_max_delta = max(item.scale_axis_max_delta for item in controlled)
 
     unit_max = max(
-        float(axis_diagnostics[axis]["unit_max_error_iqr"])
-        for axis in UNIT_ROBUST_AXES
+        float(axis_diagnostics[axis]["unit_max_error_iqr"]) for axis in unit_robust_axes
     )
-    all_solver_independent = all(
-        axis.solver_independent for axis in CVRP_INSTANCE_QOI.axes
-    )
-    repeated = _observe(annotated, "annotation-left")
+    all_solver_independent = all(axis.solver_independent for axis in spec.axes)
+    repeated = _observe(annotated, "annotation-left", qoi_version)
     deterministic_observation = repeated == annotation_left
     all_fingerprints = {
         observation.spec_fingerprint
@@ -701,9 +949,15 @@ def run_cvrp_qoi_axiom_validation(
         for observation in (pair.left, pair.right)
     }
     version_evidence = _version_freezing_evidence(
-        CVRP_INSTANCE_QOI,
+        spec,
         CVRP_INSTANCE_QOI_PINNED_FINGERPRINTS,
         all_fingerprints,
+    )
+    defined_core = all(
+        axis_diagnostics[axis]["defined_fraction"] >= 0.99 for axis in structural_axes
+    )
+    required_scale_stable_fraction = (
+        1.0 if qoi_version == "1.1" else thresholds.scale_stable_axis_fraction_min
     )
 
     axiom_pass = {
@@ -720,10 +974,11 @@ def run_cvrp_qoi_axiom_validation(
         "3_scale_sensitivity": count_exact
         and scale_spearman >= thresholds.scale_monotonicity_spearman_min,
         "4_structure_scale_separability": (
-            scale_stable_fraction >= thresholds.scale_stable_axis_fraction_min
+            scale_stable_fraction >= required_scale_stable_fraction
             and controlled_pass_fraction
             >= thresholds.controlled_direction_pass_fraction_min
             and structure_scale_max_delta == 0.0
+            and defined_core
         ),
         "5_unit_representation_robustness": unit_max
         <= thresholds.numerical_standardized_tolerance,
@@ -734,11 +989,10 @@ def run_cvrp_qoi_axiom_validation(
             and deterministic_observation
         ),
         "8_falsifiability": (
-            _median(unrelated_distances)
-            >= thresholds.unrelated_distance_median_iqr_min
+            _median(unrelated_distances) >= thresholds.unrelated_distance_median_iqr_min
             and equivalence_unrelated_ratio
             <= thresholds.equivalence_unrelated_ratio_max
-            and len(controlled) == len(_DIRECTIONS)
+            and len(controlled) == len(direction_specs)
         ),
     }
 
@@ -746,9 +1000,9 @@ def run_cvrp_qoi_axiom_validation(
         "1_solver_independence": {
             "passed": axiom_pass["1_solver_independence"],
             "declared_solver_independent_axis_fraction": sum(
-                axis.solver_independent for axis in CVRP_INSTANCE_QOI.axes
+                axis.solver_independent for axis in spec.axes
             )
-            / len(CVRP_INSTANCE_QOI.axes),
+            / len(spec.axes),
             "solver_annotation_max_delta": annotation_max_delta,
         },
         "2_semantic_invariance": {
@@ -767,18 +1021,23 @@ def run_cvrp_qoi_axiom_validation(
         },
         "4_structure_scale_separability": {
             "passed": axiom_pass["4_structure_scale_separability"],
+            "scope": "struct_core_role_only_no_unified_geometry_claim",
             "stable_structural_axes": list(stable_structural_axes),
             "leaking_structural_axes": sorted(
-                set(STRUCTURAL_AXES) - set(stable_structural_axes)
+                set(structural_axes) - set(stable_structural_axes)
             ),
             "scale_stable_axis_fraction": scale_stable_fraction,
+            "required_scale_stable_axis_fraction": required_scale_stable_fraction,
+            "core_defined_fraction_gate": defined_core,
+            "scale_conditioned_axes": list(conditioned_axes),
+            "experimental_axes": list(experimental_axes),
             "controlled_direction_pass_fraction": controlled_pass_fraction,
             "structure_shift_customer_count_max_delta": structure_scale_max_delta,
         },
         "5_unit_representation_robustness": {
             "passed": axiom_pass["5_unit_representation_robustness"],
-            "unit_robust_axes": list(UNIT_ROBUST_AXES),
-            "excluded_raw_unit_axes": list(RAW_UNIT_AXES),
+            "unit_robust_axes": list(unit_robust_axes),
+            "excluded_raw_unit_axes": list(raw_axes),
             "unit_robust_axis_max_error_iqr": unit_max,
         },
         "6_no_circular_learned_semantics": {
@@ -830,12 +1089,18 @@ def run_cvrp_qoi_axiom_validation(
         ],
     }
     return CVRPQoIAxiomReport(
-        schema_version="1.0",
+        schema_version=qoi_version,
         kind="cvrp_instance_qoi_axiom_validation",
         conclusion=conclusion,
-        qoi_spec_name=CVRP_INSTANCE_QOI.name,
-        qoi_spec_version=CVRP_INSTANCE_QOI.version,
-        qoi_spec_fingerprint=CVRP_INSTANCE_QOI.fingerprint(),
+        claim_scope=(
+            "axis_definition_and_role_contract_only; "
+            "no_unified_geometry_is_defined_or_validated"
+            if qoi_version == "1.1"
+            else "legacy_v1.0_ground_geometry_axiom_validation"
+        ),
+        qoi_spec_name=spec.name,
+        qoi_spec_version=spec.version,
+        qoi_spec_fingerprint=spec.fingerprint(),
         panel_fingerprint=_canonical_hash(panel_payload),
         preregistration={
             "methodology_axioms": list(axioms),
@@ -848,11 +1113,17 @@ def run_cvrp_qoi_axiom_validation(
                 "calibration_fingerprint": calibration_fingerprint,
             },
             "unit_policy": {
-                "raw_unit_axes_reported_but_excluded_from_ground_geometry": list(
-                    RAW_UNIT_AXES
+                "raw_unit_axes_reported_but_excluded_from_invariance_gate": list(
+                    raw_axes
                 ),
-                "unit_robust_axes": list(UNIT_ROBUST_AXES),
+                "unit_robust_axes": list(unit_robust_axes),
+                "scale_conditioned_axes": list(conditioned_axes),
+                "experimental_axes": list(experimental_axes),
             },
+            "claim_scope": (
+                "axis_definition_and_role_contract_only; "
+                "no_unified_geometry_is_defined_or_validated"
+            ),
         },
         axioms=axioms,
         axis_diagnostics=axis_diagnostics,
