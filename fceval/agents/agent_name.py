@@ -10,6 +10,7 @@ class AgentName(Enum):
     CLAUDE_CODE = "claude-code"
     AIDER = "aider"
     CODEX = "codex"
+    ANTIGRAVITY = "antigravity"
     GOOSE_MCP = "goose-mcp"
     GOOSE = "goose"
     GEMINI_CLI = "gemini-cli"

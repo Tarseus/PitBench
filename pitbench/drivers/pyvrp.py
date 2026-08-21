@@ -38,6 +38,8 @@ def main() -> None:
     args = parser().parse_args()
     started = time.perf_counter()
     instance = json.loads(args.instance.read_text())
+    args.trajectory.parent.mkdir(parents=True, exist_ok=True)
+    args.trajectory.write_text("")
     try:
         from pyvrp import Model, read
         from pyvrp.stop import MaxRuntime
@@ -52,11 +54,31 @@ def main() -> None:
         routes = [list(map(int, route.visits())) for route in result.best.routes()]
         objective = float(result.cost())
         write_solution(args.output, {"routes": routes})
-        append_trajectory(
-            args.trajectory,
-            {"time_sec": time.perf_counter() - started, "objective": objective},
+        elapsed = 0.0
+        incumbent = float("inf")
+        for runtime, datum in zip(
+            result.stats.runtimes, result.stats, strict=True
+        ):
+            elapsed += runtime
+            if datum.best_feas and datum.best_cost < incumbent:
+                incumbent = float(datum.best_cost)
+                append_trajectory(
+                    args.trajectory,
+                    {"time_sec": elapsed, "objective": incumbent},
+                )
+        if incumbent != objective:
+            append_trajectory(
+                args.trajectory,
+                {"time_sec": result.runtime, "objective": objective},
+            )
+        write_result(
+            args.output,
+            started=started,
+            valid=True,
+            objective=objective,
+            iterations=result.num_iterations,
+            solver_runtime_sec=result.runtime,
         )
-        write_result(args.output, started=started, valid=True, objective=objective)
     except Exception as exc:
         write_result(args.output, started=started, valid=False, error=str(exc))
         raise

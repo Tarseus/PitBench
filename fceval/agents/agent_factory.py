@@ -17,6 +17,9 @@ class AgentFactory:
             "fceval.agents.installed_agents.aider.aider_agent:AiderAgent"
         ),
         AgentName.CODEX.value: ("fceval.agents.codex_mcp_agent:CodexMCPAgent"),
+        AgentName.ANTIGRAVITY.value: (
+            "fceval.agents.antigravity_mcp_agent:AntigravityMCPAgent"
+        ),
         AgentName.MCP_TERMINUS.value: (
             "fceval.agents.mcp_agents.mcp_terminus:MCPTerminus"
         ),

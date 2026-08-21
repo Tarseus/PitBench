@@ -9,11 +9,8 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 from fceval.agents import AgentFactory, AgentName
-from fceval.agents.codex_mcp_agent import (
-    CodexMCPAgent,
-    LoopbackMCPServer,
-    TaskTerminal,
-)
+from fceval.agents.codex_mcp_agent import CodexMCPAgent
+from fceval.agents.host_mcp import LoopbackMCPServer, TaskTerminal
 
 
 class FakeContainer:
@@ -128,9 +125,7 @@ def test_codex_command_uses_isolated_runner_and_loopback_mcp():
         command.index("--sandbox") : command.index("--sandbox") + 2
     ]
     assert 'mcp_servers.pitbench.url="http://127.0.0.1:43210/mcp"' in command
-    assert (
-        'mcp_servers.pitbench.default_tools_approval_mode="approve"' in command
-    )
+    assert 'mcp_servers.pitbench.default_tools_approval_mode="approve"' in command
     assert not any("auth.json" in argument for argument in command)
 
 

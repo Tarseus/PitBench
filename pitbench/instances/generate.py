@@ -13,29 +13,123 @@ def _choice(values: list[int], index: int) -> int:
     return values[index % len(values)]
 
 
+def make_euclidean_cvrp_instance(
+    *,
+    name: str,
+    customers: int,
+    coordinate_seed: int,
+    demand_seed: int,
+    capacity_ratio: float,
+    coordinate_distribution: str = "uniform",
+    cluster_count: int = 4,
+    cluster_spread: float = 9.0,
+    depot_mode: str = "center",
+    demand_distribution: str = "uniform_integer",
+) -> dict[str, Any]:
+    """Generate a deterministic normalized CVRP instance.
+
+    Uniform and clustered coordinates share the same RNG dimensions so validation
+    panels can hold demand realization fixed while changing only spatial structure.
+    """
+    if customers <= 0:
+        raise ValueError("customers must be positive")
+    if not 0 < capacity_ratio <= 1:
+        raise ValueError("capacity_ratio must be in (0, 1]")
+    coordinate_rng = random.Random(coordinate_seed)
+    demand_rng = random.Random(demand_seed)
+    if coordinate_distribution == "uniform":
+        customer_coordinates = [
+            [coordinate_rng.uniform(0, 100), coordinate_rng.uniform(0, 100)]
+            for _ in range(customers)
+        ]
+    elif coordinate_distribution == "clustered":
+        if cluster_count <= 0 or cluster_spread <= 0:
+            raise ValueError("cluster_count and cluster_spread must be positive")
+        centers = [
+            [coordinate_rng.uniform(15, 85), coordinate_rng.uniform(15, 85)]
+            for _ in range(cluster_count)
+        ]
+        customer_coordinates = []
+        for index in range(customers):
+            center_x, center_y = centers[index % cluster_count]
+            customer_coordinates.append(
+                [
+                    min(
+                        100.0, max(0.0, coordinate_rng.gauss(center_x, cluster_spread))
+                    ),
+                    min(
+                        100.0, max(0.0, coordinate_rng.gauss(center_y, cluster_spread))
+                    ),
+                ]
+            )
+    else:
+        raise ValueError(f"unknown coordinate_distribution: {coordinate_distribution}")
+    if depot_mode == "center":
+        depot_coordinates = [50.0, 50.0]
+    elif depot_mode == "corner":
+        depot_coordinates = [0.0, 0.0]
+    elif depot_mode == "random":
+        # A separate stream keeps the existing coordinate realization unchanged.
+        depot_rng = random.Random(f"cvrp-depot:{coordinate_seed}")
+        depot_coordinates = [
+            depot_rng.uniform(0, 100),
+            depot_rng.uniform(0, 100),
+        ]
+    else:
+        raise ValueError(f"unknown depot_mode: {depot_mode}")
+
+    if demand_distribution == "uniform_integer":
+        customer_demands = [demand_rng.randint(1, 10) for _ in range(customers)]
+    elif demand_distribution == "bimodal":
+        customer_demands = [
+            demand_rng.randint(1, 3)
+            if demand_rng.random() < 0.5
+            else demand_rng.randint(8, 10)
+            for _ in range(customers)
+        ]
+    elif demand_distribution in {"depot_correlated", "depot_anticorrelated"}:
+        # Preserve the uniform-integer marginal while coupling its order to location.
+        sampled = sorted(demand_rng.randint(1, 10) for _ in range(customers))
+        by_distance = sorted(
+            range(customers),
+            key=lambda index: (
+                math.dist(customer_coordinates[index], depot_coordinates),
+                index,
+            ),
+            reverse=demand_distribution == "depot_anticorrelated",
+        )
+        customer_demands = [0] * customers
+        for index, demand in zip(by_distance, sampled, strict=True):
+            customer_demands[index] = demand
+    else:
+        raise ValueError(f"unknown demand_distribution: {demand_distribution}")
+
+    demands = [0, *customer_demands]
+    capacity = max(10, math.ceil(sum(demands) * capacity_ratio))
+    return {
+        "name": name,
+        "depot": 0,
+        "coordinates": [depot_coordinates, *customer_coordinates],
+        "demands": demands,
+        "capacity": capacity,
+    }
+
+
 def _cvrp(config: dict[str, Any], index: int, destination: Path) -> None:
     seeds = config["randomness"]
-    coordinate_rng = random.Random(seeds["coordinate_seed"] + index)
-    demand_rng = random.Random(seeds["demand_seed"] + index)
-    customers = _choice(config["customers"], index)
-    coordinates = [[50.0, 50.0]] + [
-        [coordinate_rng.uniform(0, 100), coordinate_rng.uniform(0, 100)]
-        for _ in range(customers)
-    ]
-    demands = [0] + [demand_rng.randint(1, 10) for _ in range(customers)]
-    capacity = max(10, math.ceil(sum(demands) * config["capacity_ratio"]))
-    destination.write_text(
-        json.dumps(
-            {
-                "name": destination.stem,
-                "depot": 0,
-                "coordinates": coordinates,
-                "demands": demands,
-                "capacity": capacity,
-            },
-            indent=2,
-        )
+    instance = make_euclidean_cvrp_instance(
+        name=destination.stem,
+        customers=_choice(config["customers"], index),
+        coordinate_seed=seeds["coordinate_seed"] + index,
+        demand_seed=seeds["demand_seed"] + index,
+        capacity_ratio=float(config["capacity_ratio"]),
+        coordinate_distribution=config.get("coordinate_distribution", "uniform"),
+        cluster_count=int(config.get("cluster_count", 4)),
+        cluster_spread=float(config.get("cluster_spread", 9.0)),
+        depot_mode=config.get("depot_mode", "center"),
+        demand_distribution=config.get("demand_distribution", "uniform_integer"),
     )
+    destination.write_text(json.dumps(instance, indent=2))
 
 
 def _bin_packing(config: dict[str, Any], index: int, destination: Path) -> None:

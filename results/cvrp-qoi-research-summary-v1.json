@@ -1,0 +1,114 @@
+{
+  "schema_version": "1.0",
+  "kind": "cvrp_qoi_research_summary",
+  "scope": "Consolidated negative and exploratory evidence retained after removing superseded probe implementations.",
+  "production_geometry_changed": false,
+  "experiments": [
+    {
+      "name": "joint_qoi_counterfactual",
+      "conclusion": "Falsified",
+      "headline": "Full-covariance compensation did not beat pure scale reliably.",
+      "evidence": {
+        "reference_count": 192,
+        "median_gain": 0.0,
+        "positive_gain_fraction": 0.3125,
+        "bootstrap_95_median_lower": 0.0
+      },
+      "solver_runs_used_posthoc_only": 72,
+      "source_artifact_sha256": "b816fef89a0edef7cd0cd26ce63428e565c544f174e0b131f90486fb9d3bbc78"
+    },
+    {
+      "name": "frozen_cstruct_behavior_retention",
+      "conclusion": "Not supported",
+      "headline": "Structure matching worsened the primary conditional-gap distance.",
+      "evidence": {
+        "conditional_gap_relative_gain": -0.13996634221669813,
+        "positive_leave_one_pair_count": 1
+      },
+      "solver_runs_used": 72,
+      "source_artifact_sha256": "93a820cd497e93eb2f052e7ba90e4d0944c7e005cb14c1be36c9037178de2876"
+    },
+    {
+      "name": "scale_residual_qoi",
+      "conclusion": "Promising but unstable",
+      "headline": "Residualization helped one fitting design and not the independent design.",
+      "evidence": {
+        "primary_gains_by_design": [
+          0.13889636598810173,
+          -0.00013616645024927543
+        ],
+        "coupling_pair_jaccard": 0.5
+      },
+      "solver_runs_used": 72,
+      "source_artifact_sha256": "76e90122c354c3c02fe66cf11f695338e727aa3201d40fb2a50224aaf5ae00cc"
+    },
+    {
+      "name": "ot_planted_pair_recovery",
+      "conclusion": "No added value",
+      "headline": "Exact OT recovered planted pairs, but greedy matching was already perfect at the median.",
+      "evidence": {
+        "ot_median_pair_recovery": 1.0,
+        "greedy_median_pair_recovery": 1.0,
+        "random_median_pair_recovery": 0.0625,
+        "median_ot_minus_greedy_recovery": 0.0
+      },
+      "solver_runs_used": 0,
+      "source_artifact_sha256": "eaadc53ac4080f6f53f74b71ebe00367f1daa8fccb8bf6a702a7f2e069704e59"
+    },
+    {
+      "name": "qoi_behavior_alignment_development",
+      "conclusion": "Promising",
+      "headline": "Only iterations showed retrospective signal; conditional gap did not pass.",
+      "evidence": {
+        "primary_quality_axis_signal": false,
+        "promotion_ready": false
+      },
+      "solver_runs_used": 72,
+      "source_artifact_sha256": "ab753dcd536c26620501b22f68c220fd6ed93c3d79e8361cde06ac871cba26c8"
+    },
+    {
+      "name": "qoi_behavior_alignment_holdout",
+      "conclusion": "Falsified",
+      "headline": "The development iterations association did not replicate on 26 untouched instances.",
+      "evidence": {
+        "development_iterations_spearman": 0.457,
+        "development_iterations_pvalue": 0.0038,
+        "holdout_iterations_spearman": 0.136,
+        "holdout_iterations_pvalue": 0.116,
+        "conditional_gap_partial_spearman": 0.015,
+        "conditional_gap_pvalue": 0.418,
+        "joint_qoi_nearest_neighbor_error_change": 0.127,
+        "promotion_ready": false
+      },
+      "solver_runs_used": 156,
+      "solver_runs_created": 156,
+      "source_artifact_sha256": "c861b268f91c8f6f1205f26cc9f301ed09de5a8d8000e11cbd4ab93a5ae6b124"
+    },
+    {
+      "name": "per_axis_qoi_signal",
+      "conclusion": "Falsified",
+      "headline": "No current axis passed the independent-signal gate after permutation testing and FDR control.",
+      "evidence": {
+        "instances": 26,
+        "label_permutations": 4999,
+        "independent_discoveries": 0,
+        "solver_runs_used": 156,
+        "solver_runs_created": 0
+      },
+      "source_artifact_sha256": "34668b392c7b66f544ddddd4aafd7518f4daa322eef5a0c490ffbd9885219cec"
+    }
+  ],
+  "retained_live_experiment": "cvrp-qoi-axioms-v1.json",
+  "interpretation": {
+    "rejected": [
+      "A universal joint-QoI distance as a solver-behavior proxy",
+      "Current individual QoI axes as validated observational behavior proxies",
+      "Exact OT as an improvement over simple greedy matching in the tested synthetic domain"
+    ],
+    "not_rejected": [
+      "QoIs as solver-independent coordinates for controlled instance interventions",
+      "Axis-conditioned response analysis using known generator pairings",
+      "OT for heterogeneous populations where simple matching demonstrably leaves nuisance imbalance"
+    ]
+  }
+}

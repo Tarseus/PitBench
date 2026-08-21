@@ -1,0 +1,494 @@
+{
+  "axioms": {
+    "1_solver_independence": {
+      "declared_solver_independent_axis_fraction": 1.0,
+      "passed": true,
+      "solver_annotation_max_delta": 0.0
+    },
+    "2_semantic_invariance": {
+      "equivalence_distance_median_iqr": 1.838991093710695e-16,
+      "equivalence_unrelated_ratio": 2.0318821789824043e-16,
+      "passed": true,
+      "transformations": [
+        "translation",
+        "rotation",
+        "reflection",
+        "relabeling"
+      ],
+      "unrelated_distance_median_iqr": 0.9050677803728207
+    },
+    "3_scale_sensitivity": {
+      "customer_count_exact": true,
+      "log_ratio_spearman": 1.0,
+      "passed": true,
+      "scale_descriptor": "customer_count",
+      "sizes": [
+        50,
+        100,
+        200,
+        500
+      ]
+    },
+    "4_structure_scale_separability": {
+      "controlled_direction_pass_fraction": 1.0,
+      "leaking_structural_axes": [
+        "convex_hull_fraction",
+        "demand_mean_fraction",
+        "mst_edge_mean_normalized",
+        "nearest_distance_iqr_normalized",
+        "nearest_distance_mean_normalized"
+      ],
+      "passed": false,
+      "scale_stable_axis_fraction": 0.5833333333333334,
+      "stable_structural_axes": [
+        "vehicle_lower_bound",
+        "fleet_fill_ratio",
+        "demand_cv",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "demand_depot_correlation",
+        "demand_weighted_depot_ratio"
+      ],
+      "structure_shift_customer_count_max_delta": 0.0
+    },
+    "5_unit_representation_robustness": {
+      "excluded_raw_unit_axes": [
+        "capacity",
+        "total_demand",
+        "pairwise_distance_median"
+      ],
+      "passed": true,
+      "unit_robust_axes": [
+        "customer_count",
+        "vehicle_lower_bound",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "demand_cv",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "nearest_distance_mean_normalized",
+        "nearest_distance_iqr_normalized",
+        "mst_edge_mean_normalized",
+        "convex_hull_fraction",
+        "demand_depot_correlation",
+        "demand_weighted_depot_ratio"
+      ],
+      "unit_robust_axis_max_error_iqr": 5.169613791795945e-15
+    },
+    "6_no_circular_learned_semantics": {
+      "learned_from_target_solver": false,
+      "passed": true,
+      "solver_annotation_max_delta": 0.0,
+      "solver_runs_used": 0
+    },
+    "7_version_freezing": {
+      "calibration_fingerprint": "19e861114db2c3c5227954b5c1948a94f202247212d1b85bc559680ffeaf8c10",
+      "current_spec_fingerprint": "f924d33c1a81754934fb8f97c9ba27b62c04312025a9cb6f33820687a87f14c0",
+      "deterministic_repeat_identical": true,
+      "observations_match_pinned_fingerprint": true,
+      "passed": true,
+      "pinned_spec_fingerprint": "f924d33c1a81754934fb8f97c9ba27b62c04312025a9cb6f33820687a87f14c0",
+      "qoi_spec_fingerprint_frozen": true,
+      "spec_matches_pinned_fingerprint": true,
+      "version_has_pinned_fingerprint": true
+    },
+    "8_falsifiability": {
+      "controlled_direction_count": 5,
+      "cost_weight_sensitivity": "not_applicable_no_combined_weighted_cost",
+      "negative_controls": [
+        "equivalence",
+        "unit",
+        "unrelated"
+      ],
+      "passed": true,
+      "thresholds_frozen_in_artifact": true
+    }
+  },
+  "axis_diagnostics": {
+    "capacity": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "raw_unit",
+      "scale_leakage_median_iqr": 1.510204081632653,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "demand units",
+      "unit_max_error_iqr": 6.46530612244898,
+      "unit_robust": null,
+      "unrelated_change_median_iqr": 0.31020408163265306
+    },
+    "convex_hull_fraction": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "structure",
+      "scale_leakage_median_iqr": 0.7181818181818183,
+      "scale_stable": false,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 0.0,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.18181818181818182
+    },
+    "customer_count": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "scale",
+      "scale_leakage_median_iqr": 1.5,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "customers",
+      "unit_max_error_iqr": 0.0,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.0
+    },
+    "demand_cv": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 1.3265730977944465e-15,
+      "role": "structure",
+      "scale_leakage_median_iqr": 0.2003093980121755,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 1.3265730977944465e-15,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 1.6987163982859623
+    },
+    "demand_depot_correlation": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 1.776307425473178e-16,
+      "role": "structure",
+      "scale_leakage_median_iqr": 0.03804223688993445,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "correlation",
+      "unit_max_error_iqr": 1.184204950315452e-16,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.07719252130893746
+    },
+    "demand_mean_fraction": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "structure",
+      "scale_leakage_median_iqr": 0.6451120030670454,
+      "scale_stable": false,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 1.52472319266594e-16,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.6265578766774367
+    },
+    "demand_weighted_depot_ratio": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 3.4516762536479658e-15,
+      "role": "structure",
+      "scale_leakage_median_iqr": 0.054604606290327665,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 2.5887571902359743e-15,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.06491617810685107
+    },
+    "depot_distance_iqr_normalized": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 1.2929662119290448e-15,
+      "role": "structure",
+      "scale_leakage_median_iqr": 0.07588289031231199,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 5.746516497462422e-16,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.5579110034469499
+    },
+    "depot_distance_mean_normalized": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 3.129661840108053e-16,
+      "role": "structure",
+      "scale_leakage_median_iqr": 0.006491897198663266,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 6.259323680216106e-16,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 3.0306355816895105
+    },
+    "fleet_fill_ratio": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "structure",
+      "scale_leakage_median_iqr": 0.04361755269692627,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 0.0,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.04874594592154408
+    },
+    "mst_edge_mean_normalized": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 1.553257266071355e-15,
+      "role": "structure",
+      "scale_leakage_median_iqr": 1.2008177339617097,
+      "scale_stable": false,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 2.07100968809514e-15,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 1.150690093447541
+    },
+    "nearest_distance_iqr_normalized": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 8.748577186116215e-15,
+      "role": "structure",
+      "scale_leakage_median_iqr": 0.9269864846415521,
+      "scale_stable": false,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 5.169613791795945e-15,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.8023946756138598
+    },
+    "nearest_distance_mean_normalized": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 1.2822606118448723e-15,
+      "role": "structure",
+      "scale_leakage_median_iqr": 1.12182282252295,
+      "scale_stable": false,
+      "solver_independent_declared": true,
+      "unit": "ratio",
+      "unit_max_error_iqr": 6.411303059224361e-16,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 1.2600476194498826
+    },
+    "pairwise_distance_median": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 1.1286731492045717e-15,
+      "role": "raw_unit",
+      "scale_leakage_median_iqr": 0.11846455160118156,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "coordinate units",
+      "unit_max_error_iqr": 39.11602998391509,
+      "unit_robust": null,
+      "unrelated_change_median_iqr": 1.8373678995736427
+    },
+    "total_demand": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "raw_unit",
+      "scale_leakage_median_iqr": 1.5700636942675161,
+      "scale_stable": null,
+      "solver_independent_declared": true,
+      "unit": "demand units",
+      "unit_max_error_iqr": 6.684076433121019,
+      "unit_robust": null,
+      "unrelated_change_median_iqr": 0.05222929936305733
+    },
+    "vehicle_lower_bound": {
+      "equivalence_invariant": true,
+      "equivalence_max_error_iqr": 0.0,
+      "role": "structure",
+      "scale_leakage_median_iqr": 0.0,
+      "scale_stable": true,
+      "solver_independent_declared": true,
+      "unit": "vehicles",
+      "unit_max_error_iqr": 0.0,
+      "unit_robust": true,
+      "unrelated_change_median_iqr": 0.6666666666666666
+    }
+  },
+  "conclusion": "Falsified",
+  "controlled_directions": [
+    {
+      "correct_direction_fraction": {
+        "demand_mean_fraction": 1.0,
+        "vehicle_lower_bound": 1.0
+      },
+      "name": "capacity_pressure",
+      "oriented_median_effect_iqr": {
+        "demand_mean_fraction": 0.9953791966681365,
+        "vehicle_lower_bound": 1.0
+      },
+      "passed": true,
+      "responsive_axes": [
+        "vehicle_lower_bound",
+        "demand_mean_fraction"
+      ],
+      "scale_axis_max_delta": 0.0,
+      "source_level": "capacity_ratio=0.30",
+      "target_axes": [
+        "vehicle_lower_bound",
+        "demand_mean_fraction"
+      ],
+      "target_level": "capacity_ratio=0.08"
+    },
+    {
+      "correct_direction_fraction": {
+        "mst_edge_mean_normalized": 1.0,
+        "nearest_distance_mean_normalized": 1.0
+      },
+      "name": "cluster_spread",
+      "oriented_median_effect_iqr": {
+        "mst_edge_mean_normalized": 1.4752614899458216,
+        "nearest_distance_mean_normalized": 1.6509205680014092
+      },
+      "passed": true,
+      "responsive_axes": [
+        "nearest_distance_mean_normalized",
+        "mst_edge_mean_normalized"
+      ],
+      "scale_axis_max_delta": 0.0,
+      "source_level": "cluster_spread=3",
+      "target_axes": [
+        "nearest_distance_mean_normalized",
+        "mst_edge_mean_normalized"
+      ],
+      "target_level": "cluster_spread=24"
+    },
+    {
+      "correct_direction_fraction": {
+        "demand_cv": 1.0
+      },
+      "name": "demand_dispersion",
+      "oriented_median_effect_iqr": {
+        "demand_cv": 1.4614427924354705
+      },
+      "passed": true,
+      "responsive_axes": [
+        "demand_cv"
+      ],
+      "scale_axis_max_delta": 0.0,
+      "source_level": "uniform_integer",
+      "target_axes": [
+        "demand_cv"
+      ],
+      "target_level": "bimodal"
+    },
+    {
+      "correct_direction_fraction": {
+        "demand_depot_correlation": 1.0,
+        "demand_weighted_depot_ratio": 1.0
+      },
+      "name": "demand_location_coupling",
+      "oriented_median_effect_iqr": {
+        "demand_depot_correlation": 2.0617793974100262,
+        "demand_weighted_depot_ratio": 2.85863025321436
+      },
+      "passed": true,
+      "responsive_axes": [
+        "demand_depot_correlation",
+        "demand_weighted_depot_ratio"
+      ],
+      "scale_axis_max_delta": 0.0,
+      "source_level": "depot_anticorrelated",
+      "target_axes": [
+        "demand_depot_correlation",
+        "demand_weighted_depot_ratio"
+      ],
+      "target_level": "depot_correlated"
+    },
+    {
+      "correct_direction_fraction": {
+        "depot_distance_mean_normalized": 1.0
+      },
+      "name": "depot_position",
+      "oriented_median_effect_iqr": {
+        "depot_distance_mean_normalized": 1.0759484608944958
+      },
+      "passed": true,
+      "responsive_axes": [
+        "depot_distance_mean_normalized"
+      ],
+      "scale_axis_max_delta": 0.0,
+      "source_level": "center",
+      "target_axes": [
+        "depot_distance_mean_normalized"
+      ],
+      "target_level": "corner"
+    }
+  ],
+  "kind": "cvrp_instance_qoi_axiom_validation",
+  "panel_fingerprint": "b07331e7d597efa6c9dd7287b73872c8cf8f3d3cd18300b0ba5f579181c97fd0",
+  "preregistration": {
+    "methodology_axioms": [
+      "1_solver_independence",
+      "2_semantic_invariance",
+      "3_scale_sensitivity",
+      "4_structure_scale_separability",
+      "5_unit_representation_robustness",
+      "6_no_circular_learned_semantics",
+      "7_version_freezing",
+      "8_falsifiability"
+    ],
+    "panel": {
+      "calibration_fingerprint": "19e861114db2c3c5227954b5c1948a94f202247212d1b85bc559680ffeaf8c10",
+      "calibration_namespace": "cvrp-qoi-axiom-calibration-v1",
+      "calibration_size": 128,
+      "seeds": [
+        101,
+        211,
+        307,
+        401,
+        503,
+        601,
+        701,
+        809,
+        907,
+        1009,
+        1103,
+        1201,
+        1301,
+        1409,
+        1511,
+        1601
+      ],
+      "sizes": [
+        50,
+        100,
+        200,
+        500
+      ]
+    },
+    "thresholds": {
+      "controlled_direction_fraction_min": 0.75,
+      "controlled_direction_pass_fraction_min": 0.8,
+      "controlled_effect_median_iqr_min": 0.5,
+      "equivalence_unrelated_ratio_max": 0.05,
+      "numerical_standardized_tolerance": 1e-09,
+      "scale_leakage_median_iqr_max": 0.25,
+      "scale_monotonicity_spearman_min": 0.99,
+      "scale_stable_axis_fraction_min": 0.75,
+      "unrelated_distance_median_iqr_min": 0.5
+    },
+    "unit_policy": {
+      "raw_unit_axes_reported_but_excluded_from_ground_geometry": [
+        "capacity",
+        "total_demand",
+        "pairwise_distance_median"
+      ],
+      "unit_robust_axes": [
+        "customer_count",
+        "vehicle_lower_bound",
+        "fleet_fill_ratio",
+        "demand_mean_fraction",
+        "demand_cv",
+        "depot_distance_mean_normalized",
+        "depot_distance_iqr_normalized",
+        "nearest_distance_mean_normalized",
+        "nearest_distance_iqr_normalized",
+        "mst_edge_mean_normalized",
+        "convex_hull_fraction",
+        "demand_depot_correlation",
+        "demand_weighted_depot_ratio"
+      ]
+    }
+  },
+  "production_geometry_changed": false,
+  "qoi_spec_fingerprint": "f924d33c1a81754934fb8f97c9ba27b62c04312025a9cb6f33820687a87f14c0",
+  "qoi_spec_name": "cvrp-instance-qoi",
+  "qoi_spec_version": "1.0",
+  "schema_version": "1.0",
+  "solver_runs_created": 0,
+  "solver_runs_used": 0
+}

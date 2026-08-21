@@ -2,7 +2,8 @@ import json
 from pathlib import Path
 
 from pitbench.families.cvrp import CVRPFamily
-from pitbench.instances import materialize_population
+from pitbench.instances import make_euclidean_cvrp_instance, materialize_population
+from pitbench.qoi.cvrp import extract_cvrp_instance_qoi
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -37,3 +38,48 @@ def test_cvrp_verifier_is_independent_and_rejects_duplicates(tmp_path: Path) -> 
     verifier = CVRPFamily()
     assert verifier.verify(instance, valid).feasible is True
     assert verifier.verify(instance, invalid).feasible is False
+
+
+def test_cvrp_generator_supports_depot_and_demand_location_coupling() -> None:
+    common = {
+        "name": "coupled",
+        "customers": 200,
+        "coordinate_seed": 123,
+        "demand_seed": 456,
+        "capacity_ratio": 0.15,
+        "depot_mode": "corner",
+    }
+    correlated = make_euclidean_cvrp_instance(
+        **common, demand_distribution="depot_correlated"
+    )
+    anticorrelated = make_euclidean_cvrp_instance(
+        **common, demand_distribution="depot_anticorrelated"
+    )
+    correlated_qoi = extract_cvrp_instance_qoi(correlated)
+    anticorrelated_qoi = extract_cvrp_instance_qoi(anticorrelated)
+
+    assert correlated_qoi.values["demand_depot_correlation"] > 0.8
+    assert anticorrelated_qoi.values["demand_depot_correlation"] < -0.8
+    assert correlated["coordinates"] == anticorrelated["coordinates"]
+    assert sorted(correlated["demands"]) == sorted(anticorrelated["demands"])
+
+
+def test_cvrp_generator_legacy_defaults_are_explicitly_backward_compatible() -> None:
+    implicit = make_euclidean_cvrp_instance(
+        name="legacy",
+        customers=12,
+        coordinate_seed=11,
+        demand_seed=22,
+        capacity_ratio=0.2,
+    )
+    explicit = make_euclidean_cvrp_instance(
+        name="legacy",
+        customers=12,
+        coordinate_seed=11,
+        demand_seed=22,
+        capacity_ratio=0.2,
+        depot_mode="center",
+        demand_distribution="uniform_integer",
+    )
+
+    assert implicit == explicit

@@ -47,9 +47,23 @@ uv sync --group dev
 uv run pitbench tasks validate
 uv run pitbench tasks materialize-dev --output dataset/dev
 uv run pitbench tasks smoke --instances-per-population 1
+uv run pitbench qoi validate-cvrp-axioms \
+  --output results/cvrp-qoi-axioms-v1.json
 uv run pytest -q tests/unit/pitbench
 uv run pytest -q tests/unit -m 'not docker'
 ```
+
+`qoi validate-cvrp-axioms` applies the methodology's eight ground-geometry axioms
+directly to every frozen Instance-QoI coordinate. It reports
+equivalence and unit invariance, scale leakage per structural axis, controlled
+structure-direction response, solver independence, version freezing, and negative
+controls. It does not combine axes, invoke a solver, or change production geometry.
+The complete result and a compact history of rejected research probes are retained
+under `results/`.
+
+The methodology requirements, completed experiments, negative evidence, and
+feasibility assessment are summarized in
+[`docs/cvrp-qoi-methodology-validation.md`](docs/cvrp-qoi-methodology-validation.md).
 
 ## Codex agent with a ChatGPT subscription
 
@@ -77,6 +91,37 @@ The runner passes subscription authentication through standard input into a
 temporary directory, removes it after the run, and executes as `pitbench-codex`, a
 dedicated system user without Docker socket access. No API key or auth file is
 mounted into the task container.
+
+## Antigravity agent with a Google subscription
+
+PitBench can also run the host Antigravity CLI (`agy`) through the same bounded
+loopback MCP surface. Complete the normal interactive sign-in and install the
+isolated runner once:
+
+```bash
+agy
+sudo scripts/install-antigravity-runner.sh
+```
+
+Re-run the installer after upgrading `agy` because it copies the executable used by
+the dedicated runner account.
+
+```bash
+uv run pitbench tasks materialize-dev --output dataset/dev
+uv run fc-eval runs create \
+  --dataset-path dataset/dev \
+  --agent antigravity \
+  --model gemini-3.1-pro-high \
+  --n-concurrent 1
+```
+
+The runner copies only Antigravity's OAuth token and authentication mode through
+standard input into temporary files with mode `0600`. It runs as
+`pitbench-agy`, which has no Docker socket access, and removes the temporary HOME
+after every trial. The task container remains network-disabled and receives no
+credential files. PitBench deliberately does not enable Antigravity's
+`--dangerously-skip-permissions` mode: the temporary settings allow only
+`mcp(pitbench/run_command)`.
 
 Materialized tasks expose the same agent-side developer interface:
 

@@ -9,6 +9,9 @@ import typer
 
 from adapters.pitbench.adapter import PitBenchAdapter
 from fceval.evaluation import EvaluationRequest
+from pitbench.distribution.qoi_axiom_validation import (
+    run_cvrp_qoi_axiom_validation,
+)
 from pitbench.evaluator.evaluator import PitBenchEvaluator
 from pitbench.instances import materialize_population
 from pitbench.schema.task import PopulationKind
@@ -16,7 +19,9 @@ from pitbench.tasks import TaskCatalog
 
 app = typer.Typer(help="PitBench task and evaluator tooling.")
 tasks_app = typer.Typer(help="Validate and smoke-test benchmark tasks.")
+qoi_app = typer.Typer(help="Versioned quantities-of-interest tooling.")
 app.add_typer(tasks_app, name="tasks")
+app.add_typer(qoi_app, name="qoi")
 
 
 def _root(value: Path | None) -> Path:
@@ -115,6 +120,41 @@ def materialize_task(
         private_root if private_root.is_absolute() else repository_root / private_root,
     ).materialize(task_id, output)
     typer.echo(f"Materialized {task_id} at {task_dir}")
+
+
+@qoi_app.command("validate-cvrp-axioms")
+def validate_cvrp_qoi_axioms(
+    output: Annotated[
+        Path,
+        typer.Option(help="JSON destination for the axis-level QoI axiom report"),
+    ],
+    calibration_size: Annotated[
+        int,
+        typer.Option(min=8, help="Solver-free designs used for robust axis scales"),
+    ] = 128,
+) -> None:
+    """Validate methodology axioms 1--8 against CVRP instance QoIs."""
+    report = run_cvrp_qoi_axiom_validation(calibration_size=calibration_size)
+    payload = report.as_dict()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    typer.echo(
+        json.dumps(
+            {
+                "conclusion": report.conclusion,
+                "axioms": {
+                    name: evidence["passed"]
+                    for name, evidence in report.axioms.items()
+                },
+                "artifact": str(output),
+                "solver_runs_used": report.solver_runs_used,
+                "solver_runs_created": report.solver_runs_created,
+                "production_geometry_changed": report.production_geometry_changed,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 if __name__ == "__main__":
