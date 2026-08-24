@@ -11,7 +11,6 @@ from pathlib import Path
 
 import yaml
 
-from pitbench.distribution.transforms import relabel_cvrp_customers
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.families.base import ProblemFamilyRegistry
 from pitbench.families.external import ExternalVerifierFamily
@@ -192,55 +191,6 @@ class JudgePlan:
                 )
         return cls(task, cases)
 
-    def with_equivalence_panel(self, root: Path) -> "JudgePlan":
-        protocol = self.task.evaluation.sensitivity
-        if protocol.equivalence_transform is None:
-            return self
-        if self.task.problem_family.value != "cvrp":
-            raise ValueError("customer relabel equivalence is only defined for CVRP")
-
-        variants: list[InstanceCase] = []
-        by_population: dict[str, list[InstanceCase]] = {}
-        for case in self.cases:
-            by_population.setdefault(case.population.name, []).append(case)
-        for population_name, cases in sorted(by_population.items()):
-            selected = sorted(cases, key=lambda item: item.instance_id)[
-                : protocol.equivalence_instances_per_population
-            ]
-            for index, case in enumerate(selected):
-                if case.path is None or case.path.suffix.lower() != ".json":
-                    continue
-                original = json.loads(case.path.read_text())
-                transformed = relabel_cvrp_customers(
-                    original,
-                    seed=17_000 + index,
-                )
-                transform_id = f"{case.instance_id}__equiv_relabel"
-                path = root / population_name / f"{transform_id}.json"
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(json.dumps(transformed, indent=2))
-                variants.append(
-                    InstanceCase(
-                        population=case.population,
-                        instance_id=transform_id,
-                        path=path,
-                        anchor=case.anchor,
-                        problem_scale=case.problem_scale,
-                        equivalence_parent_id=case.instance_id,
-                        equivalence_transform="customer_relabel",
-                        solver_seeds=(
-                            tuple(protocol.equivalence_solver_seeds)
-                            or tuple(self.task.evaluation.solver_seeds)
-                        ),
-                        budgets_sec=(
-                            tuple(protocol.equivalence_budgets_sec)
-                            or (max(self.task.evaluation.budgets_sec),)
-                        ),
-                    )
-                )
-        return JudgePlan(self.task, [*self.cases, *variants])
-
-
 class FixtureJudge:
     """Deterministic contract smoke test; never selected implicitly."""
 
@@ -394,7 +344,7 @@ class LocalProcessJudge:
                 self.task,
                 self.resolver,
                 generated_root=root / "generated-populations",
-            ).with_equivalence_panel(root / "equivalence-panel")
+            )
             for state in CodeState:
                 self._workspace(state, root / "validation", BuildKind.VALIDATION)
             workspaces = {

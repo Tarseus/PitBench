@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import importlib
 import json
 import os
 import subprocess
@@ -37,8 +37,11 @@ def _instances(selected: str | None) -> list[Path]:
 def _runner_available(config: dict[str, Any]) -> tuple[bool, str]:
     requirement = config.get("runner_requirement")
     if requirement == "pyvrp_import":
-        available = importlib.util.find_spec("pyvrp") is not None
-        return available, "pyvrp import" if available else "pyvrp is not installed"
+        try:
+            importlib.import_module("pyvrp")
+        except Exception as exc:
+            return False, f"pyvrp import failed: {exc}"
+        return True, "pyvrp import"
     if requirement and requirement.startswith("env:"):
         variable = requirement.split(":", 1)[1]
         available = bool(os.environ.get(variable))

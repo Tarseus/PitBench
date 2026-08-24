@@ -12,7 +12,7 @@ from pitbench.schema.task import PitBenchTask, PopulationKind
 from pitbench.tasks import TaskCatalog
 
 _AGENT_IMAGES = {
-    "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin": "python:3.13-bookworm",
+    "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin": "python:3.13-trixie",
     "pitbench.repositories.vroom:VroomRepositoryPlugin": "ubuntu:22.04",
     "pitbench.repositories.highs:HighsRepositoryPlugin": "ubuntu:24.04",
     "pitbench.repositories.choco:ChocoRepositoryPlugin": (
@@ -59,6 +59,12 @@ _PREBUILD_COMMANDS = {
         "cmake --build build -j1\n"
     ),
 }
+
+# Increment when the generated task image or bundled public tooling becomes
+# incompatible with an image produced by an earlier PitBench checkout.
+IMAGE_REVISION = "1"
+IMAGE_REVISION_LABEL = "org.pitbench.image-revision"
+IMAGE_SOURCE_LABEL = "org.pitbench.image-source"
 
 
 class PitBenchAdapter:
@@ -117,9 +123,12 @@ class PitBenchAdapter:
         write_agent_tooling(
             repository_root=self.repository_root, task=task, task_dir=task_dir
         )
+        prepared_image = agent_image or task.repository.agent_image
         (task_dir / "Dockerfile").write_text(
             self._dockerfile(task, image_override=agent_image)
         )
+        if prepared_image is not None:
+            (task_dir / ".dockerignore").write_text(self._dockerignore())
         (task_dir / "docker-compose.yaml").write_text(self._compose())
         return task_dir
 
@@ -186,7 +195,11 @@ class PitBenchAdapter:
     @staticmethod
     def _dockerfile(task: PitBenchTask, *, image_override: str | None = None) -> str:
         plugin = task.repository.plugin
-        image = image_override or task.repository.agent_image or _AGENT_IMAGES[plugin]
+        prepared_image = image_override or task.repository.agent_image
+        if prepared_image is not None:
+            return PitBenchAdapter._prepared_dockerfile(prepared_image)
+
+        image = _AGENT_IMAGES[plugin]
         packages = (
             "git tmux asciinema python3 python3-pip time " + _BUILD_PACKAGES[plugin]
         )
@@ -210,9 +223,40 @@ RUN rm -rf /workspace/repo
 COPY repo /workspace/repo
 {prebuild}COPY dev_instances /pitbench/dev_instances
 RUN chmod 0755 /usr/local/bin/pitbench
+LABEL {IMAGE_REVISION_LABEL}="{IMAGE_REVISION}" \
+      {IMAGE_SOURCE_LABEL}="{image}"
 ENV PYTHONPATH=/opt/pitbench-tooling
 WORKDIR /workspace/repo
 CMD ["sh", "-c", "sleep infinity"]
+"""
+
+    @staticmethod
+    def _prepared_dockerfile(image: str) -> str:
+        return f"""FROM {image}
+RUN mkdir -p /logs /agent-logs /pitbench/dev_instances
+COPY agent_tooling /opt/pitbench-tooling
+COPY agent_bin/pitbench /usr/local/bin/pitbench
+COPY agent_config.json /pitbench/config.json
+COPY dev_instances /pitbench/dev_instances
+RUN chmod 0755 /usr/local/bin/pitbench
+LABEL {IMAGE_REVISION_LABEL}="{IMAGE_REVISION}" \
+      {IMAGE_SOURCE_LABEL}="{image}"
+ENV PYTHONPATH=/opt/pitbench-tooling
+WORKDIR /workspace/repo
+CMD ["sh", "-c", "sleep infinity"]
+"""
+
+    @staticmethod
+    def _dockerignore() -> str:
+        return """*
+!Dockerfile
+!agent_tooling/
+!agent_tooling/**
+!agent_bin/
+!agent_bin/**
+!agent_config.json
+!dev_instances/
+!dev_instances/**
 """
 
     @staticmethod

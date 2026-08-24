@@ -37,6 +37,11 @@ def test_every_task_runs_explicit_fixture_grid(record, tmp_path: Path) -> None:
     assert observations
     assert {item.code_state for item in observations} == set(CodeState)
     assert all(item.task_id == record.task.task_id for item in observations)
+    summary = envelope.payload["summary"]
+    assert summary["performance"] is not None
+    assert "outcomes" not in summary
+    assert "sensitivity" not in summary
+    assert "behavior" not in summary
 
 
 def test_real_evaluation_without_private_assets_fails_closed(tmp_path: Path) -> None:
@@ -59,7 +64,7 @@ def test_real_evaluation_without_private_assets_fails_closed(tmp_path: Path) -> 
     assert "real judge missing configuration" in (envelope.error or "")
 
 
-def test_model_build_fixture_uses_model_size_decision_path(tmp_path: Path) -> None:
+def test_model_build_fixture_uses_performance_decision_path(tmp_path: Path) -> None:
     record = next(
         record
         for record in TaskCatalog(ROOT).validate_all()
@@ -87,15 +92,14 @@ def test_model_build_fixture_uses_model_size_decision_path(tmp_path: Path) -> No
 
     assert envelope.completed, envelope.error
     decision = envelope.payload["summary"]["decision"]
-    assert decision["policy_name"] == ("pitbench-model-build-pareto-gated-improvement")
-    assert decision["outcome_complete"] is True
-    assert decision["resource_telemetry_complete"] is True
-    assert decision["paired_model_runs"] == 1
-    assert decision["model_variable_ratio"] < 1
-    assert decision["model_constraint_ratio"] < 1
-    assert decision["classification"] == "improved"
-    assert decision["is_resolved"] is True
-    assert envelope.is_resolved is True
+    assert decision["policy_name"] == "pitbench-performance-first"
+    assert decision["performance_complete"] is False
+    assert decision["classification"] == "incomplete"
+    assert decision["is_resolved"] is False
+    assert envelope.is_resolved is False
+    assert "outcome_complete" not in decision
+    assert "resource_telemetry_complete" not in decision
+    assert "sensitivity_complete" not in decision
 
 
 def test_patch_policy_protects_judge_surfaces(tmp_path: Path) -> None:

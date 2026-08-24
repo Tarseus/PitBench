@@ -20,6 +20,7 @@ repository:
   clone_url: https://github.com/PyVRP/PyVRP.git
   language: cpp_python
   plugin: pitbench.repositories.pyvrp:PyVRPRepositoryPlugin
+  agent_image: ghcr.io/tarseus/pitbench-pyvrp:ea0c4211819edac6fd920413ad7508cc9ad56e0e
 oracle:
     kind: best_known_solution
     source: private://calibration/cvrplib_x/oracle.yaml
@@ -39,18 +40,8 @@ evaluation:
     compiler: gcc
     compiler_version: 13.3.0
     flags: [-O3, -DNDEBUG]
-  sensitivity:
-    scale_descriptor: customer_count
-    equivalence_transform: customer_relabel
-    equivalence_instances_per_population: 4
-    equivalence_budgets_sec: [5.0]
-    equivalence_solver_seeds: [0, 1, 2, 3, 4]
   decision:
     minimum_success_rate_delta: 0.0
-    minimum_operational_speedup: 0.95
-    minimum_cpu_speedup: 0.95
-    maximum_peak_rss_ratio: 1.05
-    require_complete_sensitivity: true
 populations:
   - name: agent_dev
     kind: agent_dev

@@ -24,6 +24,13 @@ def test_release_identity_and_private_judge_assets() -> None:
     for record in TaskCatalog(ROOT).validate_all():
         assert record.task.release.tag.startswith("v")
         assert len(record.task.release.base_commit) == 40
+        if record.task.task_id.startswith("pyvrp_"):
+            assert record.task.repository.agent_image == (
+                "ghcr.io/tarseus/pitbench-pyvrp:"
+                f"{record.task.release.base_commit}"
+            )
+        else:
+            assert record.task.repository.agent_image is None
         assert record.task.information_regime.value == "snapshot_only"
         for population in record.task.populations:
             if population.kind == PopulationKind.AGENT_DEV:

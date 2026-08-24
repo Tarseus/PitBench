@@ -1,23 +1,44 @@
 # PitBench
 
-PitBench evaluates coding agents that improve real combinatorial-optimization
-solvers, providing full execution harness, isolated Docker judging, and
-6-dimensional (Outcome 3D + Sensitivity 3D) evaluation metrics.
+PitBench evaluates coding agents that modify real combinatorial-optimization
+solvers. Its benchmark contract is performance-first: independently certify every
+solution, measure quality at fixed time budgets, quantify randomized repeatability,
+and check whether improvements remain on a hidden instance population.
 
 ## Evaluation contract
 
 The PitBench execution harness creates the task environment, runs an agent, captures a
 binary candidate patch, executes isolated judging, and stores the evaluation results.
 
-PitBench records the raw grid
+PitBench records the canonical experimental grid
 
 ```
 task × code_state × population × instance × solver_seed × budget
 ```
 
-where `code_state` is `base` or `agent`. Validity is separate from performance.
-Problem-level optimum/BKS oracles anchor solution quality; they are not code
-references.
+where `code_state` is `base` or `agent`. The experimental unit is
+`instance × solver_seed × budget`, not an unstructured timing repeat. Base and Agent
+runs are paired on that unit.
+
+The primary report has four parts:
+
+1. **Independent validity.** Evaluator-owned problem verifiers check feasibility and
+   recompute objectives; solver-reported validity and objectives are not trusted.
+2. **Quality-time performance.** At each fixed budget, feasible objective values are
+   anchored to an optimum or best-known solution. Runtime alone is never called a
+   speedup when solution quality changes.
+3. **Randomized repeatability.** Solver seeds remain first-class observations. The
+   report gives paired better/equal/worse counts, per-seed gap reductions, and an
+   instance-cluster bootstrap 95% confidence interval. Repeatability is evidence for
+   a performance conclusion, not a separate Stability score.
+4. **Held-out population retention.** Judge-ID and hidden-shift improvements are
+   reported directly, together with `shift improvement - ID improvement`. No
+   instance-distance metric is required for this claim.
+
+Problem-level optimum/BKS oracles anchor solution quality; they are not human code
+references. This makes the benchmark about a randomized optimization process
+`A(instance; seed, budget)`, rather than runtime of an equivalent deterministic
+computation.
 
 A production evaluation destroys the agent environment and launches a fresh,
 network-disabled judge container from a digest-pinned image. Hidden instances,
@@ -25,19 +46,15 @@ independent verifiers, and oracle data are mounted only there.
 `fixture_mode` is explicit, deterministic, and cannot be reported as a real solver
 result.
 
-Production PyVRP evaluation populates two independent three-dimensional views:
+The primary conclusion uses the largest declared fixed budget on the BKS-anchored
+`judge_id` population. All budgets remain visible as a quality-time curve. A result
+is classified as improved only when the paired judge-ID 95% interval excludes zero,
+independent validity does not regress, and the point improvement remains non-negative
+on `judge_shift`. A positive mean whose interval crosses zero is inconclusive.
 
-- outcome coordinates: performance, reliability, and resource consumption;
-- input sensitivity directions: certified representation equivalence, frozen
-  customer-count scale, and an independently seeded shifted population.
-
-The evaluator also publishes the three population-conditional empirical Wasserstein
-solver distances instead of collapsing unlike outcome units into one scalar. The
-main quality result uses only the BKS-anchored `judge_id` population; equivalence and
-shift panels remain diagnostics and cannot bias the primary gap or runtime summary.
-CPU time and peak RSS are captured for every driver process. A versioned,
-manifest-declared Pareto gate turns the evaluator-owned report into the generic
-resolved verdict and fails closed when a required six-dimensional panel is missing.
+The six-dimensional experimental metric definitions remain on the independent
+`metric/definition` branch. They are not part of this performance-first branch or
+its evaluator verdict.
 
 ## Implemented release snapshots
 
@@ -56,25 +73,46 @@ explicit RNG dimensions, and agent-dev/hidden population definitions.
 The four PyVRP snapshots share the same generated development population and the
 same 38-instance CVRPLIB-X calibration population with published BKS anchors, so
 cross-version comparisons use common instances, seeds, and budgets.
-They also share a hash-pinned 10-instance hidden structural-shift generator and a
-bounded customer-relabel equivalence panel.
+They also share a fixed 10-instance hidden structural-shift population.
 
 ## Commands
+
+Start a complete evaluation with one command. PitBench materializes the selected
+release task, runs the agent, and invokes the independent judge:
+
+```bash
+uv run pitbench evaluate pyvrp_v0_14_0 \
+  --agent codex \
+  --model gpt-5.6-terra
+```
+
+Materialized tasks are retained under `.pitbench/tasks/<run-id>/`; results are
+written under `runs/<run-id>/`. PyVRP release images are built ahead of time and
+published to GHCR under commit tags. A new machine pulls the prepared PyVRP image
+and builds only a thin PitBench tooling layer; later runs reuse the local thin
+image. Pass `--rebuild` to force a refresh.
+
+The publication matrix and recipes live under `.github/workflows/` and
+`docker/solver-images/pyvrp/`. Each prepared image contains the frozen PyVRP
+checkout, build toolchain, dependencies, and initial release build. The materialized task
+Dockerfile adds only agent-visible tooling and development instances; its
+`.dockerignore` excludes the locally cloned solver snapshot from the Docker context.
+The PyVRP image build imports both native extension modules before publication, so a
+missing or ABI-incompatible build fails CI instead of becoming a downloadable image.
+
+Lower-level task and reporting commands remain available for custom workflows:
 
 ```bash
 uv sync --group dev
 uv run pitbench tasks validate
 uv run pitbench tasks materialize-dev --output dataset/dev
 uv run pitbench tasks smoke --instances-per-population 1
+uv run pitbench report path/to/trials.parquet
 uv run pytest -q tests/unit/pitbench
 uv run pytest -q tests/unit -m 'not docker'
 ```
 
-The outcome geometries, population-conditional solver pseudometric, empirical
-stochasticity, and instance-space sensitivity definitions are specified in
-[`docs/solver-behavior-metric-definition.md`](docs/solver-behavior-metric-definition.md).
-The provable instance-space metric and upper-bound certificates are specified in
-[`docs/cvrp-problem-metric-definition.md`](docs/cvrp-problem-metric-definition.md).
+The `pitbench report` command emits only the performance-first report.
 
 ## Codex agent with a ChatGPT subscription
 
@@ -90,9 +128,7 @@ sudo scripts/install-codex-runner.sh
 Re-run the installer after upgrading Codex because it copies the pinned executables.
 
 ```bash
-uv run pitbench tasks materialize-dev --output dataset/dev
-uv run pitbench run \
-  --dataset-path dataset/dev \
+uv run pitbench evaluate pyvrp_v0_14_0 \
   --agent codex \
   --model gpt-5.6-terra \
   --n-concurrent 1
@@ -110,8 +146,7 @@ network-disabled throughout.
 When the host requires an outbound proxy, pass it explicitly to the isolated runner:
 
 ```bash
-uv run pitbench run \
-  --dataset-path dataset/dev \
+uv run pitbench evaluate pyvrp_v0_14_0 \
   --agent codex \
   --model gpt-5.6-terra \
   --agent-kwarg proxy_url=http://127.0.0.1:7897
@@ -135,9 +170,7 @@ Re-run the installer after upgrading `agy` because it copies the executable used
 the dedicated runner account.
 
 ```bash
-uv run pitbench tasks materialize-dev --output dataset/dev
-uv run pitbench run \
-  --dataset-path dataset/dev \
+uv run pitbench evaluate pyvrp_v0_14_0 \
   --agent antigravity \
   --model gemini-3.1-pro-high \
   --n-concurrent 1
@@ -175,8 +208,7 @@ pitbench/harness/       execution harness, agent loopback, Docker sandboxes
 pitbench/evaluator/     patch policy, isolated judge, artifact/Parquet storage
 pitbench/repositories/  build/run plugins for solver repositories
 pitbench/families/      independent CVRP and private MIP/CP verifier contracts
-pitbench/metrics/       6D outcome & sensitivity metrics, summary matrix
-pitbench/distribution/  research-only population discrepancy layer
+pitbench/metrics/       canonical performance report and decision policy
 pitbench/schema/        task, validity, observation, and result contracts
 adapters/pitbench/      time-censored Git snapshot tooling
 manifests/              public task and agent-development population definitions
@@ -184,6 +216,6 @@ private/                hidden instances, verifiers, and oracle data
 upstream/               untouched reference implementation
 ```
 
-`pitbench/evaluator` is benchmark truth. `pitbench/distribution` is an analysis
-layer: Wasserstein, MMD, energy distance, or another discrepancy can change without
-rerunning agents or changing judge validity.
+`pitbench/evaluator` is benchmark truth. Independent problem verifiers live under
+`pitbench/families`; performance reporting and its decision policy live under
+`pitbench/metrics`.

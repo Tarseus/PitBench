@@ -13,6 +13,23 @@ from pitbench.tasks import TaskCatalog
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_pyvrp_runner_check_imports_native_extension(monkeypatch) -> None:
+    from pitbench import agent_cli
+
+    monkeypatch.setattr(
+        agent_cli.importlib,
+        "import_module",
+        lambda name: (_ for _ in ()).throw(ModuleNotFoundError("pyvrp._pyvrp")),
+    )
+
+    available, detail = agent_cli._runner_available(
+        {"runner_requirement": "pyvrp_import"}
+    )
+
+    assert available is False
+    assert "pyvrp._pyvrp" in detail
+
+
 @pytest.mark.parametrize(
     "record", TaskCatalog(ROOT).records(), ids=lambda item: item.task.task_id
 )

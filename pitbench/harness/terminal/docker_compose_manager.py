@@ -180,6 +180,14 @@ class DockerComposeManager:
         """Build the docker compose services."""
         self._run_docker_compose_command(["build"])
 
+    def image_label(self, label: str) -> str | None:
+        """Return a label from the cached client image, if that image exists."""
+        try:
+            image = self._client.images.get(self._client_image_name)
+        except docker.errors.ImageNotFound:
+            return None
+        return image.labels.get(label)
+
     def save_container_image(self, output_path: Path) -> None:
         """Commit the running container and save it as a gzipped image tarball."""
         if self._client_container is None:

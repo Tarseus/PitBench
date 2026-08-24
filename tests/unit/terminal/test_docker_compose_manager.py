@@ -2,6 +2,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import Mock
 
+import docker.errors
 import pytest
 
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
@@ -56,3 +57,22 @@ def test_run_docker_compose_command_adds_address_pool_hint(monkeypatch):
     message = str(exc_info.value)
     assert "docker network prune -f" in message
     assert "--n-concurrent-trials" in message
+
+
+def test_image_label_returns_cached_value() -> None:
+    manager = _make_manager()
+    manager._client_image_name = "pitbench-task"
+    manager._client = Mock()
+    manager._client.images.get.return_value.labels = {"revision": "current"}
+
+    assert manager.image_label("revision") == "current"
+    manager._client.images.get.assert_called_once_with("pitbench-task")
+
+
+def test_image_label_returns_none_when_image_is_missing() -> None:
+    manager = _make_manager()
+    manager._client_image_name = "pitbench-task"
+    manager._client = Mock()
+    manager._client.images.get.side_effect = docker.errors.ImageNotFound("missing")
+
+    assert manager.image_label("revision") is None

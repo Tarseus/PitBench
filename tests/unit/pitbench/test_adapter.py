@@ -4,7 +4,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from adapters.pitbench.adapter import PitBenchAdapter
+from adapters.pitbench.adapter import (
+    IMAGE_REVISION,
+    IMAGE_REVISION_LABEL,
+    IMAGE_SOURCE_LABEL,
+    PitBenchAdapter,
+)
 from adapters.pitbench.git_snapshot import GitSnapshot
 from pitbench.tasks import TaskCatalog
 
@@ -72,14 +77,30 @@ def test_materialized_release_task_has_no_hidden_assets(
     )
     assert (
         "pip install --break-system-packages --no-cache-dir"
+        not in (destination / "Dockerfile").read_text()
+    )
+    assert "COPY repo /workspace/repo" not in (destination / "Dockerfile").read_text()
+    assert (
+        f'LABEL {IMAGE_REVISION_LABEL}="{IMAGE_REVISION}"'
         in (destination / "Dockerfile").read_text()
     )
-    assert "ENV PIP_NO_BUILD_ISOLATION=1" in (destination / "Dockerfile").read_text()
+    assert (
+        f'{IMAGE_SOURCE_LABEL}="sha256:{"b" * 64}"'
+        in (destination / "Dockerfile").read_text()
+    )
     assert (
         (destination / "Dockerfile").read_text().startswith("FROM sha256:" + "b" * 64)
     )
-    assert "RUN rm -rf /workspace/repo" in (destination / "Dockerfile").read_text()
+    dockerignore = (destination / ".dockerignore").read_text().splitlines()
+    assert dockerignore[0] == "*"
+    assert "!repo" not in dockerignore
     assert "network_mode: none" in (destination / "docker-compose.yaml").read_text()
+
+    legacy_task = task.model_copy(deep=True)
+    legacy_task.repository.agent_image = None
+    legacy_dockerfile = adapter._dockerfile(legacy_task)
+    assert "pip install --break-system-packages --no-cache-dir" in legacy_dockerfile
+    assert "COPY repo /workspace/repo" in legacy_dockerfile
 
 
 def test_repository_source_may_match_verified_release_tree(tmp_path: Path) -> None:
