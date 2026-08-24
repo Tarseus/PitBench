@@ -1,5 +1,5 @@
 [project]
-name = "pitbench"
+name = "fc-eval"
 version = "0.1.0"
 description = "Evaluation infrastructure for coding agents improving CO solvers."
 readme = "README.md"
@@ -25,7 +25,6 @@ dependencies = [
 ]
 
 [project.scripts]
-fc-eval = "fceval.cli.fceval.main:app"
 pitbench = "pitbench.cli.main:app"
 
 [dependency-groups]
@@ -42,7 +41,7 @@ requires = ["setuptools>=75", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["fceval*", "pitbench*", "adapters*"]
+include = ["pitbench*", "adapters*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -58,7 +57,7 @@ exclude = ["upstream"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["fceval", "pitbench", "adapters"]
-
+known-first-party = ["pitbench", "adapters"]

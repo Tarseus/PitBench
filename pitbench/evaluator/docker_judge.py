@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -22,7 +23,9 @@ class DockerJudge:
         cpus: float = 1.0,
         memory: str = "8g",
     ) -> None:
-        if "@sha256:" not in image:
+        digest_pinned = re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image)
+        local_image_id = re.fullmatch(r"sha256:[0-9a-f]{64}", image)
+        if digest_pinned is None and local_image_id is None:
             raise ValueError("judge image must be pinned by sha256 digest")
         self.image = image
         self.manifest_path = manifest_path.resolve()

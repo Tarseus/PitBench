@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from fceval.llms.portkey_llm import _required_env_int
+from pitbench.harness.llms.portkey_llm import _required_env_int
 
 
 def test_required_env_int_raises_for_missing_env_var():

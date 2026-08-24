@@ -4,10 +4,10 @@ from unittest.mock import Mock, patch
 import pytest
 from typer.testing import CliRunner
 
-from fceval.cli.fceval.runs import runs_app
-from fceval.dataset import Dataset
-from fceval.harness.models import TrialResults
-from fceval.utils.run_lock import RunLock
+from pitbench.harness.cli.harness_cli.runs import runs_app
+from pitbench.harness.dataset import Dataset
+from pitbench.harness.harness.models import TrialResults
+from pitbench.harness.utils.run_lock import RunLock
 
 
 @pytest.fixture
@@ -135,8 +135,12 @@ class TestStatusCommand:
             )
 
         with (
-            patch("fceval.utils.run_lock.RunLock.from_json") as mock_read_lock,
-            patch("fceval.cli.fceval.runs.Dataset") as mock_dataset_class,
+            patch(
+                "pitbench.harness.utils.run_lock.RunLock.from_json"
+            ) as mock_read_lock,
+            patch(
+                "pitbench.harness.cli.harness_cli.runs.Dataset"
+            ) as mock_dataset_class,
         ):
             mock_lock = create_mock_lock()
             mock_read_lock.return_value = mock_lock
@@ -185,8 +189,12 @@ class TestStatusCommand:
 
         # task3: not started (no directory)
         with (
-            patch("fceval.utils.run_lock.RunLock.from_json") as mock_read_lock,
-            patch("fceval.cli.fceval.runs.Dataset") as mock_dataset_class,
+            patch(
+                "pitbench.harness.utils.run_lock.RunLock.from_json"
+            ) as mock_read_lock,
+            patch(
+                "pitbench.harness.cli.harness_cli.runs.Dataset"
+            ) as mock_dataset_class,
         ):
             mock_lock = create_mock_lock()
             mock_read_lock.return_value = mock_lock
@@ -223,8 +231,12 @@ class TestStatusCommand:
         lock_path.write_text(json.dumps(mock_lock_data))
 
         with (
-            patch("fceval.utils.run_lock.RunLock.from_json") as mock_read_lock,
-            patch("fceval.cli.fceval.runs.Dataset") as mock_dataset_class,
+            patch(
+                "pitbench.harness.utils.run_lock.RunLock.from_json"
+            ) as mock_read_lock,
+            patch(
+                "pitbench.harness.cli.harness_cli.runs.Dataset"
+            ) as mock_dataset_class,
         ):
             mock_lock = create_mock_lock()
             mock_read_lock.return_value = mock_lock
@@ -276,8 +288,12 @@ class TestStatusCommand:
         )
 
         with (
-            patch("fceval.utils.run_lock.RunLock.from_json") as mock_read_lock,
-            patch("fceval.cli.fceval.runs.Dataset") as mock_dataset_class,
+            patch(
+                "pitbench.harness.utils.run_lock.RunLock.from_json"
+            ) as mock_read_lock,
+            patch(
+                "pitbench.harness.cli.harness_cli.runs.Dataset"
+            ) as mock_dataset_class,
         ):
             mock_lock = create_mock_lock()
             mock_read_lock.return_value = mock_lock
@@ -322,8 +338,12 @@ class TestStatusCommand:
             )
 
         with (
-            patch("fceval.utils.run_lock.RunLock.from_json") as mock_read_lock,
-            patch("fceval.cli.fceval.runs.Dataset") as mock_dataset_class,
+            patch(
+                "pitbench.harness.utils.run_lock.RunLock.from_json"
+            ) as mock_read_lock,
+            patch(
+                "pitbench.harness.cli.harness_cli.runs.Dataset"
+            ) as mock_dataset_class,
         ):
             mock_lock = create_mock_lock(n_attempts=3)
             mock_read_lock.return_value = mock_lock
@@ -375,8 +395,12 @@ class TestStatusCommand:
 
         # task3: not started
         with (
-            patch("fceval.utils.run_lock.RunLock.from_json") as mock_read_lock,
-            patch("fceval.cli.fceval.runs.Dataset") as mock_dataset_class,
+            patch(
+                "pitbench.harness.utils.run_lock.RunLock.from_json"
+            ) as mock_read_lock,
+            patch(
+                "pitbench.harness.cli.harness_cli.runs.Dataset"
+            ) as mock_dataset_class,
         ):
             mock_lock = create_mock_lock()
             mock_read_lock.return_value = mock_lock
@@ -428,8 +452,12 @@ class TestStatusCommand:
 
         # task3: not started
         with (
-            patch("fceval.utils.run_lock.RunLock.from_json") as mock_read_lock,
-            patch("fceval.cli.fceval.runs.Dataset") as mock_dataset_class,
+            patch(
+                "pitbench.harness.utils.run_lock.RunLock.from_json"
+            ) as mock_read_lock,
+            patch(
+                "pitbench.harness.cli.harness_cli.runs.Dataset"
+            ) as mock_dataset_class,
         ):
             mock_lock = create_mock_lock()
             mock_read_lock.return_value = mock_lock
@@ -473,8 +501,12 @@ class TestStatusCommand:
         )
 
         with (
-            patch("fceval.utils.run_lock.RunLock.from_json") as mock_read_lock,
-            patch("fceval.cli.fceval.runs.Dataset") as mock_dataset_class,
+            patch(
+                "pitbench.harness.utils.run_lock.RunLock.from_json"
+            ) as mock_read_lock,
+            patch(
+                "pitbench.harness.cli.harness_cli.runs.Dataset"
+            ) as mock_dataset_class,
         ):
             mock_lock = create_mock_lock(agent_name="multi-agent", model_name="multi")
             mock_run_spec = Mock()
@@ -529,7 +561,9 @@ class TestStatusCommand:
         lock_path = run_path / "fc.lock"
         lock_path.write_text("invalid json content")
 
-        with patch("fceval.utils.run_lock.RunLock.from_json") as mock_read_lock:
+        with patch(
+            "pitbench.harness.utils.run_lock.RunLock.from_json"
+        ) as mock_read_lock:
             mock_read_lock.return_value = None  # Simulate failed parsing
 
             result = cli_runner.invoke(
@@ -548,8 +582,12 @@ class TestStatusCommand:
         lock_path.write_text(json.dumps(mock_lock_data))
 
         with (
-            patch("fceval.utils.run_lock.RunLock.from_json") as mock_read_lock,
-            patch("fceval.cli.fceval.runs.Dataset") as mock_dataset_class,
+            patch(
+                "pitbench.harness.utils.run_lock.RunLock.from_json"
+            ) as mock_read_lock,
+            patch(
+                "pitbench.harness.cli.harness_cli.runs.Dataset"
+            ) as mock_dataset_class,
         ):
             mock_lock = create_mock_lock()
             mock_read_lock.return_value = mock_lock
@@ -572,8 +610,12 @@ class TestStatusCommand:
         lock_path.write_text(json.dumps(mock_lock_data))
 
         with (
-            patch("fceval.utils.run_lock.RunLock.from_json") as mock_read_lock,
-            patch("fceval.cli.fceval.runs.Dataset") as mock_dataset_class,
+            patch(
+                "pitbench.harness.utils.run_lock.RunLock.from_json"
+            ) as mock_read_lock,
+            patch(
+                "pitbench.harness.cli.harness_cli.runs.Dataset"
+            ) as mock_dataset_class,
         ):
             mock_lock = create_mock_lock()
             mock_read_lock.return_value = mock_lock

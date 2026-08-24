@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
-from fceval.agents import AgentFactory, AgentName
-from fceval.agents.antigravity_mcp_agent import AntigravityMCPAgent
+from pitbench.harness.agents import AgentFactory, AgentName
+from pitbench.harness.agents.antigravity_mcp_agent import AntigravityMCPAgent
 
 
 def test_antigravity_command_uses_isolated_runner_and_loopback_mcp():

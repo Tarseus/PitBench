@@ -1,4 +1,4 @@
-"""Unit tests for fceval.remote.config module."""
+"""Unit tests for pitbench.harness.remote.config module."""
 
 import os
 from importlib import reload
@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-import fceval.remote.config as remote_config
-from fceval.remote.config import AWSConfig, RemoteConfig
+import pitbench.harness.remote.config as remote_config
+from pitbench.harness.remote.config import AWSConfig, RemoteConfig
 
 REQUIRED_EC2_ENV = {
     "EC2_INSTANCE_TYPE": "c6id.xlarge",
@@ -200,7 +200,7 @@ class TestGlobalAWSClients:
         """Import should not initialize clients; first use should."""
         _clear_cached_clients()
 
-        with patch("fceval.remote.config.boto3.client") as mock_client:
+        with patch("pitbench.harness.remote.config.boto3.client") as mock_client:
             reload(remote_config)
             _ = remote_config.GLOBAL_EC2_CLIENT
             _ = remote_config.GLOBAL_S3_CLIENT
@@ -218,7 +218,7 @@ class TestGlobalAWSClients:
     def test_client_region_prefers_aws_region(self):
         _clear_cached_clients()
 
-        with patch("fceval.remote.config.boto3.client") as mock_client:
+        with patch("pitbench.harness.remote.config.boto3.client") as mock_client:
             _ = remote_config.GLOBAL_EC2_CLIENT.meta
             assert mock_client.call_args.kwargs["region_name"] == "eu-west-1"
 
@@ -230,6 +230,6 @@ class TestGlobalAWSClients:
     def test_client_region_falls_back_to_aws_default_region(self):
         _clear_cached_clients()
 
-        with patch("fceval.remote.config.boto3.client") as mock_client:
+        with patch("pitbench.harness.remote.config.boto3.client") as mock_client:
             _ = remote_config.GLOBAL_EC2_CLIENT.meta
             assert mock_client.call_args.kwargs["region_name"] == "us-east-1"

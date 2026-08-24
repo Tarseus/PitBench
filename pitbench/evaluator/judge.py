@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -10,9 +11,11 @@ from pathlib import Path
 
 import yaml
 
+from pitbench.distribution.transforms import relabel_cvrp_customers
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.families.base import ProblemFamilyRegistry
 from pitbench.families.external import ExternalVerifierFamily
+from pitbench.instances import materialize_generated_population
 from pitbench.repositories.base import (
     BuildKind,
     CommandSpec,
@@ -29,6 +32,24 @@ class InstanceCase:
     instance_id: str
     path: Path | None
     anchor: float | None
+    problem_scale: float | None = None
+    equivalence_parent_id: str | None = None
+    equivalence_transform: str | None = None
+    solver_seeds: tuple[int, ...] | None = None
+    budgets_sec: tuple[float, ...] | None = None
+
+
+def _customer_count(path: Path | None) -> float | None:
+    if path is None or path.suffix.lower() != ".json":
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    coordinates = payload.get("coordinates")
+    if not isinstance(coordinates, list) or not coordinates:
+        return None
+    return float(len(coordinates) - 1)
 
 
 class JudgePlan:
@@ -47,40 +68,177 @@ class JudgePlan:
             if population.kind == PopulationKind.AGENT_DEV:
                 continue
             for index in range(min(instances_per_population, population.size)):
+                objective_scored = (
+                    population.kind == PopulationKind.JUDGE_ID
+                    and task.task_type
+                    not in {TaskType.MODEL_BUILD, TaskType.PRESOLVE}
+                )
                 cases.append(
                     InstanceCase(
                         population=population,
                         instance_id=f"{population.name}_{index:04d}",
                         path=None,
-                        anchor=1000.0,
+                        anchor=1000.0 if objective_scored else None,
+                        problem_scale=float(index + 1),
                     )
                 )
         return cls(task, cases)
 
     @classmethod
     def from_private_manifests(
-        cls, task: PitBenchTask, resolver: PrivateAssetResolver
+        cls,
+        task: PitBenchTask,
+        resolver: PrivateAssetResolver,
+        *,
+        generated_root: Path | None = None,
     ) -> "JudgePlan":
         cases: list[InstanceCase] = []
         for population in task.populations:
             if population.kind == PopulationKind.AGENT_DEV:
                 continue
-            manifest_path = resolver.resolve(population.manifest)
+            manifest_path = resolver.resolve(
+                population.manifest, population.manifest_sha256
+            )
             payload = yaml.safe_load(manifest_path.read_text())
+            if "generator" in payload:
+                if generated_root is None:
+                    raise ValueError(
+                        f"population {population.name} requires a generated_root"
+                    )
+                paths = materialize_generated_population(
+                    payload,
+                    generated_root / population.name,
+                    expected_visibility="judge",
+                    stem_prefix=population.name,
+                )
+                if len(paths) != population.size:
+                    raise ValueError(
+                        f"population {population.name} size does not match manifest"
+                    )
+                anchors: dict[str, dict] = {}
+                oracle_spec = payload.get("oracle")
+                if oracle_spec is not None:
+                    oracle_path = resolver.resolve(
+                        oracle_spec["uri"], oracle_spec.get("sha256")
+                    )
+                    oracle_payload = yaml.safe_load(oracle_path.read_text())
+                    for item in oracle_payload.get("anchors", []):
+                        instance_id = item["id"]
+                        if instance_id in anchors:
+                            raise ValueError(
+                                f"population {population.name} has duplicate anchor "
+                                f"for {instance_id}"
+                            )
+                        resolver.resolve(
+                            item["bks_solution_uri"],
+                            item.get("bks_solution_sha256"),
+                        )
+                        anchors[instance_id] = item
+                    expected_ids = {path.stem for path in paths}
+                    if set(anchors) != expected_ids:
+                        raise ValueError(
+                            f"population {population.name} oracle support does not "
+                            "match generated instances"
+                        )
+                for path in paths:
+                    anchor = anchors.get(path.stem)
+                    if anchor is not None:
+                        instance_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+                        if instance_sha256 != anchor.get("instance_sha256"):
+                            raise ValueError(
+                                f"population {population.name} generated instance "
+                                f"hash mismatch for {path.stem}"
+                            )
+                    cases.append(
+                        InstanceCase(
+                            population=population,
+                            instance_id=path.stem,
+                            path=path,
+                            anchor=(
+                                float(anchor["bks"]) if anchor is not None else None
+                            ),
+                            problem_scale=_customer_count(path),
+                        )
+                    )
+                continue
             if len(payload["instances"]) != population.size:
                 raise ValueError(
                     f"population {population.name} size does not match manifest"
                 )
             for item in payload["instances"]:
+                uri = item.get("uri", item.get("instance_uri"))
+                anchor = item.get("optimal_or_bks", item.get("bks"))
+                objective_scored = (
+                    population.kind == PopulationKind.JUDGE_ID
+                    and task.task_type
+                    not in {
+                        TaskType.MODEL_BUILD,
+                        TaskType.PRESOLVE,
+                    }
+                )
+                if uri is None or (objective_scored and anchor is None):
+                    raise ValueError(
+                        f"population {population.name} has an incomplete instance"
+                    )
+                path = resolver.resolve(uri)
                 cases.append(
                     InstanceCase(
                         population=population,
                         instance_id=item["id"],
-                        path=resolver.resolve(item["uri"]),
-                        anchor=item.get("optimal_or_bks"),
+                        path=path,
+                        anchor=float(anchor) if anchor is not None else None,
+                        problem_scale=_customer_count(path),
                     )
                 )
         return cls(task, cases)
+
+    def with_equivalence_panel(self, root: Path) -> "JudgePlan":
+        protocol = self.task.evaluation.sensitivity
+        if protocol.equivalence_transform is None:
+            return self
+        if self.task.problem_family.value != "cvrp":
+            raise ValueError("customer relabel equivalence is only defined for CVRP")
+
+        variants: list[InstanceCase] = []
+        by_population: dict[str, list[InstanceCase]] = {}
+        for case in self.cases:
+            by_population.setdefault(case.population.name, []).append(case)
+        for population_name, cases in sorted(by_population.items()):
+            selected = sorted(cases, key=lambda item: item.instance_id)[
+                : protocol.equivalence_instances_per_population
+            ]
+            for index, case in enumerate(selected):
+                if case.path is None or case.path.suffix.lower() != ".json":
+                    continue
+                original = json.loads(case.path.read_text())
+                transformed = relabel_cvrp_customers(
+                    original,
+                    seed=17_000 + index,
+                )
+                transform_id = f"{case.instance_id}__equiv_relabel"
+                path = root / population_name / f"{transform_id}.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(transformed, indent=2))
+                variants.append(
+                    InstanceCase(
+                        population=case.population,
+                        instance_id=transform_id,
+                        path=path,
+                        anchor=case.anchor,
+                        problem_scale=case.problem_scale,
+                        equivalence_parent_id=case.instance_id,
+                        equivalence_transform="customer_relabel",
+                        solver_seeds=(
+                            tuple(protocol.equivalence_solver_seeds)
+                            or tuple(self.task.evaluation.solver_seeds)
+                        ),
+                        budgets_sec=(
+                            tuple(protocol.equivalence_budgets_sec)
+                            or (max(self.task.evaluation.budgets_sec),)
+                        ),
+                    )
+                )
+        return JudgePlan(self.task, [*self.cases, *variants])
 
 
 class FixtureJudge:
@@ -95,8 +253,10 @@ class FixtureJudge:
         observations: list[RunObservation] = []
         task = plan.task
         for case in plan.cases:
-            for seed in task.evaluation.solver_seeds:
-                for budget in task.evaluation.budgets_sec:
+            seeds = case.solver_seeds or tuple(task.evaluation.solver_seeds)
+            budgets = case.budgets_sec or tuple(task.evaluation.budgets_sec)
+            for seed in seeds:
+                for budget in budgets:
                     for state in CodeState:
                         observations.append(
                             self._observation(task, case, state, seed, budget)
@@ -120,6 +280,7 @@ class FixtureJudge:
             task_id=task.task_id,
             code_state=state,
             population=case.population.name,
+            population_kind=case.population.kind.value,
             instance_id=case.instance_id,
             instance_seed=case.population.randomness.instance_seed,
             coordinate_seed=case.population.randomness.coordinate_seed,
@@ -130,6 +291,9 @@ class FixtureJudge:
             status=RunStatus.COMPLETED,
             valid=True,
             wall_time_sec=budget,
+            problem_scale=case.problem_scale,
+            equivalence_parent_id=case.equivalence_parent_id,
+            equivalence_transform=case.equivalence_transform,
         )
         if task.task_type in {TaskType.MODEL_BUILD, TaskType.PRESOLVE}:
             variables = {
@@ -141,14 +305,15 @@ class FixtureJudge:
                 model_variables=variables,
                 model_constraints=max(1, variables // 2),
                 cpu_time_sec=budget * factor,
+                peak_rss_bytes=int(128 * 1024 * 1024 * factor),
             )
-        anchor = case.anchor or 1000.0
+        objective_reference = case.anchor if case.anchor is not None else 1000.0
         gap = (0.08 + noise) * factor / max(budget, 1) ** 0.25
         return RunObservation(
             **common,
-            objective=anchor * (1 + gap),
-            optimal_or_bks=anchor,
-            normalized_gap=gap,
+            objective=objective_reference * (1 + gap),
+            optimal_or_bks=case.anchor,
+            normalized_gap=gap if case.anchor is not None else None,
             iterations=int(budget * 100 / factor),
             nodes=(
                 int(budget * 20 / factor)
@@ -214,16 +379,22 @@ class LocalProcessJudge:
         for command in self.repository.build_commands(build_kind):
             built = self._run(command, workspace)
             if built.returncode:
+                details = built.stderr.strip() or built.stdout.strip()
                 raise RuntimeError(
-                    f"{state.value} {build_kind.value} build failed: {built.stderr}"
+                    f"{state.value} {build_kind.value} build failed "
+                    f"(exit {built.returncode}): {details}"
                 )
         return workspace
 
     def run(self) -> list[RunObservation]:
-        plan = JudgePlan.from_private_manifests(self.task, self.resolver)
         observations: list[RunObservation] = []
         with tempfile.TemporaryDirectory(prefix="pitbench-judge-") as temporary:
             root = Path(temporary)
+            plan = JudgePlan.from_private_manifests(
+                self.task,
+                self.resolver,
+                generated_root=root / "generated-populations",
+            ).with_equivalence_panel(root / "equivalence-panel")
             for state in CodeState:
                 self._workspace(state, root / "validation", BuildKind.VALIDATION)
             workspaces = {
@@ -235,8 +406,10 @@ class LocalProcessJudge:
             for case in plan.cases:
                 if case.path is None:
                     raise RuntimeError("real judge case has no instance path")
-                for seed in self.task.evaluation.solver_seeds:
-                    for budget in self.task.evaluation.budgets_sec:
+                seeds = case.solver_seeds or tuple(self.task.evaluation.solver_seeds)
+                budgets = case.budgets_sec or tuple(self.task.evaluation.budgets_sec)
+                for seed in seeds:
+                    for budget in budgets:
                         for state, workspace in workspaces.items():
                             observations.append(
                                 self._run_case(workspace, case, state, seed, budget)
@@ -291,6 +464,7 @@ class LocalProcessJudge:
             task_id=self.task.task_id,
             code_state=state,
             population=case.population.name,
+            population_kind=case.population.kind.value,
             instance_id=case.instance_id,
             instance_seed=case.population.randomness.instance_seed,
             coordinate_seed=case.population.randomness.coordinate_seed,
@@ -312,6 +486,9 @@ class LocalProcessJudge:
             model_variables=parsed.model_variables,
             model_constraints=parsed.model_constraints,
             peak_rss_bytes=parsed.peak_rss_bytes,
+            problem_scale=case.problem_scale,
+            equivalence_parent_id=case.equivalence_parent_id,
+            equivalence_transform=case.equivalence_transform,
             trajectory_path=str(trajectory) if trajectory.exists() else None,
             solution_path=str(solution) if solution.exists() else None,
             stdout_path=str(output),
@@ -331,6 +508,7 @@ class LocalProcessJudge:
             task_id=self.task.task_id,
             code_state=state,
             population=case.population.name,
+            population_kind=case.population.kind.value,
             instance_id=case.instance_id,
             instance_seed=case.population.randomness.instance_seed,
             coordinate_seed=case.population.randomness.coordinate_seed,
@@ -340,5 +518,8 @@ class LocalProcessJudge:
             threads=self.task.evaluation.threads,
             status=status,
             valid=False,
+            problem_scale=case.problem_scale,
+            equivalence_parent_id=case.equivalence_parent_id,
+            equivalence_transform=case.equivalence_transform,
             error=error,
         )

@@ -5,8 +5,11 @@ from unittest.mock import Mock, patch
 import pytest
 from typer.testing import CliRunner
 
-from fceval.agents import AgentName
-from fceval.cli.fceval.runs import _load_agent_entries_from_config, runs_app
+from pitbench.harness.agents import AgentName
+from pitbench.harness.cli.harness_cli.runs import (
+    _load_agent_entries_from_config,
+    runs_app,
+)
 
 
 @pytest.fixture
@@ -83,8 +86,8 @@ def test_create_accepts_config(cli_runner: CliRunner, tmp_path: Path):
     )
 
     with (
-        patch("fceval.cli.fceval.runs.Harness") as mock_harness_class,
-        patch("fceval.cli.fceval.runs._print_rich_results"),
+        patch("pitbench.harness.cli.harness_cli.runs.Harness") as mock_harness_class,
+        patch("pitbench.harness.cli.harness_cli.runs._print_rich_results"),
     ):
         mock_harness = Mock()
         mock_harness.run.return_value = Mock()
@@ -141,8 +144,8 @@ def test_create_accepts_config_custom_import_path(
     )
 
     with (
-        patch("fceval.cli.fceval.runs.Harness") as mock_harness_class,
-        patch("fceval.cli.fceval.runs._print_rich_results"),
+        patch("pitbench.harness.cli.harness_cli.runs.Harness") as mock_harness_class,
+        patch("pitbench.harness.cli.harness_cli.runs._print_rich_results"),
     ):
         mock_harness = Mock()
         mock_harness.run.return_value = Mock()

@@ -1,7 +1,7 @@
 """Tests for canonical recording path construction (issue #18)."""
 
-from fceval.harness.harness import Harness
-from fceval.harness.models import RunMetadata
+from pitbench.harness.harness.harness import Harness
+from pitbench.harness.harness.models import RunMetadata
 
 
 def _make_method_only_harness() -> Harness:

@@ -4,6 +4,10 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, computed_field
 
+from pitbench.metrics.behavior_metrics import BehaviorMetricReport
+from pitbench.metrics.decision_metrics import BenchmarkDecision
+from pitbench.metrics.outcome_metrics import OutcomeReport
+from pitbench.metrics.sensitivity_metrics import SensitivityReport
 from pitbench.schema.observation import CodeState, RunObservation
 
 
@@ -54,6 +58,10 @@ class EvaluationSummary(BaseModel):
     observation_count: int = Field(ge=0)
     valid_observation_count: int = Field(ge=0)
     counts_by_state: dict[CodeState, int] = Field(default_factory=dict)
+    outcomes: OutcomeReport | None = None
+    sensitivity: SensitivityReport | None = None
+    behavior: BehaviorMetricReport | None = None
+    decision: BenchmarkDecision | None = None
 
 
 class EvaluationResult(BaseModel):
@@ -62,3 +70,8 @@ class EvaluationResult(BaseModel):
     observations: list[RunObservation]
     artifacts: ArtifactManifest
     summary: EvaluationSummary
+
+    @computed_field
+    @property
+    def is_resolved(self) -> bool:
+        return bool(self.summary.decision and self.summary.decision.is_resolved)

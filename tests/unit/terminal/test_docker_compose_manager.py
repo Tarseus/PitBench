@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from fceval.terminal.docker_compose_manager import DockerComposeManager
+from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
 
 
 def _make_manager() -> DockerComposeManager:

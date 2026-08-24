@@ -22,6 +22,7 @@ class RunObservation(BaseModel):
     task_id: str
     code_state: CodeState
     population: str
+    population_kind: str | None = None
     instance_id: str
     instance_seed: int
     coordinate_seed: int | None = None
@@ -43,6 +44,9 @@ class RunObservation(BaseModel):
     model_variables: int | None = None
     model_constraints: int | None = None
     peak_rss_bytes: int | None = None
+    problem_scale: float | None = Field(default=None, gt=0)
+    equivalence_parent_id: str | None = None
+    equivalence_transform: str | None = None
     trajectory_path: str | None = None
     solution_path: str | None = None
     stdout_path: str | None = None

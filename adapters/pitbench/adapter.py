@@ -37,9 +37,32 @@ _BUILD_PACKAGES = {
     ),
 }
 
+_PYTHON_PACKAGES = {
+    "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin": (
+        "docblock matplotlib meson ninja numpy pandas poetry-core pyarrow "
+        "pybind11 pydantic "
+        "pytest pytest-cov pytest-timeout pytest-xdist pyyaml setuptools tqdm "
+        "vrplib wheel"
+    ),
+}
+
+_PREBUILD_COMMANDS = {
+    "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin": (
+        "RUN python3 -m pip install --break-system-packages "
+        "--no-build-isolation --no-deps -e /workspace/repo\n"
+    ),
+    "pitbench.repositories.vroom:VroomRepositoryPlugin": (
+        "RUN cd /workspace/repo && make -j1 CXXFLAGS='-O3 -DNDEBUG'\n"
+    ),
+    "pitbench.repositories.highs:HighsRepositoryPlugin": (
+        "RUN cd /workspace/repo && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && "
+        "cmake --build build -j1\n"
+    ),
+}
+
 
 class PitBenchAdapter:
-    """Materialize an agent-safe fceval task from a PitBench manifest."""
+    """Materialize an agent-safe PitBench task from a PitBench manifest."""
 
     def __init__(self, repository_root: Path, private_root: Path) -> None:
         self.repository_root = repository_root.resolve()
@@ -52,6 +75,8 @@ class PitBenchAdapter:
         destination: Path,
         *,
         repository_source: Path | None = None,
+        agent_image: str | None = None,
+        judge_image: str | None = None,
     ) -> Path:
         record = next(
             record
@@ -82,11 +107,19 @@ class PitBenchAdapter:
             self.repository_root / development.manifest,
             task_dir / "dev_instances",
         )
-        self._write_task_yaml(task, record.manifest_path, repository, task_dir)
+        self._write_task_yaml(
+            task,
+            record.manifest_path,
+            repository,
+            task_dir,
+            judge_image=judge_image,
+        )
         write_agent_tooling(
             repository_root=self.repository_root, task=task, task_dir=task_dir
         )
-        (task_dir / "Dockerfile").write_text(self._dockerfile(task))
+        (task_dir / "Dockerfile").write_text(
+            self._dockerfile(task, image_override=agent_image)
+        )
         (task_dir / "docker-compose.yaml").write_text(self._compose())
         return task_dir
 
@@ -98,7 +131,15 @@ class PitBenchAdapter:
             ["git", "rev-parse", "HEAD"], cwd=repository, text=True
         ).strip()
         if head != task.release.base_commit:
-            raise ValueError(f"repository HEAD {head} != {task.release.base_commit}")
+            tree = subprocess.check_output(
+                ["git", "rev-parse", "HEAD^{tree}"], cwd=repository, text=True
+            ).strip()
+            if task.release.tree_sha is None or tree != task.release.tree_sha:
+                raise ValueError(
+                    "repository release identity mismatch: "
+                    f"HEAD {head} != {task.release.base_commit} and "
+                    f"tree {tree} != {task.release.tree_sha}"
+                )
         refs = subprocess.check_output(
             ["git", "for-each-ref", "--format=%(refname)"],
             cwd=repository,
@@ -116,6 +157,8 @@ class PitBenchAdapter:
         manifest: Path,
         repository: Path,
         task_dir: Path,
+        *,
+        judge_image: str | None = None,
     ) -> None:
         payload = {
             "instruction": task.instruction,
@@ -136,24 +179,36 @@ class PitBenchAdapter:
             "max_setup_timeout_sec": 1800,
             "run_tests_in_same_shell": False,
         }
+        if judge_image is not None:
+            payload["evaluator_config"]["judge_image"] = judge_image
         (task_dir / "task.yaml").write_text(yaml.safe_dump(payload, sort_keys=False))
 
     @staticmethod
-    def _dockerfile(task: PitBenchTask) -> str:
+    def _dockerfile(task: PitBenchTask, *, image_override: str | None = None) -> str:
         plugin = task.repository.plugin
-        image = task.repository.agent_image or _AGENT_IMAGES[plugin]
+        image = image_override or task.repository.agent_image or _AGENT_IMAGES[plugin]
         packages = (
             "git tmux asciinema python3 python3-pip time " + _BUILD_PACKAGES[plugin]
         )
+        python_packages = _PYTHON_PACKAGES.get(plugin)
+        install_python = (
+            "RUN python3 -m pip install --break-system-packages "
+            f"--no-cache-dir {python_packages}\n"
+            if python_packages
+            else ""
+        )
+        prebuild = _PREBUILD_COMMANDS.get(plugin, "")
         return f"""FROM {image}
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y {packages} \\
     && rm -rf /var/lib/apt/lists/*
+{install_python}ENV PIP_NO_BUILD_ISOLATION=1
 RUN mkdir -p /logs /agent-logs /pitbench/dev_instances
 COPY agent_tooling /opt/pitbench-tooling
 COPY agent_bin/pitbench /usr/local/bin/pitbench
 COPY agent_config.json /pitbench/config.json
+RUN rm -rf /workspace/repo
 COPY repo /workspace/repo
-COPY dev_instances /pitbench/dev_instances
+{prebuild}COPY dev_instances /pitbench/dev_instances
 RUN chmod 0755 /usr/local/bin/pitbench
 ENV PYTHONPATH=/opt/pitbench-tooling
 WORKDIR /workspace/repo

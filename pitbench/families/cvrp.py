@@ -7,6 +7,22 @@ from pathlib import Path
 from pitbench.families.base import ProblemFamilyPlugin, VerificationResult
 
 
+def _edge_cost(
+    coordinates: list[list[float]],
+    first: int,
+    second: int,
+    distance_metric: str | None,
+) -> float:
+    x1, y1 = coordinates[first]
+    x2, y2 = coordinates[second]
+    distance = math.hypot(x2 - x1, y2 - y1)
+    if distance_metric is None or distance_metric == "EXACT_2D":
+        return distance
+    if distance_metric == "EUC_2D":
+        return float(math.floor(distance + 0.5))
+    raise ValueError(f"unsupported CVRP distance metric: {distance_metric}")
+
+
 class CVRPFamily(ProblemFamilyPlugin):
     """Independent verifier for PitBench's normalized CVRP JSON format."""
 
@@ -19,6 +35,7 @@ class CVRPFamily(ProblemFamilyPlugin):
         demands = instance["demands"]
         capacity = instance["capacity"]
         depot = int(instance.get("depot", 0))
+        distance_metric = instance.get("distance_metric")
         expected = set(range(len(coordinates))) - {depot}
         visited: list[int] = []
         objective = 0.0
@@ -32,9 +49,7 @@ class CVRPFamily(ProblemFamilyPlugin):
                 )
             path = [depot, *route, depot]
             for first, second in zip(path, path[1:]):
-                x1, y1 = coordinates[first]
-                x2, y2 = coordinates[second]
-                objective += math.hypot(x2 - x1, y2 - y1)
+                objective += _edge_cost(coordinates, first, second, distance_metric)
             visited.extend(route)
 
         if len(visited) != len(set(visited)):

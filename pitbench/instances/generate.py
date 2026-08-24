@@ -25,6 +25,7 @@ def make_euclidean_cvrp_instance(
     cluster_spread: float = 9.0,
     depot_mode: str = "center",
     demand_distribution: str = "uniform_integer",
+    distance_metric: str | None = None,
 ) -> dict[str, Any]:
     """Generate a deterministic normalized CVRP instance.
 
@@ -106,13 +107,16 @@ def make_euclidean_cvrp_instance(
 
     demands = [0, *customer_demands]
     capacity = max(10, math.ceil(sum(demands) * capacity_ratio))
-    return {
+    instance = {
         "name": name,
         "depot": 0,
         "coordinates": [depot_coordinates, *customer_coordinates],
         "demands": demands,
         "capacity": capacity,
     }
+    if distance_metric is not None:
+        instance["distance_metric"] = distance_metric
+    return instance
 
 
 def _cvrp(config: dict[str, Any], index: int, destination: Path) -> None:
@@ -128,6 +132,7 @@ def _cvrp(config: dict[str, Any], index: int, destination: Path) -> None:
         cluster_spread=float(config.get("cluster_spread", 9.0)),
         depot_mode=config.get("depot_mode", "center"),
         demand_distribution=config.get("demand_distribution", "uniform_integer"),
+        distance_metric=config.get("distance_metric"),
     )
     destination.write_text(json.dumps(instance, indent=2))
 
@@ -200,10 +205,20 @@ _GENERATORS = {
 }
 
 
-def materialize_population(manifest: Path, output_dir: Path) -> list[Path]:
-    payload = yaml.safe_load(manifest.read_text())
-    if payload.get("visibility") != "agent":
-        raise ValueError("only agent-visible populations may be materialized here")
+def materialize_generated_population(
+    payload: dict[str, Any],
+    output_dir: Path,
+    *,
+    expected_visibility: str,
+    stem_prefix: str = "dev",
+) -> list[Path]:
+    """Materialize a frozen generator manifest in its authorized environment."""
+
+    if payload.get("visibility") != expected_visibility:
+        raise ValueError(
+            f"population visibility must be {expected_visibility!r}, "
+            f"got {payload.get('visibility')!r}"
+        )
     config = payload["generator"]
     kind = config["kind"]
     if kind not in _GENERATORS:
@@ -212,7 +227,7 @@ def materialize_population(manifest: Path, output_dir: Path) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
     for index in range(int(config["count"])):
-        path = output_dir / f"dev_{index:04d}.{suffix}"
+        path = output_dir / f"{stem_prefix}_{index:04d}.{suffix}"
         generator(config, index, path)
         paths.append(path)
     index_path = output_dir / "population.yaml"
@@ -227,3 +242,13 @@ def materialize_population(manifest: Path, output_dir: Path) -> list[Path]:
         )
     )
     return paths
+
+
+def materialize_population(manifest: Path, output_dir: Path) -> list[Path]:
+    payload = yaml.safe_load(manifest.read_text())
+    return materialize_generated_population(
+        payload,
+        output_dir,
+        expected_visibility="agent",
+        stem_prefix="dev",
+    )

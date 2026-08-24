@@ -3,14 +3,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from fceval.agents.agent_name import AgentName
-from fceval.agents.base_agent import AgentResult
-from fceval.agents.failure_mode import FailureMode
-from fceval.handlers.trial_handler import TrialPaths
-from fceval.harness.harness import Harness
-from fceval.harness.models import TrialResults
-from fceval.parsers.base_parser import UnitTestStatus
-from fceval.utils.pipeline_trace import PipelineTrace
+from pitbench.harness.agents.agent_name import AgentName
+from pitbench.harness.agents.base_agent import AgentResult
+from pitbench.harness.agents.failure_mode import FailureMode
+from pitbench.harness.handlers.trial_handler import TrialPaths
+from pitbench.harness.harness.harness import Harness
+from pitbench.harness.harness.models import TrialResults
+from pitbench.harness.parsers.base_parser import UnitTestStatus
+from pitbench.harness.utils.pipeline_trace import PipelineTrace
 
 
 class _Session:
@@ -136,5 +136,3 @@ def test_trial_pipeline_records_stage_inputs_and_outputs(tmp_path: Path) -> None
     assert "must-not-leak" not in harness._pipeline_trace.path.read_text()
     assert completed.is_resolved is True
     assert terminal.closed_sessions == ["tests", "agent", "setup"]
-
-

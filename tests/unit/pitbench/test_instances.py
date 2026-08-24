@@ -1,9 +1,12 @@
 import json
+import math
 from pathlib import Path
+
+import numpy as np
+import pytest
 
 from pitbench.families.cvrp import CVRPFamily
 from pitbench.instances import make_euclidean_cvrp_instance, materialize_population
-from pitbench.qoi.cvrp import extract_cvrp_instance_qoi
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -40,6 +43,28 @@ def test_cvrp_verifier_is_independent_and_rejects_duplicates(tmp_path: Path) -> 
     assert verifier.verify(instance, invalid).feasible is False
 
 
+def test_cvrp_verifier_applies_declared_euc_2d_rounding(tmp_path: Path) -> None:
+    payload = {
+        "depot": 0,
+        "coordinates": [[0, 0], [1, 1], [2, 0]],
+        "demands": [0, 1, 1],
+        "capacity": 2,
+    }
+    solution = tmp_path / "solution.json"
+    solution.write_text(json.dumps({"routes": [[1, 2]]}))
+    exact_instance = tmp_path / "exact.json"
+    exact_instance.write_text(json.dumps(payload))
+    rounded_instance = tmp_path / "rounded.json"
+    rounded_instance.write_text(json.dumps({**payload, "distance_metric": "EUC_2D"}))
+    verifier = CVRPFamily()
+
+    exact = verifier.verify(exact_instance, solution)
+    rounded = verifier.verify(rounded_instance, solution)
+
+    assert exact.objective == pytest.approx(2 + 2 * math.sqrt(2))
+    assert rounded.objective == 4
+
+
 def test_cvrp_generator_supports_depot_and_demand_location_coupling() -> None:
     common = {
         "name": "coupled",
@@ -55,11 +80,13 @@ def test_cvrp_generator_supports_depot_and_demand_location_coupling() -> None:
     anticorrelated = make_euclidean_cvrp_instance(
         **common, demand_distribution="depot_anticorrelated"
     )
-    correlated_qoi = extract_cvrp_instance_qoi(correlated)
-    anticorrelated_qoi = extract_cvrp_instance_qoi(anticorrelated)
+    coords = np.asarray(correlated["coordinates"], dtype=float)
+    depot_dist = np.linalg.norm(coords[1:] - coords[0], axis=1)
+    corr = float(np.corrcoef(correlated["demands"][1:], depot_dist)[0, 1])
+    anticorr = float(np.corrcoef(anticorrelated["demands"][1:], depot_dist)[0, 1])
 
-    assert correlated_qoi.values["demand_depot_correlation"] > 0.8
-    assert anticorrelated_qoi.values["demand_depot_correlation"] < -0.8
+    assert corr > 0.8
+    assert anticorr < -0.8
     assert correlated["coordinates"] == anticorrelated["coordinates"]
     assert sorted(correlated["demands"]) == sorted(anticorrelated["demands"])
 

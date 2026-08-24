@@ -4,9 +4,9 @@ import docker
 import pytest
 from docker import errors as docker_errors
 
-from fceval.terminal.models import TerminalCommand
-from fceval.terminal.tmux_session import TmuxSession
-from fceval.utils.logger import setup_logger
+from pitbench.harness.terminal.models import TerminalCommand
+from pitbench.harness.terminal.tmux_session import TmuxSession
+from pitbench.harness.utils.logger import setup_logger
 
 pytestmark = pytest.mark.docker
 

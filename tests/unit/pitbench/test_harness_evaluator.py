@@ -3,11 +3,11 @@ from types import SimpleNamespace
 
 from pydantic import BaseModel
 
-from fceval.evaluation import EvaluationRequest, Evaluator
-from fceval.handlers.trial_handler import TrialPaths
-from fceval.harness.harness import Harness
-from fceval.harness.models import TrialResults
-from fceval.utils.pipeline_trace import PipelineTrace
+from pitbench.harness.evaluation import EvaluationRequest, Evaluator
+from pitbench.harness.handlers.trial_handler import TrialPaths
+from pitbench.harness.harness.harness import Harness
+from pitbench.harness.harness.models import TrialResults
+from pitbench.harness.utils.pipeline_trace import PipelineTrace
 
 
 class EchoResult(BaseModel):
@@ -23,6 +23,17 @@ class EchoEvaluator(Evaluator):
             task_id=request.task_id,
             patch_size=request.candidate_patch_path.stat().st_size,
         )
+
+
+class VerdictResult(BaseModel):
+    is_resolved: bool
+
+
+class VerdictEvaluator(Evaluator):
+    name = "verdict"
+
+    def evaluate(self, request: EvaluationRequest) -> VerdictResult:
+        return VerdictResult(is_resolved=True)
 
 
 class FakeContainer:
@@ -64,8 +75,43 @@ def test_harness_treats_evaluator_payload_as_opaque(tmp_path: Path) -> None:
     assert results.evaluation is not None
     assert results.evaluation.completed is True
     assert results.evaluation.payload == {"task_id": "task", "patch_size": 25}
+    assert results.is_resolved is None
     assert (
         (paths.task_output_path / "evaluation/candidate.patch")
         .read_bytes()
         .startswith(b"diff --git")
     )
+
+
+def test_harness_consumes_standard_evaluator_verdict_without_parsing_payload(
+    tmp_path: Path,
+) -> None:
+    paths = TrialPaths(tmp_path, "task", "trial")
+    paths.mkdir()
+    handler = SimpleNamespace(
+        task_id="task",
+        trial_name="trial",
+        task_paths=SimpleNamespace(input_path=tmp_path),
+        trial_paths=paths,
+        task=SimpleNamespace(
+            evaluator_import_path=(
+                "tests.unit.pitbench.test_harness_evaluator:VerdictEvaluator"
+            ),
+            evaluator_config={},
+        ),
+    )
+    results = TrialResults(trial_name="trial", task_id="task", instruction="test")
+    harness = Harness.__new__(Harness)
+    harness._pipeline_trace = PipelineTrace(tmp_path / "trace.jsonl", "run")
+
+    harness._evaluate_candidate(
+        terminal=SimpleNamespace(container=FakeContainer()),
+        trial_handler=handler,
+        results=results,
+        agent_label="nop",
+        model_name=None,
+    )
+
+    assert results.evaluation is not None
+    assert results.evaluation.payload == {"is_resolved": True}
+    assert results.is_resolved is True

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import anyio
+import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
-from fceval.agents import AgentFactory, AgentName
-from fceval.agents.codex_mcp_agent import CodexMCPAgent
-from fceval.agents.host_mcp import LoopbackMCPServer, TaskTerminal
+from pitbench.harness.agents import AgentFactory, AgentName
+from pitbench.harness.agents.codex_mcp_agent import CodexMCPAgent
+from pitbench.harness.agents.host_mcp import LoopbackMCPServer, TaskTerminal
 
 
 class FakeContainer:
@@ -129,6 +131,27 @@ def test_codex_command_uses_isolated_runner_and_loopback_mcp():
     assert not any("auth.json" in argument for argument in command)
 
 
+def test_codex_control_plane_command_uses_runner_without_task_mcp():
+    agent = CodexMCPAgent(
+        model_name="openai/gpt-5.6-luna",
+        runner_path="/installed/pitbench-codex-runner",
+    )
+
+    command = agent._build_control_plane_command()
+
+    assert command[:7] == [
+        "sudo",
+        "-n",
+        "-u",
+        "pitbench-codex",
+        "--",
+        "/installed/pitbench-codex-runner",
+        "exec",
+    ]
+    assert command[command.index("--model") + 1] == "gpt-5.6-luna"
+    assert not any("mcp_servers" in argument for argument in command)
+
+
 def test_runner_payload_copies_only_auth_and_proxy(tmp_path):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text('{"tokens":{"access_token":"secret"}}')
@@ -164,6 +187,25 @@ def test_subscription_env_removes_api_key_and_keeps_loopback_off_proxy():
     assert "localhost" in env["NO_PROXY"]
 
 
+def test_runtime_env_applies_explicit_proxy_to_codex_runner(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text('{"tokens":{"access_token":"secret"}}')
+    agent = CodexMCPAgent(
+        model_name="gpt-5",
+        codex_auth_path=str(auth_path),
+        proxy_url="http://127.0.0.1:7897",
+    )
+
+    with patch.dict("os.environ", {}, clear=True):
+        env = agent._runtime_env()
+        payload = json.loads(agent._runner_payload(env))
+
+    assert payload["proxy_env"]["HTTP_PROXY"] == "http://127.0.0.1:7897"
+    assert payload["proxy_env"]["HTTPS_PROXY"] == "http://127.0.0.1:7897"
+    assert payload["proxy_env"]["ALL_PROXY"] == "http://127.0.0.1:7897"
+    assert env["NO_PROXY"] == "127.0.0.1,localhost"
+
+
 def test_codex_jsonl_usage_is_aggregated():
     output = "\n".join(
         [
@@ -174,6 +216,63 @@ def test_codex_jsonl_usage_is_aggregated():
     )
 
     assert CodexMCPAgent._parse_usage(output) == (17, 5)
+
+
+def test_control_plane_preflight_requires_completed_turn(tmp_path):
+    agent = CodexMCPAgent(model_name="gpt-5", control_plane_timeout_sec=3)
+    completed = MagicMock()
+    completed.returncode = 0
+    completed.communicate.return_value = (
+        '{"type":"turn.completed","usage":{}}\n',
+        "",
+    )
+
+    with patch("subprocess.Popen", return_value=completed) as popen:
+        agent._check_control_plane('{"auth_json":"{}"}', tmp_path)
+
+    assert popen.call_args.kwargs["start_new_session"] is True
+    completed.communicate.assert_called_once_with(input='{"auth_json":"{}"}', timeout=3)
+    assert "turn.completed" in (tmp_path / "codex-preflight.jsonl").read_text()
+
+
+def test_control_plane_preflight_reports_backend_timeout(tmp_path):
+    agent = CodexMCPAgent(model_name="gpt-5", control_plane_timeout_sec=2)
+    process = MagicMock()
+    process.communicate.side_effect = [
+        subprocess.TimeoutExpired(
+            cmd="codex", timeout=2, output=b'{"type":"turn.started"}\n'
+        ),
+        ('{"type":"turn.started"}\n', "transport timeout\n"),
+    ]
+
+    with (
+        patch("subprocess.Popen", return_value=process),
+        patch.object(agent, "_terminate_process") as terminate,
+        pytest.raises(RuntimeError, match="control-plane preflight timed out"),
+    ):
+        agent._check_control_plane('{"auth_json":"{}"}', tmp_path)
+
+    terminate.assert_called_once_with(process)
+    assert "turn.started" in (tmp_path / "codex-preflight.jsonl").read_text()
+
+
+def test_control_plane_preflight_preserves_backend_error(tmp_path):
+    agent = CodexMCPAgent(model_name="gpt-5")
+    failed = MagicMock()
+    failed.returncode = 1
+    failed.communicate.return_value = (
+        (
+            '{"type":"error","message":"Reconnecting"}\n'
+            '{"type":"turn.failed","error":{"message":"request timed out"}}\n'
+        ),
+        "transport closed",
+    )
+
+    with (
+        patch("subprocess.Popen", return_value=failed),
+        pytest.raises(RuntimeError, match="request timed out"),
+    ):
+        agent._check_control_plane('{"auth_json":"{}"}', tmp_path)
 
 
 def test_codex_jsonl_requires_completed_mcp_call():

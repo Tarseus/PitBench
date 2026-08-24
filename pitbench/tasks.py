@@ -60,6 +60,14 @@ class TaskCatalog:
                         f"{population.manifest}"
                     )
                 payload = yaml.safe_load(path.read_text())
+                if (
+                    population.manifest_sha256 is not None
+                    and hashlib.sha256(path.read_bytes()).hexdigest()
+                    != population.manifest_sha256
+                ):
+                    raise TaskValidationError(
+                        f"{task.task_id}: visible population hash mismatch"
+                    )
                 if payload.get("visibility") != "agent":
                     raise TaskValidationError(
                         f"{task.task_id}: development population must be agent-visible"

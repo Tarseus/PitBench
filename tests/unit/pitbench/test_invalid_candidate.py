@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from fceval.evaluation import EvaluationRequest
 from pitbench.evaluator.evaluator import PitBenchEvaluator
+from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]

@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from fceval.evaluation import EvaluationRequest
 from pitbench.evaluator.evaluator import PitBenchEvaluator
 from pitbench.evaluator.patch_policy import PatchPolicy
 from pitbench.evaluator.storage import ObservationStore
+from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.schema.observation import CodeState
 from pitbench.tasks import TaskCatalog
 
@@ -57,6 +57,45 @@ def test_real_evaluation_without_private_assets_fails_closed(tmp_path: Path) -> 
     )
     assert envelope.completed is False
     assert "real judge missing configuration" in (envelope.error or "")
+
+
+def test_model_build_fixture_uses_model_size_decision_path(tmp_path: Path) -> None:
+    record = next(
+        record
+        for record in TaskCatalog(ROOT).validate_all()
+        if record.task.task_id == "ortools_v9_15"
+    )
+    output = tmp_path / record.task.task_id
+    output.mkdir()
+    patch = output / "candidate.patch"
+    patch.write_text("")
+
+    envelope = PitBenchEvaluator().envelope(
+        EvaluationRequest(
+            task_id=record.task.task_id,
+            task_path=ROOT,
+            candidate_patch_path=patch,
+            output_dir=output,
+            agent_name="fixture",
+            evaluator_config={
+                "manifest_path": str(record.manifest_path),
+                "fixture_mode": True,
+                "fixture_instances_per_population": 1,
+            },
+        )
+    )
+
+    assert envelope.completed, envelope.error
+    decision = envelope.payload["summary"]["decision"]
+    assert decision["policy_name"] == ("pitbench-model-build-pareto-gated-improvement")
+    assert decision["outcome_complete"] is True
+    assert decision["resource_telemetry_complete"] is True
+    assert decision["paired_model_runs"] == 1
+    assert decision["model_variable_ratio"] < 1
+    assert decision["model_constraint_ratio"] < 1
+    assert decision["classification"] == "improved"
+    assert decision["is_resolved"] is True
+    assert envelope.is_resolved is True
 
 
 def test_patch_policy_protects_judge_surfaces(tmp_path: Path) -> None:

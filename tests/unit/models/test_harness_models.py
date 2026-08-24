@@ -2,7 +2,7 @@
 
 from pytest import approx
 
-from fceval.harness.models import BenchmarkResults, FailureMode, TrialResults
+from pitbench.harness.harness.models import BenchmarkResults, FailureMode, TrialResults
 
 
 def create_trial_results(task_id: str, is_resolved: bool) -> TrialResults:
@@ -126,5 +126,3 @@ def test_pass_at_k_mixed_results():
     assert pass_at_k[2] == approx((0 + 1.0 + 0.7) / 3, rel=1e-8)
     assert pass_at_k[4] == approx(2 / 3, rel=1e-8)
     assert pass_at_k[5] == approx(2 / 3, rel=1e-8)
-
-

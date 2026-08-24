@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from fceval.agents.installed_agents.mini_swe_agent.mini_swe_agent import (
+from pitbench.harness.agents.installed_agents.mini_swe_agent.mini_swe_agent import (
     MiniSweAgent,
 )
-from fceval.utils.template_utils import (
+from pitbench.harness.utils.template_utils import (
     get_template_path,
     render_setup_script,
 )

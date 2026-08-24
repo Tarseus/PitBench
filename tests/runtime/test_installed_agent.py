@@ -3,12 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from fceval.agents.base_agent import AgentResult
-from fceval.agents.failure_mode import FailureMode
-from fceval.agents.installed_agents.abstract_installed_agent import (
+from pitbench.harness.agents.base_agent import AgentResult
+from pitbench.harness.agents.failure_mode import FailureMode
+from pitbench.harness.agents.installed_agents.abstract_installed_agent import (
     AbstractInstalledAgent,
 )
-from fceval.terminal.models import TerminalCommand
+from pitbench.harness.terminal.models import TerminalCommand
 
 pytestmark = pytest.mark.docker
 

@@ -13,14 +13,51 @@ from pitbench.drivers.common import (
 )
 
 
+def _route_visits(route: object) -> list[int]:
+    """Return zero-based CVRP node ids across PyVRP route API generations."""
+
+    legacy_visits = getattr(route, "visits", None)
+    if callable(legacy_visits):
+        return list(map(int, legacy_visits()))
+
+    # PyVRP v0.14 represents routes as scheduled activities. For the
+    # single-depot VRPLIB files emitted below, client activity index zero maps
+    # to normalized CVRP node one.
+    return [
+        int(activity.idx) + 1
+        for activity in route  # type: ignore[union-attr]
+        if activity.is_client()
+    ]
+
+
+def _statistics_rows(stats: object):
+    """Yield runtime, feasibility, and incumbent across PyVRP statistics APIs."""
+
+    runtimes = stats.runtimes  # type: ignore[attr-defined]
+    legacy_feasible = getattr(stats, "feas_stats", None)
+    if legacy_feasible is not None:
+        for runtime, datum in zip(runtimes, legacy_feasible, strict=True):
+            yield runtime, datum.size > 0, datum.best_cost
+        return
+
+    for runtime, datum in zip(runtimes, stats, strict=True):
+        yield runtime, datum.best_feas, datum.best_cost
+
+
 def _vrplib(instance: dict, path: Path) -> None:
     coordinates = instance["coordinates"]
     demands = instance["demands"]
+    distance_metric = instance.get("distance_metric", "EUC_2D")
+    if distance_metric != "EUC_2D":
+        raise ValueError(
+            "PyVRP driver only supports normalized instances with EUC_2D "
+            f"distance semantics, got {distance_metric!r}"
+        )
     lines = [
         f"NAME : {instance.get('name', path.stem)}",
         "TYPE : CVRP",
         f"DIMENSION : {len(coordinates)}",
-        "EDGE_WEIGHT_TYPE : EUC_2D",
+        f"EDGE_WEIGHT_TYPE : {distance_metric}",
         f"CAPACITY : {instance['capacity']}",
         "NODE_COORD_SECTION",
     ]
@@ -51,17 +88,15 @@ def main() -> None:
             result = Model.from_data(data).solve(
                 stop=MaxRuntime(args.budget), seed=args.seed, display=False
             )
-        routes = [list(map(int, route.visits())) for route in result.best.routes()]
+        routes = [_route_visits(route) for route in result.best.routes()]
         objective = float(result.cost())
         write_solution(args.output, {"routes": routes})
         elapsed = 0.0
         incumbent = float("inf")
-        for runtime, datum in zip(
-            result.stats.runtimes, result.stats, strict=True
-        ):
+        for runtime, feasible, best_cost in _statistics_rows(result.stats):
             elapsed += runtime
-            if datum.best_feas and datum.best_cost < incumbent:
-                incumbent = float(datum.best_cost)
+            if feasible and best_cost < incumbent:
+                incumbent = float(best_cost)
                 append_trajectory(
                     args.trajectory,
                     {"time_sec": elapsed, "objective": incumbent},

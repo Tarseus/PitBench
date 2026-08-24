@@ -33,6 +33,12 @@ def test_judge_image_must_be_digest_pinned(tmp_path: Path) -> None:
         _judge(tmp_path, "pitbench/pyvrp:latest")
 
 
+def test_judge_accepts_immutable_local_image_id(tmp_path: Path) -> None:
+    judge = _judge(tmp_path, "sha256:" + "b" * 64)
+
+    assert judge.image == "sha256:" + "b" * 64
+
+
 def test_docker_judge_disables_network_and_reads_observations(tmp_path: Path) -> None:
     judge = _judge(tmp_path, "pitbench/pyvrp@sha256:" + "a" * 64)
     observation = RunObservation(

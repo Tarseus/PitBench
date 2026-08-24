@@ -8,8 +8,8 @@ def test_importing_claude_code_agents_ignores_invalid_unused_proxy() -> None:
     command = [
         sys.executable,
         "-c",
-        "from fceval.agents.agent_factory import AgentFactory; "
-        "from fceval.agents.agent_name import AgentName; "
+        "from pitbench.harness.agents.agent_factory import AgentFactory; "
+        "from pitbench.harness.agents.agent_name import AgentName; "
         "assert AgentFactory.get_agent_class(AgentName.CLAUDE_CODE).name() "
         "== 'claude-code'",
     ]

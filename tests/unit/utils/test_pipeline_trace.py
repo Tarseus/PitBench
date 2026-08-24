@@ -2,8 +2,8 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fceval.agents.failure_mode import FailureMode
-from fceval.utils.pipeline_trace import PipelineTrace
+from pitbench.harness.agents.failure_mode import FailureMode
+from pitbench.harness.utils.pipeline_trace import PipelineTrace
 
 
 def _read_events(path: Path) -> list[dict]:

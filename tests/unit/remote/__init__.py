@@ -1,1 +1,1 @@
-"""Unit tests for fceval.remote module."""
+"""Unit tests for pitbench.harness.remote module."""

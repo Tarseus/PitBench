@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 from docker.models.containers import Container
 
-from fceval.terminal.tmux_session import TmuxSession
+from pitbench.harness.terminal.tmux_session import TmuxSession
 
 
 @pytest.fixture

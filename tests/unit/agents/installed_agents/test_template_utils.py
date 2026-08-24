@@ -1,7 +1,7 @@
 import tempfile
 from pathlib import Path
 
-from fceval.utils.template_utils import (
+from pitbench.harness.utils.template_utils import (
     render_setup_script,
 )
 

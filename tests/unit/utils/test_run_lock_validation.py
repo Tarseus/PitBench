@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from fceval.utils.run_lock import (
+from pitbench.harness.utils.run_lock import (
     AgentLock,
     DatasetLock,
     LocalConfig,
@@ -473,7 +473,7 @@ class TestRunLockValidation:
             run_lock = RunLock(
                 agent=AgentLock(
                     name="multi-agent",
-                    import_path="fceval.harness.harness:MultiAgent",
+                    import_path="pitbench.harness.harness.harness:MultiAgent",
                     model_name="multi-agent",
                     extra_kwargs={"agent_configs": legacy_payload},
                 ),

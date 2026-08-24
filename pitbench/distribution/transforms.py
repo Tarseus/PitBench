@@ -47,5 +47,7 @@ def relabel_cvrp_customers(instance: Mapping[str, Any], *, seed: int) -> dict[st
     order = [depot, *customers]
     result["coordinates"] = [result["coordinates"][index] for index in order]
     result["demands"] = [result["demands"][index] for index in order]
+    if "node_ids" in result:
+        result["node_ids"] = [result["node_ids"][index] for index in order]
     result["depot"] = 0
     return result

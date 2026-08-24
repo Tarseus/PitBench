@@ -76,9 +76,7 @@ def test_runner_installs_exact_mcp_tool_permission(tmp_path, monkeypatch):
         "auth_token_json": (
             '{"auth_method":"oauth-personal","token":{"access_token":"test"}}'
         ),
-        "settings_json": (
-            '{"security":{"auth":{"selectedType":"oauth-personal"}}}'
-        ),
+        "settings_json": ('{"security":{"auth":{"selectedType":"oauth-personal"}}}'),
     }
     invocation = {}
 

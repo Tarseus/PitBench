@@ -1,7 +1,7 @@
 # A provable metric for standard metric CVRP instances
 
-Status: definition 1.0, complete metric proof, and exact finite reference
-implementation.
+Status: definition 1.0, complete metric proof, exact finite reference, and
+independently verifiable map-pair upper-bound certificates.
 
 This document defines a solver-independent metric on a declared quotient of
 standard symmetric metric CVRP instances. It does not use QoIs, population-fitted
@@ -235,7 +235,104 @@ solver. An entropic, greedy, or learned approximation must use a different API a
 must not be advertised as satisfying the exact metric theorem unless separately
 proved.
 
-## 5. What the theorem does and does not claim
+## 5. Certified map-pair upper bounds
+
+Exact enumeration is not needed to verify an upper bound. Let `f:X_I -> X_J` and
+`g:X_J -> X_I` preserve the depot partition, and define
+
+\[
+D_f=\max_{x,x'}
+|\bar d_I(x,x')-\bar d_J(f(x),f(x'))|,
+\]
+
+\[
+D_g=\max_{y,y'}
+|\bar d_I(g(y),g(y'))-\bar d_J(y,y')|,
+\]
+
+\[
+C_{f,g}=\max_{x,y}
+|\bar d_I(x,g(y))-\bar d_J(f(x),y)|.
+\]
+
+The last quantity is the codistortion. It is required: the two maps may each be
+low-distortion while being mutually incompatible. For the demand marks, define
+
+\[
+Q_f=\max_x|a_I(x)-a_J(f(x))|,
+\qquad
+Q_g=\max_y|a_I(g(y))-a_J(y)|.
+\]
+
+Under PitBench definition 1.0, a map pair certifies
+
+\[
+\boxed{
+U(f,g)=\max\{D_f,D_g,C_{f,g},Q_f,Q_g\}.
+}
+\]
+
+This formula deliberately has no factor `1/2` and no fitted demand weight, matching
+the convention fixed in Section 2. Under the conventional GH normalization, all
+travel-distortion terms would instead receive the same factor `1/2`; that is not the
+version-1.0 PitBench metric.
+
+Construct the anchored correspondence
+
+\[
+R_{f,g}=\{(x,f(x)):x\in X_I\}\cup\{(g(y),y):y\in X_J\}.
+\]
+
+Its travel distortion is exactly `max(D_f,D_g,C_f,g)`, and its mark discrepancy is
+exactly `max(Q_f,Q_g)`. Therefore
+
+\[
+\delta_{\mathrm{CVRP}}(I,J)\le U(f,g).
+\]
+
+Conversely, selecting one partner in each direction from any anchored
+correspondence produces a map pair whose union is a subrelation and cannot have a
+larger cost. Consequently,
+
+\[
+\boxed{
+\delta_{\mathrm{CVRP}}(I,J)=\inf_{f,g}U(f,g).
+}
+\]
+
+### 5.1 Proposer--verifier API
+
+`pitbench.metrics.cvrp_certificate` separates untrusted search from deterministic
+verification:
+
+- `CVRPMapCertificate` stores the two maps as `O(n+m)` integers and supports a
+  JSON-compatible dictionary representation;
+- `verify_cvrp_map_certificate` validates depot preservation and independently
+  recomputes all five maxima in `O(n²+m²+nm)` time;
+- `signature_cvrp_map_certificate` proposes a deterministic initial witness using
+  normalized demand, depot distance, and distance-distribution quantiles;
+- `search_cvrp_upper_bound` applies budgeted coordinated reassignment/swap moves.
+  Every accepted move is reverified, and `upper_bound_history` is monotonically
+  decreasing. Evaluation-count and wall-time budgets make the search anytime.
+
+The proposer has no trusted role. A certificate produced by a heuristic, a learned
+model, MILP, CP-SAT, or an external program has the same status after the verifier
+recomputes its bound.
+
+### 5.2 Interpretation and propagation
+
+`U(f,g)` is a certified upper approximation to `delta_CVRP`; it is not itself a new
+metric and is not claimed to satisfy the triangle inequality. The exact reference
+can measure certificate tightness on small instances. A nontrivial lower-bound
+relaxation is not part of definition 1.0, so the only universally available interval
+without additional machinery is `[0,U]`.
+
+If every ground cost used by an outer population transport problem is replaced by
+a certified upper bound `U_ij >= delta_ij`, minimizing the transport objective with
+those costs yields an upper bound on the true population Wasserstein distance. Thus
+the certificate property propagates through the outer optimal-transport layer.
+
+## 6. What the theorem does and does not claim
 
 The theorem proves that the declared formula is a legal metric for the declared
 CVRP semantics. It does not prove that this is the unique possible CVRP metric, that

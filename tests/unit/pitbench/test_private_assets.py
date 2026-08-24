@@ -2,8 +2,13 @@ import hashlib
 from pathlib import Path
 
 import pytest
+import yaml
 
+from pitbench.evaluator.judge import JudgePlan
 from pitbench.evaluator.private_assets import PrivateAssetError, PrivateAssetResolver
+from pitbench.schema.task import PitBenchTask
+
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_private_asset_hash_is_verified(tmp_path: Path) -> None:
@@ -14,3 +19,113 @@ def test_private_asset_hash_is_verified(tmp_path: Path) -> None:
     assert resolver.resolve("private://oracle.json", expected) == asset
     with pytest.raises(PrivateAssetError, match="hash mismatch"):
         resolver.resolve("private://oracle.json", "0" * 64)
+
+
+def test_judge_plan_accepts_calibration_oracle_manifest(tmp_path: Path) -> None:
+    instance = tmp_path / "instance.json"
+    instance.write_text("{}")
+    oracle = tmp_path / "oracle.yaml"
+    oracle.write_text(
+        yaml.safe_dump(
+            {
+                "instances": [
+                    {
+                        "id": "X-n101-k25",
+                        "instance_uri": "private://instance.json",
+                        "bks": 27591,
+                    }
+                ]
+            }
+        )
+    )
+    task = PitBenchTask.from_yaml(ROOT / "manifests/tasks/pyvrp_v0_13_4.yaml")
+    development, judge, *_ = task.populations
+    task = task.model_copy(
+        update={
+            "populations": [
+                development,
+                judge.model_copy(
+                    update={
+                        "manifest": "private://oracle.yaml",
+                        "manifest_sha256": None,
+                        "size": 1,
+                    }
+                ),
+            ]
+        }
+    )
+
+    plan = JudgePlan.from_private_manifests(task, PrivateAssetResolver(tmp_path))
+
+    assert len(plan.cases) == 1
+    assert plan.cases[0].path == instance
+    assert plan.cases[0].anchor == 27591
+
+
+def test_judge_plan_allows_missing_anchor_for_non_objective_tasks(
+    tmp_path: Path,
+) -> None:
+    instance = tmp_path / "instance.json"
+    instance.write_text("{}")
+    manifest = tmp_path / "manifest.yaml"
+    manifest.write_text(
+        yaml.safe_dump(
+            {"instances": [{"id": "model-1", "uri": "private://instance.json"}]}
+        )
+    )
+    task = PitBenchTask.from_yaml(ROOT / "manifests/tasks/ortools_v9_15.yaml")
+    development, judge, *_ = task.populations
+    task = task.model_copy(
+        update={
+            "populations": [
+                development,
+                judge.model_copy(
+                    update={
+                        "manifest": "private://manifest.yaml",
+                        "manifest_sha256": None,
+                        "size": 1,
+                    }
+                ),
+            ]
+        }
+    )
+
+    plan = JudgePlan.from_private_manifests(task, PrivateAssetResolver(tmp_path))
+
+    assert len(plan.cases) == 1
+    assert plan.cases[0].path == instance
+    assert plan.cases[0].anchor is None
+
+
+def test_judge_plan_requires_anchor_for_objective_tasks(tmp_path: Path) -> None:
+    instance = tmp_path / "instance.json"
+    instance.write_text("{}")
+    manifest = tmp_path / "manifest.yaml"
+    manifest.write_text(
+        yaml.safe_dump(
+            {
+                "instances": [
+                    {"id": "routing-1", "instance_uri": "private://instance.json"}
+                ]
+            }
+        )
+    )
+    task = PitBenchTask.from_yaml(ROOT / "manifests/tasks/pyvrp_v0_13_4.yaml")
+    development, judge, *_ = task.populations
+    task = task.model_copy(
+        update={
+            "populations": [
+                development,
+                judge.model_copy(
+                    update={
+                        "manifest": "private://manifest.yaml",
+                        "manifest_sha256": None,
+                        "size": 1,
+                    }
+                ),
+            ]
+        }
+    )
+
+    with pytest.raises(ValueError, match="incomplete instance"):
+        JudgePlan.from_private_manifests(task, PrivateAssetResolver(tmp_path))

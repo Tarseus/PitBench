@@ -8,20 +8,32 @@ from typing import Annotated
 import typer
 
 from adapters.pitbench.adapter import PitBenchAdapter
-from fceval.evaluation import EvaluationRequest
-from pitbench.distribution.qoi_axiom_validation import (
-    run_cvrp_qoi_axiom_validation,
-)
 from pitbench.evaluator.evaluator import PitBenchEvaluator
+from pitbench.evaluator.storage import ObservationStore
+from pitbench.harness.cli.harness_cli.runs import create as run_harness
+from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.instances import materialize_population
+from pitbench.metrics.behavior_metrics import compute_behavior_metric_report
+from pitbench.metrics.outcome_metrics import (
+    compute_outcome_metrics,
+    format_outcome_report_table,
+)
+from pitbench.metrics.sensitivity_metrics import (
+    compute_sensitivity_report,
+    format_sensitivity_report_table,
+)
 from pitbench.schema.task import PopulationKind
 from pitbench.tasks import TaskCatalog
 
-app = typer.Typer(help="PitBench task and evaluator tooling.")
+app = typer.Typer(help="PitBench task, execution harness, and evaluation tooling.")
 tasks_app = typer.Typer(help="Validate and smoke-test benchmark tasks.")
-qoi_app = typer.Typer(help="Versioned quantities-of-interest tooling.")
 app.add_typer(tasks_app, name="tasks")
-app.add_typer(qoi_app, name="qoi")
+
+# Direct unified run command: `pitbench run --dataset-path ... --agent ...`
+app.command(
+    name="run",
+    help="Run coding agents on materialized benchmark tasks (e.g. Codex on PyVRP).",
+)(run_harness)
 
 
 def _root(value: Path | None) -> Path:
@@ -112,49 +124,116 @@ def materialize_task(
     private_root: Annotated[
         Path, typer.Option(help="Evaluator-only private storage")
     ] = Path("private"),
+    repository_source: Annotated[
+        Path | None,
+        typer.Option(help="Pre-censored local repository snapshot"),
+    ] = None,
+    agent_image: Annotated[
+        str | None,
+        typer.Option(help="Agent container base image override"),
+    ] = None,
+    judge_image: Annotated[
+        str | None,
+        typer.Option(help="Immutable judge image digest or local image ID"),
+    ] = None,
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
 ) -> None:
     repository_root = _root(root)
     task_dir = PitBenchAdapter(
         repository_root,
         private_root if private_root.is_absolute() else repository_root / private_root,
-    ).materialize(task_id, output)
+    ).materialize(
+        task_id,
+        output,
+        repository_source=repository_source,
+        agent_image=agent_image,
+        judge_image=judge_image,
+    )
     typer.echo(f"Materialized {task_id} at {task_dir}")
 
 
-@qoi_app.command("validate-cvrp-axioms")
-def validate_cvrp_qoi_axioms(
-    output: Annotated[
+@app.command("report")
+def report_command(
+    path: Annotated[
         Path,
-        typer.Option(help="JSON destination for the axis-level QoI axiom report"),
+        typer.Argument(
+            help="Path to trials.parquet, observations file, or evaluation directory"
+        ),
     ],
-    calibration_size: Annotated[
-        int,
-        typer.Option(min=8, help="Solver-free designs used for robust axis scales"),
-    ] = 128,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output report as structured JSON"),
+    ] = False,
 ) -> None:
-    """Validate methodology axioms 1--8 against CVRP instance QoIs."""
-    report = run_cvrp_qoi_axiom_validation(calibration_size=calibration_size)
-    payload = report.as_dict()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    typer.echo(
-        json.dumps(
-            {
-                "conclusion": report.conclusion,
-                "axioms": {
-                    name: evidence["passed"]
-                    for name, evidence in report.axioms.items()
-                },
-                "artifact": str(output),
-                "solver_runs_used": report.solver_runs_used,
-                "solver_runs_created": report.solver_runs_created,
-                "production_geometry_changed": report.production_geometry_changed,
-            },
-            indent=2,
-            sort_keys=True,
+    """Generate complete PitBench evaluation report (Outcome 3D + Sensitivity)."""
+    target = path.resolve()
+    if target.is_dir():
+        parquet_file = target / "trials.parquet"
+        jsonl_file = target / "observations.jsonl"
+        if parquet_file.is_file():
+            target = parquet_file
+        elif jsonl_file.is_file():
+            target = jsonl_file
+        else:
+            raise typer.BadParameter(
+                f"No trials.parquet or observations.jsonl found in directory: {path}"
+            )
+
+    if not target.is_file():
+        raise typer.BadParameter(f"File does not exist: {target}")
+
+    if target.suffix == ".parquet":
+        observations = ObservationStore.read(target)
+    elif target.suffix in {".jsonl", ".json"}:
+        observations = ObservationStore.read_jsonl(target)
+    else:
+        observations = ObservationStore.read(target)
+
+    outcome_report = compute_outcome_metrics(observations)
+    sensitivity_report = compute_sensitivity_report(observations)
+    behavior_report = compute_behavior_metric_report(observations)
+
+    if json_output:
+        combined = {
+            "outcomes": outcome_report.model_dump(),
+            "sensitivity": sensitivity_report.model_dump(),
+            "behavior": behavior_report.model_dump(),
+        }
+        typer.echo(json.dumps(combined, indent=2))
+        return
+
+    typer.echo("\n========================================================")
+    typer.echo(f"  PitBench Evaluation Report: {target.name}")
+    typer.echo(f"  Total observations: {len(observations)}")
+    typer.echo("========================================================\n")
+
+    typer.echo("=== I. Outcome 3D (Performance, Reliability, Resource) ===")
+    typer.echo(format_outcome_report_table(outcome_report))
+
+    typer.echo("\n=== II. Sensitivity Dimensions & Summary Matrix ===")
+    typer.echo(format_sensitivity_report_table(sensitivity_report))
+
+    typer.echo("\n=== III. Population-Conditional Solver Distances ===")
+    for item in behavior_report.slices:
+        coordinates = ", ".join(
+            f"{name}={coordinate.distance:.6g}"
+            if coordinate.distance is not None
+            else f"{name}=undefined"
+            for name, coordinate in (
+                ("performance", item.performance),
+                ("reliability", item.reliability),
+                ("resource", item.resource),
+            )
         )
-    )
+        typer.echo(
+            f"{item.population} @ {item.budget_sec:g}s, p={item.p:g}: {coordinates}"
+        )
+
+    if outcome_report.by_population:
+        typer.echo("\n--- By Population Outcome Breakdown ---")
+        for pop_name, pop_report in outcome_report.by_population.items():
+            typer.echo(f"\n[Population: {pop_name}]")
+            typer.echo(format_outcome_report_table(pop_report))
 
 
 if __name__ == "__main__":

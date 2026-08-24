@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import resource
 import time
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,22 @@ def write_result(
     error: str | None = None,
     **metrics: Any,
 ) -> None:
+    self_usage = resource.getrusage(resource.RUSAGE_SELF)
+    child_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    metrics.setdefault(
+        "cpu_time_sec",
+        self_usage.ru_utime
+        + self_usage.ru_stime
+        + child_usage.ru_utime
+        + child_usage.ru_stime,
+    )
+    # Linux reports ru_maxrss in KiB. Judge images are Linux-only and pinned.
+    # These are separate high-water marks that may occur at different times,
+    # so adding them would not represent a process-tree peak.
+    metrics.setdefault(
+        "peak_rss_bytes",
+        int(max(self_usage.ru_maxrss, child_usage.ru_maxrss) * 1024),
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
