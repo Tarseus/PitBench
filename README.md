@@ -197,22 +197,8 @@ ALL_PROXY= all_proxy= uv run pytest -q tests/unit
 ## 🧭 Roadmap & Future Directions
 
 - [ ] **Broader Combinatorial Optimization Problem Domains**
-  - [ ] **MIP & LP Tracks**: Integrate **HiGHS** cutting-plane generation and presolve heuristic optimization tasks.
-  - [ ] **CP & SAT Tracks**: Integrate **Google OR-Tools** CP-SAT constraint propagation and search-tree branching tasks.
-  - [ ] **Classic Integer Programming**: Support **SCIP** and **Cbc** solver tracks.
 - [ ] **Advanced Sensitivity & Distributional Metrics**
-  - [ ] Representation Stability: Test invariance under semantic-preserving transformations (node relabeling, coordinate shifts).
-  - [ ] Problem Scale Exponents: Quantify scaling slopes ($\frac{\Delta \log T}{\Delta \log s(x)}$) across instance scale descriptors (customer counts, variables, constraints).
-  - [ ] Optimal Transport Behavior Profiling: Evaluate Wasserstein distances between solver empirical behavior kernels across instance populations.
 - [ ] **Hardware-Isolated Distributed Cloud Infrastructure**
-  - [ ] Automated provisioning and hardware isolation on AWS EC2 bare-metal instances.
-  - [ ] Distributed batch evaluation pipelines for Slurm and Kubernetes clusters.
-- [ ] **Autonomous Operator Discovery in Combinatorial Optimization**
-  - [ ] Evaluate LLM agents on autonomously inventing novel local search neighborhood operators (2-opt, Relocate, Swap, Ejection Chains).
-  - [ ] Benchmark Large Neighborhood Search (LNS) Ruin-and-Recreate operator synthesis and heuristic adaptation.
-- [ ] **Live Leaderboard & Automated Benchmark CI**
-  - [ ] Launch a public web leaderboard tracking the state-of-the-art LLM coding agents on Combinatorial Optimization solvers.
-  - [ ] Automated GitHub Actions CI workflow for verifying community agent submissions.
 
 ---
 
