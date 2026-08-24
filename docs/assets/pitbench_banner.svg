@@ -148,7 +148,7 @@
     <!-- Domain Header Notation -->
     <g transform="translate(0, 58)">
       <text x="0" y="0" class="latex-code">
-        <tspan fill="#38BDF8">∀ x ∈ 𝒳_CVRP</tspan> :  <tspan fill="#94A3B8">Performance-First PyVRP Benchmark</tspan>
+        <tspan fill="#38BDF8">∀ x ∈ 𝒳_CO</tspan> :  <tspan fill="#94A3B8">Performance-First CO Solver Benchmark</tspan>
       </text>
       <line x1="0" y1="10" x2="740" y2="10" stroke="#334155" stroke-width="0.8"/>
     </g>
@@ -158,7 +158,7 @@
 
     <!-- Subtitle (Mathematical & Rigorous) -->
     <text x="2" y="180" fill="#93C5FD" class="math-sub">
-      Evaluating Coding Agents on Production-Grade PyVRP
+      Evaluating Coding Agents on Production-Grade CO Solver Repositories
     </text>
 
     <!-- Abstract / Core Concept Line -->

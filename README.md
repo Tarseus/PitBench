@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/PitBench-Benchmark-8A2BE2?style=for-the-badge&logo=github&logoColor=white" alt="PitBench Benchmark">
   <img src="https://img.shields.io/badge/Domain-Combinatorial%20Optimization%20%26%20OR-0A7A5E?style=for-the-badge&logo=target&logoColor=white" alt="Combinatorial Optimization">
-  <img src="https://img.shields.io/badge/Solver-PyVRP-1F6FEB?style=for-the-badge" alt="PyVRP">
+  <img src="https://img.shields.io/badge/Current%20Track-PyVRP-1F6FEB?style=for-the-badge" alt="Current track: PyVRP">
   <img src="https://img.shields.io/badge/Evaluation-Performance--First-EA580C?style=for-the-badge&logo=speedtest&logoColor=white" alt="Performance First">
   <img src="https://img.shields.io/badge/Sandbox-Docker%20Isolated-3776AB?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/License-BSD%203--Clause-gray?style=for-the-badge" alt="License">
@@ -15,7 +15,7 @@
   <a href="#-quickstart">
     <img src="https://img.shields.io/badge/%F0%9F%9A%80%20Quickstart-0A7A5E?style=flat-square" alt="Quickstart">
   </a>
-  <a href="#-combinatorial-optimization-tasks-matrix">
+  <a href="#-current-combinatorial-optimization-tasks">
     <img src="https://img.shields.io/badge/%F0%9F%93%A6%20Tasks%20Matrix-1F6FEB?style=flat-square" alt="Tasks">
   </a>
   <a href="#%EF%B8%8F-the-three-pillars-of-pitbench">
@@ -30,14 +30,14 @@
 </p>
 
 <p align="center">
-  <b>A benchmark for evaluating whether coding agents can produce valid, statistically supported performance improvements in mature optimization solvers.</b>
+  <b>A benchmark for evaluating whether coding agents can produce valid, statistically supported performance improvements in mature combinatorial-optimization solver repositories.</b>
 </p>
 
 ---
 
 ## 🎯 Why Combinatorial Optimization (CO)?
 
-**Combinatorial Optimization (CO)** is the algorithmic backbone of modern logistics, supply chains, manufacturing, and scheduling. Developing and accelerating high-performance solvers requires mathematical insight, intricate search heuristics, and low-level systems programming. PitBench currently focuses on four release snapshots of **PyVRP**.
+**Combinatorial Optimization (CO)** is the algorithmic backbone of modern logistics, supply chains, manufacturing, and scheduling. Developing and accelerating high-performance solvers requires mathematical insight, intricate search heuristics, and low-level systems programming. PitBench is designed for repository-level evaluation of CO solvers; **PyVRP is the first implemented track**, currently represented by four release snapshots, rather than the boundary of the benchmark.
 
 Unlike general repository-level coding benchmarks, solver optimization must preserve problem semantics while evaluating a randomized quality-time process:
 
@@ -45,14 +45,14 @@ Unlike general repository-level coding benchmarks, solver optimization must pres
 * ⚡ **High-Performance Hybrid Architectures**: Solvers heavily utilize C++/Python hybrid designs (e.g., C++ computational kernels exposed via Pybind11 / Cython) where minor changes can break memory invariants or cause severe algorithmic regressions.
 * ⏱️ **Stochastic Quality-Time Tradeoffs**: Combinatorial search is inherently randomized. Speedup is meaningless if solution quality (optimality gap) degrades. Benchmarking must evaluate the quality-time Pareto frontier under fixed computational budgets.
 
-**PitBench provides a problem-aware testbed for agentic performance engineering on real solver repositories.**
+**PitBench provides a problem-aware testbed for agentic performance engineering on real CO solver repositories.**
 
 ---
 
 ## 🌟 Key Highlights
 
-1. **Repository-Level Solver Optimization**
-   Agents modify real PyVRP release snapshots rather than isolated algorithm exercises.
+1. **Repository-Level CO Solver Optimization**
+   Agents modify real solver repositories rather than isolated algorithm exercises. The current implementation uses PyVRP release snapshots.
 
 2. **Four PyVRP Release Snapshots**
    The supported tasks cover PyVRP v0.12.2, v0.13.0, v0.13.4, and v0.14.0 using common instances, seeds, and budgets.
@@ -98,7 +98,7 @@ Unlike general repository-level coding benchmarks, solver optimization must pres
 
 ---
 
-## 📦 Combinatorial Optimization Tasks Matrix
+## 📦 Current Combinatorial Optimization Tasks
 
 | Task ID | Solver & Version | Problem Family | Architecture | Optimization Scope |
 | :--- | :--- | :--- | :--- | :--- |
