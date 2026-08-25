@@ -35,6 +35,7 @@ results/*
 /dataset/
 *.parquet
 *.egg-info/
+runs/
 .pitbench-runs/
 .pitbench/
 
