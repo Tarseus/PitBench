@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 
 import pytest
@@ -183,39 +184,19 @@ def test_budget_conditioned_problem_scalability() -> None:
     # At budget 10.0s: gaps = [0.01, 0.02, 0.03] -> smaller slope
     # Multi-seed for inst_100 at 1.0s: seed 0 has 0.09, seed 1 has 0.11 -> mean is 0.10
     base_obs = [
-        _make_obs(
-            CodeState.BASE, "inst_100", 0, budget_sec=1.0, normalized_gap=0.09
-        ),
-        _make_obs(
-            CodeState.BASE, "inst_100", 1, budget_sec=1.0, normalized_gap=0.11
-        ),
-        _make_obs(
-            CodeState.BASE, "inst_200", 0, budget_sec=1.0, normalized_gap=0.20
-        ),
-        _make_obs(
-            CodeState.BASE, "inst_400", 0, budget_sec=1.0, normalized_gap=0.30
-        ),
-        _make_obs(
-            CodeState.BASE, "inst_100", 0, budget_sec=10.0, normalized_gap=0.01
-        ),
-        _make_obs(
-            CodeState.BASE, "inst_200", 0, budget_sec=10.0, normalized_gap=0.02
-        ),
-        _make_obs(
-            CodeState.BASE, "inst_400", 0, budget_sec=10.0, normalized_gap=0.03
-        ),
+        _make_obs(CodeState.BASE, "inst_100", 0, budget_sec=1.0, normalized_gap=0.09),
+        _make_obs(CodeState.BASE, "inst_100", 1, budget_sec=1.0, normalized_gap=0.11),
+        _make_obs(CodeState.BASE, "inst_200", 0, budget_sec=1.0, normalized_gap=0.20),
+        _make_obs(CodeState.BASE, "inst_400", 0, budget_sec=1.0, normalized_gap=0.30),
+        _make_obs(CodeState.BASE, "inst_100", 0, budget_sec=10.0, normalized_gap=0.01),
+        _make_obs(CodeState.BASE, "inst_200", 0, budget_sec=10.0, normalized_gap=0.02),
+        _make_obs(CodeState.BASE, "inst_400", 0, budget_sec=10.0, normalized_gap=0.03),
     ]
 
     agent_obs = [
-        _make_obs(
-            CodeState.AGENT, "inst_100", 0, budget_sec=1.0, normalized_gap=0.08
-        ),
-        _make_obs(
-            CodeState.AGENT, "inst_200", 0, budget_sec=1.0, normalized_gap=0.16
-        ),
-        _make_obs(
-            CodeState.AGENT, "inst_400", 0, budget_sec=1.0, normalized_gap=0.24
-        ),
+        _make_obs(CodeState.AGENT, "inst_100", 0, budget_sec=1.0, normalized_gap=0.08),
+        _make_obs(CodeState.AGENT, "inst_200", 0, budget_sec=1.0, normalized_gap=0.16),
+        _make_obs(CodeState.AGENT, "inst_400", 0, budget_sec=1.0, normalized_gap=0.24),
         _make_obs(
             CodeState.AGENT, "inst_100", 0, budget_sec=10.0, normalized_gap=0.005
         ),
@@ -247,6 +228,175 @@ def test_budget_conditioned_problem_scalability() -> None:
         scal.base.gap_scaling_slopes_by_budget[10.0]
     )
     assert scal.delta_gap_slope == pytest.approx(scal.delta_gap_slopes_by_budget[10.0])
+
+    report = compute_sensitivity_report(
+        [*base_obs, *agent_obs], scale_descriptors=scale_desc
+    )
+    table = format_sensitivity_report_table(report)
+    assert "Runtime Scaling Slope @ 1.0s" in table
+    assert "Runtime Scaling Slope @ 10.0s" in table
+    assert "Reliability Scaling Slope @ 1.0s" in table
+    assert "Reliability Scaling Slope @ 10.0s" in table
+
+
+def test_problem_scalability_uses_budget_for_each_missing_runtime() -> None:
+    scale_desc = {"small": 1.0, "large": 2.0}
+
+    def observations(code_state: CodeState) -> list[RunObservation]:
+        return [
+            _make_obs(
+                code_state,
+                "small",
+                0,
+                budget_sec=10.0,
+                wall_time_sec=1.0,
+            ),
+            _make_obs(
+                code_state,
+                "small",
+                1,
+                budget_sec=10.0,
+                status=RunStatus.TIMED_OUT,
+                valid=False,
+                normalized_gap=None,
+                wall_time_sec=None,
+            ),
+            _make_obs(
+                code_state,
+                "large",
+                0,
+                budget_sec=10.0,
+                wall_time_sec=10.0,
+            ),
+            _make_obs(
+                code_state,
+                "large",
+                1,
+                budget_sec=10.0,
+                wall_time_sec=10.0,
+            ),
+        ]
+
+    scal = compute_problem_scalability(
+        observations(CodeState.BASE),
+        observations(CodeState.AGENT),
+        scale_descriptors=scale_desc,
+    )
+
+    # The small instance averages the completed 1s run and the timeout's 10s budget.
+    expected_slope = math.log(10.0 / 5.5) / math.log(2.0)
+    assert scal.base.runtime_scaling_slopes_by_budget[10.0] == pytest.approx(
+        expected_slope
+    )
+
+
+def test_problem_scalability_primary_slopes_use_highest_common_budget() -> None:
+    scale_desc = {"small": 100.0, "large": 200.0}
+    base_obs = [
+        _make_obs(
+            CodeState.BASE,
+            "small",
+            0,
+            budget_sec=1.0,
+            normalized_gap=0.10,
+        ),
+        _make_obs(
+            CodeState.BASE,
+            "large",
+            0,
+            budget_sec=1.0,
+            normalized_gap=0.20,
+        ),
+        _make_obs(
+            CodeState.BASE,
+            "small",
+            0,
+            budget_sec=10.0,
+            normalized_gap=0.01,
+        ),
+        _make_obs(
+            CodeState.BASE,
+            "large",
+            0,
+            budget_sec=10.0,
+            normalized_gap=0.03,
+        ),
+    ]
+    agent_obs = [
+        _make_obs(
+            CodeState.AGENT,
+            "small",
+            0,
+            budget_sec=1.0,
+            normalized_gap=0.05,
+        ),
+        _make_obs(
+            CodeState.AGENT,
+            "large",
+            0,
+            budget_sec=1.0,
+            normalized_gap=0.10,
+        ),
+        _make_obs(
+            CodeState.AGENT,
+            "small",
+            0,
+            budget_sec=10.0,
+            normalized_gap=None,
+        ),
+        _make_obs(
+            CodeState.AGENT,
+            "large",
+            0,
+            budget_sec=10.0,
+            normalized_gap=None,
+        ),
+    ]
+
+    scal = compute_problem_scalability(
+        base_obs, agent_obs, scale_descriptors=scale_desc
+    )
+
+    assert set(scal.base.gap_scaling_slopes_by_budget) == {1.0, 10.0}
+    assert set(scal.agent.gap_scaling_slopes_by_budget) == {1.0}
+    assert scal.base.gap_scaling_slope == pytest.approx(
+        scal.base.gap_scaling_slopes_by_budget[1.0]
+    )
+    assert scal.agent.gap_scaling_slope == pytest.approx(
+        scal.agent.gap_scaling_slopes_by_budget[1.0]
+    )
+    assert scal.delta_gap_slope == pytest.approx(scal.delta_gap_slopes_by_budget[1.0])
+
+
+def test_problem_scalability_requires_an_estimable_budget_slice() -> None:
+    scale_desc = {"small": 100.0, "large": 200.0}
+
+    def observations(code_state: CodeState) -> list[RunObservation]:
+        return [
+            _make_obs(code_state, "small", 0, budget_sec=1.0),
+            _make_obs(code_state, "large", 0, budget_sec=10.0),
+        ]
+
+    scal = compute_problem_scalability(
+        observations(CodeState.BASE),
+        observations(CodeState.AGENT),
+        scale_descriptors=scale_desc,
+    )
+
+    assert scal.base.scales_evaluated == 2
+    assert not scal.base.has_scale_data
+    assert not scal.agent.has_scale_data
+    assert not scal.base.runtime_scaling_slopes_by_budget
+    assert not scal.base.gap_scaling_slopes_by_budget
+    assert not scal.base.reliability_scaling_slopes_by_budget
+
+    report = compute_sensitivity_report(
+        [*observations(CodeState.BASE), *observations(CodeState.AGENT)],
+        scale_descriptors=scale_desc,
+    )
+    assert "None (No fixed-budget regression)" in format_sensitivity_report_table(
+        report
+    )
 
 
 def test_cross_population_gain_retention() -> None:

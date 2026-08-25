@@ -102,9 +102,7 @@ class ProblemScaleProfile(BaseModel):
     reliability_scaling_slopes_by_budget: dict[float, float] = Field(
         default_factory=dict
     )
-    runtime_scaling_slopes_by_budget: dict[float, float] = Field(
-        default_factory=dict
-    )
+    runtime_scaling_slopes_by_budget: dict[float, float] = Field(default_factory=dict)
 
 
 class ProblemScalabilityComparison(BaseModel):
@@ -116,12 +114,8 @@ class ProblemScalabilityComparison(BaseModel):
     delta_gap_slope: float | None = None
     delta_reliability_slope: float | None = None
     delta_gap_slopes_by_budget: dict[float, float] = Field(default_factory=dict)
-    delta_reliability_slopes_by_budget: dict[float, float] = Field(
-        default_factory=dict
-    )
-    delta_runtime_slopes_by_budget: dict[float, float] = Field(
-        default_factory=dict
-    )
+    delta_reliability_slopes_by_budget: dict[float, float] = Field(default_factory=dict)
+    delta_runtime_slopes_by_budget: dict[float, float] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -473,21 +467,21 @@ def compute_problem_scalability(
                 reliabilities_b.append(len(valid_runs) / len(runs))
 
                 # Runtime (mean wall time across runs, or budget fallback)
+                budget_fallback = max(1e-6, b)
                 wall_times = [
-                    r.wall_time_sec
+                    (
+                        r.wall_time_sec
+                        if r.wall_time_sec is not None and r.wall_time_sec > 0
+                        else budget_fallback
+                    )
                     for r in runs
-                    if r.wall_time_sec is not None and r.wall_time_sec > 0
                 ]
-                mean_runtime = (
-                    statistics.mean(wall_times) if wall_times else max(1e-6, b)
-                )
+                mean_runtime = statistics.mean(wall_times)
                 log_runtimes_b.append(math.log(mean_runtime))
 
                 # Gap (mean normalized gap over valid runs with gap data)
                 valid_gaps = [
-                    r.normalized_gap
-                    for r in valid_runs
-                    if r.normalized_gap is not None
+                    r.normalized_gap for r in valid_runs if r.normalized_gap is not None
                 ]
                 if valid_gaps:
                     gap_log_scales_b.append(log_s)
@@ -505,25 +499,15 @@ def compute_problem_scalability(
             if g_slope is not None:
                 gap_slopes_by_budget[b] = g_slope
 
-        primary_b = max(budgets) if budgets else 1.0
-        primary_gap_slope = gap_slopes_by_budget.get(primary_b)
-        if primary_gap_slope is None and gap_slopes_by_budget:
-            primary_gap_slope = list(gap_slopes_by_budget.values())[-1]
-
-        primary_rel_slope = reliability_slopes_by_budget.get(primary_b)
-        if primary_rel_slope is None and reliability_slopes_by_budget:
-            primary_rel_slope = list(reliability_slopes_by_budget.values())[-1]
-
-        primary_runtime_slope = runtime_slopes_by_budget.get(primary_b)
-        if primary_runtime_slope is None and runtime_slopes_by_budget:
-            primary_runtime_slope = list(runtime_slopes_by_budget.values())[-1]
+        has_estimable_slice = bool(
+            gap_slopes_by_budget
+            or reliability_slopes_by_budget
+            or runtime_slopes_by_budget
+        )
 
         return ProblemScaleProfile(
-            has_scale_data=True,
+            has_scale_data=has_estimable_slice,
             scales_evaluated=unique_scales,
-            runtime_scaling_slope=primary_runtime_slope,
-            gap_scaling_slope=primary_gap_slope,
-            reliability_scaling_slope=primary_rel_slope,
             gap_scaling_slopes_by_budget=gap_slopes_by_budget,
             reliability_scaling_slopes_by_budget=reliability_slopes_by_budget,
             runtime_scaling_slopes_by_budget=runtime_slopes_by_budget,
@@ -560,27 +544,46 @@ def compute_problem_scalability(
         if base_t is not None and agent_t is not None:
             delta_runtime_slopes_by_budget[b] = agent_t - base_t
 
-    delta_runtime_slope = None
-    if (
-        base_p.runtime_scaling_slope is not None
-        and agent_p.runtime_scaling_slope is not None
-    ):
-        delta_runtime_slope = (
-            agent_p.runtime_scaling_slope - base_p.runtime_scaling_slope
-        )
+    def _primary_common_slopes(
+        base_slopes: Mapping[float, float],
+        agent_slopes: Mapping[float, float],
+    ) -> tuple[float | None, float | None, float | None]:
+        common_budgets = set(base_slopes) & set(agent_slopes)
+        if not common_budgets:
+            return None, None, None
+        primary_budget = max(common_budgets)
+        base_slope = base_slopes[primary_budget]
+        agent_slope = agent_slopes[primary_budget]
+        return base_slope, agent_slope, agent_slope - base_slope
 
-    delta_gap_slope = None
-    if base_p.gap_scaling_slope is not None and agent_p.gap_scaling_slope is not None:
-        delta_gap_slope = agent_p.gap_scaling_slope - base_p.gap_scaling_slope
-
-    delta_reliability_slope = None
-    if (
-        base_p.reliability_scaling_slope is not None
-        and agent_p.reliability_scaling_slope is not None
-    ):
-        delta_reliability_slope = (
-            agent_p.reliability_scaling_slope - base_p.reliability_scaling_slope
+    base_runtime, agent_runtime, delta_runtime_slope = _primary_common_slopes(
+        base_p.runtime_scaling_slopes_by_budget,
+        agent_p.runtime_scaling_slopes_by_budget,
+    )
+    base_gap, agent_gap, delta_gap_slope = _primary_common_slopes(
+        base_p.gap_scaling_slopes_by_budget,
+        agent_p.gap_scaling_slopes_by_budget,
+    )
+    base_reliability, agent_reliability, delta_reliability_slope = (
+        _primary_common_slopes(
+            base_p.reliability_scaling_slopes_by_budget,
+            agent_p.reliability_scaling_slopes_by_budget,
         )
+    )
+    base_p = base_p.model_copy(
+        update={
+            "runtime_scaling_slope": base_runtime,
+            "gap_scaling_slope": base_gap,
+            "reliability_scaling_slope": base_reliability,
+        }
+    )
+    agent_p = agent_p.model_copy(
+        update={
+            "runtime_scaling_slope": agent_runtime,
+            "gap_scaling_slope": agent_gap,
+            "reliability_scaling_slope": agent_reliability,
+        }
+    )
 
     return ProblemScalabilityComparison(
         base=base_p,
@@ -939,85 +942,75 @@ def format_sensitivity_report_table(report: SensitivityReport) -> str:
     if report.problem_scalability.base.has_scale_data:
         base_sc = report.problem_scalability.base
         agent_sc = report.problem_scalability.agent
-        rows.append(
-            [
-                "  Runtime Scaling Slope (d log T / d log s)",
-                f"{base_sc.runtime_scaling_slope:.3f}"
-                if base_sc.runtime_scaling_slope is not None
-                else "-",
-                f"{agent_sc.runtime_scaling_slope:.3f}"
-                if agent_sc.runtime_scaling_slope is not None
-                else "-",
-                (
-                    f"Δ {report.problem_scalability.delta_runtime_slope:+.3f}"
-                    if report.problem_scalability.delta_runtime_slope is not None
-                    else "-"
-                ),
-            ]
-        )
-        budgets_with_gap = sorted(
-            set(base_sc.gap_scaling_slopes_by_budget)
-            | set(agent_sc.gap_scaling_slopes_by_budget)
-        )
-        if len(budgets_with_gap) > 1:
-            for b in budgets_with_gap:
-                b_base = base_sc.gap_scaling_slopes_by_budget.get(b)
-                b_agent = agent_sc.gap_scaling_slopes_by_budget.get(b)
-                b_delta = report.problem_scalability.delta_gap_slopes_by_budget.get(b)
+
+        def _append_budget_slopes(
+            label: str,
+            derivative: str,
+            base_slopes: Mapping[float, float],
+            agent_slopes: Mapping[float, float],
+            delta_slopes: Mapping[float, float],
+        ) -> None:
+            budgets = sorted(set(base_slopes) | set(agent_slopes))
+            if not budgets:
+                rows.append([f"  {label} ({derivative})", "-", "-", "-"])
+                return
+            for budget in budgets:
+                base_slope = base_slopes.get(budget)
+                agent_slope = agent_slopes.get(budget)
+                delta_slope = delta_slopes.get(budget)
                 rows.append(
                     [
-                        f"  Gap Scaling Slope @ {b:.1f}s (d gap / d log s)",
-                        f"{b_base:.3f}" if b_base is not None else "-",
-                        f"{b_agent:.3f}" if b_agent is not None else "-",
-                        (
-                            f"Δ {b_delta:+.3f}"
-                            if b_delta is not None
-                            else "-"
-                        ),
+                        f"  {label} @ {budget:.1f}s ({derivative})",
+                        f"{base_slope:.3f}" if base_slope is not None else "-",
+                        f"{agent_slope:.3f}" if agent_slope is not None else "-",
+                        f"Δ {delta_slope:+.3f}" if delta_slope is not None else "-",
                     ]
                 )
+
+        _append_budget_slopes(
+            "Runtime Scaling Slope",
+            "d log T / d log s",
+            base_sc.runtime_scaling_slopes_by_budget,
+            agent_sc.runtime_scaling_slopes_by_budget,
+            report.problem_scalability.delta_runtime_slopes_by_budget,
+        )
+        _append_budget_slopes(
+            "Gap Scaling Slope",
+            "d gap / d log s",
+            base_sc.gap_scaling_slopes_by_budget,
+            agent_sc.gap_scaling_slopes_by_budget,
+            report.problem_scalability.delta_gap_slopes_by_budget,
+        )
+        _append_budget_slopes(
+            "Reliability Scaling Slope",
+            "d success / d log s",
+            base_sc.reliability_scaling_slopes_by_budget,
+            agent_sc.reliability_scaling_slopes_by_budget,
+            report.problem_scalability.delta_reliability_slopes_by_budget,
+        )
+    else:
+        has_multiple_scales = (
+            report.problem_scalability.base.scales_evaluated >= 2
+            or report.problem_scalability.agent.scales_evaluated >= 2
+        )
+        if has_multiple_scales:
+            rows.append(
+                [
+                    "  Problem Scale Scaling",
+                    "Not Estimable",
+                    "Not Estimable",
+                    "None (No fixed-budget regression)",
+                ]
+            )
         else:
             rows.append(
                 [
-                    "  Gap Scaling Slope (d gap / d log s)",
-                    f"{base_sc.gap_scaling_slope:.3f}"
-                    if base_sc.gap_scaling_slope is not None
-                    else "-",
-                    f"{agent_sc.gap_scaling_slope:.3f}"
-                    if agent_sc.gap_scaling_slope is not None
-                    else "-",
-                    (
-                        f"Δ {report.problem_scalability.delta_gap_slope:+.3f}"
-                        if report.problem_scalability.delta_gap_slope is not None
-                        else "-"
-                    ),
+                    "  Problem Scale Scaling",
+                    "No Descriptor",
+                    "No Descriptor",
+                    "None (Scale descriptor required)",
                 ]
             )
-        rows.append(
-            [
-                "  Reliability Scaling Slope (d success / d log s)",
-                f"{base_sc.reliability_scaling_slope:.3f}"
-                if base_sc.reliability_scaling_slope is not None
-                else "-",
-                f"{agent_sc.reliability_scaling_slope:.3f}"
-                if agent_sc.reliability_scaling_slope is not None
-                else "-",
-                (
-                    f"Δ {report.problem_scalability.delta_reliability_slope:+.3f}"
-                    if report.problem_scalability.delta_reliability_slope is not None
-                    else "-"
-                ),
-            ]
-        )
-    else:
-        rows.append(
-            [
-                "  Problem Scale Scaling",
-                "No Descriptor",
-                "No Descriptor",
-                "None (Scale descriptor required)",
-            ]
-        )
 
     # Section: Cross-Population Retention
     rows.append(["[4. Cross-Population Gain Retention]", "", "", ""])
