@@ -52,7 +52,7 @@ Task:
         *,
         agy_binary: str = "agy",
         auth_token_path: str = ("~/.gemini/antigravity-cli/antigravity-oauth-token"),
-        settings_path: str = "~/.gemini/settings.json",
+        settings_path: str = "~/.gemini/antigravity-cli/settings.json",
         runner_path: str = "/usr/local/libexec/pitbench-antigravity-runner",
         runner_user: str = "pitbench-agy",
         container_workdir: str = "/workspace/repo",
