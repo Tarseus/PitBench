@@ -17,13 +17,15 @@ agents:
   codex:
     codex_binary: codex
     codex_auth_path: ~/.codex/auth.json
-    runner_path: /usr/local/libexec/pitbench-codex-runner
-    runner_user: pitbench-codex
+    runner_backend: container
+    container_runner_image: python:3.13-slim-bookworm
+    profile_path: null
     proxy_url: null
   antigravity:
     agy_binary: agy
     auth_token_path: ~/.gemini/antigravity-cli/antigravity-oauth-token
     settings_path: ~/.gemini/antigravity-cli/settings.json
-    runner_path: /usr/local/libexec/pitbench-antigravity-runner
-    runner_user: pitbench-agy
+    runner_backend: container
+    container_runner_image: python:3.13-slim-bookworm
+    profile_path: null
     proxy_url: null

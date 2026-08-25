@@ -11,6 +11,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 from pitbench.harness.agents import AgentFactory, AgentName
+from pitbench.harness.agents.codex_container import CodexContainerRunner
 from pitbench.harness.agents.codex_mcp_agent import CodexMCPAgent
 from pitbench.harness.agents.host_mcp import LoopbackMCPServer, TaskTerminal
 
@@ -154,6 +155,49 @@ def test_codex_control_plane_command_uses_runner_without_task_mcp():
     assert command[command.index("--model") + 1] == "gpt-5.6-luna"
     assert 'model_reasoning_effort="xhigh"' in command
     assert not any("mcp_servers" in argument for argument in command)
+
+
+def test_codex_container_backend_loads_ephemeral_profile_config(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text('{"tokens":{"access_token":"test"}}')
+    profile_home = tmp_path / "profile/codex-home"
+    profile_home.mkdir(parents=True)
+    (tmp_path / "profile/profile.yaml").write_text(
+        'schema_version: "1.0"\n'
+        "name: custom\n"
+        "codex_home: codex-home\n"
+        "allow_hooks: true\n"
+    )
+    (profile_home / "config.toml").write_text("# profile\n")
+    agent = CodexMCPAgent(
+        model_name="gpt-5.6-sol",
+        codex_auth_path=str(auth_path),
+        runner_backend="container",
+        profile_path=str(tmp_path / "profile"),
+    )
+    container_runner = MagicMock(spec=CodexContainerRunner)
+    container_runner.command_prefix.return_value = ["docker-runner"]
+    agent._container_runner = container_runner
+
+    command = agent._build_command(
+        mcp_url="http://127.0.0.1:43210/mcp", instruction="Improve it."
+    )
+    payload = json.loads(agent._runner_payload({}))
+
+    assert command[0:2] == ["docker-runner", "exec"]
+    assert "--ignore-user-config" not in command
+    assert command[command.index("--sandbox") + 1] == "read-only"
+    assert payload["allow_hooks"] is True
+    assert payload["profile_sha256"] == agent._profile.sha256
+
+
+def test_codex_host_backend_rejects_profile(tmp_path):
+    with pytest.raises(ValueError, match="profiles require runner_backend=container"):
+        CodexMCPAgent(
+            model_name="gpt-5.6-sol",
+            runner_backend="host",
+            profile_path=str(tmp_path),
+        )
 
 
 def test_codex_omits_reasoning_effort_when_unspecified():

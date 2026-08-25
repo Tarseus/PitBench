@@ -14,12 +14,14 @@ from adapters.pitbench.adapter import (
     IMAGE_SOURCE_LABEL,
     PitBenchAdapter,
 )
+from pitbench.cli.doctor import CheckStatus, run_doctor
 from pitbench.cli.evaluate_config import (
     EvaluationConfig,
     encode_agent_kwargs,
     resolve_config_path,
     resolve_repository_path,
 )
+from pitbench.cli.profiles import profiles_app
 from pitbench.evaluator.evaluator import PitBenchEvaluator
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.harness.agents import AgentName
@@ -39,6 +41,7 @@ from pitbench.tasks import TaskCatalog
 app = typer.Typer(help="PitBench task, execution harness, and evaluation tooling.")
 tasks_app = typer.Typer(help="Validate and smoke-test benchmark tasks.")
 app.add_typer(tasks_app, name="tasks")
+app.add_typer(profiles_app, name="profiles")
 
 # Direct unified run command: `pitbench run --dataset-path ... --agent ...`
 app.command(
@@ -71,6 +74,42 @@ def _prepare_task_image(task_path: Path, *, rebuild: bool) -> None:
         manager.build()
     else:
         typer.echo(f"Reusing task image {trial.client_image_name}")
+
+
+@app.command("doctor")
+def doctor_command(
+    profile: Annotated[
+        str, typer.Argument(help="Environment profile to diagnose (currently: pyvrp)")
+    ],
+    config_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--config",
+            help=(
+                "Machine-local evaluation YAML; defaults to "
+                "config/evaluate.local.yaml when present"
+            ),
+        ),
+    ] = None,
+    root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
+) -> None:
+    """Check whether this machine is ready for a real evaluation."""
+    try:
+        checks = run_doctor(profile, _root(root), config_path)
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="PROFILE") from error
+
+    for check in checks:
+        typer.echo(f"{check.status.value} {check.name}: {check.detail}")
+        if check.recovery is not None:
+            typer.echo(f"     Recovery: {check.recovery}")
+
+    failures = sum(check.status == CheckStatus.FAIL for check in checks)
+    warnings = sum(check.status == CheckStatus.WARN for check in checks)
+    if failures:
+        typer.echo(f"NOT READY: {failures} failure(s), {warnings} warning(s)", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"READY: PyVRP evaluation prerequisites passed ({warnings} warning(s))")
 
 
 @app.command("evaluate")
@@ -200,9 +239,15 @@ def evaluate_task(
     typer.echo(f"Materialized {task_id} at {task_path}")
     _prepare_task_image(task_path, rebuild=rebuild or resolved_agent_image is not None)
     typer.echo(f"Starting evaluation run {resolved_run_id}")
-    configured_agent_kwargs = encode_agent_kwargs(
-        evaluation_config.kwargs_for(agent.value)
-    )
+    configured_agent_values = evaluation_config.kwargs_for(agent.value)
+    if configured_agent_values.get("profile_path"):
+        configured_agent_values["profile_path"] = str(
+            resolve_repository_path(
+                repository_root,
+                Path(str(configured_agent_values["profile_path"])),
+            )
+        )
+    configured_agent_kwargs = encode_agent_kwargs(configured_agent_values)
     harness_agent_kwargs = [
         "no_rebuild=False",
         *configured_agent_kwargs,

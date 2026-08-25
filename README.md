@@ -145,12 +145,46 @@ cp config/evaluate.example.yaml config/evaluate.local.yaml
 
 # Codex with a ChatGPT subscription
 codex login
-sudo scripts/install-codex-runner.sh
 
 # Or Antigravity with a Google subscription
 agy
-sudo scripts/install-antigravity-runner.sh
 ```
+
+The default Codex and Antigravity configurations run the locally installed CLI
+in a short-lived container. PitBench injects the selected agent's local OAuth
+login through stdin and does not mount the host home, task repository, or Docker
+socket. Neither agent needs an administrator-installed runner. The current shell
+must still be able to use Docker because the benchmark itself is containerized.
+
+To benchmark a customized Codex setup, create a reproducible profile and set its
+path in `config/evaluate.local.yaml`:
+
+```bash
+uv run pitbench profiles init my-codex --allow-hooks
+uv run pitbench profiles validate agent-profiles/my-codex
+
+uv run pitbench profiles init my-agy --agent antigravity --allow-hooks
+uv run pitbench profiles validate agent-profiles/my-agy
+```
+
+Put Codex customizations under `codex-home/` and Antigravity customizations under
+`gemini-config/`. PitBench records the profile hash and runner image ID with each
+trial. See [`docs/codex-container-runner.md`](docs/codex-container-runner.md) and
+[`docs/antigravity-container-runner.md`](docs/antigravity-container-runner.md)
+for their layouts, trust boundaries, and legacy host-runner configurations.
+
+Before starting an evaluation, diagnose the current shell and machine:
+
+```bash
+uv run pitbench doctor pyvrp
+```
+
+The command checks the live Docker API, host resources, local configuration,
+private-asset checksums, image references and availability, GHCR/daemon proxy
+access, credentials, and the isolated runners. It prints `PASS`, `WARN`, or
+`FAIL` for each check, gives a recovery action for failures, and exits nonzero
+until the required prerequisites and at least one agent are ready. Run it from
+the same shell or tmux session that will start the evaluation.
 
 Once those evaluator-owned inputs are provisioned, one command materializes the task, runs the agent, and starts independent judging:
 

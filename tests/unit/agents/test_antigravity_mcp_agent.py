@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from pitbench.harness.agents import AgentFactory, AgentName
+from pitbench.harness.agents.antigravity_container import (
+    AntigravityContainerRunner,
+)
 from pitbench.harness.agents.antigravity_mcp_agent import AntigravityMCPAgent
 
 
@@ -43,13 +48,58 @@ def test_antigravity_command_uses_isolated_runner_and_loopback_mcp():
     assert not any("oauth_creds.json" in argument for argument in command)
 
 
+def test_antigravity_container_backend_loads_profile(tmp_path):
+    auth_path = tmp_path / "antigravity-oauth-token"
+    settings_path = tmp_path / "settings.json"
+    auth_path.write_text('{"auth_method":"consumer","token":{"access_token":"test"}}')
+    settings_path.write_text("{}")
+    profile_config = tmp_path / "profile/gemini-config"
+    profile_config.mkdir(parents=True)
+    (tmp_path / "profile/profile.yaml").write_text(
+        'schema_version: "1.0"\n'
+        "name: custom\n"
+        "gemini_config: gemini-config\n"
+        "allow_hooks: true\n"
+    )
+    (profile_config / "config.json").write_text("{}\n")
+    agent = AntigravityMCPAgent(
+        model_name="gemini-3.7-flash-high",
+        auth_token_path=str(auth_path),
+        settings_path=str(settings_path),
+        runner_backend="container",
+        profile_path=str(tmp_path / "profile"),
+    )
+    container_runner = MagicMock(spec=AntigravityContainerRunner)
+    container_runner.command_prefix.return_value = ["docker-runner"]
+    agent._container_runner = container_runner
+
+    command = agent._build_command(
+        mcp_url="http://127.0.0.1:43210/mcp", instruction="Improve it."
+    )
+    payload = json.loads(agent._runner_payload({}))
+
+    assert command[:2] == ["docker-runner", "run"]
+    assert "--disable-slash-commands" not in command
+    assert payload["allow_hooks"] is True
+    assert payload["profile_sha256"] == agent._profile.sha256
+
+
+def test_antigravity_host_backend_rejects_profile(tmp_path):
+    with pytest.raises(ValueError, match="profiles require runner_backend=container"):
+        AntigravityMCPAgent(
+            model_name="gemini-3.7-flash-high",
+            runner_backend="host",
+            profile_path=str(tmp_path),
+        )
+
+
 def test_runner_payload_copies_only_antigravity_auth_and_proxy(tmp_path):
     auth_token_path = tmp_path / "antigravity-oauth-token"
     settings_path = tmp_path / "settings.json"
     auth_token_path.write_text(
-        '{"auth_method":"oauth-personal","token":{"access_token":"secret"}}'
+        '{"auth_method":"consumer","token":{"access_token":"secret"}}'
     )
-    settings_path.write_text('{"security":{"auth":{"selectedType":"oauth-personal"}}}')
+    settings_path.write_text('{"agentMode":"auto","toolPermission":"always-proceed"}')
     agent = AntigravityMCPAgent(
         model_name="gemini-3.7-flash-low",
         auth_token_path=str(auth_token_path),
@@ -66,7 +116,10 @@ def test_runner_payload_copies_only_antigravity_auth_and_proxy(tmp_path):
     )
 
     assert json.loads(payload["auth_token_json"])["token"]["access_token"] == "secret"
-    assert json.loads(payload["settings_json"])["security"]["auth"]
+    runner_settings = json.loads(payload["settings_json"])
+    assert runner_settings["agentMode"] == "auto"
+    assert runner_settings["security"]["auth"]["selectedType"] == "consumer"
+    assert "security" not in json.loads(settings_path.read_text())
     assert payload["proxy_env"] == {"HTTPS_PROXY": "http://127.0.0.1:7897"}
     assert "UNRELATED" not in payload["proxy_env"]
 

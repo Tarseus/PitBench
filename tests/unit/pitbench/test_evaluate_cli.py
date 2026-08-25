@@ -179,6 +179,7 @@ tasks:
 agents:
   codex:
     codex_auth_path: /data/auth.json
+    profile_path: agent-profiles/reproducible
     proxy_url: http://127.0.0.1:17898
     reasoning_effort: high
 """
@@ -227,6 +228,7 @@ agents:
     assert harness_kwargs["agent_kwargs"] == [
         "no_rebuild=False",
         "codex_auth_path=/data/auth.json",
+        f"profile_path={repository_root / 'agent-profiles/reproducible'}",
         "proxy_url=http://127.0.0.1:17898",
         "reasoning_effort=high",
         "reasoning_effort=xhigh",

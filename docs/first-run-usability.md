@@ -16,7 +16,11 @@ public quickstart can eventually become a reliable one-command workflow.
 ## Friction observed
 
 1. Docker group membership only took effect after starting a new login session.
-   The resulting socket error looked unrelated to PitBench.
+   The resulting socket error looked unrelated to PitBench. A later model-matrix
+   attempt also showed that creating a new named tmux socket from inside a stale
+   tmux session does not refresh supplementary groups: the new server inherited
+   the old process's missing Docker group and all five evaluations failed before
+   startup.
 2. The server could not reach GHCR directly. Docker depended on a user-session
    proxy at `127.0.0.1:17898`, which intermittently dropped TLS connections.
 3. There was no documented offline image transfer path. The pipeline
@@ -46,10 +50,12 @@ public quickstart can eventually become a reliable one-command workflow.
 
 ### First priority
 
-- Add `pitbench doctor pyvrp`. It should check Docker socket access, architecture,
+- Implemented: `pitbench doctor pyvrp` checks Docker socket access, architecture,
   free disk and memory, private-asset checksums, required images, anonymous GHCR
   access, and whether a proxy is configured on the daemon rather than only in the
-  shell. Errors should include the exact recovery command.
+  shell. The Docker check must call the server API from the current process, not
+  merely inspect group membership, and should explain stale tmux group inheritance.
+  Errors should include the exact recovery command.
 - Implement a real `pitbench tasks smoke pyvrp` path using one real instance per
   judge population, one seed, and the shortest budget while retaining the full
   independent correctness gate.

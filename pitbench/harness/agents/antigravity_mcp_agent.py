@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from pitbench.harness.agents.agent_name import AgentName
+from pitbench.harness.agents.antigravity_container import AntigravityContainerRunner
+from pitbench.harness.agents.antigravity_profile import AntigravityProfile
 from pitbench.harness.agents.base_agent import AgentResult, BaseAgent
 from pitbench.harness.agents.failure_mode import FailureMode
 from pitbench.harness.agents.host_mcp import LoopbackMCPServer, TaskTerminal
@@ -31,12 +33,13 @@ class AntigravityMCPAgent(BaseAgent):
     }
     _PROMPT = """You are improving a solver in an isolated PitBench task.
 
-You MUST use only the PitBench MCP server's run_command tool for repository
-inspection, editing, building, profiling, and testing. The host working directory is
-empty and is not the task repository. Do not use native host file, shell, browser,
-web, plugin, skill, or subagent tools. Start by running `pwd`, `git status --short`,
-and `pitbench inspect` through the PitBench MCP tool. Keep all changes inside the
-task repository and verify them with the visible PitBench commands.
+You MUST use only the PitBench MCP server's run_command tool for task repository
+inspection, editing, building, profiling, and testing. The runner working directory
+is empty and is not the task repository. You may use customizations supplied by the
+evaluator's trusted Antigravity profile, but all task repository access must go
+through PitBench MCP. Start by running `pwd`, `git status --short`, and `pitbench
+inspect` through the PitBench MCP tool. Keep all changes inside the task repository
+and verify them with the visible PitBench commands.
 
 Task:
 {instruction}
@@ -55,6 +58,9 @@ Task:
         settings_path: str = "~/.gemini/antigravity-cli/settings.json",
         runner_path: str = "/usr/local/libexec/pitbench-antigravity-runner",
         runner_user: str = "pitbench-agy",
+        runner_backend: str = "host",
+        container_runner_image: str = "python:3.13-slim-bookworm",
+        profile_path: str | None = None,
         container_workdir: str = "/workspace/repo",
         timeout_sec: float = 3500.0,
         print_timeout: str = "55m",
@@ -69,6 +75,23 @@ Task:
         self._settings_path = Path(settings_path).expanduser()
         self._runner_path = Path(runner_path)
         self._runner_user = runner_user
+        if runner_backend not in {"host", "container"}:
+            raise ValueError("runner_backend must be 'host' or 'container'")
+        if runner_backend == "host" and profile_path is not None:
+            raise ValueError("Antigravity profiles require runner_backend=container")
+        self._runner_backend = runner_backend
+        self._container_runner_image = container_runner_image
+        self._profile = (
+            AntigravityProfile.load(Path(profile_path))
+            if profile_path is not None
+            else None
+        )
+        self._container_runner: AntigravityContainerRunner | None = None
+        self._runner_metadata: dict[str, object] = {
+            "schema_version": "1.0",
+            "backend": "host",
+            "profile": None,
+        }
         self._container_workdir = container_workdir
         self._timeout_sec = timeout_sec
         self._print_timeout = print_timeout
@@ -134,6 +157,14 @@ Task:
         }
         if self._model_name not in available_models:
             raise RuntimeError(f"Antigravity model is unavailable: {self._model_name}")
+        if self._runner_backend == "container":
+            self._container_runner = AntigravityContainerRunner(
+                image=self._container_runner_image,
+                agy_binary=Path(agy_binary),
+                profile=self._profile,
+            )
+            self._runner_metadata = self._container_runner.prepare()
+            return
         if not self._runner_path.is_file():
             raise RuntimeError(
                 "The isolated Antigravity runner is not installed. Run "
@@ -168,14 +199,25 @@ Task:
         if check.get("docker_socket_access") or "docker" in check.get("groups", []):
             raise RuntimeError("Isolated Antigravity runner still has Docker access")
 
-    def _build_command(self, *, mcp_url: str, instruction: str) -> list[str]:
-        command = [
+    def _runner_command_prefix(self) -> list[str]:
+        if self._runner_backend == "container":
+            if self._container_runner is None:
+                raise RuntimeError(
+                    "Antigravity container runner has not passed preflight"
+                )
+            return self._container_runner.command_prefix()
+        return [
             "sudo",
             "-n",
             "-u",
             self._runner_user,
             "--",
             str(self._runner_path),
+        ]
+
+    def _build_command(self, *, mcp_url: str, instruction: str) -> list[str]:
+        command = [
+            *self._runner_command_prefix(),
             "run",
             "--mcp-url",
             mcp_url,
@@ -189,10 +231,11 @@ Task:
             "--mode",
             "accept-edits",
             "--sandbox",
-            "--disable-slash-commands",
             "--print-timeout",
             self._print_timeout,
         ]
+        if self._profile is None:
+            command.append("--disable-slash-commands")
         if self._effort is not None:
             command.extend(["--effort", self._effort])
         return command
@@ -208,15 +251,45 @@ Task:
 
     def _runner_payload(self, env: dict[str, str]) -> str:
         proxy_env = {key: env[key] for key in self._PROXY_KEYS if env.get(key)}
+        auth_token_json = self._read_json(self._auth_token_path, label="OAuth token")
+        settings_json = self._read_json(
+            self._settings_path, label="authentication settings"
+        )
+        auth_token = json.loads(auth_token_json)
+        settings = json.loads(settings_json)
+        auth_method = (
+            auth_token.get("auth_method") if isinstance(auth_token, dict) else None
+        )
+        if not isinstance(auth_method, str) or not auth_method:
+            raise RuntimeError(
+                f"Invalid host Antigravity OAuth token: {self._auth_token_path}"
+            )
+        if not isinstance(settings, dict):
+            raise RuntimeError(
+                f"Invalid host Antigravity authentication settings: "
+                f"{self._settings_path}"
+            )
+
+        # Older installed runners require this selection, while agy 1.1.20 no
+        # longer persists it in settings.json. Derive it without changing the
+        # user's settings file so both runner revisions accept the payload.
+        security = settings.setdefault("security", {})
+        if not isinstance(security, dict):
+            raise RuntimeError("Invalid Antigravity security settings")
+        auth = security.setdefault("auth", {})
+        if not isinstance(auth, dict):
+            raise RuntimeError("Invalid Antigravity authentication settings")
+        selected_type = auth.get("selectedType")
+        if not isinstance(selected_type, str) or not selected_type:
+            auth["selectedType"] = auth_method
+
         return json.dumps(
             {
-                "auth_token_json": self._read_json(
-                    self._auth_token_path, label="OAuth token"
-                ),
-                "settings_json": self._read_json(
-                    self._settings_path, label="authentication settings"
-                ),
+                "auth_token_json": auth_token_json,
+                "settings_json": json.dumps(settings),
                 "proxy_env": proxy_env,
+                "allow_hooks": bool(self._profile and self._profile.allow_hooks),
+                "profile_sha256": self._profile.sha256 if self._profile else None,
             }
         )
 
@@ -311,6 +384,9 @@ Task:
         self._cancelled.clear()
         if logging_dir is not None:
             logging_dir.mkdir(parents=True, exist_ok=True)
+            (logging_dir / "antigravity-runner.json").write_text(
+                json.dumps(self._runner_metadata, indent=2, sort_keys=True) + "\n"
+            )
         terminal_log = (
             logging_dir / "mcp-terminal.jsonl" if logging_dir is not None else None
         )

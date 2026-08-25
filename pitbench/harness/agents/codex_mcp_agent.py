@@ -10,6 +10,8 @@ from pathlib import Path
 
 from pitbench.harness.agents.agent_name import AgentName
 from pitbench.harness.agents.base_agent import AgentResult, BaseAgent
+from pitbench.harness.agents.codex_container import CodexContainerRunner
+from pitbench.harness.agents.codex_profile import CodexProfile
 from pitbench.harness.agents.failure_mode import FailureMode
 from pitbench.harness.agents.host_mcp import LoopbackMCPServer, TaskTerminal
 from pitbench.harness.terminal.tmux_session import TmuxSession
@@ -55,6 +57,9 @@ Task:
         codex_auth_path: str = "~/.codex/auth.json",
         runner_path: str = "/usr/local/libexec/pitbench-codex-runner",
         runner_user: str = "pitbench-codex",
+        runner_backend: str = "host",
+        container_runner_image: str = "python:3.13-slim-bookworm",
+        profile_path: str | None = None,
         container_workdir: str = "/workspace/repo",
         timeout_sec: float = 3500.0,
         control_plane_preflight: bool = True,
@@ -69,6 +74,21 @@ Task:
         self._codex_auth_path = Path(codex_auth_path).expanduser()
         self._runner_path = Path(runner_path)
         self._runner_user = runner_user
+        if runner_backend not in {"host", "container"}:
+            raise ValueError("runner_backend must be 'host' or 'container'")
+        if runner_backend == "host" and profile_path is not None:
+            raise ValueError("Codex profiles require runner_backend=container")
+        self._runner_backend = runner_backend
+        self._container_runner_image = container_runner_image
+        self._profile = (
+            CodexProfile.load(Path(profile_path)) if profile_path is not None else None
+        )
+        self._container_runner: CodexContainerRunner | None = None
+        self._runner_metadata: dict[str, object] = {
+            "schema_version": "1.0",
+            "backend": "host",
+            "profile": None,
+        }
         self._container_workdir = container_workdir
         self._timeout_sec = timeout_sec
         self._control_plane_preflight = control_plane_preflight
@@ -130,6 +150,14 @@ Task:
             raise RuntimeError(
                 "Host Codex is not logged in with ChatGPT. Run `codex login` first."
             )
+        if self._runner_backend == "container":
+            self._container_runner = CodexContainerRunner(
+                image=self._container_runner_image,
+                codex_binary=Path(codex_binary),
+                profile=self._profile,
+            )
+            self._runner_metadata = self._container_runner.prepare()
+            return
         if not self._runner_path.is_file():
             raise RuntimeError(
                 "The isolated Codex runner is not installed. Run "
@@ -162,31 +190,46 @@ Task:
         if check.get("docker_socket_access") or "docker" in check.get("groups", []):
             raise RuntimeError("Isolated Codex runner still has Docker access")
 
-    def _build_command(
-        self,
-        *,
-        mcp_url: str,
-        instruction: str,
-    ) -> list[str]:
-        command = [
+    def _runner_command_prefix(self) -> list[str]:
+        if self._runner_backend == "container":
+            if self._container_runner is None:
+                raise RuntimeError("Codex container runner has not passed preflight")
+            return self._container_runner.command_prefix()
+        return [
             "sudo",
             "-n",
             "-u",
             self._runner_user,
             "--",
             str(self._runner_path),
-            "exec",
-            "--ignore-user-config",
-            "--ephemeral",
-            "--json",
-            "--color",
-            "never",
-            "--sandbox",
-            "read-only",
-            "--skip-git-repo-check",
-            "--model",
-            self._model_name,
         ]
+
+    def _codex_exec_prefix(self) -> list[str]:
+        command = ["exec"]
+        if self._runner_backend == "host":
+            command.append("--ignore-user-config")
+        command.extend(
+            [
+                "--ephemeral",
+                "--json",
+                "--color",
+                "never",
+                "--sandbox",
+                "read-only",
+                "--skip-git-repo-check",
+                "--model",
+                self._model_name,
+            ]
+        )
+        return command
+
+    def _build_command(
+        self,
+        *,
+        mcp_url: str,
+        instruction: str,
+    ) -> list[str]:
+        command = [*self._runner_command_prefix(), *self._codex_exec_prefix()]
         command.extend(self._reasoning_effort_args())
         command.extend(
             [
@@ -209,25 +252,7 @@ Task:
         ]
 
     def _build_control_plane_command(self) -> list[str]:
-        command = [
-            "sudo",
-            "-n",
-            "-u",
-            self._runner_user,
-            "--",
-            str(self._runner_path),
-            "exec",
-            "--ignore-user-config",
-            "--ephemeral",
-            "--json",
-            "--color",
-            "never",
-            "--sandbox",
-            "read-only",
-            "--skip-git-repo-check",
-            "--model",
-            self._model_name,
-        ]
+        command = [*self._runner_command_prefix(), *self._codex_exec_prefix()]
         command.extend(self._reasoning_effort_args())
         command.extend(["--", self._CONTROL_PLANE_PROMPT])
         return command
@@ -241,7 +266,14 @@ Task:
                 f"Invalid host Codex login file: {self._codex_auth_path}"
             ) from error
         proxy_env = {key: env[key] for key in self._PROXY_KEYS if env.get(key)}
-        return json.dumps({"auth_json": auth_json, "proxy_env": proxy_env})
+        return json.dumps(
+            {
+                "auth_json": auth_json,
+                "proxy_env": proxy_env,
+                "allow_hooks": bool(self._profile and self._profile.allow_hooks),
+                "profile_sha256": self._profile.sha256 if self._profile else None,
+            }
+        )
 
     @staticmethod
     def _has_completed_turn(output: str) -> bool:
@@ -402,6 +434,9 @@ Task:
         self._cancelled.clear()
         if logging_dir is not None:
             logging_dir.mkdir(parents=True, exist_ok=True)
+            (logging_dir / "codex-runner.json").write_text(
+                json.dumps(self._runner_metadata, indent=2, sort_keys=True) + "\n"
+            )
         if self._control_plane_preflight:
             self._check_control_plane(runner_payload, logging_dir)
         terminal_log = (
