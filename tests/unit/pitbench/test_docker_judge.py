@@ -56,6 +56,7 @@ def test_docker_judge_disables_network_and_reads_observations(tmp_path: Path) ->
     def fake_run(command, **kwargs):
         assert command[command.index("--network") + 1] == "none"
         assert "--read-only" in command
+        assert command[command.index("--cpus") + 1] == "8.0"
         (judge.output_dir / "judge-observations.jsonl").write_text(
             observation.model_dump_json() + "\n"
         )
@@ -63,3 +64,16 @@ def test_docker_judge_disables_network_and_reads_observations(tmp_path: Path) ->
 
     with patch("pitbench.evaluator.docker_judge.subprocess.run", fake_run):
         assert judge.run() == [observation]
+
+
+def test_explicit_build_cpu_limit_is_preserved(tmp_path: Path) -> None:
+    judge = _judge(tmp_path, "pitbench/pyvrp@sha256:" + "a" * 64)
+    judge.cpus = 4.0
+
+    def fake_run(command, **kwargs):
+        assert command[command.index("--cpus") + 1] == "4.0"
+        (judge.output_dir / "judge-observations.jsonl").write_text("")
+        return type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    with patch("pitbench.evaluator.docker_judge.subprocess.run", fake_run):
+        assert judge.run() == []

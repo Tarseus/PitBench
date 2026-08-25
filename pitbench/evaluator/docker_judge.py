@@ -20,7 +20,7 @@ class DockerJudge:
         private_root: Path,
         candidate_patch: Path,
         output_dir: Path,
-        cpus: float = 1.0,
+        cpus: float = 8.0,
         memory: str = "8g",
     ) -> None:
         digest_pinned = re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image)

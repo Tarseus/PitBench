@@ -72,7 +72,7 @@ class PitBenchEvaluator(Evaluator):
                     private_root=Path(config["private_root"]),
                     candidate_patch=request.candidate_patch_path,
                     output_dir=request.output_dir,
-                    cpus=float(config.get("judge_cpus", 1.0)),
+                    cpus=float(config.get("judge_cpus", 8.0)),
                     memory=str(config.get("judge_memory", "8g")),
                 ).run()
 

@@ -51,6 +51,21 @@ def _customer_count(path: Path | None) -> float | None:
     return float(len(coordinates) - 1)
 
 
+def _limit_solver_cpus(command: CommandSpec, threads: int) -> CommandSpec:
+    """Bind a solver process to its declared CPU count without throttling builds."""
+
+    available = sorted(os.sched_getaffinity(0))
+    if threads > len(available):
+        raise ValueError(
+            f"solver requests {threads} threads but only {len(available)} CPUs are "
+            "available"
+        )
+    cpu_list = ",".join(str(cpu) for cpu in available[:threads])
+    return command.model_copy(
+        update={"argv": ["taskset", "--cpu-list", cpu_list, *command.argv]}
+    )
+
+
 class JudgePlan:
     """Expands task protocol into a common-random-number evaluation grid."""
 
@@ -381,15 +396,19 @@ class LocalProcessJudge:
         stem = f"seed-{seed}-budget-{budget:g}"
         output = run_dir / f"{stem}.json"
         trajectory = run_dir / f"{stem}.trajectory.jsonl"
-        command = self.repository.run_command(
-            SolverRunSpec(
-                instance_path=case.path,
-                output_path=output,
-                trajectory_path=trajectory,
-                solver_seed=seed,
-                budget_sec=budget,
-                threads=self.task.evaluation.threads,
-            )
+        threads = self.task.evaluation.threads
+        command = _limit_solver_cpus(
+            self.repository.run_command(
+                SolverRunSpec(
+                    instance_path=case.path,
+                    output_path=output,
+                    trajectory_path=trajectory,
+                    solver_seed=seed,
+                    budget_sec=budget,
+                    threads=threads,
+                )
+            ),
+            threads,
         )
         try:
             completed = self._run(command, workspace)
