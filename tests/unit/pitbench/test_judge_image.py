@@ -10,7 +10,10 @@ def test_judge_image_recipe_contains_only_public_environment_inputs() -> None:
     contents = recipe.read_text()
 
     assert "FROM ${UBUNTU_BASE_IMAGE}" in contents
-    assert "libspdlog-dev" in contents
+    assert "SPDLOG_VERSION=1.17.0" in contents
+    assert "d8862955c6d74e5846b3f580b1605d2428b11d97a410d86e2fb13e857cd3a744" in contents
+    assert "SPDLOG_USE_STD_FORMAT=ON" in contents
+    assert "libspdlog-dev" not in contents
     assert "gcc" in contents or "build-essential" in contents
     assert "python3-dev" in contents
     assert "COPY" not in contents
@@ -32,5 +35,6 @@ def test_judge_image_workflow_verifies_before_publishing() -> None:
     assert "--network none" in contents
     assert "--read-only" in contents
     assert "PYTHONPATH=/opt/pitbench" in contents
+    assert 'pkg-config --modversion spdlog)" = 1.17.0' in contents
     assert "push: true" in contents
     assert "ghcr.io/tarseus/pitbench-pyvrp-judge" in contents

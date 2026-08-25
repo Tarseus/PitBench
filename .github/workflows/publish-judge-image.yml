@@ -50,6 +50,7 @@ jobs:
           docker run --rm --network none "$JUDGE_IMAGE" \
             sh -lc 'test ! -e /private/oracle.yaml && \
               python -c "import numpy, pandas, pyarrow, yaml" && \
+              test "$(pkg-config --modversion spdlog)" = 1.17.0 && \
               git --version && gcc --version && cmake --version'
 
       - name: Publish verified judge image

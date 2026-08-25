@@ -4,6 +4,8 @@ FROM ${UBUNTU_BASE_IMAGE}
 ARG DEBIAN_MIRROR=http://archive.ubuntu.com/ubuntu
 ARG DEBIAN_SECURITY_MIRROR=http://security.ubuntu.com/ubuntu
 ARG PYPI_INDEX_URL=https://pypi.org/simple
+ARG SPDLOG_VERSION=1.17.0
+ARG SPDLOG_SHA256=d8862955c6d74e5846b3f580b1605d2428b11d97a410d86e2fb13e857cd3a744
 
 RUN sed -i \
        -e "s|URIs: http://archive.ubuntu.com/ubuntu/|URIs: $DEBIAN_MIRROR/|" \
@@ -11,9 +13,28 @@ RUN sed -i \
        /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-       asciinema build-essential cmake git libspdlog-dev ninja-build pkg-config \
+       asciinema build-essential ca-certificates cmake curl git ninja-build pkg-config \
        python-is-python3 python3-dev python3-pip python3-venv time tmux \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL \
+       "https://github.com/gabime/spdlog/archive/refs/tags/v${SPDLOG_VERSION}.tar.gz" \
+       -o /tmp/spdlog.tar.gz \
+    && echo "${SPDLOG_SHA256}  /tmp/spdlog.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/spdlog.tar.gz -C /tmp \
+    && cmake \
+       -S "/tmp/spdlog-${SPDLOG_VERSION}" \
+       -B /tmp/spdlog-build \
+       -DCMAKE_BUILD_TYPE=Release \
+       -DCMAKE_INSTALL_PREFIX=/usr/local \
+       -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+       -DSPDLOG_BUILD_EXAMPLE=OFF \
+       -DSPDLOG_BUILD_SHARED=OFF \
+       -DSPDLOG_BUILD_TESTS=OFF \
+       -DSPDLOG_USE_STD_FORMAT=ON \
+    && cmake --build /tmp/spdlog-build --parallel 1 \
+    && cmake --install /tmp/spdlog-build \
+    && rm -rf /tmp/spdlog.tar.gz /tmp/spdlog-build "/tmp/spdlog-${SPDLOG_VERSION}"
 
 RUN python -m pip install --break-system-packages --no-cache-dir \
     --index-url "$PYPI_INDEX_URL" \
