@@ -32,7 +32,7 @@ def mock_lock_data():
             "args": ["run", "--dataset-name", "test-dataset"],
         },
         "harness": {
-            "package": "fc-eval",
+            "package": "pitbench",
             "version": "0.2.12",
             "is_editable_installation": True,
         },
@@ -112,7 +112,7 @@ class TestHarnessInitialization:
             run_path.mkdir()
 
             # Create a lock file
-            lock_path = run_path / "fc.lock"
+            lock_path = run_path / "pitbench.lock"
             lock_path.write_text(json.dumps(mock_lock_data))
 
             with (

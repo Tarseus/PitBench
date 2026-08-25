@@ -26,6 +26,9 @@ class PitBenchEvaluator(Evaluator):
 
     def evaluate(self, request: EvaluationRequest) -> EvaluationResult:
         config = request.evaluator_config
+        progress_callback = config.get("_progress_callback")
+        if not callable(progress_callback):
+            progress_callback = None
         manifest_path = Path(config["manifest_path"])
         task = PitBenchTask.from_yaml(manifest_path)
         if task.task_id != request.task_id:
@@ -60,6 +63,7 @@ class PitBenchEvaluator(Evaluator):
                     private_root=Path(config["private_root"]),
                     candidate_patch=request.candidate_patch_path,
                     output_dir=request.output_dir,
+                    progress_callback=progress_callback,
                 ).run()
             else:
                 image = config.get("judge_image") or task.repository.judge_image
@@ -74,6 +78,7 @@ class PitBenchEvaluator(Evaluator):
                     output_dir=request.output_dir,
                     cpus=float(config.get("judge_cpus", 8.0)),
                     memory=str(config.get("judge_memory", "8g")),
+                    progress_callback=progress_callback,
                 ).run()
 
         parquet_path = request.output_dir / "trials.parquet"
@@ -95,9 +100,7 @@ class PitBenchEvaluator(Evaluator):
                 media_type="application/vnd.apache.parquet",
             ),
         )
-        performance = (
-            compute_performance_report(observations) if observations else None
-        )
+        performance = compute_performance_report(observations) if observations else None
         if performance is None:
             decision = None
         else:

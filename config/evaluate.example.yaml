@@ -1,0 +1,29 @@
+# Copy this file to config/evaluate.local.yaml and edit it for one machine.
+# The local file is ignored by Git. Relative paths are resolved from the
+# PitBench repository root. Null proxy values mean direct network access.
+
+paths:
+  output_path: runs
+  workspace_path: .pitbench/tasks
+  private_root: private
+
+tasks:
+  pyvrp_v0_14_0:
+    repository_source: null
+    agent_image: ghcr.io/tarseus/pitbench-pyvrp@sha256:776623be0e47b5f907efc3855886b6cd635b6c09c17f2b8fd4c0597f2f74f445
+    judge_image: ghcr.io/tarseus/pitbench-pyvrp-judge@sha256:c7a4f9abecc90cfcc5e4368ba46a9f35d5f7be2883ac53cff49e7f365f1c79a3
+
+agents:
+  codex:
+    codex_binary: codex
+    codex_auth_path: ~/.codex/auth.json
+    runner_path: /usr/local/libexec/pitbench-codex-runner
+    runner_user: pitbench-codex
+    proxy_url: null
+  antigravity:
+    agy_binary: agy
+    auth_token_path: ~/.gemini/antigravity-cli/antigravity-oauth-token
+    settings_path: ~/.gemini/settings.json
+    runner_path: /usr/local/libexec/pitbench-antigravity-runner
+    runner_user: pitbench-agy
+    proxy_url: null

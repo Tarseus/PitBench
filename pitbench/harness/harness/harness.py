@@ -87,6 +87,15 @@ class MultiAgentConfig:
 
 
 class Harness:
+    _PROGRESS_STAGE_LABELS = {
+        "trial.execute": "Trial",
+        "terminal.lifecycle": "Task container",
+        "setup.execute": "Setup",
+        "agent.execute": "Coding agent",
+        "tests.execute": "Visible tests",
+        "evaluator.execute": "Independent evaluation",
+    }
+
     def __init__(
         self,
         output_path: Path,
@@ -530,6 +539,48 @@ class Harness:
             trial_name=trial_name,
             error=error,
         )
+        self._update_progress_from_stage(
+            stage=stage,
+            status=status,
+            task_id=task_id,
+            trial_name=trial_name,
+        )
+
+    def _update_progress_from_stage(
+        self,
+        *,
+        stage: str,
+        status: str,
+        task_id: str | None,
+        trial_name: str | None,
+    ) -> None:
+        """Reflect pipeline stage changes in the non-livestream progress bar."""
+        label = self._PROGRESS_STAGE_LABELS.get(stage)
+        if label is None:
+            return
+        suffix = {
+            "started": label,
+            "completed": f"{label} complete",
+            "failed": f"{label} failed",
+        }.get(status)
+        if suffix is not None:
+            self._update_progress_detail(task_id, trial_name, suffix)
+
+    def _update_progress_detail(
+        self,
+        task_id: str | None,
+        trial_name: str | None,
+        detail: str,
+    ) -> None:
+        display = getattr(self, "_progress_display", None)
+        if display is None:
+            return
+        context = task_id or trial_name or "run"
+        description = (
+            f"Running tasks ({display['completed']}/{display['total']}, "
+            f"Accuracy: {display['accuracy']:.2%}) — {context}: {detail}"
+        )
+        display["progress"].update(display["task"], description=description)
 
     @staticmethod
     def _trace_file_input(path: Path) -> dict[str, Any]:
@@ -603,14 +654,41 @@ class Harness:
             output_dir=output_dir,
             agent_name=agent_label,
             model_name=model_name,
-            evaluator_config=trial_handler.task.evaluator_config,
+            evaluator_config={
+                **trial_handler.task.evaluator_config,
+                "_progress_callback": partial(
+                    self._update_progress_detail,
+                    trial_handler.task_id,
+                    trial_handler.trial_name,
+                ),
+            },
             telemetry={
                 "total_input_tokens": results.total_input_tokens,
                 "total_output_tokens": results.total_output_tokens,
                 "total_cost": results.total_cost,
             },
         )
-        results.evaluation = evaluator.envelope(request)
+        self._trace_pipeline(
+            stage="evaluator.execute",
+            status="started",
+            inputs={
+                "evaluator_import_path": trial_handler.task.evaluator_import_path,
+                "candidate_patch_path": candidate_patch,
+            },
+            task_id=trial_handler.task_id,
+            trial_name=trial_handler.trial_name,
+        )
+        try:
+            results.evaluation = evaluator.envelope(request)
+        except Exception as exc:
+            self._trace_pipeline(
+                stage="evaluator.execute",
+                status="failed",
+                task_id=trial_handler.task_id,
+                trial_name=trial_handler.trial_name,
+                error=exc,
+            )
+            raise
         results.is_resolved = results.evaluation.is_resolved
         self._trace_pipeline(
             stage="evaluator.execute",
@@ -634,15 +712,7 @@ class Harness:
 
     @property
     def _run_lock_path(self) -> Path:
-        fc_lock = self._run_path / "fc.lock"
-        if fc_lock.exists():
-            return fc_lock
-        # Backward compatibility: check for legacy tb.lock
-        tb_lock = self._run_path / "tb.lock"
-        if tb_lock.exists():
-            return tb_lock
-        # Default to new name for new runs
-        return fc_lock
+        return self._run_path / "pitbench.lock"
 
     def _validate_resume_configuration(self) -> None:
         """Validate that the current run configuration matches the lock file."""
@@ -3271,40 +3341,51 @@ class Harness:
             },
         )
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_task = {}
-            for task_path in self._dataset:
-                for attempt in range(1, self._n_attempts + 1):
-                    trial_name = self._get_trial_name(task_path, attempt)
-                    future = executor.submit(
-                        self._execute_single_trial,
-                        trial_name=trial_name,
-                        task_path=task_path,
-                    )
-                    future_to_task[future] = (trial_name, attempt)
+        total_tasks = len(self._dataset) * self._n_attempts
+        progress = None
+        progress_task = None
+        if not self._livestream:
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeElapsedColumn(),
+            )
+            progress.start()
+            progress_task = progress.add_task(
+                f"Running tasks (0/{total_tasks}, Accuracy: {results.accuracy:.2%})",
+                total=total_tasks,
+            )
+            self._progress_display = {
+                "progress": progress,
+                "task": progress_task,
+                "completed": len(results.results),
+                "total": total_tasks,
+                "accuracy": results.accuracy,
+            }
 
-            total_tasks = len(self._dataset) * self._n_attempts
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_task = {}
+                for task_path in self._dataset:
+                    for attempt in range(1, self._n_attempts + 1):
+                        trial_name = self._get_trial_name(task_path, attempt)
+                        future = executor.submit(
+                            self._execute_single_trial,
+                            trial_name=trial_name,
+                            task_path=task_path,
+                        )
+                        future_to_task[future] = (trial_name, attempt)
 
-            if self._livestream:
-                for future in as_completed(future_to_task):
-                    trial_results = future.result()
-                    results.results.append(trial_results)
-
-                    self._write_results(results)
-            else:
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("{task.description}"),
-                    BarColumn(),
-                    TaskProgressColumn(),
-                    TimeElapsedColumn(),
-                ) as progress:
-                    task = progress.add_task(
-                        f"Running tasks (0/{total_tasks}, "
-                        f"Accuracy: {results.accuracy:.2%})",
-                        total=total_tasks,
-                    )
-
+                if self._livestream:
+                    for future in as_completed(future_to_task):
+                        trial_results = future.result()
+                        results.results.append(trial_results)
+                        self._write_results(results)
+                else:
+                    assert progress is not None
+                    assert progress_task is not None
                     for future in as_completed(future_to_task):
                         trial_results = future.result()
 
@@ -3330,18 +3411,26 @@ class Harness:
 
                         task_name = trial_results.task_id
                         status = "✓" if trial_results.is_resolved else "✗"
-
                         completed_tasks = len(results.results)
-
+                        self._progress_display.update(
+                            {
+                                "completed": completed_tasks,
+                                "accuracy": results.accuracy,
+                            }
+                        )
                         progress.update(
-                            task,
+                            progress_task,
                             advance=1,
                             description=(
                                 f"Running tasks ({completed_tasks}/{total_tasks}, "
-                                f"Accuracy: {results.accuracy:.2%}) - "
+                                f"Accuracy: {results.accuracy:.2%}) — "
                                 f"Last: {task_name} {status}"
                             ),
                         )
+        finally:
+            self._progress_display = None
+            if progress is not None:
+                progress.stop()
 
         self._trace_pipeline(
             stage="tasks.dispatch",

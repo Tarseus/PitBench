@@ -71,12 +71,13 @@ def test_runner_payload_copies_only_antigravity_auth_and_proxy(tmp_path):
     assert "UNRELATED" not in payload["proxy_env"]
 
 
-def test_subscription_env_forces_oauth_and_keeps_loopback_off_proxy():
+def test_subscription_env_forces_oauth_and_defaults_to_no_proxy():
     with patch.dict(
         "os.environ",
         {
             "GEMINI_API_KEY": "must-not-be-used",
             "GOOGLE_API_KEY": "must-not-be-used",
+            "HTTPS_PROXY": "http://ambient-proxy:8080",
             "NO_PROXY": "example.test",
         },
         clear=True,
@@ -85,9 +86,23 @@ def test_subscription_env_forces_oauth_and_keeps_loopback_off_proxy():
 
     assert "GEMINI_API_KEY" not in env
     assert "GOOGLE_API_KEY" not in env
-    assert "example.test" in env["NO_PROXY"]
-    assert "127.0.0.1" in env["NO_PROXY"]
-    assert "localhost" in env["NO_PROXY"]
+    assert "HTTPS_PROXY" not in env
+    assert env["NO_PROXY"] == "127.0.0.1,localhost"
+
+
+def test_runtime_env_applies_explicit_proxy_to_antigravity_runner():
+    agent = AntigravityMCPAgent(
+        model_name="gemini-3.7-flash-high",
+        proxy_url="http://127.0.0.1:17898",
+    )
+
+    with patch.dict("os.environ", {}, clear=True):
+        env = agent._runtime_env()
+
+    assert env["HTTP_PROXY"] == "http://127.0.0.1:17898"
+    assert env["HTTPS_PROXY"] == "http://127.0.0.1:17898"
+    assert env["ALL_PROXY"] == "http://127.0.0.1:17898"
+    assert env["NO_PROXY"] == "127.0.0.1,localhost"
 
 
 def test_antigravity_stream_usage_and_result_are_parsed():

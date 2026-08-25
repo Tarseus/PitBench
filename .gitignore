@@ -12,6 +12,7 @@ __pycache__/
 # Local environments and secrets
 .env
 .venv/
+/config/*.local.yaml
 
 # Editor and OS files
 .DS_Store

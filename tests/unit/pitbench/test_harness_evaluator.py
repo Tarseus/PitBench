@@ -1,5 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from pydantic import BaseModel
 
@@ -115,3 +116,29 @@ def test_harness_consumes_standard_evaluator_verdict_without_parsing_payload(
     assert results.evaluation is not None
     assert results.evaluation.payload == {"is_resolved": True}
     assert results.is_resolved is True
+
+
+def test_pipeline_stage_updates_non_livestream_progress_description() -> None:
+    progress = Mock()
+    harness = Harness.__new__(Harness)
+    harness._progress_display = {
+        "progress": progress,
+        "task": 7,
+        "completed": 0,
+        "total": 1,
+        "accuracy": 0.0,
+    }
+
+    harness._update_progress_from_stage(
+        stage="agent.execute",
+        status="started",
+        task_id="pyvrp_v0_14_0",
+        trial_name="trial-1",
+    )
+
+    progress.update.assert_called_once_with(
+        7,
+        description=(
+            "Running tasks (0/1, Accuracy: 0.00%) — pyvrp_v0_14_0: Coding agent"
+        ),
+    )

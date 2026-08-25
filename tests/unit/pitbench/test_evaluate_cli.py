@@ -124,7 +124,7 @@ def test_evaluate_materializes_task_and_starts_harness(tmp_path: Path) -> None:
     assert harness_kwargs["cleanup"] is False
     assert harness_kwargs["agent_kwargs"] == [
         "no_rebuild=False",
-        "proxy_url=http://127.0.0.1:7897"
+        "proxy_url=http://127.0.0.1:7897",
     ]
 
 
@@ -155,3 +155,80 @@ def test_evaluate_stops_when_materialization_fails(tmp_path: Path) -> None:
     assert isinstance(result.exception, RuntimeError)
     prepare_task_image.assert_not_called()
     run_harness.assert_not_called()
+
+
+def test_evaluate_loads_local_config_and_cli_kwargs_override_it(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    repository_root = tmp_path / "pitbench"
+    repository_root.mkdir()
+    config_dir = repository_root / "config"
+    config_dir.mkdir()
+    (config_dir / "evaluate.local.yaml").write_text(
+        """
+paths:
+  output_path: local-runs
+  workspace_path: local-tasks
+  private_root: evaluator-private
+tasks:
+  pyvrp_v0_14_0:
+    repository_source: snapshots/pyvrp
+    agent_image: local-agent:prepared
+    judge_image: sha256:local-judge
+agents:
+  codex:
+    codex_auth_path: /data/auth.json
+    proxy_url: http://127.0.0.1:17898
+    reasoning_effort: high
+"""
+    )
+
+    with (
+        patch("pitbench.cli.main.PitBenchAdapter") as adapter_class,
+        patch("pitbench.cli.main._prepare_task_image") as prepare_task_image,
+        patch("pitbench.cli.main.run_harness") as run_harness,
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "evaluate",
+                "pyvrp_v0_14_0",
+                "--agent",
+                "codex",
+                "--model",
+                "gpt-5.5",
+                "--run-id",
+                "configured-run",
+                "--root",
+                str(repository_root),
+                "--agent-kwarg",
+                "reasoning_effort=xhigh",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    expected_dataset = repository_root / "local-tasks/configured-run"
+    adapter_class.assert_called_once_with(
+        repository_root, repository_root / "evaluator-private"
+    )
+    adapter_class.return_value.materialize.assert_called_once_with(
+        "pyvrp_v0_14_0",
+        expected_dataset / "pyvrp_v0_14_0",
+        repository_source=repository_root / "snapshots/pyvrp",
+        agent_image="local-agent:prepared",
+        judge_image="sha256:local-judge",
+    )
+    prepare_task_image.assert_called_once_with(
+        expected_dataset / "pyvrp_v0_14_0", rebuild=True
+    )
+    harness_kwargs = run_harness.call_args.kwargs
+    assert harness_kwargs["output_path"] == repository_root / "local-runs"
+    assert harness_kwargs["agent_kwargs"] == [
+        "no_rebuild=False",
+        "codex_auth_path=/data/auth.json",
+        "proxy_url=http://127.0.0.1:17898",
+        "reasoning_effort=high",
+        "reasoning_effort=xhigh",
+    ]
+    assert "Loaded evaluation config" in result.output

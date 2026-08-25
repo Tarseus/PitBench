@@ -27,7 +27,7 @@ def mock_lock_data():
             "args": ["run", "--dataset-name", "test-dataset"],
         },
         "harness": {
-            "package": "fc-eval",
+            "package": "pitbench",
             "version": "0.2.12",
             "is_editable_installation": True,
         },
@@ -121,7 +121,7 @@ class TestStatusCommand:
         run_path = tmp_path / run_id
         run_path.mkdir()
 
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         for task_id in ["task1", "task2", "task3"]:
@@ -170,7 +170,7 @@ class TestStatusCommand:
         run_path = tmp_path / run_id
         run_path.mkdir()
 
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         # task1: completed and passed
@@ -227,7 +227,7 @@ class TestStatusCommand:
         run_path = tmp_path / run_id
         run_path.mkdir()
 
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         with (
@@ -265,7 +265,7 @@ class TestStatusCommand:
         run_path = tmp_path / run_id
         run_path.mkdir()
 
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         for task_id in ["task1", "task2"]:
@@ -324,7 +324,7 @@ class TestStatusCommand:
         run_path = tmp_path / run_id
         run_path.mkdir()
 
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         task_id = "task1"
@@ -372,7 +372,7 @@ class TestStatusCommand:
         run_path = tmp_path / run_id
         run_path.mkdir()
 
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         # task1: passed
@@ -429,7 +429,7 @@ class TestStatusCommand:
         run_path = tmp_path / run_id
         run_path.mkdir()
 
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         # task1: valid results (passed)
@@ -488,7 +488,7 @@ class TestStatusCommand:
         run_path = tmp_path / run_id
         run_path.mkdir()
 
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         task_id = "task1"
@@ -558,7 +558,7 @@ class TestStatusCommand:
         run_path.mkdir()
 
         # Create corrupted lock file
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text("invalid json content")
 
         with patch(
@@ -578,7 +578,7 @@ class TestStatusCommand:
         run_path = tmp_path / run_id
         run_path.mkdir()
 
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         with (
@@ -606,7 +606,7 @@ class TestStatusCommand:
         run_path = tmp_path / run_id
         run_path.mkdir()
 
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         with (

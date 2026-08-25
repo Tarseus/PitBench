@@ -1,6 +1,6 @@
 # OpenHands Agent
 
-OpenHands agent (with local runtime) can be used in fc-eval.
+OpenHands agent (with local runtime) can be used in pitbench.
 
 OpenHands needs at least `LLM_API_KEY` environmental variable to work properly. For
 custom LLM providers, you typically also need `LLM_BASE_URL`. For Azure OpenAI, you
@@ -11,7 +11,7 @@ Example command:
 ```bash
 export LLM_BASE_URL=<optional base url>
 export LLM_API_KEY=<llm key>
-fc-eval run \
+pitbench run \
     --dataset-name terminal-bench-core \
     --dataset-version 0.1.1 \
     --agent openhands \

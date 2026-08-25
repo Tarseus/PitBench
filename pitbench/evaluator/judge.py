@@ -6,8 +6,10 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import yaml
 
@@ -84,8 +86,7 @@ class JudgePlan:
             for index in range(min(instances_per_population, population.size)):
                 objective_scored = (
                     population.kind == PopulationKind.JUDGE_ID
-                    and task.task_type
-                    not in {TaskType.MODEL_BUILD, TaskType.PRESOLVE}
+                    and task.task_type not in {TaskType.MODEL_BUILD, TaskType.PRESOLVE}
                 )
                 cases.append(
                     InstanceCase(
@@ -206,6 +207,7 @@ class JudgePlan:
                 )
         return cls(task, cases)
 
+
 class FixtureJudge:
     """Deterministic contract smoke test; never selected implicitly."""
 
@@ -298,12 +300,14 @@ class LocalProcessJudge:
         private_root: Path,
         candidate_patch: Path,
         output_dir: Path,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.task = task
         self.base_repository = base_repository
         self.resolver = PrivateAssetResolver(private_root)
         self.candidate_patch = candidate_patch
         self.output_dir = output_dir
+        self.progress_callback = progress_callback
         self.repository = RepositoryPluginRegistry.load(task.repository.plugin)
         self.family = ProblemFamilyRegistry.load(task.evaluation.family_plugin)
         if isinstance(self.family, ExternalVerifierFamily):
@@ -351,6 +355,12 @@ class LocalProcessJudge:
                 )
         return workspace
 
+    def _progress(self, message: str) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(message)
+        else:
+            print(f"PITBENCH_PROGRESS {message}", flush=True)
+
     def run(self) -> list[RunObservation]:
         observations: list[RunObservation] = []
         with tempfile.TemporaryDirectory(prefix="pitbench-judge-") as temporary:
@@ -360,17 +370,42 @@ class LocalProcessJudge:
                 self.resolver,
                 generated_root=root / "generated-populations",
             )
+            total_solver_runs = sum(
+                len(case.solver_seeds or tuple(self.task.evaluation.solver_seeds))
+                * len(case.budgets_sec or tuple(self.task.evaluation.budgets_sec))
+                * len(CodeState)
+                for case in plan.cases
+            )
+            self._progress(
+                f"Judge plan: {len(plan.cases)} instances, "
+                f"{total_solver_runs} solver runs"
+            )
             for state in CodeState:
+                started = time.monotonic()
+                self._progress(f"Judge validation build: {state.value}")
                 self._workspace(state, root / "validation", BuildKind.VALIDATION)
-            workspaces = {
-                state: self._workspace(
+                self._progress(
+                    f"Judge validation build complete: {state.value} in "
+                    f"{time.monotonic() - started:.1f}s"
+                )
+            workspaces = {}
+            for state in CodeState:
+                started = time.monotonic()
+                self._progress(f"Judge performance build: {state.value}")
+                workspaces[state] = self._workspace(
                     state, root / "performance", BuildKind.PERFORMANCE
                 )
-                for state in CodeState
-            }
-            for case in plan.cases:
+                self._progress(
+                    f"Judge performance build complete: {state.value} in "
+                    f"{time.monotonic() - started:.1f}s"
+                )
+            for case_index, case in enumerate(plan.cases, start=1):
                 if case.path is None:
                     raise RuntimeError("real judge case has no instance path")
+                self._progress(
+                    f"Judge instances {case_index}/{len(plan.cases)}: "
+                    f"{case.population.name}/{case.instance_id}"
+                )
                 seeds = case.solver_seeds or tuple(self.task.evaluation.solver_seeds)
                 budgets = case.budgets_sec or tuple(self.task.evaluation.budgets_sec)
                 for seed in seeds:
@@ -379,6 +414,11 @@ class LocalProcessJudge:
                             observations.append(
                                 self._run_case(workspace, case, state, seed, budget)
                             )
+            valid_count = sum(observation.valid for observation in observations)
+            self._progress(
+                f"Judge solver grid complete: {valid_count}/{len(observations)} "
+                "valid observations"
+            )
         return observations
 
     def _run_case(

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections import deque
 from pathlib import Path
+from typing import Callable
 
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.schema.observation import RunObservation
@@ -22,6 +24,7 @@ class DockerJudge:
         output_dir: Path,
         cpus: float = 8.0,
         memory: str = "8g",
+        progress_callback: Callable[[str], None] | None = None,
     ) -> None:
         digest_pinned = re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image)
         local_image_id = re.fullmatch(r"sha256:[0-9a-f]{64}", image)
@@ -35,6 +38,7 @@ class DockerJudge:
         self.output_dir = output_dir.resolve()
         self.cpus = cpus
         self.memory = memory
+        self.progress_callback = progress_callback
 
     def run(self) -> list[RunObservation]:
         package_root = Path(__file__).resolve().parents[2]
@@ -85,17 +89,26 @@ class DockerJudge:
             "--observations",
             "/output/judge-observations.jsonl",
         ]
-        completed = subprocess.run(
+        process = subprocess.Popen(
             command,
-            check=False,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
+            bufsize=1,
         )
-        if completed.returncode:
-            raise RuntimeError(
-                "isolated judge failed: "
-                + (completed.stderr.strip() or completed.stdout.strip())
-            )
+        recent_output: deque[str] = deque(maxlen=100)
+        if process.stdout is not None:
+            for raw_line in process.stdout:
+                line = raw_line.rstrip()
+                if line:
+                    recent_output.append(line)
+                    prefix = "PITBENCH_PROGRESS "
+                    if line.startswith(prefix) and self.progress_callback is not None:
+                        self.progress_callback(line.removeprefix(prefix))
+        returncode = process.wait()
+        if returncode:
+            detail = "\n".join(recent_output) or "no diagnostic was emitted"
+            raise RuntimeError(f"isolated judge failed: {detail}")
         if not observations.is_file():
             raise RuntimeError("isolated judge produced no observations")
         return ObservationStore.read_jsonl(observations)

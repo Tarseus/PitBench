@@ -32,8 +32,8 @@ public quickstart can eventually become a reliable one-command workflow.
 7. A no-op smoke still builds and tests separate base and agent validation trees,
    then builds two more performance trees. The fixed setup cost dominates the
    tiny solver grid.
-8. `pitbench run --help` still refers to the default `fc-eval` registry, and one
-   unit test still hard-codes the `fc-eval` distribution name.
+8. The inherited registry, lock-file, CLI, and test surfaces initially used
+   inconsistent product names.
 9. `pitbench tasks validate` lists task families whose public images are not yet
    provisioned, although the public quickstart currently supports only PyVRP.
 10. Users must manually copy evaluator-owned `private/` assets and discover that
@@ -67,13 +67,10 @@ public quickstart can eventually become a reliable one-command workflow.
 
 ### Follow-up
 
-- Remove remaining FormulaCode names from CLI help, tests, logs, and registry
-  defaults.
 - Avoid forcing a task-wrapper rebuild solely because `--agent-image` was passed;
   reuse it when the source and image-revision labels match.
-- Show judge phases (`validation/base`, `validation/agent`, `performance/base`,
-  `performance/agent`, solver grid), elapsed time, estimated remaining time, and
-  resume instructions in the main run log.
+- Add estimated remaining time and resume instructions to the phase-aware run
+  progress display.
 - Package private evaluator assets as a checksum-verified bundle with an explicit
   provisioning command instead of asking users to copy an internal directory.
 - Scope the public task listing to provisioned solvers, while keeping the plugin

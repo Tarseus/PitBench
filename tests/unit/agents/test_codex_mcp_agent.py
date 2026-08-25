@@ -185,18 +185,21 @@ def test_runner_payload_copies_only_auth_and_proxy(tmp_path):
     assert "UNRELATED" not in payload["proxy_env"]
 
 
-def test_subscription_env_removes_api_key_and_keeps_loopback_off_proxy():
+def test_subscription_env_removes_api_key_and_defaults_to_no_proxy():
     with patch.dict(
         "os.environ",
-        {"OPENAI_API_KEY": "must-not-be-used", "NO_PROXY": "example.test"},
+        {
+            "OPENAI_API_KEY": "must-not-be-used",
+            "HTTPS_PROXY": "http://ambient-proxy:8080",
+            "NO_PROXY": "example.test",
+        },
         clear=True,
     ):
         env = CodexMCPAgent._subscription_env()
 
     assert "OPENAI_API_KEY" not in env
-    assert "example.test" in env["NO_PROXY"]
-    assert "127.0.0.1" in env["NO_PROXY"]
-    assert "localhost" in env["NO_PROXY"]
+    assert "HTTPS_PROXY" not in env
+    assert env["NO_PROXY"] == "127.0.0.1,localhost"
 
 
 def test_runtime_env_applies_explicit_proxy_to_codex_runner(tmp_path):

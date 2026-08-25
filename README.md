@@ -137,14 +137,11 @@ Fixture smoke tests validate orchestration and storage contracts; they are not r
 
 ### 3. Run a Maintainer-Provisioned Evaluation
 
-Formal evaluation additionally requires evaluator-owned hidden assets under `private/`. The prepared PyVRP agent and judge images are public and pinned below, so GHCR login is not required. Pull them and prepare a host agent once:
+Formal evaluation additionally requires evaluator-owned hidden assets under `private/`. Machine-specific paths, image references, authentication-file paths, and optional proxies belong in an ignored local configuration file:
 
 ```bash
-export PITBENCH_AGENT_IMAGE='ghcr.io/tarseus/pitbench-pyvrp@sha256:776623be0e47b5f907efc3855886b6cd635b6c09c17f2b8fd4c0597f2f74f445'
-export PITBENCH_JUDGE_IMAGE='ghcr.io/tarseus/pitbench-pyvrp-judge@sha256:c7a4f9abecc90cfcc5e4368ba46a9f35d5f7be2883ac53cff49e7f365f1c79a3'
-
-docker pull "$PITBENCH_AGENT_IMAGE"
-docker pull "$PITBENCH_JUDGE_IMAGE"
+cp config/evaluate.example.yaml config/evaluate.local.yaml
+# Edit config/evaluate.local.yaml for this machine.
 
 # Codex with a ChatGPT subscription
 codex login
@@ -161,16 +158,17 @@ Once those evaluator-owned inputs are provisioned, one command materializes the 
 uv run pitbench evaluate pyvrp_v0_14_0 \
   --agent codex \
   --model gpt-5.6-terra \
-  --agent-kwarg reasoning_effort=xhigh \
-  --agent-image "$PITBENCH_AGENT_IMAGE" \
-  --judge-image "$PITBENCH_JUDGE_IMAGE"
+  --agent-kwarg reasoning_effort=xhigh
 
 uv run pitbench evaluate pyvrp_v0_14_0 \
   --agent antigravity \
-  --model gemini-3.1-pro-high \
-  --agent-image "$PITBENCH_AGENT_IMAGE" \
-  --judge-image "$PITBENCH_JUDGE_IMAGE"
+  --model gemini-3.1-pro-high
 ```
+
+`config/evaluate.local.yaml` is loaded automatically when present. An explicit
+`--config PATH` selects another file, and command-line values override YAML values.
+Agents use direct network access by default; a proxy is passed only when the selected
+agent's `proxy_url` is configured.
 
 ### 4. Generate a Performance-First Report
 

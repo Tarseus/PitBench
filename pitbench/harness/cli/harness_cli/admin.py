@@ -110,7 +110,7 @@ class SupabaseRegistry(BaseModel):
     name: str
     version: str
     description: str | None = None
-    fc_eval_version: str
+    pitbench_version: str
     github_url: str
     dataset_path: str
     branch: str
@@ -126,7 +126,7 @@ class SupabaseRegistry(BaseModel):
             self.name == other.name
             and self.version == other.version
             and self.description == other.description
-            and self.fc_eval_version == other.fc_eval_version
+            and self.pitbench_version == other.pitbench_version
             and self.github_url == other.github_url
             and self.dataset_path == other.dataset_path
             and self.branch == other.branch
@@ -151,7 +151,7 @@ class SupabaseRegistry(BaseModel):
             name=row.name,
             version=row.version,
             description=row.description,
-            fc_eval_version=row.fc_eval_version,
+            pitbench_version=row.pitbench_version,
             github_url=row.github_url,
             dataset_path=row.dataset_path,
             branch=row.branch,
@@ -183,9 +183,7 @@ def submit(
         os.environ["SUPABASE_SERVICE_ROLE_KEY"],
     )
 
-    lock_path = runs_dir / run_id / "fc.lock"
-    if not lock_path.exists():
-        lock_path = runs_dir / run_id / "tb.lock"
+    lock_path = runs_dir / run_id / "pitbench.lock"
     lock = RunLock.from_json(lock_path)
 
     if lock.dataset.name is None or lock.dataset.version is None:

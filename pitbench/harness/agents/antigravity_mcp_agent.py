@@ -59,6 +59,7 @@ Task:
         timeout_sec: float = 3500.0,
         print_timeout: str = "55m",
         effort: str | None = None,
+        proxy_url: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -72,6 +73,7 @@ Task:
         self._timeout_sec = timeout_sec
         self._print_timeout = print_timeout
         self._effort = effort
+        self._proxy_url = proxy_url
         self._process: subprocess.Popen[str] | None = None
         self._process_lock = threading.Lock()
         self._cancelled = threading.Event()
@@ -90,16 +92,25 @@ Task:
         env = os.environ.copy()
         for key in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
             env.pop(key, None)
-        no_proxy = [
-            item.strip()
-            for item in env.get("NO_PROXY", env.get("no_proxy", "")).split(",")
-            if item.strip()
-        ]
-        for host in ("127.0.0.1", "localhost"):
-            if host not in no_proxy:
-                no_proxy.append(host)
+        for key in AntigravityMCPAgent._PROXY_KEYS:
+            env.pop(key, None)
+        no_proxy = ["127.0.0.1", "localhost"]
         env["NO_PROXY"] = ",".join(no_proxy)
         env["no_proxy"] = env["NO_PROXY"]
+        return env
+
+    def _runtime_env(self) -> dict[str, str]:
+        env = self._subscription_env()
+        if self._proxy_url:
+            for key in (
+                "ALL_PROXY",
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "all_proxy",
+                "http_proxy",
+                "https_proxy",
+            ):
+                env[key] = self._proxy_url
         return env
 
     def _preflight(self, agy_binary: str, env: dict[str, str]) -> None:
@@ -294,7 +305,7 @@ Task:
     ) -> AgentResult:
         del portkey_metadata, portkey_trace_id
         agy_binary = self._resolved_agy_binary()
-        env = self._subscription_env()
+        env = self._runtime_env()
         self._preflight(agy_binary, env)
         runner_payload = self._runner_payload(env)
         self._cancelled.clear()

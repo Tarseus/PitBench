@@ -1,6 +1,6 @@
 # Agent Configuration
 
-This document explains how to configure agents in fc-eval using the `--agent-kwarg` option.
+This document explains how to configure agents in pitbench using the `--agent-kwarg` option.
 
 ## Agent Parameters
 
@@ -24,11 +24,11 @@ Only installed agents with templated setup scripts support the `version` paramet
 
 ```bash
 # Use a specific version
-uv run fc-eval run --agent openhands --task-id hello-world \
+uv run pitbench run --agent openhands --task-id hello-world \
   --agent-kwarg version=0.51.0
 
 # Use latest version (default)
-uv run fc-eval run --agent openhands --task-id hello-world
+uv run pitbench run --agent openhands --task-id hello-world
 ```
 
 #### How it Works
@@ -59,11 +59,11 @@ Only certain agent types support custom prompt templates:
 
 ```bash
 # Use custom prompt template
-uv run fc-eval run --agent openhands --task-id hello-world \
+uv run pitbench run --agent openhands --task-id hello-world \
   --agent-kwarg prompt_template=./custom_prompt.j2
 
 # Combine with version
-uv run fc-eval run --agent openhands --task-id hello-world \
+uv run pitbench run --agent openhands --task-id hello-world \
   --agent-kwarg version=0.51.0 prompt_template=./custom_prompt.j2
 ```
 
@@ -105,7 +105,7 @@ You can use multiple agent parameters together:
 
 ```bash
 # Multiple parameters
-uv run fc-eval run --agent openhands --task-id hello-world \
+uv run pitbench run --agent openhands --task-id hello-world \
   --agent-kwarg version=0.51.0 \
   --agent-kwarg prompt_template=./openhands_custom.j2
 ```

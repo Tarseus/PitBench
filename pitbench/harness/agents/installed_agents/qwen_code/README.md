@@ -1,6 +1,6 @@
 # Qwen Code Agent
 
-FC-Eval integration for [Qwen Code](https://github.com/QwenLM/qwen-code), a command-line AI workflow tool optimized for Qwen3-Coder models.
+PitBench integration for [Qwen Code](https://github.com/QwenLM/qwen-code), a command-line AI workflow tool optimized for Qwen3-Coder models.
 
 ## Prerequisites
 
@@ -29,12 +29,12 @@ You can configure the agent directly via command-line arguments:
 
 ```bash
 # Basic usage with API key via agent arguments
-fc-eval run --agent qwen-coder --model "qwen/qwen3-coder-plus" \
+pitbench run --agent qwen-coder --model "qwen/qwen3-coder-plus" \
        --agent-kwarg api_key=your_qwen_api_key \
        --task-id your-task
 
 # With custom base URL
-fc-eval run --agent qwen-coder --model "qwen/qwen3-coder-plus" \
+pitbench run --agent qwen-coder --model "qwen/qwen3-coder-plus" \
        --agent-kwarg api_key=your_qwen_api_key \
        --agent-kwarg base_url=https://custom-api.example.com/v1 \
        --task-id your-task
@@ -50,13 +50,13 @@ fc-eval run --agent qwen-coder --model "qwen/qwen3-coder-plus" \
 ### Basic Usage
 
 ```bash
-fc-eval run --agent qwen-coder --task-id your-task
+pitbench run --agent qwen-coder --task-id your-task
 ```
 
 ### With Custom Model
 
 ```bash
-fc-eval run --agent qwen-coder --model <model> --task-id your-task
+pitbench run --agent qwen-coder --model <model> --task-id your-task
 ```
 
 ## Supported Models

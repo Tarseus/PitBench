@@ -56,7 +56,7 @@ def list(
     table.add_column("Name")
     table.add_column("Version")
     table.add_column("Description")
-    table.add_column("FC-Eval Versions")
+    table.add_column("PitBench Versions")
     table.add_column("Compatible?")
 
     for d in sorted(datasets, key=lambda x: (x.name, x.version), reverse=True):
@@ -65,7 +65,7 @@ def list(
             d.name,
             d.version,
             d.description or "",
-            d.fc_eval_version,
+            d.pitbench_version,
             "✓" if is_compatible else "✗",
         )
 
@@ -126,7 +126,7 @@ def download(
         Option(
             "--output-dir",
             help="Directory to download the dataset to.",
-            show_default="~/.cache/fc-eval/<name>/<version>",
+            show_default="~/.cache/pitbench/<name>/<version>",
         ),
     ] = None,
 ):

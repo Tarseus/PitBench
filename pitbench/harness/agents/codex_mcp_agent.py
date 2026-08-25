@@ -92,14 +92,12 @@ Task:
     def _subscription_env() -> dict[str, str]:
         env = os.environ.copy()
         env.pop("OPENAI_API_KEY", None)
+        for key in CodexMCPAgent._PROXY_KEYS:
+            env.pop(key, None)
         no_proxy = [
-            item.strip()
-            for item in env.get("NO_PROXY", env.get("no_proxy", "")).split(",")
-            if item.strip()
+            "127.0.0.1",
+            "localhost",
         ]
-        for host in ("127.0.0.1", "localhost"):
-            if host not in no_proxy:
-                no_proxy.append(host)
         env["NO_PROXY"] = ",".join(no_proxy)
         env["no_proxy"] = env["NO_PROXY"]
         return env

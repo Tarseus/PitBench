@@ -186,7 +186,7 @@ fi
         run_path = runs_dir / run_id
         assert run_path.exists(), f"output directory {run_path} should exist"
 
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         assert lock_path.exists(), f"Lock file {lock_path} should exist"
 
         # Verify lock file is valid JSON

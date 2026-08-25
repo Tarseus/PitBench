@@ -248,7 +248,7 @@ class ForkWizard:
 
     def _show_welcome(self, color: str) -> None:
         self._print_with_color(
-            "=== FC-Eval Task Creation Wizard ===",
+            "=== PitBench Task Creation Wizard ===",
             color=color,
             bold=True,
         )

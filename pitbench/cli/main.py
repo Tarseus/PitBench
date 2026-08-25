@@ -14,6 +14,12 @@ from adapters.pitbench.adapter import (
     IMAGE_SOURCE_LABEL,
     PitBenchAdapter,
 )
+from pitbench.cli.evaluate_config import (
+    EvaluationConfig,
+    encode_agent_kwargs,
+    resolve_config_path,
+    resolve_repository_path,
+)
 from pitbench.evaluator.evaluator import PitBenchEvaluator
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.harness.agents import AgentName
@@ -55,16 +61,12 @@ def _prepare_task_image(task_path: Path, *, rebuild: bool) -> None:
         sessions_logs_path=task_path / ".image-prepare/sessions",
         agent_logs_path=task_path / ".image-prepare/agent-logs",
     )
-    expected_source = (task_path / "Dockerfile").read_text().splitlines()[0].removeprefix(
-        "FROM "
+    expected_source = (
+        (task_path / "Dockerfile").read_text().splitlines()[0].removeprefix("FROM ")
     )
     cached_revision = manager.image_label(IMAGE_REVISION_LABEL)
     cached_source = manager.image_label(IMAGE_SOURCE_LABEL)
-    if (
-        rebuild
-        or cached_revision != IMAGE_REVISION
-        or cached_source != expected_source
-    ):
+    if rebuild or cached_revision != IMAGE_REVISION or cached_source != expected_source:
         typer.echo(f"Building task image {trial.client_image_name}")
         manager.build()
     else:
@@ -83,18 +85,16 @@ def evaluate_task(
         typer.Option("--model", "-m", help="Model used by the coding agent"),
     ] = None,
     output_path: Annotated[
-        Path, typer.Option(help="Directory for evaluation results")
-    ] = Path("runs"),
-    run_id: Annotated[
-        str | None, typer.Option(help="Unique run identifier")
+        Path | None, typer.Option(help="Directory for evaluation results")
     ] = None,
+    run_id: Annotated[str | None, typer.Option(help="Unique run identifier")] = None,
     workspace_path: Annotated[
-        Path,
+        Path | None,
         typer.Option(help="Directory for persistent materialized tasks"),
-    ] = Path(".pitbench/tasks"),
+    ] = None,
     private_root: Annotated[
-        Path, typer.Option(help="Evaluator-only private storage")
-    ] = Path("private"),
+        Path | None, typer.Option(help="Evaluator-only private storage")
+    ] = None,
     repository_source: Annotated[
         Path | None,
         typer.Option(help="Pre-censored local repository snapshot"),
@@ -124,29 +124,68 @@ def evaluate_task(
     rebuild: Annotated[
         bool, typer.Option("--rebuild", help="Force rebuilding the cached task image")
     ] = False,
-    livestream: Annotated[
-        bool, typer.Option(help="Stream the harness log")
-    ] = False,
+    livestream: Annotated[bool, typer.Option(help="Stream the harness log")] = False,
+    config_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--config",
+            help=(
+                "Machine-local evaluation YAML; defaults to "
+                "config/evaluate.local.yaml when present"
+            ),
+        ),
+    ] = None,
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
 ) -> None:
     """Materialize one PitBench task and immediately evaluate an agent on it."""
     repository_root = _root(root)
+    resolved_config_path = resolve_config_path(repository_root, config_path)
+    evaluation_config = (
+        EvaluationConfig.from_yaml(resolved_config_path)
+        if resolved_config_path is not None
+        else EvaluationConfig()
+    )
+    if resolved_config_path is not None:
+        typer.echo(f"Loaded evaluation config {resolved_config_path}")
+
+    configured_paths = evaluation_config.paths
+    configured_resources = evaluation_config.resources_for(task_id)
+    resolved_output_path = resolve_repository_path(
+        repository_root, output_path or configured_paths.output_path
+    )
+    resolved_workspace_path = resolve_repository_path(
+        repository_root, workspace_path or configured_paths.workspace_path
+    )
+    resolved_private_root = resolve_repository_path(
+        repository_root, private_root or configured_paths.private_root
+    )
+    configured_repository_source = (
+        resolve_repository_path(repository_root, configured_resources.repository_source)
+        if configured_resources.repository_source is not None
+        else None
+    )
+    resolved_repository_source = repository_source or configured_repository_source
+    if resolved_repository_source is not None:
+        resolved_repository_source = resolve_repository_path(
+            repository_root, resolved_repository_source
+        )
+    resolved_agent_image = agent_image or configured_resources.agent_image
+    resolved_judge_image = judge_image or configured_resources.judge_image
+
     resolved_run_id = run_id or datetime.now().strftime("%Y-%m-%d__%H-%M-%S")
-    dataset_path = (workspace_path / resolved_run_id).resolve()
+    dataset_path = (resolved_workspace_path / resolved_run_id).resolve()
     task_path = dataset_path / task_id
 
     try:
         PitBenchAdapter(
             repository_root,
-            private_root
-            if private_root.is_absolute()
-            else repository_root / private_root,
+            resolved_private_root,
         ).materialize(
             task_id,
             task_path,
-            repository_source=repository_source,
-            agent_image=agent_image,
-            judge_image=judge_image,
+            repository_source=resolved_repository_source,
+            agent_image=resolved_agent_image,
+            judge_image=resolved_judge_image,
         )
     except StopIteration as exc:
         available = ", ".join(
@@ -159,9 +198,16 @@ def evaluate_task(
         ) from exc
 
     typer.echo(f"Materialized {task_id} at {task_path}")
-    _prepare_task_image(task_path, rebuild=rebuild or agent_image is not None)
+    _prepare_task_image(task_path, rebuild=rebuild or resolved_agent_image is not None)
     typer.echo(f"Starting evaluation run {resolved_run_id}")
-    harness_agent_kwargs = ["no_rebuild=False", *agent_kwargs]
+    configured_agent_kwargs = encode_agent_kwargs(
+        evaluation_config.kwargs_for(agent.value)
+    )
+    harness_agent_kwargs = [
+        "no_rebuild=False",
+        *configured_agent_kwargs,
+        *agent_kwargs,
+    ]
     run_harness(
         dataset=None,
         _dataset_name_compat=None,
@@ -170,7 +216,7 @@ def evaluate_task(
         dataset_config=None,
         registry_url=None,
         local_registry_path=None,
-        output_path=output_path,
+        output_path=resolved_output_path,
         run_id=resolved_run_id,
         upload_results=False,
         task_ids=None,

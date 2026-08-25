@@ -80,7 +80,7 @@ def _process_agent_kwargs(
     processed_kwargs["no_rebuild"] = no_rebuild
 
     for kwarg in agent_kwargs:
-        key, value = kwarg.split("=")
+        key, value = kwarg.split("=", 1)
         processed_kwargs[key] = _infer_type(value)
 
     if model_name is not None:
@@ -300,7 +300,7 @@ def create(
         Option(
             help="Registry URL (should be an endpoint that returns text-based json).",
             rich_help_panel=HelpPanel.DATASET,
-            show_default="The default fc-eval registry.",
+            show_default="The default pitbench registry.",
         ),
     ] = None,
     local_registry_path: Annotated[
@@ -519,7 +519,7 @@ def create(
         ),
     ] = None,
 ):
-    """Run the fc-eval harness with the specified configuration."""
+    """Run the pitbench harness with the specified configuration."""
     dataset_name = None
     dataset_version = None
 
@@ -750,12 +750,9 @@ def status(
         rich_print(f"[bold red]run directory {run_path} does not exist[/]")
         raise typer.Exit(1)
 
-    # Load run lock to get dataset configuration (check both fc.lock and legacy tb.lock)
-    lock_path = run_path / "fc.lock"
+    lock_path = run_path / "pitbench.lock"
     if not lock_path.exists():
-        lock_path = run_path / "tb.lock"
-    if not lock_path.exists():
-        rich_print("[bold red]Run lock file not found (checked fc.lock and tb.lock)[/]")
+        rich_print("[bold red]Run lock file not found: pitbench.lock[/]")
         raise typer.Exit(1)
 
     try:
@@ -1137,10 +1134,7 @@ def resume(
     configuration from the run's lock file.
     """
     try:
-        # Read configuration from fc.lock file (with tb.lock fallback)
-        lock_path = runs_dir / run_id / "fc.lock"
-        if not lock_path.exists():
-            lock_path = runs_dir / run_id / "tb.lock"
+        lock_path = runs_dir / run_id / "pitbench.lock"
         if not lock_path.exists():
             raise ValueError(f"Lock file not found at {runs_dir / run_id}")
 

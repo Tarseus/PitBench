@@ -82,7 +82,7 @@ def clean(
     ] = False,
 ) -> None:
     """
-    Remove all Docker images and networks that start with fc-eval prefixes,
+    Remove all Docker images and networks that start with pitbench prefixes,
     and clear cache directory.
     """
 
@@ -161,11 +161,11 @@ def clean(
                         except subprocess.CalledProcessError:
                             progress.update(image_task, advance=1)
 
-                rich_print(f"[green]Removed {len(images)} fc-eval Docker images[/]")
+                rich_print(f"[green]Removed {len(images)} pitbench Docker images[/]")
             else:
-                rich_print("[yellow]No fc-eval Docker images found[/]")
+                rich_print("[yellow]No pitbench Docker images found[/]")
         except subprocess.CalledProcessError:
-            rich_print("[yellow]No fc-eval Docker images found[/]")
+            rich_print("[yellow]No pitbench Docker images found[/]")
 
         try:
             result = subprocess.run(
@@ -196,11 +196,13 @@ def clean(
                         except subprocess.CalledProcessError:
                             progress.update(network_task, advance=1)
 
-                rich_print(f"[green]Removed {len(networks)} fc-eval Docker networks[/]")
+                rich_print(
+                    f"[green]Removed {len(networks)} pitbench Docker networks[/]"
+                )
             else:
-                rich_print("[yellow]No fc-eval Docker networks found[/]")
+                rich_print("[yellow]No pitbench Docker networks found[/]")
         except subprocess.CalledProcessError:
-            rich_print("[yellow]No fc-eval Docker networks found[/]")
+            rich_print("[yellow]No pitbench Docker networks found[/]")
 
     total_space_freed += cache_space_freed
 

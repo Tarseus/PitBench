@@ -101,7 +101,7 @@ class TestResumeCommand:
         mock_lock_data["local_config"]["run_id"] = run_id
 
         # Create lock file
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         with patch(
@@ -178,7 +178,7 @@ class TestResumeCommand:
         run_path.mkdir()
 
         # Create corrupted lock file
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text("invalid json")
 
         result = cli_runner.invoke(
@@ -200,7 +200,7 @@ class TestResumeCommand:
         mock_lock_data["local_config"]["run_id"] = run_id
 
         # Create lock file
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         with patch(
@@ -233,7 +233,7 @@ class TestResumeCommand:
         mock_lock_data["local_config"]["run_id"] = run_id
 
         # Create lock file
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         with patch(
@@ -272,7 +272,7 @@ class TestResumeCommand:
         mock_lock_data["local_config"]["run_id"] = run_id
 
         # Create lock file
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         with patch(
@@ -325,7 +325,7 @@ class TestResumeCommand:
         mock_lock_data["local_config"]["run_id"] = run_id
 
         # Create lock file
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         try:
@@ -424,7 +424,7 @@ class TestResumeCommand:
             "harness": {},
         }
 
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         with patch(
@@ -523,7 +523,7 @@ class TestResumeCommand:
             "harness": {},
         }
 
-        lock_path = run_path / "fc.lock"
+        lock_path = run_path / "pitbench.lock"
         lock_path.write_text(json.dumps(mock_lock_data))
 
         with patch(
