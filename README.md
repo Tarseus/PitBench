@@ -137,10 +137,14 @@ Fixture smoke tests validate orchestration and storage contracts; they are not r
 
 ### 3. Run a Maintainer-Provisioned Evaluation
 
-Formal evaluation additionally requires read access to the private PyVRP images, evaluator-owned hidden assets under `private/`, and a digest-pinned judge image. Authenticate to GHCR and prepare a host agent once:
+Formal evaluation additionally requires evaluator-owned hidden assets under `private/`. The prepared PyVRP agent and judge images are public and pinned below, so GHCR login is not required. Pull them and prepare a host agent once:
 
 ```bash
-docker login ghcr.io
+export PITBENCH_AGENT_IMAGE='ghcr.io/tarseus/pitbench-pyvrp@sha256:776623be0e47b5f907efc3855886b6cd635b6c09c17f2b8fd4c0597f2f74f445'
+export PITBENCH_JUDGE_IMAGE='ghcr.io/tarseus/pitbench-pyvrp-judge@sha256:c7a4f9abecc90cfcc5e4368ba46a9f35d5f7be2883ac53cff49e7f365f1c79a3'
+
+docker pull "$PITBENCH_AGENT_IMAGE"
+docker pull "$PITBENCH_JUDGE_IMAGE"
 
 # Codex with a ChatGPT subscription
 codex login
@@ -158,11 +162,13 @@ uv run pitbench evaluate pyvrp_v0_14_0 \
   --agent codex \
   --model gpt-5.6-terra \
   --agent-kwarg reasoning_effort=xhigh \
+  --agent-image "$PITBENCH_AGENT_IMAGE" \
   --judge-image "$PITBENCH_JUDGE_IMAGE"
 
 uv run pitbench evaluate pyvrp_v0_14_0 \
   --agent antigravity \
   --model gemini-3.1-pro-high \
+  --agent-image "$PITBENCH_AGENT_IMAGE" \
   --judge-image "$PITBENCH_JUDGE_IMAGE"
 ```
 
