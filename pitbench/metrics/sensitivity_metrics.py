@@ -124,25 +124,35 @@ class ProblemScalabilityComparison(BaseModel):
 
 
 class CrossPopulationRetentionMetrics(BaseModel):
-    """Gain retention and negative transfer across population shifts."""
+    """Gain retention and negative transfer across hidden populations (judge_id vs judge_shift)."""
 
     has_multi_population: bool = False
     populations_evaluated: list[str] = Field(default_factory=list)
-    dev_population: str | None = None
-    dev_gap_reduction: float | None = None
-    eval_gap_reduction: float | None = None
+    id_population: str | None = None
+    shift_population: str | None = None
+    id_gap_reduction: float | None = None
+    shift_gap_reduction: float | None = None
     gain_retention: float | None = None
-    dev_reliability_gain: float | None = None
-    eval_reliability_gain: float | None = None
+    id_reliability_gain: float | None = None
+    shift_reliability_gain: float | None = None
     reliability_gain_retention: float | None = None
-    dev_resource_gain: float | None = None
-    eval_resource_gain: float | None = None
+    id_resource_gain: float | None = None
+    shift_resource_gain: float | None = None
     resource_gain_retention: float | None = None
     delta_performance_gain: float | None = None
     delta_reliability_gain: float | None = None
     delta_resource_gain: float | None = None
     negative_transfer_count: int = Field(default=0, ge=0)
     negative_transfer_fraction: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    # Backward-compatible aliases
+    dev_population: str | None = None
+    dev_gap_reduction: float | None = None
+    eval_gap_reduction: float | None = None
+    dev_reliability_gain: float | None = None
+    eval_reliability_gain: float | None = None
+    dev_resource_gain: float | None = None
+    eval_resource_gain: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -601,8 +611,20 @@ def compute_cross_population_retention(
     base_obs: Sequence[RunObservation],
     agent_obs: Sequence[RunObservation],
 ) -> CrossPopulationRetentionMetrics:
-    """Compute gain retention across populations (e.g. agent_dev vs judge_id/hidden)."""
-    populations = sorted({o.population for o in (*base_obs, *agent_obs)})
+    """Compute gain retention across hidden populations (judge_id vs judge_shift)."""
+    # Strictly exclude agent_dev (training / development set) from generalization
+    valid_base = [
+        o
+        for o in base_obs
+        if o.population_kind != "agent_dev" and o.population != "agent_dev"
+    ]
+    valid_agent = [
+        o
+        for o in agent_obs
+        if o.population_kind != "agent_dev" and o.population != "agent_dev"
+    ]
+
+    populations = sorted({o.population for o in (*valid_base, *valid_agent)})
     if len(populations) < 2:
         return CrossPopulationRetentionMetrics(
             has_multi_population=False, populations_evaluated=populations
@@ -610,26 +632,39 @@ def compute_cross_population_retention(
 
     kinds_by_population = {
         obs.population: obs.population_kind
-        for obs in (*base_obs, *agent_obs)
+        for obs in (*valid_base, *valid_agent)
         if obs.population_kind is not None
     }
-    # Prefer the frozen in-distribution judge population. Older observations fall
-    # back to an explicitly named development population and then stable ordering.
-    dev_name = next(
+
+    # Reference in-distribution hidden population: judge_id
+    id_name = next(
         (name for name, kind in kinds_by_population.items() if kind == "judge_id"),
-        next((p for p in populations if "dev" in p.lower()), populations[0]),
+        next((p for p in populations if "id" in p.lower()), populations[0]),
     )
-    eval_names = [p for p in populations if p != dev_name]
+    # Target shift hidden population: judge_shift
+    shift_candidates = [p for p in populations if p != id_name]
+    shift_name = next(
+        (name for name, kind in kinds_by_population.items() if kind == "judge_shift"),
+        next(
+            (p for p in shift_candidates if "shift" in p.lower()),
+            shift_candidates[0] if shift_candidates else None,
+        ),
+    )
+
+    if shift_name is None:
+        return CrossPopulationRetentionMetrics(
+            has_multi_population=False, populations_evaluated=populations
+        )
 
     def _paired_gains(pop: str) -> tuple[float | None, float | None, float | None]:
         base_by_key = {
             (o.instance_id, o.solver_seed, o.budget_sec): o
-            for o in base_obs
+            for o in valid_base
             if o.population == pop and o.equivalence_parent_id is None
         }
         agent_by_key = {
             (o.instance_id, o.solver_seed, o.budget_sec): o
-            for o in agent_obs
+            for o in valid_agent
             if o.population == pop and o.equivalence_parent_id is None
         }
         performance: list[float] = []
@@ -663,96 +698,94 @@ def compute_cross_population_retention(
             statistics.fmean(resource) if resource else None,
         )
 
-    dev_reduction, dev_reliability, dev_resource = _paired_gains(dev_name)
-    eval_triplets = [_paired_gains(name) for name in eval_names]
-
-    def _average(index: int) -> float | None:
-        values = [
-            triplet[index] for triplet in eval_triplets if triplet[index] is not None
-        ]
-        return statistics.fmean(values) if values else None
-
-    eval_reduction = _average(0)
-    eval_reliability = _average(1)
-    eval_resource = _average(2)
+    id_reduction, id_reliability, id_resource = _paired_gains(id_name)
+    shift_reduction, shift_reliability, shift_resource = _paired_gains(shift_name)
 
     gain_retention = None
     if (
-        dev_reduction is not None
-        and eval_reduction is not None
-        and abs(dev_reduction) > 1e-9
+        id_reduction is not None
+        and shift_reduction is not None
+        and abs(id_reduction) > 1e-9
     ):
-        gain_retention = eval_reduction / dev_reduction
+        gain_retention = shift_reduction / id_reduction
 
     reliability_retention = None
     if (
-        dev_reliability is not None
-        and eval_reliability is not None
-        and abs(dev_reliability) > 1e-9
+        id_reliability is not None
+        and shift_reliability is not None
+        and abs(id_reliability) > 1e-9
     ):
-        reliability_retention = eval_reliability / dev_reliability
+        reliability_retention = shift_reliability / id_reliability
 
     resource_retention = None
     if (
-        dev_resource is not None
-        and eval_resource is not None
-        and abs(dev_resource) > 1e-9
+        id_resource is not None
+        and shift_resource is not None
+        and abs(id_resource) > 1e-9
     ):
-        resource_retention = eval_resource / dev_resource
+        resource_retention = shift_resource / id_resource
 
     def _difference(reference: float | None, shifted: float | None) -> float | None:
         if reference is None or shifted is None:
             return None
         return shifted - reference
 
-    # Negative transfer instances (where agent normalized_gap > base normalized_gap)
+    # Negative transfer instances on the shifted population
+    base_by_key = {
+        (o.instance_id, o.solver_seed, o.budget_sec): o
+        for o in valid_base
+        if o.population == shift_name and o.equivalence_parent_id is None
+    }
+    agent_by_key = {
+        (o.instance_id, o.solver_seed, o.budget_sec): o
+        for o in valid_agent
+        if o.population == shift_name and o.equivalence_parent_id is None
+    }
     paired_performance: list[float] = []
-    for population in populations:
-        base_by_key = {
-            (o.instance_id, o.solver_seed, o.budget_sec): o
-            for o in base_obs
-            if o.population == population and o.equivalence_parent_id is None
-        }
-        agent_by_key = {
-            (o.instance_id, o.solver_seed, o.budget_sec): o
-            for o in agent_obs
-            if o.population == population and o.equivalence_parent_id is None
-        }
-        for key in set(base_by_key) & set(agent_by_key):
-            base, agent = base_by_key[key], agent_by_key[key]
-            if not (base.valid and agent.valid):
-                continue
-            if (
-                base.objective is not None
-                and agent.objective is not None
-                and abs(base.objective) > 1e-12
-            ):
-                paired_performance.append(
-                    (base.objective - agent.objective) / abs(base.objective)
-                )
-            elif base.normalized_gap is not None and agent.normalized_gap is not None:
-                paired_performance.append(base.normalized_gap - agent.normalized_gap)
+    for key in set(base_by_key) & set(agent_by_key):
+        base, agent = base_by_key[key], agent_by_key[key]
+        if not (base.valid and agent.valid):
+            continue
+        if (
+            base.objective is not None
+            and agent.objective is not None
+            and abs(base.objective) > 1e-12
+        ):
+            paired_performance.append(
+                (base.objective - agent.objective) / abs(base.objective)
+            )
+        elif base.normalized_gap is not None and agent.normalized_gap is not None:
+            paired_performance.append(base.normalized_gap - agent.normalized_gap)
     neg_count = sum(value < -1e-9 for value in paired_performance)
     neg_fraction = neg_count / len(paired_performance) if paired_performance else 0.0
 
     return CrossPopulationRetentionMetrics(
         has_multi_population=True,
-        populations_evaluated=populations,
-        dev_population=dev_name,
-        dev_gap_reduction=dev_reduction,
-        eval_gap_reduction=eval_reduction,
+        populations_evaluated=[id_name, shift_name],
+        id_population=id_name,
+        shift_population=shift_name,
+        id_gap_reduction=id_reduction,
+        shift_gap_reduction=shift_reduction,
         gain_retention=gain_retention,
-        dev_reliability_gain=dev_reliability,
-        eval_reliability_gain=eval_reliability,
+        id_reliability_gain=id_reliability,
+        shift_reliability_gain=shift_reliability,
         reliability_gain_retention=reliability_retention,
-        dev_resource_gain=dev_resource,
-        eval_resource_gain=eval_resource,
+        id_resource_gain=id_resource,
+        shift_resource_gain=shift_resource,
         resource_gain_retention=resource_retention,
-        delta_performance_gain=_difference(dev_reduction, eval_reduction),
-        delta_reliability_gain=_difference(dev_reliability, eval_reliability),
-        delta_resource_gain=_difference(dev_resource, eval_resource),
+        delta_performance_gain=_difference(id_reduction, shift_reduction),
+        delta_reliability_gain=_difference(id_reliability, shift_reliability),
+        delta_resource_gain=_difference(id_resource, shift_resource),
         negative_transfer_count=neg_count,
         negative_transfer_fraction=neg_fraction,
+        # Backward-compatible aliases
+        dev_population=id_name,
+        dev_gap_reduction=id_reduction,
+        eval_gap_reduction=shift_reduction,
+        dev_reliability_gain=id_reliability,
+        eval_reliability_gain=shift_reliability,
+        dev_resource_gain=id_resource,
+        eval_resource_gain=shift_resource,
     )
 
 
@@ -1012,33 +1045,65 @@ def format_sensitivity_report_table(report: SensitivityReport) -> str:
                 ]
             )
 
-    # Section: Cross-Population Retention
-    rows.append(["[4. Cross-Population Gain Retention]", "", "", ""])
+    # Section: Cross-Population Generalization
+    rows.append(["[4. Cross-Population Generalization (judge_id -> judge_shift)]", "", "", ""])
     if report.cross_population_retention.has_multi_population:
         cpr = report.cross_population_retention
+        id_pop = cpr.id_population or cpr.dev_population or "judge_id"
+        shift_pop = cpr.shift_population or "judge_shift"
+        id_gap = (
+            cpr.id_gap_reduction
+            if cpr.id_gap_reduction is not None
+            else cpr.dev_gap_reduction
+        )
+        shift_gap = (
+            cpr.shift_gap_reduction
+            if cpr.shift_gap_reduction is not None
+            else cpr.eval_gap_reduction
+        )
+        id_rel = (
+            cpr.id_reliability_gain
+            if cpr.id_reliability_gain is not None
+            else cpr.dev_reliability_gain
+        )
+        shift_rel = (
+            cpr.shift_reliability_gain
+            if cpr.shift_reliability_gain is not None
+            else cpr.eval_reliability_gain
+        )
+        id_res = (
+            cpr.id_resource_gain
+            if cpr.id_resource_gain is not None
+            else cpr.dev_resource_gain
+        )
+        shift_res = (
+            cpr.shift_resource_gain
+            if cpr.shift_resource_gain is not None
+            else cpr.eval_resource_gain
+        )
         rows.append(
             [
-                f"  Reference Performance Gain ({cpr.dev_population})",
+                f"  In-Distribution Performance Gain ({id_pop})",
                 "-",
                 "-",
-                f"{cpr.dev_gap_reduction:.4f}"
-                if cpr.dev_gap_reduction is not None
+                f"{id_gap:.4f}"
+                if id_gap is not None
                 else "-",
             ]
         )
         rows.append(
             [
-                "  Shifted-Population Performance Gain",
+                f"  Distribution Shift Performance Gain ({shift_pop})",
                 "-",
                 "-",
-                f"{cpr.eval_gap_reduction:.4f}"
-                if cpr.eval_gap_reduction is not None
+                f"{shift_gap:.4f}"
+                if shift_gap is not None
                 else "-",
             ]
         )
         rows.append(
             [
-                "  Gain Retention Ratio (Eval / Dev)",
+                "  Generalization Gain Retention (Shift / ID)",
                 "-",
                 "-",
                 f"{cpr.gain_retention * 100:.1f}%"
@@ -1049,14 +1114,14 @@ def format_sensitivity_report_table(report: SensitivityReport) -> str:
         for label, reference, shifted, delta in (
             (
                 "  Reliability Gain (Agent - Base)",
-                cpr.dev_reliability_gain,
-                cpr.eval_reliability_gain,
+                id_rel,
+                shift_rel,
                 cpr.delta_reliability_gain,
             ),
             (
                 "  Resource Gain (Base - Agent)",
-                cpr.dev_resource_gain,
-                cpr.eval_resource_gain,
+                id_res,
+                shift_res,
                 cpr.delta_resource_gain,
             ),
         ):
@@ -1074,7 +1139,7 @@ def format_sensitivity_report_table(report: SensitivityReport) -> str:
         )
         rows.append(
             [
-                "  Negative Transfer Fraction",
+                f"  Negative Transfer Fraction ({shift_pop})",
                 "-",
                 "-",
                 neg_msg,
@@ -1083,10 +1148,10 @@ def format_sensitivity_report_table(report: SensitivityReport) -> str:
     else:
         rows.append(
             [
-                "  Cross-Population Analysis",
+                "  Population Generalization",
                 "Single Pop",
                 "Single Pop",
-                "None (Single population panel)",
+                "None (judge_id + judge_shift required)",
             ]
         )
 

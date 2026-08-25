@@ -24,6 +24,7 @@ def _make_obs(
     solver_seed: int,
     *,
     population: str = "agent_dev",
+    population_kind: str | None = None,
     budget_sec: float = 10.0,
     status: RunStatus = RunStatus.COMPLETED,
     valid: bool = True,
@@ -37,6 +38,7 @@ def _make_obs(
         task_id="test_task",
         code_state=code_state,
         population=population,
+        population_kind=population_kind or population,
         instance_id=instance_id,
         instance_seed=100,
         solver_seed=solver_seed,
@@ -400,24 +402,39 @@ def test_problem_scalability_requires_an_estimable_budget_slice() -> None:
 
 
 def test_cross_population_gain_retention() -> None:
-    # agent_dev: base gap = 0.10, agent gap = 0.05 -> gain = 0.05
-    # judge_id:  base gap = 0.12, agent gap = 0.08 -> gain = 0.04
+    # judge_id:    base gap = 0.10, agent gap = 0.05 -> ID gain = 0.05
+    # judge_shift: base gap = 0.12, agent gap = 0.08 -> Shift gain = 0.04
     # retention = 0.04 / 0.05 = 80.0%
+    # agent_dev is included to verify that training/dev data is strictly excluded.
     base_obs = [
-        _make_obs(CodeState.BASE, "d1", 0, population="agent_dev", normalized_gap=0.10),
-        _make_obs(CodeState.BASE, "j1", 0, population="judge_id", normalized_gap=0.12),
+        _make_obs(
+            CodeState.BASE, "d1", 0, population="agent_dev", population_kind="agent_dev", normalized_gap=0.20
+        ),
+        _make_obs(
+            CodeState.BASE, "j1", 0, population="judge_id", population_kind="judge_id", normalized_gap=0.10
+        ),
+        _make_obs(
+            CodeState.BASE, "s1", 0, population="judge_shift", population_kind="judge_shift", normalized_gap=0.12
+        ),
     ]
     agent_obs = [
         _make_obs(
-            CodeState.AGENT, "d1", 0, population="agent_dev", normalized_gap=0.05
+            CodeState.AGENT, "d1", 0, population="agent_dev", population_kind="agent_dev", normalized_gap=0.02
         ),
-        _make_obs(CodeState.AGENT, "j1", 0, population="judge_id", normalized_gap=0.08),
+        _make_obs(
+            CodeState.AGENT, "j1", 0, population="judge_id", population_kind="judge_id", normalized_gap=0.05
+        ),
+        _make_obs(
+            CodeState.AGENT, "s1", 0, population="judge_shift", population_kind="judge_shift", normalized_gap=0.08
+        ),
     ]
 
     ret = compute_cross_population_retention(base_obs, agent_obs)
     assert ret.has_multi_population
-    assert ret.dev_gap_reduction == pytest.approx(0.05)
-    assert ret.eval_gap_reduction == pytest.approx(0.04)
+    assert ret.id_population == "judge_id"
+    assert ret.shift_population == "judge_shift"
+    assert ret.id_gap_reduction == pytest.approx(0.05)
+    assert ret.shift_gap_reduction == pytest.approx(0.04)
     assert ret.gain_retention == pytest.approx(0.80)
     assert ret.negative_transfer_count == 0
     assert ret.negative_transfer_fraction == pytest.approx(0.0)
@@ -469,5 +486,5 @@ def test_complete_sensitivity_report() -> None:
     assert "Seed Stability" in table_str
     assert "Representation Stability" in table_str
     assert "Problem Scalability" in table_str
-    assert "Cross-Population Gain Retention" in table_str
+    assert "Cross-Population Generalization" in table_str
     assert "Sensitivity Summary Matrix" in table_str
