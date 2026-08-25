@@ -157,6 +157,7 @@ Once those evaluator-owned inputs are provisioned, one command materializes the 
 uv run pitbench evaluate pyvrp_v0_14_0 \
   --agent codex \
   --model gpt-5.6-terra \
+  --agent-kwarg reasoning_effort=xhigh \
   --judge-image "$PITBENCH_JUDGE_IMAGE"
 
 uv run pitbench evaluate pyvrp_v0_14_0 \

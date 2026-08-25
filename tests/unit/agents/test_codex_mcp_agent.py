@@ -105,6 +105,7 @@ def test_codex_command_uses_isolated_runner_and_loopback_mcp():
     agent = CodexMCPAgent(
         model_name="openai/gpt-5",
         runner_path="/installed/pitbench-codex-runner",
+        reasoning_effort="xhigh",
     )
 
     command = agent._build_command(
@@ -128,6 +129,7 @@ def test_codex_command_uses_isolated_runner_and_loopback_mcp():
     ]
     assert 'mcp_servers.pitbench.url="http://127.0.0.1:43210/mcp"' in command
     assert 'mcp_servers.pitbench.default_tools_approval_mode="approve"' in command
+    assert 'model_reasoning_effort="xhigh"' in command
     assert not any("auth.json" in argument for argument in command)
 
 
@@ -135,6 +137,7 @@ def test_codex_control_plane_command_uses_runner_without_task_mcp():
     agent = CodexMCPAgent(
         model_name="openai/gpt-5.6-luna",
         runner_path="/installed/pitbench-codex-runner",
+        reasoning_effort="xhigh",
     )
 
     command = agent._build_control_plane_command()
@@ -149,7 +152,16 @@ def test_codex_control_plane_command_uses_runner_without_task_mcp():
         "exec",
     ]
     assert command[command.index("--model") + 1] == "gpt-5.6-luna"
+    assert 'model_reasoning_effort="xhigh"' in command
     assert not any("mcp_servers" in argument for argument in command)
+
+
+def test_codex_omits_reasoning_effort_when_unspecified():
+    agent = CodexMCPAgent(model_name="gpt-5.5")
+
+    command = agent._build_control_plane_command()
+
+    assert not any("model_reasoning_effort" in argument for argument in command)
 
 
 def test_runner_payload_copies_only_auth_and_proxy(tmp_path):

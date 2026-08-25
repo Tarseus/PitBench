@@ -60,6 +60,7 @@ Task:
         control_plane_preflight: bool = True,
         control_plane_timeout_sec: float = 120.0,
         proxy_url: str | None = None,
+        reasoning_effort: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -73,6 +74,7 @@ Task:
         self._control_plane_preflight = control_plane_preflight
         self._control_plane_timeout_sec = control_plane_timeout_sec
         self._proxy_url = proxy_url
+        self._reasoning_effort = reasoning_effort
         self._process: subprocess.Popen[str] | None = None
         self._process_lock = threading.Lock()
         self._cancelled = threading.Event()
@@ -168,7 +170,7 @@ Task:
         mcp_url: str,
         instruction: str,
     ) -> list[str]:
-        return [
+        command = [
             "sudo",
             "-n",
             "-u",
@@ -186,16 +188,30 @@ Task:
             "--skip-git-repo-check",
             "--model",
             self._model_name,
+        ]
+        command.extend(self._reasoning_effort_args())
+        command.extend(
+            [
+                "-c",
+                f"mcp_servers.pitbench.url={json.dumps(mcp_url)}",
+                "-c",
+                'mcp_servers.pitbench.default_tools_approval_mode="approve"',
+                "--",
+                self._PROMPT.format(instruction=self._render_instruction(instruction)),
+            ]
+        )
+        return command
+
+    def _reasoning_effort_args(self) -> list[str]:
+        if self._reasoning_effort is None:
+            return []
+        return [
             "-c",
-            f"mcp_servers.pitbench.url={json.dumps(mcp_url)}",
-            "-c",
-            'mcp_servers.pitbench.default_tools_approval_mode="approve"',
-            "--",
-            self._PROMPT.format(instruction=self._render_instruction(instruction)),
+            f"model_reasoning_effort={json.dumps(self._reasoning_effort)}",
         ]
 
     def _build_control_plane_command(self) -> list[str]:
-        return [
+        command = [
             "sudo",
             "-n",
             "-u",
@@ -213,9 +229,10 @@ Task:
             "--skip-git-repo-check",
             "--model",
             self._model_name,
-            "--",
-            self._CONTROL_PLANE_PROMPT,
         ]
+        command.extend(self._reasoning_effort_args())
+        command.extend(["--", self._CONTROL_PLANE_PROMPT])
+        return command
 
     def _runner_payload(self, env: dict[str, str]) -> str:
         try:
