@@ -98,6 +98,13 @@ class ProblemScaleProfile(BaseModel):
     runtime_scaling_slope: float | None = None
     gap_scaling_slope: float | None = None
     reliability_scaling_slope: float | None = None
+    gap_scaling_slopes_by_budget: dict[float, float] = Field(default_factory=dict)
+    reliability_scaling_slopes_by_budget: dict[float, float] = Field(
+        default_factory=dict
+    )
+    runtime_scaling_slopes_by_budget: dict[float, float] = Field(
+        default_factory=dict
+    )
 
 
 class ProblemScalabilityComparison(BaseModel):
@@ -108,6 +115,13 @@ class ProblemScalabilityComparison(BaseModel):
     delta_runtime_slope: float | None = None
     delta_gap_slope: float | None = None
     delta_reliability_slope: float | None = None
+    delta_gap_slopes_by_budget: dict[float, float] = Field(default_factory=dict)
+    delta_reliability_slopes_by_budget: dict[float, float] = Field(
+        default_factory=dict
+    )
+    delta_runtime_slopes_by_budget: dict[float, float] = Field(
+        default_factory=dict
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -413,43 +427,138 @@ def compute_problem_scalability(
         if not scale_obs:
             return ProblemScaleProfile(has_scale_data=False)
 
-        scales: list[float] = []
-        log_scales: list[float] = []
-        log_runtimes: list[float] = []
-        gap_scales: list[float] = []
-        gaps: list[float] = []
-        reliability: list[float] = []
-
-        for o in scale_obs:
-            scale = scale_descriptors[o.instance_id]
-            if scale <= 0:
-                continue
-            scales.append(scale)
-            log_scales.append(math.log(scale))
-            if o.wall_time_sec is not None and o.wall_time_sec > 0:
-                log_runtimes.append(math.log(o.wall_time_sec))
-            else:
-                log_runtimes.append(math.log(max(1e-6, o.budget_sec)))
-            reliability.append(1.0 if o.valid else 0.0)
-            if o.valid and o.normalized_gap is not None:
-                gap_scales.append(math.log(scale))
-                gaps.append(o.normalized_gap)
-
-        runtime_slope = compute_linear_slope(log_scales, log_runtimes)
-        gap_slope = compute_linear_slope(gap_scales, gaps)
-        reliability_slope = compute_linear_slope(log_scales, reliability)
-
+        scales = [
+            scale_descriptors[o.instance_id]
+            for o in scale_obs
+            if scale_descriptors[o.instance_id] > 0
+        ]
         unique_scales = len(set(scales))
+        if unique_scales < 2:
+            return ProblemScaleProfile(
+                has_scale_data=False,
+                scales_evaluated=unique_scales,
+            )
+
+        budgets = sorted({o.budget_sec for o in scale_obs if o.budget_sec is not None})
+        if not budgets:
+            budgets = [1.0]
+
+        gap_slopes_by_budget: dict[float, float] = {}
+        reliability_slopes_by_budget: dict[float, float] = {}
+        runtime_slopes_by_budget: dict[float, float] = {}
+
+        for b in budgets:
+            b_runs = [o for o in scale_obs if o.budget_sec == b]
+            if not b_runs:
+                continue
+            runs_by_inst: dict[str, list[RunObservation]] = defaultdict(list)
+            for o in b_runs:
+                runs_by_inst[o.instance_id].append(o)
+
+            log_scales_b: list[float] = []
+            log_runtimes_b: list[float] = []
+            gap_log_scales_b: list[float] = []
+            mean_gaps_b: list[float] = []
+            reliabilities_b: list[float] = []
+
+            for inst_id, runs in runs_by_inst.items():
+                scale = scale_descriptors[inst_id]
+                if scale <= 0:
+                    continue
+                log_s = math.log(scale)
+                log_scales_b.append(log_s)
+
+                # Reliability (fraction of valid runs for this instance and budget)
+                valid_runs = [r for r in runs if r.valid]
+                reliabilities_b.append(len(valid_runs) / len(runs))
+
+                # Runtime (mean wall time across runs, or budget fallback)
+                wall_times = [
+                    r.wall_time_sec
+                    for r in runs
+                    if r.wall_time_sec is not None and r.wall_time_sec > 0
+                ]
+                mean_runtime = (
+                    statistics.mean(wall_times) if wall_times else max(1e-6, b)
+                )
+                log_runtimes_b.append(math.log(mean_runtime))
+
+                # Gap (mean normalized gap over valid runs with gap data)
+                valid_gaps = [
+                    r.normalized_gap
+                    for r in valid_runs
+                    if r.normalized_gap is not None
+                ]
+                if valid_gaps:
+                    gap_log_scales_b.append(log_s)
+                    mean_gaps_b.append(statistics.mean(valid_gaps))
+
+            r_slope = compute_linear_slope(log_scales_b, log_runtimes_b)
+            if r_slope is not None:
+                runtime_slopes_by_budget[b] = r_slope
+
+            rel_slope = compute_linear_slope(log_scales_b, reliabilities_b)
+            if rel_slope is not None:
+                reliability_slopes_by_budget[b] = rel_slope
+
+            g_slope = compute_linear_slope(gap_log_scales_b, mean_gaps_b)
+            if g_slope is not None:
+                gap_slopes_by_budget[b] = g_slope
+
+        primary_b = max(budgets) if budgets else 1.0
+        primary_gap_slope = gap_slopes_by_budget.get(primary_b)
+        if primary_gap_slope is None and gap_slopes_by_budget:
+            primary_gap_slope = list(gap_slopes_by_budget.values())[-1]
+
+        primary_rel_slope = reliability_slopes_by_budget.get(primary_b)
+        if primary_rel_slope is None and reliability_slopes_by_budget:
+            primary_rel_slope = list(reliability_slopes_by_budget.values())[-1]
+
+        primary_runtime_slope = runtime_slopes_by_budget.get(primary_b)
+        if primary_runtime_slope is None and runtime_slopes_by_budget:
+            primary_runtime_slope = list(runtime_slopes_by_budget.values())[-1]
+
         return ProblemScaleProfile(
-            has_scale_data=unique_scales >= 2,
+            has_scale_data=True,
             scales_evaluated=unique_scales,
-            runtime_scaling_slope=runtime_slope,
-            gap_scaling_slope=gap_slope,
-            reliability_scaling_slope=reliability_slope,
+            runtime_scaling_slope=primary_runtime_slope,
+            gap_scaling_slope=primary_gap_slope,
+            reliability_scaling_slope=primary_rel_slope,
+            gap_scaling_slopes_by_budget=gap_slopes_by_budget,
+            reliability_scaling_slopes_by_budget=reliability_slopes_by_budget,
+            runtime_scaling_slopes_by_budget=runtime_slopes_by_budget,
         )
 
     base_p = _profile(base_obs)
     agent_p = _profile(agent_obs)
+
+    all_budgets = sorted(
+        set(base_p.gap_scaling_slopes_by_budget)
+        | set(agent_p.gap_scaling_slopes_by_budget)
+        | set(base_p.reliability_scaling_slopes_by_budget)
+        | set(agent_p.reliability_scaling_slopes_by_budget)
+        | set(base_p.runtime_scaling_slopes_by_budget)
+        | set(agent_p.runtime_scaling_slopes_by_budget)
+    )
+    delta_gap_slopes_by_budget: dict[float, float] = {}
+    delta_rel_slopes_by_budget: dict[float, float] = {}
+    delta_runtime_slopes_by_budget: dict[float, float] = {}
+
+    for b in all_budgets:
+        base_g = base_p.gap_scaling_slopes_by_budget.get(b)
+        agent_g = agent_p.gap_scaling_slopes_by_budget.get(b)
+        if base_g is not None and agent_g is not None:
+            delta_gap_slopes_by_budget[b] = agent_g - base_g
+
+        base_r = base_p.reliability_scaling_slopes_by_budget.get(b)
+        agent_r = agent_p.reliability_scaling_slopes_by_budget.get(b)
+        if base_r is not None and agent_r is not None:
+            delta_rel_slopes_by_budget[b] = agent_r - base_r
+
+        base_t = base_p.runtime_scaling_slopes_by_budget.get(b)
+        agent_t = agent_p.runtime_scaling_slopes_by_budget.get(b)
+        if base_t is not None and agent_t is not None:
+            delta_runtime_slopes_by_budget[b] = agent_t - base_t
 
     delta_runtime_slope = None
     if (
@@ -479,6 +588,9 @@ def compute_problem_scalability(
         delta_runtime_slope=delta_runtime_slope,
         delta_gap_slope=delta_gap_slope,
         delta_reliability_slope=delta_reliability_slope,
+        delta_gap_slopes_by_budget=delta_gap_slopes_by_budget,
+        delta_reliability_slopes_by_budget=delta_rel_slopes_by_budget,
+        delta_runtime_slopes_by_budget=delta_runtime_slopes_by_budget,
     )
 
 
@@ -843,8 +955,29 @@ def format_sensitivity_report_table(report: SensitivityReport) -> str:
                 ),
             ]
         )
-        rows.extend(
-            [
+        budgets_with_gap = sorted(
+            set(base_sc.gap_scaling_slopes_by_budget)
+            | set(agent_sc.gap_scaling_slopes_by_budget)
+        )
+        if len(budgets_with_gap) > 1:
+            for b in budgets_with_gap:
+                b_base = base_sc.gap_scaling_slopes_by_budget.get(b)
+                b_agent = agent_sc.gap_scaling_slopes_by_budget.get(b)
+                b_delta = report.problem_scalability.delta_gap_slopes_by_budget.get(b)
+                rows.append(
+                    [
+                        f"  Gap Scaling Slope @ {b:.1f}s (d gap / d log s)",
+                        f"{b_base:.3f}" if b_base is not None else "-",
+                        f"{b_agent:.3f}" if b_agent is not None else "-",
+                        (
+                            f"Δ {b_delta:+.3f}"
+                            if b_delta is not None
+                            else "-"
+                        ),
+                    ]
+                )
+        else:
+            rows.append(
                 [
                     "  Gap Scaling Slope (d gap / d log s)",
                     f"{base_sc.gap_scaling_slope:.3f}"
@@ -853,22 +986,27 @@ def format_sensitivity_report_table(report: SensitivityReport) -> str:
                     f"{agent_sc.gap_scaling_slope:.3f}"
                     if agent_sc.gap_scaling_slope is not None
                     else "-",
-                    f"Δ {report.problem_scalability.delta_gap_slope:+.3f}"
-                    if report.problem_scalability.delta_gap_slope is not None
-                    else "-",
-                ],
-                [
-                    "  Reliability Scaling Slope (d success / d log s)",
-                    f"{base_sc.reliability_scaling_slope:.3f}"
-                    if base_sc.reliability_scaling_slope is not None
-                    else "-",
-                    f"{agent_sc.reliability_scaling_slope:.3f}"
-                    if agent_sc.reliability_scaling_slope is not None
-                    else "-",
+                    (
+                        f"Δ {report.problem_scalability.delta_gap_slope:+.3f}"
+                        if report.problem_scalability.delta_gap_slope is not None
+                        else "-"
+                    ),
+                ]
+            )
+        rows.append(
+            [
+                "  Reliability Scaling Slope (d success / d log s)",
+                f"{base_sc.reliability_scaling_slope:.3f}"
+                if base_sc.reliability_scaling_slope is not None
+                else "-",
+                f"{agent_sc.reliability_scaling_slope:.3f}"
+                if agent_sc.reliability_scaling_slope is not None
+                else "-",
+                (
                     f"Δ {report.problem_scalability.delta_reliability_slope:+.3f}"
                     if report.problem_scalability.delta_reliability_slope is not None
-                    else "-",
-                ],
+                    else "-"
+                ),
             ]
         )
     else:

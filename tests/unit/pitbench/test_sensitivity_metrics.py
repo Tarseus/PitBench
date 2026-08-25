@@ -172,6 +172,83 @@ def test_problem_scalability() -> None:
     assert scal.delta_runtime_slope == pytest.approx(0.0)
 
 
+def test_budget_conditioned_problem_scalability() -> None:
+    scale_desc: Mapping[str, float] = {
+        "inst_100": 100.0,
+        "inst_200": 200.0,
+        "inst_400": 400.0,
+    }
+    # Base:
+    # At budget 1.0s: gaps = [0.10, 0.20, 0.30] -> slope > 0
+    # At budget 10.0s: gaps = [0.01, 0.02, 0.03] -> smaller slope
+    # Multi-seed for inst_100 at 1.0s: seed 0 has 0.09, seed 1 has 0.11 -> mean is 0.10
+    base_obs = [
+        _make_obs(
+            CodeState.BASE, "inst_100", 0, budget_sec=1.0, normalized_gap=0.09
+        ),
+        _make_obs(
+            CodeState.BASE, "inst_100", 1, budget_sec=1.0, normalized_gap=0.11
+        ),
+        _make_obs(
+            CodeState.BASE, "inst_200", 0, budget_sec=1.0, normalized_gap=0.20
+        ),
+        _make_obs(
+            CodeState.BASE, "inst_400", 0, budget_sec=1.0, normalized_gap=0.30
+        ),
+        _make_obs(
+            CodeState.BASE, "inst_100", 0, budget_sec=10.0, normalized_gap=0.01
+        ),
+        _make_obs(
+            CodeState.BASE, "inst_200", 0, budget_sec=10.0, normalized_gap=0.02
+        ),
+        _make_obs(
+            CodeState.BASE, "inst_400", 0, budget_sec=10.0, normalized_gap=0.03
+        ),
+    ]
+
+    agent_obs = [
+        _make_obs(
+            CodeState.AGENT, "inst_100", 0, budget_sec=1.0, normalized_gap=0.08
+        ),
+        _make_obs(
+            CodeState.AGENT, "inst_200", 0, budget_sec=1.0, normalized_gap=0.16
+        ),
+        _make_obs(
+            CodeState.AGENT, "inst_400", 0, budget_sec=1.0, normalized_gap=0.24
+        ),
+        _make_obs(
+            CodeState.AGENT, "inst_100", 0, budget_sec=10.0, normalized_gap=0.005
+        ),
+        _make_obs(
+            CodeState.AGENT, "inst_200", 0, budget_sec=10.0, normalized_gap=0.010
+        ),
+        _make_obs(
+            CodeState.AGENT, "inst_400", 0, budget_sec=10.0, normalized_gap=0.015
+        ),
+    ]
+
+    scal = compute_problem_scalability(
+        base_obs, agent_obs, scale_descriptors=scale_desc
+    )
+    assert scal.base.has_scale_data
+    assert set(scal.base.gap_scaling_slopes_by_budget.keys()) == {1.0, 10.0}
+    assert set(scal.delta_gap_slopes_by_budget.keys()) == {1.0, 10.0}
+
+    # At 1.0s and 10.0s, agent gap slopes are lower than base (agent scales better)
+    assert scal.delta_gap_slopes_by_budget[1.0] < 0
+    assert scal.delta_gap_slopes_by_budget[10.0] < 0
+    # The slopes at 1.0s vs 10.0s are distinct and unconfounded
+    assert (
+        scal.base.gap_scaling_slopes_by_budget[1.0]
+        != scal.base.gap_scaling_slopes_by_budget[10.0]
+    )
+    # Primary representative slope uses max budget (10.0s)
+    assert scal.base.gap_scaling_slope == pytest.approx(
+        scal.base.gap_scaling_slopes_by_budget[10.0]
+    )
+    assert scal.delta_gap_slope == pytest.approx(scal.delta_gap_slopes_by_budget[10.0])
+
+
 def test_cross_population_gain_retention() -> None:
     # agent_dev: base gap = 0.10, agent gap = 0.05 -> gain = 0.05
     # judge_id:  base gap = 0.12, agent gap = 0.08 -> gain = 0.04
