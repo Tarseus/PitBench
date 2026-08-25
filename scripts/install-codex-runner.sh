@@ -6,9 +6,9 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-TARGET_USER="${SUDO_USER:-}"
+TARGET_USER="${PITBENCH_TARGET_USER:-${SUDO_USER:-}}"
 if [ -z "$TARGET_USER" ] || [ "$TARGET_USER" = "root" ]; then
-  echo "SUDO_USER must identify the desktop user running PitBench" >&2
+  echo "PITBENCH_TARGET_USER or SUDO_USER must identify the PitBench user" >&2
   exit 1
 fi
 

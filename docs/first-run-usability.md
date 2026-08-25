@@ -38,6 +38,9 @@ public quickstart can eventually become a reliable one-command workflow.
    provisioned, although the public quickstart currently supports only PyVRP.
 10. Users must manually copy evaluator-owned `private/` assets and discover that
     `runs/` is intentionally local output.
+11. The isolated-agent installers originally inferred the target user only from
+    `SUDO_USER`. An administrator installing on behalf of a different benchmark
+    user had no explicit target-user interface.
 
 ## Recommended changes
 
