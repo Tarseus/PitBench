@@ -126,10 +126,11 @@ def test_pyvrp_builds_and_runs_in_per_workspace_virtual_environments(
     assert validation[3].env["PYTHONPATH"] == ".pitbench-metadata"
     assert validation[3].env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
     assert "--no-build-isolation" in performance[1].argv
-    assert validation[3].argv[-4:] == [
+    assert validation[3].argv[-5:] == [
         "-o",
         "addopts=",
         "tests",
         "--ignore=tests/plotting",
+        "--deselect=tests/search/test_LocalSearch.py::test_debug_operator_logs",
     ]
     assert run.argv[0] == ".pitbench-venv/bin/python"

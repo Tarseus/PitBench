@@ -244,6 +244,152 @@ def evaluate_task(
     )
 
 
+@app.command("judge")
+def judge_candidate(
+    task_id: Annotated[str, typer.Argument(help="PitBench task ID")],
+    candidate_patch: Annotated[
+        Path, typer.Argument(help="Previously captured candidate.patch")
+    ],
+    output_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--output-dir",
+            help="Judge artifacts; defaults to the patch's containing directory",
+        ),
+    ] = None,
+    private_root: Annotated[
+        Path | None, typer.Option(help="Evaluator-only private storage")
+    ] = None,
+    repository_source: Annotated[
+        Path | None,
+        typer.Option(help="Pre-censored base repository snapshot"),
+    ] = None,
+    judge_image: Annotated[
+        str | None,
+        typer.Option(help="Immutable judge image digest or local image ID"),
+    ] = None,
+    judge_cpus: Annotated[
+        float, typer.Option(min=0.1, help="CPU limit for the isolated judge")
+    ] = 8.0,
+    judge_memory: Annotated[
+        str, typer.Option(help="Memory limit for the isolated judge")
+    ] = "8g",
+    config_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--config",
+            help=(
+                "Machine-local evaluation YAML; defaults to "
+                "config/evaluate.local.yaml when present"
+            ),
+        ),
+    ] = None,
+    root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
+) -> None:
+    """Run only the evaluator-owned judge on a previously captured patch."""
+    repository_root = _root(root)
+    resolved_config_path = resolve_config_path(repository_root, config_path)
+    evaluation_config = (
+        EvaluationConfig.from_yaml(resolved_config_path)
+        if resolved_config_path is not None
+        else EvaluationConfig()
+    )
+    if resolved_config_path is not None:
+        typer.echo(f"Loaded evaluation config {resolved_config_path}")
+
+    try:
+        record = next(
+            record
+            for record in TaskCatalog(repository_root).validate_all()
+            if record.task.task_id == task_id
+        )
+    except StopIteration as exc:
+        raise typer.BadParameter(
+            f"Unknown task '{task_id}'", param_hint="TASK_ID"
+        ) from exc
+
+    patch_path = candidate_patch.expanduser().resolve()
+    if not patch_path.is_file():
+        raise typer.BadParameter(
+            f"Candidate patch does not exist: {patch_path}",
+            param_hint="CANDIDATE_PATCH",
+        )
+
+    configured_paths = evaluation_config.paths
+    configured_resources = evaluation_config.resources_for(task_id)
+    resolved_private_root = resolve_repository_path(
+        repository_root, private_root or configured_paths.private_root
+    )
+    configured_repository_source = configured_resources.repository_source
+    selected_repository_source = repository_source or configured_repository_source
+    if selected_repository_source is None:
+        raise typer.BadParameter(
+            "Judge requires --repository-source or tasks.<task_id>.repository_source "
+            "in the evaluation config"
+        )
+    resolved_repository_source = resolve_repository_path(
+        repository_root, selected_repository_source
+    ).resolve()
+    if not resolved_repository_source.is_dir():
+        raise typer.BadParameter(
+            f"Repository snapshot does not exist: {resolved_repository_source}"
+        )
+
+    resolved_judge_image = (
+        judge_image
+        or configured_resources.judge_image
+        or record.task.repository.judge_image
+    )
+    if not resolved_judge_image:
+        raise typer.BadParameter(
+            "Judge requires --judge-image or tasks.<task_id>.judge_image in the "
+            "evaluation config"
+        )
+
+    resolved_output_dir = (
+        resolve_repository_path(repository_root, output_dir).resolve()
+        if output_dir is not None
+        else patch_path.parent
+    )
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
+    typer.echo(f"Starting isolated judge for {task_id}")
+    envelope = PitBenchEvaluator().envelope(
+        EvaluationRequest(
+            task_id=task_id,
+            task_path=repository_root,
+            candidate_patch_path=patch_path,
+            output_dir=resolved_output_dir,
+            agent_name="replay",
+            model_name=None,
+            evaluator_config={
+                "manifest_path": str(record.manifest_path),
+                "base_repository": str(resolved_repository_source),
+                "private_root": str(resolved_private_root),
+                "judge_image": resolved_judge_image,
+                "judge_cpus": judge_cpus,
+                "judge_memory": judge_memory,
+                "_progress_callback": typer.echo,
+            },
+        )
+    )
+    result_path = resolved_output_dir / "evaluation.json"
+    result_path.write_text(
+        json.dumps(envelope.model_dump(mode="json"), indent=2) + "\n"
+    )
+    if not envelope.completed:
+        typer.echo(f"Judge failed: {envelope.error}", err=True)
+        raise typer.Exit(code=1)
+
+    summary = envelope.payload["summary"]
+    typer.echo(
+        "Judge complete: "
+        f"{summary['valid_observation_count']}/{summary['observation_count']} "
+        "valid observations"
+    )
+    typer.echo(f"Artifacts: {resolved_output_dir}")
+    typer.echo(f"Report: pitbench report {resolved_output_dir}")
+
+
 @tasks_app.command("validate")
 def validate_tasks(
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,

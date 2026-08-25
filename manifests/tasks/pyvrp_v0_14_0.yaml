@@ -13,8 +13,9 @@ task_type: solver_search
 problem_family: cvrp
 optimization_scope: local_search_and_search_efficiency
 instruction: >-
-  Improve solver performance while preserving feasibility, objective semantics, and
-  accepted solution behavior. Use only the visible development instances.
+  Improve solver performance while preserving buildability, feasibility, objective
+  semantics, and solution format compatibility. Search policies and trajectories may
+  change. Use only the visible development instances.
 information_regime: snapshot_only
 repository:
   clone_url: https://github.com/PyVRP/PyVRP.git
