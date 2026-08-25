@@ -700,29 +700,20 @@ def compute_cross_population_retention(
     id_reduction, id_reliability, id_resource = _paired_gains(id_name)
     shift_reduction, shift_reliability, shift_resource = _paired_gains(shift_name)
 
-    gain_retention = None
-    if (
-        id_reduction is not None
-        and shift_reduction is not None
-        and abs(id_reduction) > 1e-9
-    ):
-        gain_retention = shift_reduction / id_reduction
+    def _compute_retention(
+        reference: float | None, shifted: float | None
+    ) -> float | None:
+        if reference is None or shifted is None:
+            return None
+        if reference <= 1e-9:
+            return None
+        if shifted <= 0:
+            return 0.0
+        return shifted / reference
 
-    reliability_retention = None
-    if (
-        id_reliability is not None
-        and shift_reliability is not None
-        and abs(id_reliability) > 1e-9
-    ):
-        reliability_retention = shift_reliability / id_reliability
-
-    resource_retention = None
-    if (
-        id_resource is not None
-        and shift_resource is not None
-        and abs(id_resource) > 1e-9
-    ):
-        resource_retention = shift_resource / id_resource
+    gain_retention = _compute_retention(id_reduction, shift_reduction)
+    reliability_retention = _compute_retention(id_reliability, shift_reliability)
+    resource_retention = _compute_retention(id_resource, shift_resource)
 
     def _difference(reference: float | None, shifted: float | None) -> float | None:
         if reference is None or shifted is None:
@@ -1100,14 +1091,18 @@ def format_sensitivity_report_table(report: SensitivityReport) -> str:
                 else "-",
             ]
         )
+        retention_str = "-"
+        if cpr.gain_retention is not None:
+            retention_str = f"{cpr.gain_retention * 100:.1f}%"
+        elif id_gap is not None and id_gap <= 1e-9:
+            retention_str = "N/A (No ID Gain)"
+
         rows.append(
             [
                 "  Generalization Gain Retention (Shift / ID)",
                 "-",
                 "-",
-                f"{cpr.gain_retention * 100:.1f}%"
-                if cpr.gain_retention is not None
-                else "-",
+                retention_str,
             ]
         )
         for label, reference, shifted, delta in (

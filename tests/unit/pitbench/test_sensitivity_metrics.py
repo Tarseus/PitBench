@@ -440,6 +440,58 @@ def test_cross_population_gain_retention() -> None:
     assert ret.negative_transfer_fraction == pytest.approx(0.0)
 
 
+def test_cross_population_gain_retention_negative_id_gain_is_na() -> None:
+    # Scenario C: ID has negative gain (-0.05), Shift has negative gain (-0.02)
+    # Gain retention should be None (N/A), NOT positive 0.40 (-0.02 / -0.05)!
+    base_obs_c = [
+        _make_obs(CodeState.BASE, "j1", 0, population="judge_id", population_kind="judge_id", normalized_gap=0.10),
+        _make_obs(CodeState.BASE, "s1", 0, population="judge_shift", population_kind="judge_shift", normalized_gap=0.10),
+    ]
+    agent_obs_c = [
+        _make_obs(CodeState.AGENT, "j1", 0, population="judge_id", population_kind="judge_id", normalized_gap=0.15),
+        _make_obs(CodeState.AGENT, "s1", 0, population="judge_shift", population_kind="judge_shift", normalized_gap=0.12),
+    ]
+    ret_c = compute_cross_population_retention(base_obs_c, agent_obs_c)
+    assert ret_c.id_gap_reduction == pytest.approx(-0.05)
+    assert ret_c.shift_gap_reduction == pytest.approx(-0.02)
+    assert ret_c.gain_retention is None
+    assert ret_c.delta_performance_gain == pytest.approx(0.03)
+
+    report_c = compute_sensitivity_report([*base_obs_c, *agent_obs_c])
+    table_c = format_sensitivity_report_table(report_c)
+    assert "N/A (No ID Gain)" in table_c
+
+    # Scenario D: ID has negative gain (-0.05), Shift has positive gain (+0.02)
+    # Gain retention should be None (N/A), because ID had no positive gain.
+    agent_obs_d = [
+        _make_obs(CodeState.AGENT, "j1", 0, population="judge_id", population_kind="judge_id", normalized_gap=0.15),
+        _make_obs(CodeState.AGENT, "s1", 0, population="judge_shift", population_kind="judge_shift", normalized_gap=0.08),
+    ]
+    ret_d = compute_cross_population_retention(base_obs_c, agent_obs_d)
+    assert ret_d.id_gap_reduction == pytest.approx(-0.05)
+    assert ret_d.shift_gap_reduction == pytest.approx(0.02)
+    assert ret_d.gain_retention is None
+
+
+def test_cross_population_gain_retention_positive_id_negative_shift_is_zero() -> None:
+    # Scenario B: ID has positive gain (+0.05), Shift has negative gain (-0.02)
+    # Gain retention should be 0.0 (0.0%), NOT negative.
+    base_obs = [
+        _make_obs(CodeState.BASE, "j1", 0, population="judge_id", population_kind="judge_id", normalized_gap=0.10),
+        _make_obs(CodeState.BASE, "s1", 0, population="judge_shift", population_kind="judge_shift", normalized_gap=0.10),
+    ]
+    agent_obs = [
+        _make_obs(CodeState.AGENT, "j1", 0, population="judge_id", population_kind="judge_id", normalized_gap=0.05),
+        _make_obs(CodeState.AGENT, "s1", 0, population="judge_shift", population_kind="judge_shift", normalized_gap=0.12),
+    ]
+    ret = compute_cross_population_retention(base_obs, agent_obs)
+    assert ret.id_gap_reduction == pytest.approx(0.05)
+    assert ret.shift_gap_reduction == pytest.approx(-0.02)
+    assert ret.gain_retention == pytest.approx(0.0)
+    assert ret.negative_transfer_count == 1
+    assert ret.negative_transfer_fraction == pytest.approx(1.0)
+
+
 def test_cross_population_requires_explicit_distinct_roles() -> None:
     observations = [
         _make_obs(
