@@ -107,6 +107,9 @@ def test_antigravity_entrypoint_merges_profile_and_injects_oauth(
         )
         observed["config"] = json.loads((gemini / "config/config.json").read_text())
         observed["mcp"] = json.loads((gemini / "config/mcp_config.json").read_text())
+        observed["cli_settings"] = json.loads(
+            (gemini / "antigravity-cli/settings.json").read_text()
+        )
         observed["hooks"] = (gemini / "config/hooks.json").read_text()
         return SimpleNamespace(returncode=0)
 
@@ -141,5 +144,8 @@ def test_antigravity_entrypoint_merges_profile_and_injects_oauth(
     assert observed["mcp"]["mcpServers"]["pitbench"] == {
         "url": "http://127.0.0.1:43210/mcp"
     }
+    assert observed["cli_settings"]["permissions"]["allow"] == [
+        "mcp(pitbench/run_command)"
+    ]
     assert observed["hooks"] == "{}\n"
     assert "secret" not in " ".join(observed["command"])

@@ -127,7 +127,9 @@ def test_runner_installs_exact_mcp_tool_permission(tmp_path, monkeypatch):
     )
     assert shared == {"permissions": {"allow": ["mcp(pitbench/run_command)"]}}
     assert cli["toolPermission"] == "request-review"
-    assert "permissions" not in cli
+    assert cli["permissions"] == {
+        "allow": ["mcp(pitbench/run_command)"],
+    }
     assert token["auth_method"] == "consumer"
     legacy = json.loads((runner_home / ".gemini" / "settings.json").read_text())
     assert legacy["security"]["auth"]["selectedType"] == "consumer"
