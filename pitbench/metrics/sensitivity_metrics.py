@@ -630,31 +630,30 @@ def compute_cross_population_retention(
             has_multi_population=False, populations_evaluated=populations
         )
 
-    kinds_by_population = {
-        obs.population: obs.population_kind
-        for obs in (*valid_base, *valid_agent)
-        if obs.population_kind is not None
-    }
-
-    # Reference in-distribution hidden population: judge_id
-    id_name = next(
-        (name for name, kind in kinds_by_population.items() if kind == "judge_id"),
-        next((p for p in populations if "id" in p.lower()), populations[0]),
+    id_populations = sorted(
+        {
+            obs.population
+            for obs in (*valid_base, *valid_agent)
+            if obs.population_kind == "judge_id"
+        }
     )
-    # Target shift hidden population: judge_shift
-    shift_candidates = [p for p in populations if p != id_name]
-    shift_name = next(
-        (name for name, kind in kinds_by_population.items() if kind == "judge_shift"),
-        next(
-            (p for p in shift_candidates if "shift" in p.lower()),
-            shift_candidates[0] if shift_candidates else None,
-        ),
+    shift_populations = sorted(
+        {
+            obs.population
+            for obs in (*valid_base, *valid_agent)
+            if obs.population_kind == "judge_shift"
+        }
     )
-
-    if shift_name is None:
+    if (
+        len(id_populations) != 1
+        or len(shift_populations) != 1
+        or id_populations[0] == shift_populations[0]
+    ):
         return CrossPopulationRetentionMetrics(
             has_multi_population=False, populations_evaluated=populations
         )
+    id_name = id_populations[0]
+    shift_name = shift_populations[0]
 
     def _paired_gains(pop: str) -> tuple[float | None, float | None, float | None]:
         base_by_key = {

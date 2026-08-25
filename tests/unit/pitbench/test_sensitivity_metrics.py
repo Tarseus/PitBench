@@ -440,6 +440,37 @@ def test_cross_population_gain_retention() -> None:
     assert ret.negative_transfer_fraction == pytest.approx(0.0)
 
 
+def test_cross_population_requires_explicit_distinct_roles() -> None:
+    observations = [
+        _make_obs(
+            code_state,
+            instance_id,
+            0,
+            population=population,
+            population_kind="judge_id",
+        )
+        for code_state in (CodeState.BASE, CodeState.AGENT)
+        for population, instance_id in (
+            ("hidden_primary", "p1"),
+            ("hidden_secondary", "p2"),
+        )
+    ]
+    base_obs = [o for o in observations if o.code_state == CodeState.BASE]
+    agent_obs = [o for o in observations if o.code_state == CodeState.AGENT]
+
+    ret = compute_cross_population_retention(base_obs, agent_obs)
+
+    assert not ret.has_multi_population
+    assert ret.populations_evaluated == ["hidden_primary", "hidden_secondary"]
+    assert ret.id_population is None
+    assert ret.shift_population is None
+
+    report = compute_sensitivity_report(observations)
+    assert report.matrix.population.performance is None
+    assert report.matrix.population.reliability is None
+    assert report.matrix.population.resource is None
+
+
 def test_complete_sensitivity_report() -> None:
     obs = [
         _make_obs(
