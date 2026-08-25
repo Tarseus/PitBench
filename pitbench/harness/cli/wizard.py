@@ -862,7 +862,7 @@ class Wizard:
         )
 
         self._print_with_color(
-            "See the README.md and docs/CONTRIBUTING.md for more detailed information.",
+            "See README.md for more detailed information.",
             color=Colors.CYAN,
             end="\n\n",
         )

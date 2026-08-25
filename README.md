@@ -1,6 +1,10 @@
-<p align="center">
-  <img src="docs/assets/pitbench_banner.svg" alt="PitBench Banner" width="100%">
-</p>
+# PitBench: Benchmarking Coding Agents on Real-World Solver Improvement
+
+*A repository-level benchmark for combinatorial optimization solvers.*
+
+PitBench is a benchmark for evaluating whether coding agents can make
+statistically significant, generalizable performance improvements to mature
+combinatorial optimization solver repositories.
 
 <p align="center">
   <img src="https://img.shields.io/badge/PitBench-Benchmark-8A2BE2?style=for-the-badge&logo=github&logoColor=white" alt="PitBench Benchmark">
@@ -27,10 +31,6 @@
   <a href="#-citation">
     <img src="https://img.shields.io/badge/%F0%9F%93%9D%20Citation-475569?style=flat-square" alt="Citation">
   </a>
-</p>
-
-<p align="center">
-  <b>A benchmark for evaluating whether coding agents can produce valid, statistically supported performance improvements in mature combinatorial-optimization solver repositories.</b>
 </p>
 
 ---
@@ -111,100 +111,45 @@ Unlike general repository-level coding benchmarks, solver optimization must pres
 
 ## 🚀 Quickstart
 
-### 1. Installation
+PitBench requires Linux x86-64, Python 3.12+, [uv](https://github.com/astral-sh/uv),
+Docker Engine with Compose, and an installed and authenticated Codex or
+Antigravity CLI. Formal runs also require the evaluator-provided private bundle
+and configured agent and judge images.
 
-PitBench requires Linux, Python 3.12+, [`uv`](https://github.com/astral-sh/uv), Docker Engine, and Docker Compose.
-
-```bash
-# Clone the repository
-git clone https://github.com/Tarseus/PitBench.git
-cd PitBench
-
-# Install development dependencies
-uv sync --group dev
-```
-
-### 2. Validate the Public Benchmark Contract
-
-The public repository includes task manifests, development instances, and the deterministic evaluator smoke path:
+With those prerequisites provisioned, install PitBench and start a Codex run in
+four commands:
 
 ```bash
-uv run pitbench tasks validate
-uv run pitbench tasks smoke --instances-per-population 1
-```
-
-Fixture smoke tests validate orchestration and storage contracts; they are not real solver results.
-
-### 3. Run a Maintainer-Provisioned Evaluation
-
-Formal evaluation additionally requires evaluator-owned hidden assets under `private/`. Machine-specific paths, image references, authentication-file paths, and optional proxies belong in an ignored local configuration file:
-
-```bash
+git clone https://github.com/Tarseus/PitBench.git && cd PitBench
+uv sync
 cp config/evaluate.example.yaml config/evaluate.local.yaml
-# Edit config/evaluate.local.yaml for this machine.
-
-# Codex with a ChatGPT subscription
-codex login
-
-# Or Antigravity with a Google subscription
-agy
-```
-
-The default Codex and Antigravity configurations run the locally installed CLI
-in a short-lived container. PitBench injects the selected agent's local OAuth
-login through stdin and does not mount the host home, task repository, or Docker
-socket. Neither agent needs an administrator-installed runner. The current shell
-must still be able to use Docker because the benchmark itself is containerized.
-
-To benchmark a customized Codex setup, create a reproducible profile and set its
-path in `config/evaluate.local.yaml`:
-
-```bash
-uv run pitbench profiles init my-codex --allow-hooks
-uv run pitbench profiles validate agent-profiles/my-codex
-
-uv run pitbench profiles init my-agy --agent antigravity --allow-hooks
-uv run pitbench profiles validate agent-profiles/my-agy
-```
-
-Put Codex customizations under `codex-home/` and Antigravity customizations under
-`gemini-config/`. PitBench records the profile hash and runner image ID with each
-trial. See [`docs/codex-container-runner.md`](docs/codex-container-runner.md) and
-[`docs/antigravity-container-runner.md`](docs/antigravity-container-runner.md)
-for their layouts, trust boundaries, and legacy host-runner configurations.
-
-Before starting an evaluation, diagnose the current shell and machine:
-
-```bash
-uv run pitbench doctor pyvrp
-```
-
-The command checks the live Docker API, host resources, local configuration,
-private-asset checksums, image references and availability, GHCR/daemon proxy
-access, credentials, and the isolated runners. It prints `PASS`, `WARN`, or
-`FAIL` for each check, gives a recovery action for failures, and exits nonzero
-until the required prerequisites and at least one agent are ready. Run it from
-the same shell or tmux session that will start the evaluation.
-
-Once those evaluator-owned inputs are provisioned, one command materializes the task, runs the agent, and starts independent judging:
-
-```bash
 uv run pitbench evaluate pyvrp_v0_14_0 \
   --agent codex \
-  --model gpt-5.6-terra \
+  --model gpt-5.6-sol \
   --agent-kwarg reasoning_effort=xhigh
+```
 
+Use Antigravity by replacing the final command with:
+
+```bash
 uv run pitbench evaluate pyvrp_v0_14_0 \
   --agent antigravity \
   --model gemini-3.1-pro-high
 ```
 
-`config/evaluate.local.yaml` is loaded automatically when present. An explicit
-`--config PATH` selects another file, and command-line values override YAML values.
-Agents use direct network access by default; a proxy is passed only when the selected
-agent's `proxy_url` is configured.
+The default configuration runs the locally installed agent CLI in a short-lived
+container and injects its OAuth login through standard input. It does not mount
+the host home, task repository, or Docker socket, and it does not require a
+sudo-installed agent runner. Direct network access is the default; set an
+agent's `proxy_url` only on machines that require one.
 
-### 4. Generate a Performance-First Report
+If the run cannot start, diagnose the current shell and machine with
+`uv run pitbench doctor pyvrp`. Custom Codex and Antigravity profiles can be
+created with `pitbench profiles init` and selected through `profile_path` in the
+local configuration. PitBench records the runner image ID and profile hash with
+every trial.
+
+### Generate a Performance-First Report
 
 Each trial stores observations under `runs/<run_id>/<task_id>/<trial_name>/evaluation/trials.parquet`. The report command accepts either that file or its containing `evaluation/` directory:
 
@@ -274,7 +219,7 @@ If you use PitBench in your research, please cite our work:
 
 ```bibtex
 @misc{pitbench2026,
-  title={PitBench: Performance-First Evaluation for Agents Modifying Combinatorial Optimization Solvers},
+  title={PitBench: Benchmarking Coding Agents on Real-World Solver Improvement},
   author={Tarseus Team and Contributors},
   year={2026},
   publisher={GitHub},
@@ -286,4 +231,8 @@ If you use PitBench in your research, please cite our work:
 
 ## License
 
-PitBench is distributed under the [BSD 3-Clause License](LICENSE). It incorporates and adapts components from FormulaCode; the original copyright notice is retained in the license file.
+PitBench is distributed under the [BSD 3-Clause License](LICENSE). The root
+license retains the FormulaCode Developers notice and adds the PitBench
+Contributors notice for subsequent work. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for provenance; the FormulaCode
+snapshot under `upstream/` retains its original license unchanged.
