@@ -6,6 +6,7 @@ import shutil
 import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -41,9 +42,24 @@ through PitBench MCP. Start by running `pwd`, `git status --short`, and `pitbenc
 inspect` through the PitBench MCP tool. Keep all changes inside the task repository
 and verify them with the visible PitBench commands.
 
+Treat existing tests as immutable specifications. Never change a test to accommodate
+an implementation change. The protected paths reported by `pitbench inspect` must
+not be modified. Preserve behavior across every supported problem feature, not only
+the visible development instances. Before finishing, run `pitbench validate` and
+`pitbench check`, inspect `git status --short`, and remove generated output and
+temporary helper files. The final candidate must contain only intentional source
+changes.
+
 Task:
 {instruction}
 """
+    _RETRYABLE_NETWORK_MARKERS = (
+        "network issue",
+        "connection reset",
+        "connecting to the server",
+        "stream was interrupted",
+        "temporarily unavailable",
+    )
 
     @staticmethod
     def name() -> str:
@@ -66,6 +82,7 @@ Task:
         print_timeout: str = "55m",
         effort: str | None = None,
         proxy_url: str | None = None,
+        network_retries: int = 1,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -97,6 +114,9 @@ Task:
         self._print_timeout = print_timeout
         self._effort = effort
         self._proxy_url = proxy_url
+        if network_retries not in {0, 1}:
+            raise ValueError("network_retries must be 0 or 1")
+        self._network_retries = network_retries
         self._process: subprocess.Popen[str] | None = None
         self._process_lock = threading.Lock()
         self._cancelled = threading.Event()
@@ -305,13 +325,16 @@ Task:
 
     @classmethod
     def _parse_usage(cls, output: str) -> tuple[int, int]:
+        input_tokens = 0
+        output_tokens = 0
         for event in cls._events(output):
             if event.get("event") != "result":
                 continue
             result = event.get("result") or {}
             usage = result.get("usage") or {}
-            return int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
-        return 0, 0
+            input_tokens += int(usage.get("input_tokens", 0))
+            output_tokens += int(usage.get("output_tokens", 0))
+        return input_tokens, output_tokens
 
     @classmethod
     def _has_successful_result(cls, output: str) -> bool:
@@ -319,6 +342,31 @@ Task:
             event.get("event") == "result"
             and (event.get("result") or {}).get("status") == "SUCCESS"
             for event in cls._events(output)
+        )
+
+    @classmethod
+    def _has_retryable_network_error(cls, output: str, stderr: str) -> bool:
+        messages = [stderr]
+        for event in cls._events(output):
+            if event.get("event") != "result":
+                continue
+            result = event.get("result") or {}
+            if result.get("status") == "SUCCESS":
+                return False
+            messages.extend(
+                [str(result.get("error") or ""), str(result.get("response") or "")]
+            )
+        combined = "\n".join(messages).lower()
+        return any(marker in combined for marker in cls._RETRYABLE_NETWORK_MARKERS)
+
+    @staticmethod
+    def _continuation_instruction(instruction: str) -> str:
+        return (
+            "A transient connection interrupted the previous attempt. Continue from "
+            "the existing task repository state instead of restarting. Inspect the "
+            "current diff, finish or repair the implementation, remove forbidden or "
+            "temporary changes, then run pitbench validate and pitbench check before "
+            f"finishing. The original task was:\n{instruction}"
         )
 
     @classmethod
@@ -398,35 +446,59 @@ Task:
         stdout = ""
         stderr = ""
         return_code = 1
+        deadline = time.monotonic() + self._timeout_sec
         with LoopbackMCPServer(terminal) as mcp_server:
             if mcp_server.url is None:
                 raise RuntimeError("PitBench MCP server URL is unavailable")
-            process = subprocess.Popen(
-                self._build_command(
-                    mcp_url=mcp_server.url,
-                    instruction=instruction,
-                ),
-                env=env,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
-            )
-            self._set_process(process)
-            try:
-                stdout, stderr = process.communicate(
-                    input=runner_payload,
-                    timeout=self._timeout_sec,
+            attempt_instruction = instruction
+            for attempt in range(self._network_retries + 1):
+                process = subprocess.Popen(
+                    self._build_command(
+                        mcp_url=mcp_server.url,
+                        instruction=attempt_instruction,
+                    ),
+                    env=env,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    start_new_session=True,
                 )
-                return_code = process.returncode
-            except subprocess.TimeoutExpired:
-                self._cancelled.set()
-                self._terminate_process(process)
-                stdout, stderr = process.communicate()
-                return_code = process.returncode
-            finally:
-                self._set_process(None)
+                self._set_process(process)
+                try:
+                    remaining = max(0.1, deadline - time.monotonic())
+                    attempt_stdout, attempt_stderr = process.communicate(
+                        input=runner_payload,
+                        timeout=remaining,
+                    )
+                    return_code = process.returncode
+                except subprocess.TimeoutExpired:
+                    self._cancelled.set()
+                    self._terminate_process(process)
+                    attempt_stdout, attempt_stderr = process.communicate()
+                    return_code = process.returncode
+                finally:
+                    self._set_process(None)
+
+                stdout += attempt_stdout
+                if attempt_stdout and not attempt_stdout.endswith("\n"):
+                    stdout += "\n"
+                stderr += attempt_stderr
+                if attempt_stderr and not attempt_stderr.endswith("\n"):
+                    stderr += "\n"
+
+                should_retry = (
+                    attempt < self._network_retries
+                    and not self._cancelled.is_set()
+                    and time.monotonic() < deadline
+                    and not self._has_successful_result(attempt_stdout)
+                    and self._has_retryable_network_error(
+                        attempt_stdout, attempt_stderr
+                    )
+                )
+                if not should_retry:
+                    break
+                attempt_instruction = self._continuation_instruction(instruction)
         if logging_dir is not None:
             (logging_dir / "antigravity.jsonl").write_text(stdout)
             (logging_dir / "antigravity.stderr.log").write_text(stderr)

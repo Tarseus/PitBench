@@ -62,7 +62,7 @@ _PREBUILD_COMMANDS = {
 
 # Increment when the generated task image or bundled public tooling becomes
 # incompatible with an image produced by an earlier PitBench checkout.
-IMAGE_REVISION = "1"
+IMAGE_REVISION = "2"
 IMAGE_REVISION_LABEL = "org.pitbench.image-revision"
 IMAGE_SOURCE_LABEL = "org.pitbench.image-source"
 
@@ -277,6 +277,7 @@ CMD ["sh", "-c", "sleep infinity"]
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
+      PITBENCH_RUNS: "/pitbench/runs"
       PYTHONHASHSEED: "0"
       TZ: "UTC"
 """

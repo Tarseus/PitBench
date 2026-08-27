@@ -634,7 +634,16 @@ class Harness:
             raise RuntimeError("agent container is not running")
         working_dir = container.attrs.get("Config", {}).get("WorkingDir") or None
         captured = container.exec_run(
-            ["sh", "-lc", "git add -N . && git diff --binary --no-ext-diff HEAD"],
+            [
+                "sh",
+                "-lc",
+                (
+                    "git add -N -- . ':(exclude).pitbench' "
+                    "':(exclude).pitbench/**' && "
+                    "git diff --binary --no-ext-diff HEAD -- . "
+                    "':(exclude).pitbench' ':(exclude).pitbench/**'"
+                ),
+            ],
             workdir=working_dir,
         )
         if captured.exit_code != 0:

@@ -45,6 +45,7 @@ class PitBenchEvaluator(Evaluator):
             patch_exists=patch_exists,
             policy_passed=policy.accepted,
             fixture_mode=fixture_mode,
+            policy_violations=policy.violations,
         )
         if not validity.accepted:
             observations = []

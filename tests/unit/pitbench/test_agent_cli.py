@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -87,11 +88,14 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
     payload = json.loads(inspected.stdout)
     assert payload["task_id"] == record.task.task_id
     assert len(payload["development_instances"]) == development.size
+    assert "tests" in payload["protected_paths"]
+    assert payload["validation_available"] is True
 
     instance = instances[0].stem
     for command in (
         ["bench", "--split", "dev", "--instance", instance, "--dry-run"],
         ["profile", "--instance", instance, "--dry-run"],
+        ["check"],
         ["diff"],
     ):
         subprocess.run(
@@ -108,3 +112,97 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
         if path.is_file()
     )
     assert "private://" not in visible
+
+
+def test_agent_cli_check_rejects_protected_changes(monkeypatch, tmp_path, capsys):
+    from pitbench import agent_cli
+
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    subprocess.run(["git", "init", "--quiet"], cwd=repository, check=True)
+    (repository / "README.md").write_text("fixture\n")
+    subprocess.run(["git", "add", "README.md"], cwd=repository, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=PitBench",
+            "-c",
+            "user.email=pitbench.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ],
+        cwd=repository,
+        check=True,
+    )
+    tests = repository / "tests"
+    tests.mkdir()
+    (tests / "test_solver.py").write_text("assert True\n")
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"protected_paths": ["tests"]}))
+    monkeypatch.setenv("PITBENCH_REPO", str(repository))
+    monkeypatch.setenv("PITBENCH_AGENT_CONFIG", str(config))
+
+    assert agent_cli.check_command(SimpleNamespace()) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["violations"] == ["protected path: tests/test_solver.py"]
+
+
+def test_agent_cli_validate_uses_clean_clone_and_candidate_patch(monkeypatch, tmp_path):
+    from pitbench import agent_cli
+
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    subprocess.run(["git", "init", "--quiet"], cwd=repository, check=True)
+    (repository / "README.md").write_text("fixture\n")
+    subprocess.run(["git", "add", "README.md"], cwd=repository, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=PitBench",
+            "-c",
+            "user.email=pitbench.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ],
+        cwd=repository,
+        check=True,
+    )
+    (repository / "candidate.txt").write_text("changed\n")
+    generated = repository / ".pitbench/runs"
+    generated.mkdir(parents=True)
+    (generated / "result.json").write_text("{}\n")
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "protected_paths": ["tests"],
+                "validation_commands": [
+                    {
+                        "argv": [
+                            "python",
+                            "-c",
+                            (
+                                "from pathlib import Path; "
+                                "assert Path('candidate.txt').read_text() == "
+                                "'changed\\n'; "
+                                "assert not Path('.pitbench/runs/result.json').exists()"
+                            ),
+                        ],
+                        "cwd": ".",
+                        "env": {},
+                        "timeout_sec": 30,
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.setenv("PITBENCH_REPO", str(repository))
+    monkeypatch.setenv("PITBENCH_AGENT_CONFIG", str(config))
+
+    assert agent_cli.validate_command(SimpleNamespace()) == 0

@@ -38,6 +38,14 @@ not the task repository. Do not use the host shell or web access. Start by runni
 `pwd`, `git status --short`, and `pitbench inspect` through the MCP tool. Keep all
 changes inside the task repository and verify them with the visible PitBench commands.
 
+Treat existing tests as immutable specifications. Never change a test to accommodate
+an implementation change. The protected paths reported by `pitbench inspect` must
+not be modified. Preserve behavior across every supported problem feature, not only
+the visible development instances. Before finishing, run `pitbench validate` and
+`pitbench check`, inspect `git status --short`, and remove generated output and
+temporary helper files. The final candidate must contain only intentional source
+changes.
+
 Task:
 {instruction}
 """

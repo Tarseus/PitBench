@@ -41,7 +41,8 @@ class FakeContainer:
     attrs = {"Config": {"WorkingDir": "/workspace/repo"}}
 
     def exec_run(self, command, workdir=None):
-        assert command[-1].endswith("git diff --binary --no-ext-diff HEAD")
+        assert "git diff --binary --no-ext-diff HEAD" in command[-1]
+        assert "':(exclude).pitbench/**'" in command[-1]
         assert workdir == "/workspace/repo"
         return SimpleNamespace(exit_code=0, output=b"diff --git a/a.py b/a.py\n")
 

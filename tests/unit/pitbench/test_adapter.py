@@ -95,6 +95,9 @@ def test_materialized_release_task_has_no_hidden_assets(
     assert dockerignore[0] == "*"
     assert "!repo" not in dockerignore
     assert "network_mode: none" in (destination / "docker-compose.yaml").read_text()
+    assert 'PITBENCH_RUNS: "/pitbench/runs"' in (
+        destination / "docker-compose.yaml"
+    ).read_text()
 
     legacy_task = task.model_copy(deep=True)
     legacy_task.repository.agent_image = None

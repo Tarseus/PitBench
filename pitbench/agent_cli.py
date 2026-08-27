@@ -6,9 +6,16 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
+
+_CANDIDATE_PATHS = (
+    ".",
+    ":(exclude).pitbench",
+    ":(exclude).pitbench/**",
+)
 
 
 def _path(environment: str, default: str) -> Path:
@@ -65,6 +72,8 @@ def inspect_command(_: argparse.Namespace) -> int:
         "development_instances": [path.name for path in _instances(None)],
         "runner_available": available,
         "runner_detail": detail,
+        "protected_paths": config.get("protected_paths", []),
+        "validation_available": bool(config.get("validation_commands")),
     }
     print(json.dumps(payload, indent=2))
     return 0
@@ -87,7 +96,7 @@ def _command(
 def _run_one(
     config: dict[str, Any], instance: Path, seed: int, budget: float, dry_run: bool
 ) -> bool:
-    run_root = _path("PITBENCH_RUNS", "/workspace/repo/.pitbench/runs")
+    run_root = _path("PITBENCH_RUNS", "/pitbench/runs")
     run_root.mkdir(parents=True, exist_ok=True)
     output = run_root / f"{instance.stem}.seed-{seed}.budget-{budget:g}.json"
     command = _command(config, instance, output, seed, budget)
@@ -160,7 +169,7 @@ def _verify_cvrp(instance_path: Path, solution_path: Path) -> tuple[bool, str]:
 
 def verify_command(args: argparse.Namespace) -> int:
     config = _config()
-    run_root = _path("PITBENCH_RUNS", "/workspace/repo/.pitbench/runs")
+    run_root = _path("PITBENCH_RUNS", "/pitbench/runs")
     results = (
         [Path(args.run)]
         if args.run
@@ -191,14 +200,154 @@ def verify_command(args: argparse.Namespace) -> int:
     return 0 if accepted else 1
 
 
-def diff_command(_: argparse.Namespace) -> int:
+def _repository() -> Path:
+    return _path("PITBENCH_REPO", "/workspace/repo")
+
+
+def _git_paths(repository: Path, *arguments: str) -> list[str]:
     completed = subprocess.run(
-        ["git", "diff", "--stat", "HEAD"],
-        cwd=_path("PITBENCH_REPO", "/workspace/repo"),
+        ["git", *arguments, "-z", "--", *_CANDIDATE_PATHS],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    return [
+        value.decode(errors="surrogateescape")
+        for value in completed.stdout.split(b"\0")
+        if value
+    ]
+
+
+def _changed_paths(repository: Path) -> list[str]:
+    tracked = _git_paths(repository, "diff", "--name-only", "HEAD")
+    untracked = _git_paths(repository, "ls-files", "--others", "--exclude-standard")
+    return sorted(set(tracked) | set(untracked))
+
+
+def _policy_result(config: dict[str, Any], changed_paths: list[str]) -> dict[str, Any]:
+    protected = tuple(map(str, config.get("protected_paths", [])))
+    violations = sorted(
+        f"protected path: {path}"
+        for path in changed_paths
+        if any(path == prefix or path.startswith(f"{prefix}/") for prefix in protected)
+    )
+    return {
+        "accepted": not violations,
+        "changed_paths": changed_paths,
+        "violations": violations,
+    }
+
+
+def check_command(_: argparse.Namespace) -> int:
+    result = _policy_result(_config(), _changed_paths(_repository()))
+    print(json.dumps(result, indent=2))
+    return 0 if result["accepted"] else 1
+
+
+def _prepare_candidate_index(repository: Path) -> None:
+    subprocess.run(
+        ["git", "add", "-N", "--", *_CANDIDATE_PATHS],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _candidate_patch(repository: Path) -> bytes:
+    _prepare_candidate_index(repository)
+    completed = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--binary",
+            "--no-ext-diff",
+            "HEAD",
+            "--",
+            *_CANDIDATE_PATHS,
+        ],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    return completed.stdout
+
+
+def diff_command(_: argparse.Namespace) -> int:
+    repository = _repository()
+    _prepare_candidate_index(repository)
+    completed = subprocess.run(
+        ["git", "diff", "--stat", "HEAD", "--", *_CANDIDATE_PATHS],
+        cwd=repository,
         check=False,
         text=True,
     )
     return completed.returncode
+
+
+def validate_command(_: argparse.Namespace) -> int:
+    config = _config()
+    repository = _repository()
+    policy = _policy_result(config, _changed_paths(repository))
+    if not policy["accepted"]:
+        print(json.dumps(policy, indent=2), file=sys.stderr)
+        return 1
+
+    commands = config.get("validation_commands") or []
+    if not commands:
+        print("public validation is unavailable for this task", file=sys.stderr)
+        return 2
+
+    patch = _candidate_patch(repository)
+    with tempfile.TemporaryDirectory(prefix="pitbench-public-validation-") as root:
+        workspace = Path(root) / "workspace"
+        cloned = subprocess.run(
+            ["git", "clone", "--quiet", "--no-hardlinks", str(repository), workspace],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if cloned.returncode:
+            print(cloned.stderr or cloned.stdout, file=sys.stderr)
+            return cloned.returncode
+        if patch:
+            applied = subprocess.run(
+                ["git", "apply", "--whitespace=nowarn", "-"],
+                cwd=workspace,
+                input=patch,
+                check=False,
+                capture_output=True,
+            )
+            if applied.returncode:
+                print(applied.stderr.decode(errors="replace"), file=sys.stderr)
+                return applied.returncode
+
+        for index, command in enumerate(commands, start=1):
+            argv = list(map(str, command["argv"]))
+            cwd = workspace / str(command.get("cwd", "."))
+            environment = os.environ.copy()
+            environment.update(
+                {str(key): str(value) for key, value in command.get("env", {}).items()}
+            )
+            print(
+                json.dumps(
+                    {"validation_step": index, "command": argv, "cwd": str(cwd)}
+                ),
+                flush=True,
+            )
+            try:
+                completed = subprocess.run(
+                    argv,
+                    cwd=cwd,
+                    env=environment,
+                    check=False,
+                    timeout=float(command.get("timeout_sec", 1800)),
+                )
+            except subprocess.TimeoutExpired:
+                print(f"validation step {index} timed out", file=sys.stderr)
+                return 124
+            if completed.returncode:
+                return completed.returncode
+    return 0
 
 
 def _run_options(parser: argparse.ArgumentParser, *, instance_required: bool) -> None:
@@ -223,6 +372,10 @@ def parser() -> argparse.ArgumentParser:
     verify = commands.add_parser("verify")
     verify.add_argument("--run")
     verify.set_defaults(handler=verify_command)
+    check = commands.add_parser("check")
+    check.set_defaults(handler=check_command)
+    validate = commands.add_parser("validate")
+    validate.set_defaults(handler=validate_command)
     diff = commands.add_parser("diff")
     diff.set_defaults(handler=diff_command)
     return result

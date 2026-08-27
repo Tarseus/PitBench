@@ -112,3 +112,35 @@ def test_patch_policy_protects_judge_surfaces(tmp_path: Path) -> None:
     result = PatchPolicy().inspect(patch)
     assert result.accepted is False
     assert result.violations == ["protected path: pitbench/evaluator/judge.py"]
+
+
+@pytest.mark.parametrize(
+    "patch_text",
+    [
+        (
+            "diff --git a/tests/test_solver.py b/tests/test_solver.py\n"
+            "deleted file mode 100644\n"
+            "--- a/tests/test_solver.py\n"
+            "+++ /dev/null\n"
+        ),
+        (
+            "diff --git a/tests/data.bin b/tests/data.bin\n"
+            "index 1234567..7654321 100644\n"
+            "GIT binary patch\n"
+        ),
+    ],
+)
+def test_patch_policy_protects_deleted_and_binary_paths(
+    tmp_path: Path, patch_text: str
+) -> None:
+    patch = tmp_path / "candidate.patch"
+    patch.write_text(patch_text)
+
+    result = PatchPolicy().inspect(patch)
+
+    assert result.accepted is False
+    assert result.violations == [
+        "protected path: tests/data.bin"
+        if "data.bin" in patch_text
+        else "protected path: tests/test_solver.py"
+    ]

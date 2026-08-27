@@ -4,6 +4,8 @@ import json
 import shutil
 from pathlib import Path
 
+from pitbench.evaluator.patch_policy import PatchPolicy
+from pitbench.repositories.base import BuildKind, RepositoryPluginRegistry
 from pitbench.schema.task import PitBenchTask
 
 
@@ -74,6 +76,7 @@ def write_agent_tooling(
     executable.write_text('#!/bin/sh\nexec python3 -m pitbench.agent_cli "$@"\n')
     executable.chmod(0o755)
 
+    repository = RepositoryPluginRegistry.load(task.repository.plugin)
     config = {
         "task_id": task.task_id,
         "task_type": task.task_type.value,
@@ -83,5 +86,10 @@ def write_agent_tooling(
         "threads": task.evaluation.threads,
         "runner": _RUNNERS[task.repository.plugin],
         "runner_requirement": _REQUIREMENTS[task.repository.plugin],
+        "protected_paths": list(PatchPolicy.DEFAULT_PROTECTED),
+        "validation_commands": [
+            command.model_dump(mode="json")
+            for command in repository.build_commands(BuildKind.VALIDATION)
+        ],
     }
     (task_dir / "agent_config.json").write_text(json.dumps(config, indent=2) + "\n")

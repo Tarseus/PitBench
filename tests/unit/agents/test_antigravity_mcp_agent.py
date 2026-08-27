@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ from pitbench.harness.agents.antigravity_container import (
     AntigravityContainerRunner,
 )
 from pitbench.harness.agents.antigravity_mcp_agent import AntigravityMCPAgent
+from pitbench.harness.agents.failure_mode import FailureMode
 
 
 def test_antigravity_command_uses_isolated_runner_and_loopback_mcp():
@@ -46,6 +48,10 @@ def test_antigravity_command_uses_isolated_runner_and_loopback_mcp():
     assert ["--effort", "high"] == command[-2:]
     assert "--dangerously-skip-permissions" not in command
     assert not any("oauth_creds.json" in argument for argument in command)
+    prompt = command[command.index("--print") + 1]
+    assert "pitbench validate" in prompt
+    assert "pitbench check" in prompt
+    assert "Never change a test" in prompt
 
 
 def test_antigravity_container_backend_loads_profile(tmp_path):
@@ -170,6 +176,114 @@ def test_antigravity_stream_usage_and_result_are_parsed():
 
     assert AntigravityMCPAgent._parse_usage(output) == (10, 3)
     assert AntigravityMCPAgent._has_successful_result(output) is True
+
+
+def test_antigravity_combines_retry_usage_and_detects_network_errors():
+    failed = json.dumps(
+        {
+            "event": "result",
+            "result": {
+                "status": "ERROR",
+                "error": "There was a network issue connecting to the server",
+                "usage": {"input_tokens": 10, "output_tokens": 3},
+            },
+        }
+    )
+    succeeded = json.dumps(
+        {
+            "event": "result",
+            "result": {
+                "status": "SUCCESS",
+                "usage": {"input_tokens": 7, "output_tokens": 2},
+            },
+        }
+    )
+
+    assert AntigravityMCPAgent._has_retryable_network_error(failed, "") is True
+    assert AntigravityMCPAgent._has_retryable_network_error(succeeded, "") is False
+    assert AntigravityMCPAgent._parse_usage(f"{failed}\n{succeeded}") == (17, 5)
+
+
+def test_antigravity_rejects_more_than_one_network_retry():
+    with pytest.raises(ValueError, match="network_retries must be 0 or 1"):
+        AntigravityMCPAgent(model_name="gemini-3.7-flash-high", network_retries=2)
+
+
+def test_antigravity_retries_network_failure_in_existing_workspace(tmp_path):
+    failed = json.dumps(
+        {
+            "event": "result",
+            "result": {
+                "status": "ERROR",
+                "error": "The stream was interrupted. Please continue the task.",
+                "usage": {"input_tokens": 10, "output_tokens": 3},
+            },
+        }
+    )
+    completed_tool = json.dumps(
+        {
+            "event": "step_update",
+            "step_update": {
+                "state": "DONE",
+                "tool_info": {
+                    "name": "call_mcp_tool",
+                    "parameters": {
+                        "server_name": "pitbench",
+                        "tool_name": "run_command",
+                    },
+                    "output": {"exit_code": 0},
+                },
+            },
+        }
+    )
+    succeeded = "\n".join(
+        [
+            completed_tool,
+            json.dumps(
+                {
+                    "event": "result",
+                    "result": {
+                        "status": "SUCCESS",
+                        "usage": {"input_tokens": 7, "output_tokens": 2},
+                    },
+                }
+            ),
+        ]
+    )
+    first_process = MagicMock(returncode=0)
+    first_process.communicate.return_value = (failed, "")
+    second_process = MagicMock(returncode=0)
+    second_process.communicate.return_value = (succeeded, "")
+    agent = AntigravityMCPAgent(model_name="gemini-3.7-flash-high")
+    agent._resolved_agy_binary = MagicMock(return_value="/usr/bin/agy")
+    agent._runtime_env = MagicMock(return_value={})
+    agent._preflight = MagicMock()
+    agent._runner_payload = MagicMock(return_value="{}")
+
+    with (
+        patch(
+            "pitbench.harness.agents.antigravity_mcp_agent.LoopbackMCPServer"
+        ) as server_class,
+        patch(
+            "pitbench.harness.agents.antigravity_mcp_agent.subprocess.Popen",
+            side_effect=[first_process, second_process],
+        ) as popen,
+    ):
+        server_class.return_value.__enter__.return_value.url = (
+            "http://127.0.0.1:43210/mcp"
+        )
+        result = agent.perform_task(
+            "Improve it.",
+            SimpleNamespace(container=MagicMock()),
+            logging_dir=tmp_path,
+        )
+
+    assert popen.call_count == 2
+    retry_command = popen.call_args_list[1].args[0]
+    retry_prompt = retry_command[retry_command.index("--print") + 1]
+    assert "Continue from the existing task repository state" in retry_prompt
+    assert result.failure_mode == FailureMode.NONE
+    assert (result.total_input_tokens, result.total_output_tokens) == (17, 5)
 
 
 def test_antigravity_requires_completed_pitbench_mcp_call():
