@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import tempfile
-from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -28,9 +27,6 @@ from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.harness.handlers.trial_handler import TrialHandler
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
 from pitbench.instances import materialize_population
-from pitbench.matrix.models import MatrixSpec
-from pitbench.matrix.progress import MatrixProgressDisplay
-from pitbench.matrix.runner import MatrixRunner
 from pitbench.metrics.performance_report import (
     compute_performance_report,
     format_performance_report,
@@ -62,103 +58,6 @@ def _prepare_task_image(task_path: Path, *, rebuild: bool) -> None:
         trial_handler_type=TrialHandler,
         manager_type=DockerComposeManager,
     )
-
-
-@app.command("matrix")
-def run_matrix(
-    spec_path: Annotated[Path, typer.Argument(help="Experiment matrix YAML")],
-    run_id: Annotated[
-        str | None, typer.Option(help="Stable run ID; reuse it to resume")
-    ] = None,
-    config_path: Annotated[
-        Path | None,
-        typer.Option(
-            "--config",
-            help=(
-                "Machine-local evaluation YAML; defaults to "
-                "config/evaluate.local.yaml when present"
-            ),
-        ),
-    ] = None,
-    rebuild: Annotated[
-        bool, typer.Option("--rebuild", help="Force rebuilding task images")
-    ] = False,
-    root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
-) -> None:
-    """Run or resume an asynchronous agent/evaluator experiment matrix."""
-    repository_root = _root(root)
-    resolved_spec = (
-        spec_path.resolve()
-        if spec_path.is_absolute()
-        else (repository_root / spec_path).resolve()
-    )
-    if not resolved_spec.is_file():
-        raise typer.BadParameter(
-            f"Matrix spec does not exist: {resolved_spec}", param_hint="SPEC_PATH"
-        )
-    resolved_config = resolve_config_path(repository_root, config_path)
-    evaluation_config = (
-        EvaluationConfig.from_yaml(resolved_config)
-        if resolved_config is not None
-        else EvaluationConfig()
-    )
-    spec = MatrixSpec.from_yaml(resolved_spec)
-    resolved_run_id = run_id or (
-        f"{datetime.now().strftime('%Y-%m-%d__%H-%M-%S')}__{spec.experiment_id}"
-    )
-    try:
-        with MatrixProgressDisplay() as progress:
-            MatrixRunner(
-                repository_root=repository_root,
-                spec=spec,
-                config=evaluation_config,
-                run_id=resolved_run_id,
-                rebuild=rebuild,
-                progress=progress,
-            ).run()
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-
-@app.command("matrix-status")
-def matrix_status(
-    run_id: Annotated[str, typer.Argument(help="Matrix run ID")],
-    config_path: Annotated[
-        Path | None, typer.Option("--config", help="Machine-local evaluation YAML")
-    ] = None,
-    root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
-) -> None:
-    """Show durable Agent, Judge, and BASE pipeline states."""
-    repository_root = _root(root)
-    resolved_config = resolve_config_path(repository_root, config_path)
-    config = (
-        EvaluationConfig.from_yaml(resolved_config)
-        if resolved_config is not None
-        else EvaluationConfig()
-    )
-    run_root = (
-        resolve_repository_path(repository_root, config.paths.output_path).resolve()
-        / run_id
-    )
-    lock = run_root / "matrix.lock.json"
-    if not lock.is_file():
-        raise typer.BadParameter(f"Unknown matrix run: {run_id}", param_hint="RUN_ID")
-    trial_states = Counter()
-    for state_path in run_root.glob("trials/*/*/repeat-*/state.json"):
-        trial_states[json.loads(state_path.read_text()).get("status", "unknown")] += 1
-    base_states = Counter()
-    for state_path in run_root.glob("baselines/*/repeat-*/state.json"):
-        base_states[json.loads(state_path.read_text()).get("status", "unknown")] += 1
-    typer.echo(
-        "Trials: "
-        + ", ".join(f"{name}={count}" for name, count in sorted(trial_states.items()))
-    )
-    typer.echo(
-        "BASE: "
-        + ", ".join(f"{name}={count}" for name, count in sorted(base_states.items()))
-    )
-    report = run_root / "matrix-report.md"
-    typer.echo(f"Report: {report if report.is_file() else 'not ready'}")
 
 
 @app.command("doctor")
@@ -333,25 +232,12 @@ def evaluate_task(
             )
         )
     configured_agent_kwargs = encode_agent_kwargs(configured_agent_values)
-    harness_agent_kwargs = [
-        "no_rebuild=False",
-        *configured_agent_kwargs,
-        *agent_kwargs,
-    ]
+    harness_agent_kwargs = [*configured_agent_kwargs, *agent_kwargs]
     run_harness(
-        dataset=None,
-        _dataset_name_compat=None,
-        _dataset_version_compat=None,
         dataset_path=dataset_path,
         dataset_config=None,
-        registry_url=None,
-        local_registry_path=None,
         output_path=resolved_output_path,
         run_id=resolved_run_id,
-        upload_results=False,
-        task_ids=None,
-        n_tasks=None,
-        exclude_task_ids=None,
         no_rebuild=True,
         cleanup=False,
         model_name=model_name,

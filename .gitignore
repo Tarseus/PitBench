@@ -17,6 +17,9 @@ __pycache__/
 # Editor and OS files
 .DS_Store
 
+# Local review notes
+/docs/
+
 # LaTeX build products
 *.aux
 *.fdb_latexmk

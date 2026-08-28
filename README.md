@@ -20,7 +20,7 @@ combinatorial optimization solver repositories.
     <img src="https://img.shields.io/badge/%F0%9F%9A%80%20Quickstart-0A7A5E?style=flat-square" alt="Quickstart">
   </a>
   <a href="#-current-combinatorial-optimization-tasks">
-    <img src="https://img.shields.io/badge/%F0%9F%93%A6%20Tasks%20Matrix-1F6FEB?style=flat-square" alt="Tasks">
+    <img src="https://img.shields.io/badge/%F0%9F%93%A6%20Task%20Snapshots-1F6FEB?style=flat-square" alt="Task snapshots">
   </a>
   <a href="#%EF%B8%8F-the-three-pillars-of-pitbench">
     <img src="https://img.shields.io/badge/%F0%9F%8F%9B%EF%B8%8F%20Three%20Pillars-7C3AED?style=flat-square" alt="Pillars">
@@ -167,25 +167,21 @@ created with `pitbench profiles init` and selected through `profile_path` in the
 local configuration. PitBench records the runner image ID and profile hash with
 every trial.
 
-### Run an asynchronous experiment matrix
+### Schedule multiple agents externally
 
-The bundled PyVRP matrix runs four releases, six agent/model configurations,
-and three independent repetitions. Agent generation and hidden judging use
-separate worker pools; each solver remains single-threaded while a judge runs
-eight independent observations on isolated physical cores.
+Each `pitbench evaluate` invocation evaluates one externally selected agent on
+one PyVRP snapshot task. Agent/model selection and batch scheduling stay outside
+the benchmark task definition. The bundled shell script is an example serial
+scheduler whose list of agents can be edited by the caller:
 
 ```bash
-uv run pitbench matrix experiments/pyvrp-4x6x3.yaml \
-  --config config/evaluate.local.yaml \
-  --run-id pyvrp-4x6x3-01
-
-# Re-run the same command to resume, or inspect durable queue state:
-uv run pitbench matrix-status pyvrp-4x6x3-01
+scripts/run-pyvrp-model-matrix.sh pyvrp_v0_14_0
 ```
 
-Configure all four task snapshots, pinned judge images, and the local CPU pools
-before starting. Matrix outputs include per-trial Parquet data, JSON summaries,
-and `matrix-report.md` under `runs/<run_id>/`.
+The script makes independent `pitbench evaluate` calls in sequence and records
+their command logs plus `status.tsv`. Other schedulers can invoke the same
+single-agent command concurrently or serially without a PitBench-specific
+matrix schema.
 
 ### Generate a Performance-First Report
 
@@ -236,8 +232,8 @@ PitBench/
 │   ├── repositories/    # Solver build and execution plugins
 │   ├── families/        # Independent CVRP verification
 │   ├── instances/       # CO instance generation and materialization tooling
-│   └── cli/             # Unified CLI (`run/evaluate/matrix/report/tasks`)
-├── experiments/         # Reproducible multi-version agent matrices
+│   └── cli/             # Unified CLI (`run/evaluate/judge/report/tasks`)
+├── scripts/             # Optional external scheduling and maintenance scripts
 ├── manifests/tasks/      # Public task specifications
 ├── adapters/pitbench/    # Prepared PyVRP Docker adapter
 ├── private/              # Maintainer-provisioned hidden evaluation assets

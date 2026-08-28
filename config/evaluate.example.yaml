@@ -36,12 +36,3 @@ agents:
     container_runner_image: python:3.13-slim-bookworm
     profile_path: null
     proxy_url: null
-
-pipeline:
-  agent_workers: 3
-  agent_cpus_per_worker: 8
-  agent_cpu_pool: null
-  judge_workers: 4
-  judge_parallel_runs: 8
-  judge_cpu_pool: null
-  infrastructure_retries: 2

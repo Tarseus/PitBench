@@ -1,6 +1,7 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from adapters.pitbench.adapter import (
@@ -8,6 +9,7 @@ from adapters.pitbench.adapter import (
     IMAGE_REVISION_LABEL,
     IMAGE_SOURCE_LABEL,
 )
+from pitbench.cli.evaluate_config import EvaluationConfig
 from pitbench.cli.main import _prepare_task_image, app
 from pitbench.harness.agents import AgentName
 
@@ -123,7 +125,6 @@ def test_evaluate_materializes_task_and_starts_harness(tmp_path: Path) -> None:
     assert harness_kwargs["no_rebuild"] is True
     assert harness_kwargs["cleanup"] is False
     assert harness_kwargs["agent_kwargs"] == [
-        "no_rebuild=False",
         "proxy_url=http://127.0.0.1:7897",
     ]
 
@@ -226,7 +227,6 @@ agents:
     harness_kwargs = run_harness.call_args.kwargs
     assert harness_kwargs["output_path"] == repository_root / "local-runs"
     assert harness_kwargs["agent_kwargs"] == [
-        "no_rebuild=False",
         "codex_auth_path=/data/auth.json",
         f"profile_path={repository_root / 'agent-profiles/reproducible'}",
         "proxy_url=http://127.0.0.1:17898",
@@ -234,3 +234,19 @@ agents:
         "reasoning_effort=xhigh",
     ]
     assert "Loaded evaluation config" in result.output
+
+
+@pytest.mark.parametrize("command", ["matrix", "matrix-status"])
+def test_matrix_commands_are_not_registered(command: str) -> None:
+    result = CliRunner().invoke(app, [command])
+
+    assert result.exit_code == 2
+    assert "No such command" in result.output
+
+
+def test_evaluation_config_rejects_matrix_pipeline_settings(tmp_path: Path) -> None:
+    config = tmp_path / "evaluate.yaml"
+    config.write_text("pipeline:\n  agent_workers: 3\n")
+
+    with pytest.raises(ValueError, match="pipeline"):
+        EvaluationConfig.from_yaml(config)
