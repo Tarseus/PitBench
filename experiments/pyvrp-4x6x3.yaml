@@ -1,0 +1,35 @@
+schema_version: "1.0"
+experiment_id: pyvrp-4x6x3
+tasks:
+  - pyvrp_v0_12_2
+  - pyvrp_v0_13_0
+  - pyvrp_v0_13_4
+  - pyvrp_v0_14_0
+repeats: 3
+schedule_seed: 20260827
+base_cache_scope: task_repeat
+agents:
+  - id: codex-gpt-5-5-xhigh
+    agent: codex
+    model: gpt-5.5
+    agent_kwargs:
+      reasoning_effort: xhigh
+  - id: codex-gpt-5-6-sol-xhigh
+    agent: codex
+    model: gpt-5.6-sol
+    agent_kwargs:
+      reasoning_effort: xhigh
+  - id: codex-gpt-5-4-mini-medium
+    agent: codex
+    model: gpt-5.4-mini
+    agent_kwargs:
+      reasoning_effort: medium
+  - id: antigravity-gemini-3-7-flash-high
+    agent: antigravity
+    model: gemini-3.7-flash-high
+  - id: antigravity-gemini-3-1-pro-high
+    agent: antigravity
+    model: gemini-3.1-pro-high
+  - id: antigravity-gemini-3-5-flash-low
+    agent: antigravity
+    model: gemini-3.5-flash-low

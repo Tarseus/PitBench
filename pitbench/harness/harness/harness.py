@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import boto3
 from rich.progress import (
@@ -134,6 +134,10 @@ class Harness:
         ec2_use_nvme_storage: bool = True,
         ec2_root_volume_size: int = 50,
         history_limit: int | None = None,
+        defer_evaluation: bool = False,
+        agent_cpuset_cpus: str | None = None,
+        progress_bar: bool = True,
+        progress_callback: Callable[[str], None] | None = None,
     ):
         """
         Runs the Terminal-Bench harness.
@@ -239,6 +243,10 @@ class Harness:
 
         # Terminal configuration
         self._history_limit = history_limit
+        self._defer_evaluation = defer_evaluation
+        self._agent_cpuset_cpus = agent_cpuset_cpus
+        self._progress_bar = progress_bar
+        self._external_progress_callback = progress_callback
 
         # Check if we're resuming from an existing run
         self._is_resuming = self._run_path.exists()
@@ -572,6 +580,9 @@ class Harness:
         trial_name: str | None,
         detail: str,
     ) -> None:
+        external_callback = getattr(self, "_external_progress_callback", None)
+        if external_callback is not None:
+            external_callback(detail)
         display = getattr(self, "_progress_display", None)
         if display is None:
             return
@@ -580,7 +591,14 @@ class Harness:
             f"Running tasks ({display['completed']}/{display['total']}, "
             f"Accuracy: {display['accuracy']:.2%}) — {context}: {detail}"
         )
-        display["progress"].update(display["task"], description=description)
+        update: dict[str, Any] = {"description": description}
+        solver_runs = re.search(r"solver runs (\d+)/(\d+)", detail)
+        if solver_runs is not None:
+            update.update(
+                completed=int(solver_runs.group(1)),
+                total=int(solver_runs.group(2)),
+            )
+        display["progress"].update(display["task"], **update)
 
     @staticmethod
     def _trace_file_input(path: Path) -> dict[str, Any]:
@@ -652,6 +670,16 @@ class Harness:
         if not isinstance(captured.output, bytes):
             raise TypeError("container returned a non-bytes patch")
         candidate_patch.write_bytes(captured.output)
+
+        if getattr(self, "_defer_evaluation", False):
+            self._trace_pipeline(
+                stage="candidate.capture",
+                status="completed",
+                outputs={"candidate_patch": self._trace_artifact(candidate_patch)},
+                task_id=trial_handler.task_id,
+                trial_name=trial_handler.trial_name,
+            )
+            return
 
         evaluator = EvaluatorFactory.from_import_path(
             trial_handler.task.evaluator_import_path
@@ -940,7 +968,7 @@ class Harness:
         file_handler.setLevel(logging.DEBUG)
         logger.addHandler(file_handler)
 
-        if not self._livestream:
+        if not self._livestream and getattr(self, "_progress_bar", True):
             console_handler = logging.StreamHandler()
             console_handler.setLevel(self._log_level)
             logger.addHandler(console_handler)
@@ -2136,6 +2164,13 @@ class Harness:
                     model_name=model_name,
                     per_agent_kwargs=per_agent_kwargs,
                 )
+                task_agent.set_progress_callback(
+                    partial(
+                        self._update_progress_detail,
+                        trial_handler.task_id,
+                        trial_handler.trial_name,
+                    )
+                )
             except Exception as exc:
                 self._trace_pipeline(
                     stage="agent.execute",
@@ -2534,6 +2569,7 @@ class Harness:
                 cleanup=self._cleanup,
                 livestream=self._livestream,
                 disable_recording=trial_handler.task.disable_asciinema,
+                cpuset_cpus=self._agent_cpuset_cpus,
             )
 
         self._trace_pipeline(
@@ -3387,7 +3423,7 @@ class Harness:
                         )
                         future_to_task[future] = (trial_name, attempt)
 
-                if self._livestream:
+                if self._livestream or progress is None:
                     for future in as_completed(future_to_task):
                         trial_results = future.result()
                         results.results.append(trial_results)
@@ -3429,7 +3465,8 @@ class Harness:
                         )
                         progress.update(
                             progress_task,
-                            advance=1,
+                            completed=completed_tasks,
+                            total=total_tasks,
                             description=(
                                 f"Running tasks ({completed_tasks}/{total_tasks}, "
                                 f"Accuracy: {results.accuracy:.2%}) — "

@@ -143,3 +143,35 @@ def test_pipeline_stage_updates_non_livestream_progress_description() -> None:
             "Running tasks (0/1, Accuracy: 0.00%) — pyvrp_v0_14_0: Coding agent"
         ),
     )
+
+
+def test_judge_progress_advances_the_rich_bar() -> None:
+    progress = Mock()
+    harness = Harness.__new__(Harness)
+    harness._progress_display = {
+        "progress": progress,
+        "task": 7,
+        "completed": 0,
+        "total": 1,
+        "accuracy": 0.0,
+    }
+
+    harness._update_progress_detail(
+        "pyvrp_v0_14_0",
+        "trial-1",
+        (
+            "Judge progress: instances 17/48, seed groups 83/240, "
+            "solver runs 249/720, valid 247"
+        ),
+    )
+
+    progress.update.assert_called_once_with(
+        7,
+        description=(
+            "Running tasks (0/1, Accuracy: 0.00%) — pyvrp_v0_14_0: "
+            "Judge progress: instances 17/48, seed groups 83/240, "
+            "solver runs 249/720, valid 247"
+        ),
+        completed=249,
+        total=720,
+    )

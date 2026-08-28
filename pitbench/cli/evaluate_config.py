@@ -25,6 +25,18 @@ class TaskResources(BaseModel):
     judge_image: str | None = None
 
 
+class PipelineResources(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_workers: int = Field(default=3, ge=1)
+    agent_cpus_per_worker: int = Field(default=8, ge=1)
+    agent_cpu_pool: str | None = None
+    judge_workers: int = Field(default=4, ge=1)
+    judge_parallel_runs: int = Field(default=8, ge=1)
+    judge_cpu_pool: str | None = None
+    infrastructure_retries: int = Field(default=2, ge=0)
+
+
 class EvaluationConfig(BaseModel):
     """Machine-local settings for the unified evaluation command."""
 
@@ -33,6 +45,7 @@ class EvaluationConfig(BaseModel):
     paths: EvaluationPaths = Field(default_factory=EvaluationPaths)
     tasks: dict[str, TaskResources] = Field(default_factory=dict)
     agents: dict[str, dict[str, ConfigValue]] = Field(default_factory=dict)
+    pipeline: PipelineResources = Field(default_factory=PipelineResources)
 
     @classmethod
     def from_yaml(cls, path: Path) -> EvaluationConfig:

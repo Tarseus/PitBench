@@ -64,6 +64,55 @@ def test_real_evaluation_without_private_assets_fails_closed(tmp_path: Path) -> 
     assert "real judge missing configuration" in (envelope.error or "")
 
 
+def test_cached_base_observations_merge_with_agent_fixture(tmp_path: Path) -> None:
+    record = next(
+        item
+        for item in TaskCatalog(ROOT).validate_all()
+        if item.task.task_id == "pyvrp_v0_14_0"
+    )
+    patch = tmp_path / "candidate.patch"
+    patch.write_text("")
+    base_dir = tmp_path / "base"
+    agent_dir = tmp_path / "agent"
+    base_dir.mkdir()
+    agent_dir.mkdir()
+    common = {
+        "manifest_path": str(record.manifest_path),
+        "fixture_mode": True,
+        "fixture_instances_per_population": 1,
+    }
+    base = PitBenchEvaluator().envelope(
+        EvaluationRequest(
+            task_id=record.task.task_id,
+            task_path=ROOT,
+            candidate_patch_path=patch,
+            output_dir=base_dir,
+            agent_name="base",
+            evaluator_config={**common, "code_states": ["base"]},
+        )
+    )
+    assert base.completed, base.error
+
+    agent = PitBenchEvaluator().envelope(
+        EvaluationRequest(
+            task_id=record.task.task_id,
+            task_path=ROOT,
+            candidate_patch_path=patch,
+            output_dir=agent_dir,
+            agent_name="agent",
+            evaluator_config={
+                **common,
+                "code_states": ["agent"],
+                "base_observations_path": str(base_dir / "trials.parquet"),
+            },
+        )
+    )
+
+    assert agent.completed, agent.error
+    observations = ObservationStore.read(agent_dir / "trials.parquet")
+    assert {item.code_state for item in observations} == set(CodeState)
+
+
 def test_model_build_fixture_uses_performance_decision_path(tmp_path: Path) -> None:
     record = next(
         record

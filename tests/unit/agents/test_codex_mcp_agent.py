@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -346,6 +347,56 @@ def test_codex_jsonl_requires_completed_mcp_call():
 
     assert CodexMCPAgent._has_successful_mcp_call(failed) is False
     assert CodexMCPAgent._has_successful_mcp_call(completed) is True
+
+
+def test_codex_jsonl_reports_live_agent_interactions():
+    agent = CodexMCPAgent(model_name="gpt-5")
+    progress = []
+    agent.set_progress_callback(progress.append)
+    counts = {"mcp_calls": 0, "messages": 0}
+
+    agent._update_live_progress(
+        '{"type":"item.completed","item":{"type":"agent_message"}}', counts
+    )
+    agent._update_live_progress(
+        '{"type":"item.completed","item":{"type":"mcp_tool_call",'
+        '"status":"completed"}}',
+        counts,
+    )
+
+    assert progress == [
+        "Agent: MCP calls 0 · messages 1",
+        "Agent: MCP calls 1 · messages 1",
+    ]
+
+
+def test_codex_process_streams_jsonl_and_preserves_output():
+    agent = CodexMCPAgent(model_name="gpt-5", timeout_sec=5)
+    progress = []
+    agent.set_progress_callback(progress.append)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "print('{\"type\":\"item.completed\",\"item\":{\"type\":"
+                "\"mcp_tool_call\"}}', flush=True); "
+                "print('diagnostic', file=sys.stderr, flush=True)"
+            ),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    stdout, stderr, return_code = agent._stream_process(process, "{}")
+
+    assert return_code == 0
+    assert '"mcp_tool_call"' in stdout
+    assert stderr == "diagnostic\n"
+    assert progress == ["Agent: MCP calls 1 · messages 0"]
 
 
 def test_factory_registers_host_codex_agent():

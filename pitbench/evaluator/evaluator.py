@@ -17,12 +17,13 @@ from pitbench.schema.evaluation import (
     EvaluationResult,
     EvaluationSummary,
 )
+from pitbench.schema.observation import CodeState
 from pitbench.schema.task import PitBenchTask
 
 
 class PitBenchEvaluator(Evaluator):
     name = "pitbench"
-    version = "2"
+    version = "3"
 
     def evaluate(self, request: EvaluationRequest) -> EvaluationResult:
         config = request.evaluator_config
@@ -41,6 +42,10 @@ class PitBenchEvaluator(Evaluator):
             else PatchPolicyResult(accepted=False, violations=["patch missing"])
         )
         fixture_mode = bool(config.get("fixture_mode", False))
+        code_states = tuple(
+            CodeState(value)
+            for value in config.get("code_states", [state.value for state in CodeState])
+        )
         validity = evaluator_validity(
             patch_exists=patch_exists,
             policy_passed=policy.accepted,
@@ -51,7 +56,9 @@ class PitBenchEvaluator(Evaluator):
             observations = []
         elif fixture_mode:
             limit = int(config.get("fixture_instances_per_population", 2))
-            observations = FixtureJudge().run(JudgePlan.fixture(task, limit))
+            observations = FixtureJudge().run(
+                JudgePlan.fixture(task, limit), code_states=code_states
+            )
         else:
             required = ("base_repository", "private_root")
             missing = [key for key in required if key not in config]
@@ -64,6 +71,8 @@ class PitBenchEvaluator(Evaluator):
                     private_root=Path(config["private_root"]),
                     candidate_patch=request.candidate_patch_path,
                     output_dir=request.output_dir,
+                    code_states=code_states,
+                    parallel_runs=int(config.get("judge_parallel_runs", 1)),
                     progress_callback=progress_callback,
                 ).run()
             else:
@@ -79,8 +88,20 @@ class PitBenchEvaluator(Evaluator):
                     output_dir=request.output_dir,
                     cpus=float(config.get("judge_cpus", 8.0)),
                     memory=str(config.get("judge_memory", "8g")),
+                    cpuset_cpus=config.get("judge_cpuset_cpus"),
+                    code_states=code_states,
+                    parallel_runs=int(config.get("judge_parallel_runs", 1)),
                     progress_callback=progress_callback,
                 ).run()
+
+        base_observations_path = config.get("base_observations_path")
+        if base_observations_path is not None:
+            cached_base = ObservationStore.read(Path(base_observations_path))
+            if any(item.task_id != task.task_id for item in cached_base):
+                raise ValueError("cached BASE observations belong to another task")
+            if any(item.code_state != CodeState.BASE for item in cached_base):
+                raise ValueError("cached BASE artifact contains non-BASE observations")
+            observations = [*cached_base, *observations]
 
         parquet_path = request.output_dir / "trials.parquet"
         ObservationStore.write(parquet_path, observations)

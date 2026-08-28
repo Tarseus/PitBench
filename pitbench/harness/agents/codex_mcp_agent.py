@@ -401,6 +401,67 @@ Task:
                 return True
         return False
 
+    def _update_live_progress(self, line: str, counts: dict[str, int]) -> None:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        if event.get("type") != "item.completed":
+            return
+        item = event.get("item") or {}
+        if item.get("type") == "mcp_tool_call":
+            counts["mcp_calls"] += 1
+        elif item.get("type") == "agent_message":
+            counts["messages"] += 1
+        else:
+            return
+        self._report_progress(
+            f"Agent: MCP calls {counts['mcp_calls']} · "
+            f"messages {counts['messages']}"
+        )
+
+    def _stream_process(
+        self,
+        process: subprocess.Popen[str],
+        runner_payload: str,
+    ) -> tuple[str, str, int]:
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        counts = {"mcp_calls": 0, "messages": 0}
+
+        def read_stdout() -> None:
+            if process.stdout is None:
+                return
+            for line in process.stdout:
+                stdout_lines.append(line)
+                self._update_live_progress(line, counts)
+
+        def read_stderr() -> None:
+            if process.stderr is None:
+                return
+            stderr_lines.extend(process.stderr)
+
+        stdout_reader = threading.Thread(target=read_stdout, daemon=True)
+        stderr_reader = threading.Thread(target=read_stderr, daemon=True)
+        stdout_reader.start()
+        stderr_reader.start()
+        try:
+            if process.stdin is not None:
+                try:
+                    process.stdin.write(runner_payload)
+                except BrokenPipeError:
+                    pass
+                finally:
+                    process.stdin.close()
+            process.wait(timeout=self._timeout_sec)
+        except subprocess.TimeoutExpired:
+            self._cancelled.set()
+            self._terminate_process(process)
+        finally:
+            stdout_reader.join()
+            stderr_reader.join()
+        return "".join(stdout_lines), "".join(stderr_lines), process.returncode or 0
+
     def _set_process(self, process: subprocess.Popen[str] | None) -> None:
         with self._process_lock:
             self._process = process
@@ -476,16 +537,9 @@ Task:
             )
             self._set_process(process)
             try:
-                stdout, stderr = process.communicate(
-                    input=runner_payload,
-                    timeout=self._timeout_sec,
+                stdout, stderr, return_code = self._stream_process(
+                    process, runner_payload
                 )
-                return_code = process.returncode
-            except subprocess.TimeoutExpired:
-                self._cancelled.set()
-                self._terminate_process(process)
-                stdout, stderr = process.communicate()
-                return_code = process.returncode
             finally:
                 self._set_process(None)
         if logging_dir is not None:

@@ -96,6 +96,27 @@ def test_explicit_build_cpu_limit_is_preserved(tmp_path: Path) -> None:
         assert judge.run() == []
 
 
+def test_docker_judge_forwards_cpuset_states_and_parallelism(tmp_path: Path) -> None:
+    judge = _judge(tmp_path, "pitbench/pyvrp@sha256:" + "a" * 64)
+    judge.cpuset_cpus = "28-35"
+    judge.code_states = (CodeState.AGENT,)
+    judge.parallel_runs = 8
+
+    def fake_popen(command, **kwargs):
+        assert command[command.index("--cpuset-cpus") + 1] == "28-35"
+        assert command[command.index("--parallel-runs") + 1] == "8"
+        assert command[command.index("--code-state") + 1] == "agent"
+        (judge.output_dir / "judge-observations.jsonl").write_text("")
+        return type(
+            "Process",
+            (),
+            {"stdout": io.StringIO(), "wait": lambda self: 0},
+        )()
+
+    with patch("pitbench.evaluator.docker_judge.subprocess.Popen", fake_popen):
+        assert judge.run() == []
+
+
 def test_docker_judge_failure_includes_streamed_output(tmp_path: Path) -> None:
     judge = _judge(tmp_path, "pitbench/pyvrp@sha256:" + "a" * 64)
 

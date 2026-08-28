@@ -149,6 +149,26 @@ created with `pitbench profiles init` and selected through `profile_path` in the
 local configuration. PitBench records the runner image ID and profile hash with
 every trial.
 
+### Run an asynchronous experiment matrix
+
+The bundled PyVRP matrix runs four releases, six agent/model configurations,
+and three independent repetitions. Agent generation and hidden judging use
+separate worker pools; each solver remains single-threaded while a judge runs
+eight independent observations on isolated physical cores.
+
+```bash
+uv run pitbench matrix experiments/pyvrp-4x6x3.yaml \
+  --config config/evaluate.local.yaml \
+  --run-id pyvrp-4x6x3-01
+
+# Re-run the same command to resume, or inspect durable queue state:
+uv run pitbench matrix-status pyvrp-4x6x3-01
+```
+
+Configure all four task snapshots, pinned judge images, and the local CPU pools
+before starting. Matrix outputs include per-trial Parquet data, JSON summaries,
+and `matrix-report.md` under `runs/<run_id>/`.
+
 ### Generate a Performance-First Report
 
 Each trial stores observations under `runs/<run_id>/<task_id>/<trial_name>/evaluation/trials.parquet`. The report command accepts either that file or its containing `evaluation/` directory:
@@ -198,7 +218,8 @@ PitBench/
 │   ├── repositories/    # Solver build and execution plugins
 │   ├── families/        # Independent CVRP verification
 │   ├── instances/       # CO instance generation and materialization tooling
-│   └── cli/             # Unified CLI entry points (`pitbench run/evaluate/report/tasks`)
+│   └── cli/             # Unified CLI (`run/evaluate/matrix/report/tasks`)
+├── experiments/         # Reproducible multi-version agent matrices
 ├── manifests/tasks/      # Public task specifications
 ├── adapters/pitbench/    # Prepared PyVRP Docker adapter
 ├── private/              # Maintainer-provisioned hidden evaluation assets

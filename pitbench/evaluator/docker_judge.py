@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from pitbench.evaluator.storage import ObservationStore
-from pitbench.schema.observation import RunObservation
+from pitbench.schema.observation import CodeState, RunObservation
 
 
 class DockerJudge:
@@ -24,6 +24,9 @@ class DockerJudge:
         output_dir: Path,
         cpus: float = 8.0,
         memory: str = "8g",
+        cpuset_cpus: str | None = None,
+        code_states: tuple[CodeState, ...] = tuple(CodeState),
+        parallel_runs: int = 1,
         progress_callback: Callable[[str], None] | None = None,
     ) -> None:
         digest_pinned = re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image)
@@ -38,6 +41,9 @@ class DockerJudge:
         self.output_dir = output_dir.resolve()
         self.cpus = cpus
         self.memory = memory
+        self.cpuset_cpus = cpuset_cpus
+        self.code_states = code_states
+        self.parallel_runs = parallel_runs
         self.progress_callback = progress_callback
 
     def run(self) -> list[RunObservation]:
@@ -89,6 +95,14 @@ class DockerJudge:
             "--observations",
             "/output/judge-observations.jsonl",
         ]
+        if self.cpuset_cpus is not None:
+            command[command.index("--memory"):command.index("--memory")] = [
+                "--cpuset-cpus",
+                self.cpuset_cpus,
+            ]
+        command.extend(["--parallel-runs", str(self.parallel_runs)])
+        for state in self.code_states:
+            command.extend(["--code-state", state.value])
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,

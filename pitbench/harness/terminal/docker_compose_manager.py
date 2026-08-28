@@ -7,10 +7,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
 
-import docker
 import docker.errors
 from docker.models.containers import Container
 
+import docker
 from pitbench.harness.utils.env_model import EnvModel
 from pitbench.harness.utils.logger import logger
 
@@ -43,6 +43,7 @@ class DockerComposeManager:
         sessions_logs_path: Path | None = None,
         agent_logs_path: Path | None = None,
         agent_model_name: str | None = None,
+        cpuset_cpus: str | None = None,
     ):
         try:
             self._client = docker.from_env()
@@ -63,6 +64,7 @@ class DockerComposeManager:
         self._client_container: Container | None = None
         self._sessions_logs_path = sessions_logs_path
         self._agent_logs_path = agent_logs_path
+        self._cpuset_cpus = cpuset_cpus
         self._logger = logger.getChild(__name__)
 
         self.env = DockerComposeEnvVars(
@@ -163,6 +165,8 @@ class DockerComposeManager:
         self._client_container = self._client.containers.get(
             self._client_container_name
         )
+        if self._cpuset_cpus is not None:
+            self._client_container.update(cpuset_cpus=self._cpuset_cpus)
         return self._client_container
 
     def stop(self) -> None:
