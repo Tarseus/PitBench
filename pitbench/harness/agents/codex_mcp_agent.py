@@ -32,17 +32,20 @@ class CodexMCPAgent(BaseAgent):
     }
     _PROMPT = """You are improving a solver in an isolated PitBench task.
 
-You MUST use only the pitbench MCP run_command tool for repository inspection,
-editing, building, profiling, and testing. The host working directory is empty and is
-not the task repository. Do not use the host shell or web access. Start by running
-`pwd`, `git status --short`, and `pitbench inspect` through the MCP tool. Keep all
-changes inside the task repository and verify them with the visible PitBench commands.
+You MUST use only the pitbench MCP tools for repository inspection, editing,
+building, profiling, and testing. Prefer read_file, list_files, search_files,
+apply_patch, git_status, and git_diff for structured repository work. Use run_command
+for short commands and start_command, poll_command, and cancel_command for long-running
+commands or incremental output. The host working directory is empty and is not the
+task repository. Do not use the host shell or web access. Start with git_status and run
+`pwd` and `pitbench inspect` through run_command. Keep all changes inside the task
+repository and verify them with the visible PitBench commands.
 
 Treat existing tests as immutable specifications. Never change a test to accommodate
 an implementation change. The protected paths reported by `pitbench inspect` must
 not be modified. Preserve behavior across every supported problem feature, not only
 the visible development instances. Before finishing, run `pitbench validate` and
-`pitbench check`, inspect `git status --short`, and remove generated output and
+`pitbench check`, inspect git_status, and remove generated output and
 temporary helper files. The final candidate must contain only intentional source
 changes.
 

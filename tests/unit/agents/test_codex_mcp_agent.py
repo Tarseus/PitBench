@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -36,6 +38,22 @@ class FakeContainer:
             exit_code=self.exit_code,
             output=(self.stdout, self.stderr),
         )
+
+
+class BlockingContainer(FakeContainer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.released = threading.Event()
+
+    def exec_run(self, command, **kwargs):
+        self.calls.append((command, kwargs))
+        if len(self.calls) == 1:
+            self.started.set()
+            self.released.wait(timeout=2)
+            return SimpleNamespace(exit_code=143, output=(b"partial\n", b""))
+        self.released.set()
+        return SimpleNamespace(exit_code=0, output=(b"", b""))
 
 
 def test_task_terminal_runs_in_fixed_container_workdir(tmp_path):
@@ -81,10 +99,12 @@ def test_loopback_mcp_server_calls_bound_terminal():
         async with streamablehttp_client(url) as (read, write, _):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                return await session.call_tool(
+                tools = await session.list_tools()
+                result = await session.call_tool(
                     "run_command",
                     {"command": "pwd", "timeout_sec": 1},
                 )
+                return result, {tool.name for tool in tools.tools}
 
     with LoopbackMCPServer(terminal) as server:
         assert server.url is not None
@@ -97,10 +117,126 @@ def test_loopback_mcp_server_calls_bound_terminal():
                 "no_proxy": "127.0.0.1,localhost",
             },
         ):
-            result = anyio.run(call_tool, server.url)
+            result, tool_names = anyio.run(call_tool, server.url)
 
     assert result.isError is False
     assert container.calls[0][0][-1] == "pwd"
+    assert tool_names == {
+        "apply_patch",
+        "cancel_command",
+        "git_diff",
+        "git_status",
+        "list_files",
+        "poll_command",
+        "read_file",
+        "run_command",
+        "search_files",
+        "start_command",
+    }
+
+
+def test_task_terminal_reads_file_range_and_rejects_escape():
+    container = FakeContainer(stdout=b"11\naGVsbG8=")
+    terminal = TaskTerminal(container, workdir="/workspace/repo")
+
+    result = terminal.read_file("src/example.py", offset=2, limit=5)
+
+    assert result == {
+        "path": "src/example.py",
+        "offset": 2,
+        "content": "hello",
+        "next_offset": 7,
+        "size": 11,
+        "eof": False,
+    }
+    assert "realpath -e" in container.calls[0][0][-1]
+
+    with pytest.raises(ValueError, match="stay within"):
+        terminal.read_file("../hidden.txt")
+
+
+def test_task_terminal_applies_checked_patch_and_rejects_escape():
+    container = FakeContainer()
+    terminal = TaskTerminal(container, workdir="/workspace/repo")
+    patch_text = """--- a/example.txt
++++ b/example.txt
+@@ -1 +1 @@
+-old
++new
+"""
+
+    result = terminal.apply_patch(patch_text)
+
+    assert result["applied"] is True
+    command = container.calls[0][0][-1]
+    assert "git apply --check" in command
+    assert "git apply \"$patch_file\"" in command
+
+    with pytest.raises(ValueError, match="stay within"):
+        terminal.apply_patch("--- a/file\n+++ ../../outside\n")
+
+
+def test_task_terminal_returns_structured_git_status_and_diff():
+    status_container = FakeContainer(stdout=b" M src/main.py\n?? notes.txt\n")
+    terminal = TaskTerminal(status_container, workdir="/workspace/repo")
+
+    assert terminal.git_status() == {
+        "clean": False,
+        "entries": [
+            {"index": " ", "worktree": "M", "path": "src/main.py"},
+            {"index": "?", "worktree": "?", "path": "notes.txt"},
+        ],
+    }
+
+    diff_container = FakeContainer(stdout=b"diff --git a/a b/a\n")
+    diff = TaskTerminal(diff_container, workdir="/workspace/repo").git_diff(
+        "src/main.py", staged=True
+    )
+    assert diff["diff"].startswith("diff --git")
+    assert diff["path"] == "src/main.py"
+    assert diff["staged"] is True
+    assert "git diff --cached -- src/main.py" in diff_container.calls[0][0][-1]
+
+
+def test_task_terminal_async_command_supports_incremental_polling():
+    terminal = TaskTerminal(
+        FakeContainer(stdout=b"first second", stderr=b"warning"),
+        workdir="/workspace/repo",
+    )
+
+    started = terminal.start_command("pitbench check", timeout_sec=10)
+    deadline = time.monotonic() + 2
+    while True:
+        result = terminal.poll_command(started["handle"], max_chars=5)
+        if result["done"]:
+            break
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+    assert started["streaming"] is False
+    assert result["stdout"] == "first"
+    assert result["next_stdout_offset"] == 5
+    remainder = terminal.poll_command(
+        started["handle"], stdout_offset=result["next_stdout_offset"]
+    )
+    assert remainder["stdout"] == " second"
+    assert remainder["stderr"] == "warning"
+    assert remainder["exit_code"] == 0
+
+
+def test_task_terminal_can_cancel_async_command():
+    container = BlockingContainer()
+    terminal = TaskTerminal(container, workdir="/workspace/repo")
+    started = terminal.start_command("sleep 100")
+    assert container.started.wait(timeout=1)
+
+    cancelled = terminal.cancel_command(started["handle"])
+    terminal._jobs[started["handle"]].thread.join(timeout=1)
+    result = terminal.poll_command(started["handle"])
+
+    assert cancelled["cancelled"] is True
+    assert result["cancelled"] is True
+    assert result["done"] is True
 
 
 def test_codex_command_uses_isolated_runner_and_loopback_mcp():
