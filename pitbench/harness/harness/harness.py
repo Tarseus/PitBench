@@ -240,6 +240,7 @@ class Harness:
         self._ec2_instance_ami = ec2_instance_ami
         self._ec2_use_nvme_storage = ec2_use_nvme_storage
         self._ec2_root_volume_size = ec2_root_volume_size
+        self._validate_remote_workspace_compatibility()
 
         # Terminal configuration
         self._history_limit = history_limit
@@ -854,6 +855,31 @@ class Harness:
             import_path=effective_agent_import_path,
             **resolved_agent_kwargs,
         )
+
+    def _needs_nested_command_sandbox(self) -> bool:
+        """Whether this task container must support Codex bubblewrap nesting."""
+        if not self._is_multi_agent:
+            return (
+                self._agent_name == AgentName.CODEX
+                and self._agent_kwargs.get("runner_backend") == "workspace"
+            )
+        if self._agent_configs is None:
+            return False
+        for config in self._agent_configs:
+            kwargs = {**self._agent_kwargs, **config.agent_kwargs}
+            if (
+                config.agent_name == AgentName.CODEX
+                and kwargs.get("runner_backend") == "workspace"
+            ):
+                return True
+        return False
+
+    def _validate_remote_workspace_compatibility(self) -> None:
+        if self._remote_build and self._needs_nested_command_sandbox():
+            raise ValueError(
+                "Codex runner_backend=workspace is not supported with "
+                "--remote-build; use runner_backend=container for remote trials"
+            )
 
     def _init_dataset(self) -> None:
         if self._dataset_config:
@@ -1751,6 +1777,7 @@ class Harness:
                 livestream=self._livestream,
                 disable_recording=trial_handler.task.disable_asciinema,
                 history_limit=self._history_limit,
+                nested_sandbox=self._needs_nested_command_sandbox(),
             )
 
         self._trace_pipeline(
@@ -2570,6 +2597,7 @@ class Harness:
                 livestream=self._livestream,
                 disable_recording=trial_handler.task.disable_asciinema,
                 cpuset_cpus=self._agent_cpuset_cpus,
+                nested_sandbox=self._needs_nested_command_sandbox(),
             )
 
         self._trace_pipeline(

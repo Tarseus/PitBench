@@ -170,7 +170,7 @@ def test_task_terminal_applies_checked_patch_and_rejects_escape():
     assert result["applied"] is True
     command = container.calls[0][0][-1]
     assert "git apply --check" in command
-    assert "git apply \"$patch_file\"" in command
+    assert 'git apply "$patch_file"' in command
 
     with pytest.raises(ValueError, match="stay within"):
         terminal.apply_patch("--- a/file\n+++ ../../outside\n")
@@ -328,8 +328,61 @@ def test_codex_container_backend_loads_ephemeral_profile_config(tmp_path):
     assert payload["profile_sha256"] == agent._profile.sha256
 
 
+def test_codex_workspace_backend_uses_native_tools_and_strict_relay(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text('{"tokens":{"access_token":"secret"}}')
+    profile_home = tmp_path / "profile/codex-home"
+    profile_home.mkdir(parents=True)
+    (tmp_path / "profile/profile.yaml").write_text(
+        'schema_version: "1.0"\n'
+        "name: plugins\n"
+        "codex_home: codex-home\n"
+        "allow_hooks: true\n"
+    )
+    (profile_home / "config.toml").write_text("# plugin config\n")
+    agent = CodexMCPAgent(
+        model_name="gpt-5.6-sol",
+        codex_auth_path=str(auth_path),
+        runner_backend="workspace",
+        profile_path=str(tmp_path / "profile"),
+        reasoning_effort="high",
+    )
+    runtime = SimpleNamespace(
+        config_profile_name="pitbench_workspace_test",
+        command_prefix=lambda: ["docker-exec", "token-from-environment"],
+    )
+    relay = SimpleNamespace(
+        url="http://172.30.0.1:4321",
+        container_ip="172.30.0.1",
+        port=4321,
+    )
+
+    command = agent._build_workspace_command(
+        runtime=runtime,
+        relay=relay,
+        instruction="Improve it.",
+    )
+
+    assert command[:2] == ["docker-exec", "token-from-environment"]
+    assert command[command.index("--profile") + 1] == "pitbench_workspace_test"
+    assert "--dangerously-bypass-hook-trust" in command
+    assert "--sandbox" not in command
+    assert "use_legacy_landlock" not in command
+    assert 'model_provider="pitbench_relay"' in command
+    assert 'model_providers.pitbench_relay.base_url="http://172.30.0.1:4321"' in command
+    assert not any("env_key" in argument for argument in command)
+    assert 'web_search="disabled"' in command
+    assert "features.unified_exec=true" in command
+    assert "--strict-config" in command
+    assert "shell_environment_policy.ignore_default_excludes=false" in command
+    assert not any("secret" in argument for argument in command)
+    assert agent._runner_payload({}) == ""
+
+
 def test_codex_host_backend_rejects_profile(tmp_path):
-    with pytest.raises(ValueError, match="profiles require runner_backend=container"):
+    with pytest.raises(
+        ValueError, match="profiles require runner_backend=container or workspace"
+    ):
         CodexMCPAgent(
             model_name="gpt-5.6-sol",
             runner_backend="host",
@@ -485,11 +538,61 @@ def test_codex_jsonl_requires_completed_mcp_call():
     assert CodexMCPAgent._has_successful_mcp_call(completed) is True
 
 
+def test_codex_jsonl_accepts_completed_workspace_command():
+    failed = (
+        '{"type":"item.completed","item":{"type":"command_execution",'
+        '"status":"failed","exit_code":1}}'
+    )
+    completed = (
+        '{"type":"item.completed","item":{"type":"command_execution",'
+        '"status":"completed","exit_code":0}}'
+    )
+
+    assert CodexMCPAgent._has_successful_workspace_call(failed) is False
+    assert CodexMCPAgent._has_successful_workspace_call(completed) is True
+
+
+def test_workspace_relay_uses_no_solver_credential():
+    agent = CodexMCPAgent(model_name="gpt-5", runner_backend="workspace")
+    relay_process = MagicMock(returncode=0)
+    relay_process.communicate.return_value = ("PITBENCH_RELAY_REACHABLE\n", "")
+    public_process = MagicMock(returncode=0)
+    public_process.communicate.return_value = ("PITBENCH_PUBLIC_BLOCKED\n", "")
+    runtime = SimpleNamespace(
+        config_profile_name="pitbench_workspace_test",
+        permission_profile_name="pitbench_workspace_relay_test",
+        command_prefix=lambda: ["docker", "exec"],
+    )
+    relay = SimpleNamespace(
+        url="http://172.30.0.1:4321",
+        container_ip="172.30.0.1",
+        port=4321,
+    )
+
+    with patch(
+        "subprocess.Popen", side_effect=[relay_process, public_process]
+    ) as popen:
+        agent._check_workspace_isolation(
+            runtime=runtime,
+            relay=relay,
+            env={"PATH": "/usr/bin"},
+            logging_dir=None,
+        )
+
+    commands = [call.args[0] for call in popen.call_args_list]
+    assert all(
+        not any("env_key" in argument for argument in command) for command in commands
+    )
+    assert all(
+        call.kwargs["env"] == {"PATH": "/usr/bin"} for call in popen.call_args_list
+    )
+
+
 def test_codex_jsonl_reports_live_agent_interactions():
     agent = CodexMCPAgent(model_name="gpt-5")
     progress = []
     agent.set_progress_callback(progress.append)
-    counts = {"mcp_calls": 0, "messages": 0}
+    counts = {"tool_calls": 0, "messages": 0}
 
     agent._update_live_progress(
         '{"type":"item.completed","item":{"type":"agent_message"}}', counts
@@ -501,8 +604,8 @@ def test_codex_jsonl_reports_live_agent_interactions():
     )
 
     assert progress == [
-        "Agent: MCP calls 0 · messages 1",
-        "Agent: MCP calls 1 · messages 1",
+        "Agent: tool calls 0 · messages 1",
+        "Agent: tool calls 1 · messages 1",
     ]
 
 
@@ -516,8 +619,8 @@ def test_codex_process_streams_jsonl_and_preserves_output():
             "-c",
             (
                 "import sys; "
-                "print('{\"type\":\"item.completed\",\"item\":{\"type\":"
-                "\"mcp_tool_call\"}}', flush=True); "
+                'print(\'{"type":"item.completed","item":{"type":'
+                '"mcp_tool_call"}}\', flush=True); '
                 "print('diagnostic', file=sys.stderr, flush=True)"
             ),
         ],
@@ -532,7 +635,7 @@ def test_codex_process_streams_jsonl_and_preserves_output():
     assert return_code == 0
     assert '"mcp_tool_call"' in stdout
     assert stderr == "diagnostic\n"
-    assert progress == ["Agent: MCP calls 1 · messages 0"]
+    assert progress == ["Agent: tool calls 1 · messages 0"]
 
 
 def test_factory_registers_host_codex_agent():

@@ -137,11 +137,29 @@ uv run pitbench evaluate pyvrp_v0_14_0 \
   --model gemini-3.1-pro-high
 ```
 
-The default configuration runs the locally installed agent CLI in a short-lived
-container and injects its OAuth login through standard input. It does not mount
-the host home, task repository, or Docker socket, and it does not require a
-sudo-installed agent runner. Direct network access is the default; set an
-agent's `proxy_url` only on machines that require one.
+The default Codex configuration uses `runner_backend: workspace`. Codex and its
+native shell/file tools run inside the solver container, while a separate relay
+frontend sidecar is its only permitted network peer. That sidecar has no internet
+route or credential; it bridges over a per-run Unix socket to a host relay that
+holds OAuth, accepts only Responses requests for the assigned model, rejects web
+search, and applies per-trial request/concurrency admission limits, a
+response-accounted token cutoff, and a request-boundary duration cutoff.
+Codex's network proxy allowlists only the frontend sidecar IP plus container-local
+loopback.
+The run starts only after a real Codex shell probe demonstrates that the relay is
+reachable, the public internet is not, and no relay credential exists in the shell.
+A `profile_path` overlay may include user-installed
+plugins, skills, hooks, and local MCP servers; server-backed connectors remain
+offline unless PitBench is explicitly extended with a separately isolated
+capability relay.
+
+`runner_backend: container` remains available as the compatibility fallback.
+It runs the locally installed CLI in a short-lived control-plane container and
+uses the bounded PitBench MCP tool surface to operate on the offline solver
+container. Neither backend mounts the host home or Docker socket into the agent.
+Remote builds currently require `runner_backend: container`; PitBench rejects the
+workspace backend before allocating remote resources.
+Set `proxy_url` only on machines that require one for model access.
 
 If the run cannot start, diagnose the current shell and machine with
 `uv run pitbench doctor pyvrp`. Custom Codex and Antigravity profiles can be

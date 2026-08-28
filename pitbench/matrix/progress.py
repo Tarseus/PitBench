@@ -24,7 +24,7 @@ class MatrixProgressDisplay:
         r"valid (?P<valid>\d+)"
     )
     _AGENT_PROGRESS = re.compile(
-        r"Agent: MCP calls (?P<calls>\d+) · messages (?P<messages>\d+)"
+        r"Agent: (?:MCP|tool) calls (?P<calls>\d+) · messages (?P<messages>\d+)"
     )
 
     def __init__(self, *, console: Console | None = None) -> None:
@@ -54,9 +54,7 @@ class MatrixProgressDisplay:
     def _task(self, context: str, *, description: str) -> int:
         task = self._tasks.get(context)
         if task is None:
-            task = self._progress.add_task(
-                description, total=None, counts="starting"
-            )
+            task = self._progress.add_task(description, total=None, counts="starting")
             self._tasks[context] = task
         return task
 
@@ -112,9 +110,7 @@ class MatrixProgressDisplay:
                     task,
                     description=f"{context} · Agent",
                     total=None,
-                    counts=(
-                        f"MCP {agent['calls']} · messages {agent['messages']}"
-                    ),
+                    counts=(f"tools {agent['calls']} · messages {agent['messages']}"),
                 )
                 return
 

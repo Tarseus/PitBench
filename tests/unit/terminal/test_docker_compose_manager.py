@@ -76,3 +76,23 @@ def test_image_label_returns_none_when_image_is_missing() -> None:
     manager._client.images.get.side_effect = docker.errors.ImageNotFound("missing")
 
     assert manager.image_label("revision") is None
+
+
+def test_nested_sandbox_uses_scoped_compose_override() -> None:
+    manager = _make_manager()
+    manager._nested_sandbox = True
+    manager._compose_override_path = None
+
+    command = manager.get_docker_compose_command(["up", "-d"])
+    override = manager._compose_override_path
+
+    assert override is not None
+    assert command.count("-f") == 2
+    assert str(override) in command
+    content = override.read_text()
+    assert "cap_drop:\n      - ALL" in content
+    assert "SETFCAP" in content
+    assert "no-new-privileges:true" in content
+    assert "seccomp=unconfined" in content
+    assert "apparmor=unconfined" in content
+    override.unlink()

@@ -3,6 +3,7 @@ import io
 import shutil
 import subprocess
 import tarfile
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
@@ -44,6 +45,7 @@ class DockerComposeManager:
         agent_logs_path: Path | None = None,
         agent_model_name: str | None = None,
         cpuset_cpus: str | None = None,
+        nested_sandbox: bool = False,
     ):
         try:
             self._client = docker.from_env()
@@ -65,6 +67,8 @@ class DockerComposeManager:
         self._sessions_logs_path = sessions_logs_path
         self._agent_logs_path = agent_logs_path
         self._cpuset_cpus = cpuset_cpus
+        self._nested_sandbox = nested_sandbox
+        self._compose_override_path: Path | None = None
         self._logger = logger.getChild(__name__)
 
         self.env = DockerComposeEnvVars(
@@ -104,15 +108,49 @@ class DockerComposeManager:
                 self.env[key] = value
 
     def get_docker_compose_command(self, command: list[str]) -> list[str]:
-        return [
+        prefix = [
             "docker",
             "compose",
             "-p",
             self._client_container_name,
             "-f",
             str(self._docker_compose_path.resolve().absolute()),
-            *command,
         ]
+        override = self._nested_sandbox_override()
+        if override is not None:
+            prefix.extend(["-f", str(override)])
+        return [*prefix, *command]
+
+    def _nested_sandbox_override(self) -> Path | None:
+        if not getattr(self, "_nested_sandbox", False):
+            return None
+        existing = getattr(self, "_compose_override_path", None)
+        if existing is not None:
+            return existing
+        stream = tempfile.NamedTemporaryFile(
+            mode="w",
+            prefix="pitbench-nested-sandbox-",
+            suffix=".yaml",
+            delete=False,
+        )
+        with stream:
+            stream.write(
+                """services:
+  client:
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+      - SETFCAP
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=unconfined
+      - apparmor=unconfined
+"""
+            )
+        self._compose_override_path = Path(stream.name)
+        return self._compose_override_path
 
     def _run_docker_compose_command(
         self, command: list[str]
@@ -179,6 +217,11 @@ class DockerComposeManager:
                 self._cleanup_build_cache()
         except Exception as e:
             self._logger.error(f"Error cleaning up docker compose services: {e}")
+        finally:
+            override = getattr(self, "_compose_override_path", None)
+            if override is not None:
+                override.unlink(missing_ok=True)
+                self._compose_override_path = None
 
     def build(self) -> None:
         """Build the docker compose services."""

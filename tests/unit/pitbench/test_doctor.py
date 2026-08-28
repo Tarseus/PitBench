@@ -136,6 +136,44 @@ def test_codex_container_runner_needs_no_administrator(tmp_path: Path) -> None:
     prepare.assert_called_once_with(pull=False)
 
 
+def test_codex_workspace_runner_accepts_profile_plugins(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle/bin"
+    bundle.mkdir(parents=True)
+    codex = bundle / "codex"
+    codex.write_text("binary")
+    codex.chmod(0o755)
+    code_mode_host = bundle / "codex-code-mode-host"
+    code_mode_host.write_text("host")
+    code_mode_host.chmod(0o755)
+    resources = tmp_path / "bundle/codex-resources"
+    resources.mkdir()
+    bubblewrap = resources / "bwrap"
+    bubblewrap.write_text("bwrap")
+    bubblewrap.chmod(0o755)
+    profile_home = tmp_path / "profile/codex-home"
+    profile_home.mkdir(parents=True)
+    (tmp_path / "profile/profile.yaml").write_text(
+        'schema_version: "1.0"\n'
+        "name: plugins\n"
+        "codex_home: codex-home\n"
+        "allow_hooks: false\n"
+    )
+    (profile_home / "plugins.json").write_text("{}\n")
+
+    with patch("pitbench.cli.doctor.shutil.which", return_value=str(codex)):
+        result, ready = _runner_check(
+            "codex",
+            {
+                "runner_backend": "workspace",
+                "profile_path": str(tmp_path / "profile"),
+            },
+        )
+
+    assert ready is True
+    assert result.status == CheckStatus.PASS
+    assert "profile plugins@" in result.detail
+
+
 def test_antigravity_container_runner_needs_no_administrator(
     tmp_path: Path,
 ) -> None:

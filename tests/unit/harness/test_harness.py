@@ -70,6 +70,35 @@ def mock_lock_data():
 
 
 class TestHarnessInitialization:
+    def test_nested_sandbox_is_scoped_to_codex_workspace_backend(self):
+        harness = object.__new__(Harness)
+        harness._is_multi_agent = False
+        harness._agent_name = AgentName.CODEX
+        harness._agent_configs = None
+        harness._agent_kwargs = {"runner_backend": "workspace"}
+
+        assert harness._needs_nested_command_sandbox() is True
+
+        harness._agent_kwargs = {"runner_backend": "container"}
+        assert harness._needs_nested_command_sandbox() is False
+
+    def test_remote_build_rejects_codex_workspace_backend(self):
+        harness = object.__new__(Harness)
+        harness._remote_build = True
+        harness._is_multi_agent = False
+        harness._agent_name = AgentName.CODEX
+        harness._agent_configs = None
+        harness._agent_kwargs = {"runner_backend": "workspace"}
+
+        with pytest.raises(
+            ValueError,
+            match="runner_backend=workspace is not supported with --remote-build",
+        ):
+            harness._validate_remote_workspace_compatibility()
+
+        harness._agent_kwargs = {"runner_backend": "container"}
+        harness._validate_remote_workspace_compatibility()
+
     def test_normalize_multi_agent_configs_supports_import_paths(self):
         configs = Harness._normalize_multi_agent_configs(
             [

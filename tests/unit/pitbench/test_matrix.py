@@ -105,7 +105,7 @@ def test_matrix_progress_switches_from_agent_pulse_to_judge_bar() -> None:
         task_id = display._tasks["job"]
         agent_task = display._progress.tasks[task_id]
         assert agent_task.total is None
-        assert agent_task.fields["counts"] == "MCP 18 · messages 12"
+        assert agent_task.fields["counts"] == "tools 18 · messages 12"
 
         display(
             "job — Judge progress: instances 17/48, seed groups 83/240, "

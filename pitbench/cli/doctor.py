@@ -562,6 +562,14 @@ def _credential_check(
 
 
 def _runner_check(agent: str, values: dict[str, object]) -> tuple[DoctorCheck, bool]:
+    if values.get("runner_backend") == "workspace":
+        if agent != "codex":
+            return _check(
+                CheckStatus.WARN,
+                f"{agent} runner",
+                "workspace backend is currently supported only for Codex",
+            ), False
+        return _codex_workspace_runner_check(values)
     if values.get("runner_backend") == "container":
         if agent == "codex":
             return _codex_container_runner_check(values)
@@ -647,6 +655,59 @@ def _runner_check(agent: str, values: dict[str, object]) -> tuple[DoctorCheck, b
         CheckStatus.PASS,
         f"{agent} runner",
         f"root-owned launcher runs as {runner_user} without Docker access",
+    ), True
+
+
+def _codex_workspace_runner_check(
+    values: dict[str, object],
+) -> tuple[DoctorCheck, bool]:
+    binary_value = str(values.get("codex_binary") or "codex")
+    resolved = shutil.which(binary_value)
+    if resolved is None:
+        return _check(
+            CheckStatus.WARN,
+            "codex workspace runner",
+            f"Codex CLI is not executable: {binary_value}",
+            "Install Codex and run `codex login`.",
+        ), False
+    codex_binary = Path(resolved).resolve()
+    code_mode_host = codex_binary.parent / "codex-code-mode-host"
+    bubblewrap = codex_binary.parent.parent / "codex-resources/bwrap"
+    missing_runtime = next(
+        (
+            path
+            for path in (code_mode_host, bubblewrap)
+            if not path.is_file() or not os.access(path, os.X_OK)
+        ),
+        None,
+    )
+    if missing_runtime is not None:
+        return _check(
+            CheckStatus.WARN,
+            "codex workspace runner",
+            f"Codex runtime helper is unavailable: {missing_runtime}",
+            "Reinstall the standalone Codex CLI bundle.",
+        ), False
+    profile: CodexProfile | None = None
+    profile_path = values.get("profile_path")
+    if profile_path is not None:
+        try:
+            profile = CodexProfile.load(Path(str(profile_path)))
+        except Exception as error:
+            return _check(
+                CheckStatus.WARN,
+                "codex workspace runner",
+                f"invalid Codex profile: {error}",
+                "Run `uv run pitbench profiles validate PROFILE_PATH`.",
+            ), False
+    profile_detail = (
+        f", profile {profile.name}@{profile.sha256[:12]}" if profile else ""
+    )
+    return _check(
+        CheckStatus.PASS,
+        "codex workspace runner",
+        "Codex can be staged in the solver container with a relay-only network"
+        f"{profile_detail}",
     ), True
 
 

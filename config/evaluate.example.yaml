@@ -17,10 +17,17 @@ agents:
   codex:
     codex_binary: codex
     codex_auth_path: ~/.codex/auth.json
-    runner_backend: container
+    # Native Codex tools run in the solver container. A credential-free frontend
+    # sidecar is its only network peer and bridges to a budgeted host OAuth relay.
+    # Use container for --remote-build or as the MCP compatibility fallback.
+    runner_backend: workspace
     container_runner_image: python:3.13-slim-bookworm
     profile_path: null
     proxy_url: null
+    relay_max_requests: 256
+    relay_max_total_tokens: 10000000
+    relay_max_concurrent_requests: 1
+    relay_max_duration_sec: null
   antigravity:
     agy_binary: agy
     auth_token_path: ~/.gemini/antigravity-cli/antigravity-oauth-token

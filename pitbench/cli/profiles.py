@@ -63,7 +63,8 @@ def init_agent_profile(
         )
         (overlay / "config.toml").write_text(
             "# Put reproducible Codex configuration in this CODEX_HOME overlay.\n"
-            "# OAuth auth.json is reserved and injected by PitBench at runtime.\n"
+            "# Installed plugins, skills, hooks, and local MCP config may live here.\n"
+            "# OAuth auth.json is reserved; PitBench supplies model access separately.\n"
         )
         profile = CodexProfile.load(destination)
     else:
