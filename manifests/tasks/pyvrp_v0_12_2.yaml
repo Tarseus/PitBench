@@ -31,8 +31,18 @@ evaluation:
   solver_seeds: [0, 1, 2, 3, 4]
   threads: 1
   verifier: cvrp_independent
+  sensitivity:
+    scale_descriptor: customer_count
+    equivalence_transform: customer_relabel
+    equivalence_instances_per_population: 4
+    equivalence_budgets_sec: [5.0]
+    equivalence_solver_seeds: [0, 1, 2, 3, 4]
   decision:
     minimum_success_rate_delta: 0.0
+    minimum_operational_speedup: 0.95
+    minimum_cpu_speedup: 0.95
+    maximum_peak_rss_ratio: 1.05
+    require_complete_sensitivity: true
 populations:
   - name: agent_dev
     kind: agent_dev

@@ -40,10 +40,9 @@ def test_every_task_runs_explicit_fixture_grid(record, tmp_path: Path) -> None:
     assert {item.code_state for item in observations} == set(CodeState)
     assert all(item.task_id == record.task.task_id for item in observations)
     summary = envelope.payload["summary"]
-    assert summary["performance"] is not None
-    assert "outcomes" not in summary
-    assert "sensitivity" not in summary
-    assert "behavior" not in summary
+    assert summary["outcomes"] is not None
+    assert summary["sensitivity"] is not None
+    assert summary["behavior"] is not None
 
 
 def test_real_evaluation_without_private_assets_fails_closed(tmp_path: Path) -> None:
@@ -275,14 +274,12 @@ def test_model_equivalence_fixture_uses_performance_decision_path(
 
     assert envelope.completed, envelope.error
     decision = envelope.payload["summary"]["decision"]
-    assert decision["policy_name"] == "pitbench-performance-first"
-    assert decision["performance_complete"] is False
+    assert decision["policy_name"] == "pitbench-pareto-gated-improvement"
+    assert decision["outcome_complete"] is False
     assert decision["classification"] == "incomplete"
     assert decision["is_resolved"] is False
     assert envelope.is_resolved is False
-    assert "outcome_complete" not in decision
-    assert "resource_telemetry_complete" not in decision
-    assert "sensitivity_complete" not in decision
+    assert "performance_complete" not in decision
 
 
 def test_evaluator_does_not_gate_candidate_paths(tmp_path: Path) -> None:

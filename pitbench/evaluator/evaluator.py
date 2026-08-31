@@ -11,8 +11,10 @@ from pitbench.evaluator.judge import FixtureJudge, JudgePlan
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest, Evaluator
-from pitbench.metrics.decision_metrics import compute_performance_decision
-from pitbench.metrics.performance_report import compute_performance_report
+from pitbench.metrics.behavior_metrics import compute_behavior_metric_report
+from pitbench.metrics.decision_metrics import compute_benchmark_decision
+from pitbench.metrics.outcome_metrics import compute_outcome_metrics
+from pitbench.metrics.sensitivity_metrics import compute_sensitivity_report
 from pitbench.schema.evaluation import (
     ArtifactManifest,
     EvaluationResult,
@@ -117,15 +119,21 @@ class PitBenchEvaluator(Evaluator):
                 media_type="application/vnd.apache.parquet",
             ),
         )
-        performance = compute_performance_report(observations) if observations else None
-        if performance is None:
-            decision = None
-        else:
-            decision = compute_performance_decision(
-                performance,
+        outcomes = compute_outcome_metrics(observations) if observations else None
+        behavior = (
+            compute_behavior_metric_report(observations) if observations else None
+        )
+        sensitivity = compute_sensitivity_report(observations) if observations else None
+        decision = (
+            compute_benchmark_decision(
+                outcomes,
+                sensitivity,
                 task.evaluation.decision,
                 validity_accepted=validity.accepted,
             )
+            if outcomes is not None and sensitivity is not None
+            else None
+        )
         return EvaluationResult(
             task_id=task.task_id,
             validity=validity,
@@ -135,7 +143,9 @@ class PitBenchEvaluator(Evaluator):
                 observation_count=len(observations),
                 valid_observation_count=sum(item.valid for item in observations),
                 counts_by_state=dict(counts),
-                performance=performance,
+                outcomes=outcomes,
+                sensitivity=sensitivity,
+                behavior=behavior,
                 decision=decision,
             ),
         )
