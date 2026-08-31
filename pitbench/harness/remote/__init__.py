@@ -1,8 +1,8 @@
-"""Remote build infrastructure for fc-eval.
+"""Remote build infrastructure for pitbench.
 
 This module provides remote build capabilities using cloud providers like AWS EC2.
 It abstracts away the complexity of managing remote compute resources for running
-fc-eval tasks in distributed environments.
+pitbench tasks in distributed environments.
 """
 
 from .aws import EC2RemoteBuilder

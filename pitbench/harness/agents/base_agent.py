@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Callable
 
 from pydantic import BaseModel, Field
 
@@ -44,6 +45,15 @@ class BaseAgent(ABC):
         super().__init__()
         self._version = kwargs.get("version", None)
         self._prompt_template = kwargs.get("prompt_template", None)
+        self._progress_callback: Callable[[str], None] | None = None
+
+    def set_progress_callback(self, callback: Callable[[str], None] | None) -> None:
+        """Receive live, human-readable progress from an agent implementation."""
+        self._progress_callback = callback
+
+    def _report_progress(self, detail: str) -> None:
+        if self._progress_callback is not None:
+            self._progress_callback(detail)
 
     def _get_network_name(self, container_name: str) -> str:
         return f"{container_name}__mcp-network"
@@ -100,7 +110,7 @@ class BaseAgent(ABC):
             agent.prompt_template  # -> "./custom_prompt.j2"
 
         Usage with CLI:
-            uv run tb run --agent openhands --task-id hello-world \
+            uv run pitbench run --dataset-path tasks --agent openhands \
                 --agent-kwarg prompt_template=./openhands_template.j2
         """
         return self._prompt_template

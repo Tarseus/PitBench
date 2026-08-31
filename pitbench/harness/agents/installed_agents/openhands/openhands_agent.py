@@ -386,7 +386,7 @@ class OpenHandsAgent(AbstractInstalledAgent):
         if "LLM_API_VERSION" in os.environ:
             env["LLM_API_VERSION"] = os.environ["LLM_API_VERSION"]
 
-        # Disable browsing and prompt extensions since fc-eval does not need them
+        # Disable browsing and prompt extensions since pitbench does not need them
         env["AGENT_ENABLE_PROMPT_EXTENSIONS"] = "false"
         env["AGENT_ENABLE_BROWSING"] = "false"
         env["ENABLE_BROWSER"] = "false"
@@ -474,7 +474,7 @@ class OpenHandsAgent(AbstractInstalledAgent):
         escaped_instruction = shlex.quote(instruction)
 
         commands = [
-            # FC-Eval always uses the current directory as the workspace
+            # PitBench always uses the current directory as the workspace
             "SANDBOX_VOLUMES=${PWD}:/workspace:rw",
             # Note: OpenHands default entrypoint is OpenHands CLI, but
             # we need to use OpenHands headless mode.

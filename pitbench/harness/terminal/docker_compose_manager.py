@@ -1,21 +1,25 @@
 import gzip
 import io
+import os
 import shutil
 import subprocess
 import tarfile
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
 
-import docker
 import docker.errors
 from docker.models.containers import Container
 
+import docker
 from pitbench.harness.utils.env_model import EnvModel
 from pitbench.harness.utils.logger import logger
 
 
 class DockerComposeEnvVars(EnvModel):
+    agent_uid: int | None = None
+    agent_gid: int | None = None
     task_docker_client_container_name: str | None = None
     task_docker_client_image_name: str | None = None
     task_docker_name_prefix: str | None = None
@@ -43,6 +47,8 @@ class DockerComposeManager:
         sessions_logs_path: Path | None = None,
         agent_logs_path: Path | None = None,
         agent_model_name: str | None = None,
+        cpuset_cpus: str | None = None,
+        nested_sandbox: bool = False,
     ):
         try:
             self._client = docker.from_env()
@@ -63,9 +69,16 @@ class DockerComposeManager:
         self._client_container: Container | None = None
         self._sessions_logs_path = sessions_logs_path
         self._agent_logs_path = agent_logs_path
+        self._cpuset_cpus = cpuset_cpus
+        self._nested_sandbox = nested_sandbox
+        self._compose_override_path: Path | None = None
         self._logger = logger.getChild(__name__)
 
+        agent_uid = os.getuid() or 1000
+        agent_gid = os.getgid() or 1000
         self.env = DockerComposeEnvVars(
+            agent_uid=agent_uid,
+            agent_gid=agent_gid,
             task_docker_client_image_name=self._client_image_name,
             task_docker_client_container_name=self._client_container_name,
             task_docker_name_prefix=self._docker_name_prefix,
@@ -84,6 +97,8 @@ class DockerComposeManager:
             ),
             agent_model_name=agent_model_name,
         ).to_env_dict(include_os_env=True)
+        self.env["T_BENCH_AGENT_UID"] = str(agent_uid)
+        self.env["T_BENCH_AGENT_GID"] = str(agent_gid)
 
         # Add benchmark tuning environment variables for single-threaded
         # library operation. These ensure consistent performance by
@@ -102,15 +117,49 @@ class DockerComposeManager:
                 self.env[key] = value
 
     def get_docker_compose_command(self, command: list[str]) -> list[str]:
-        return [
+        prefix = [
             "docker",
             "compose",
             "-p",
             self._client_container_name,
             "-f",
             str(self._docker_compose_path.resolve().absolute()),
-            *command,
         ]
+        override = self._nested_sandbox_override()
+        if override is not None:
+            prefix.extend(["-f", str(override)])
+        return [*prefix, *command]
+
+    def _nested_sandbox_override(self) -> Path | None:
+        if not getattr(self, "_nested_sandbox", False):
+            return None
+        existing = getattr(self, "_compose_override_path", None)
+        if existing is not None:
+            return existing
+        stream = tempfile.NamedTemporaryFile(
+            mode="w",
+            prefix="pitbench-nested-sandbox-",
+            suffix=".yaml",
+            delete=False,
+        )
+        with stream:
+            stream.write(
+                """services:
+  client:
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+      - SETFCAP
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=unconfined
+      - apparmor=unconfined
+"""
+            )
+        self._compose_override_path = Path(stream.name)
+        return self._compose_override_path
 
     def _run_docker_compose_command(
         self, command: list[str]
@@ -163,6 +212,8 @@ class DockerComposeManager:
         self._client_container = self._client.containers.get(
             self._client_container_name
         )
+        if self._cpuset_cpus is not None:
+            self._client_container.update(cpuset_cpus=self._cpuset_cpus)
         return self._client_container
 
     def stop(self) -> None:
@@ -175,10 +226,23 @@ class DockerComposeManager:
                 self._cleanup_build_cache()
         except Exception as e:
             self._logger.error(f"Error cleaning up docker compose services: {e}")
+        finally:
+            override = getattr(self, "_compose_override_path", None)
+            if override is not None:
+                override.unlink(missing_ok=True)
+                self._compose_override_path = None
 
     def build(self) -> None:
         """Build the docker compose services."""
         self._run_docker_compose_command(["build"])
+
+    def image_label(self, label: str) -> str | None:
+        """Return a label from the cached client image, if that image exists."""
+        try:
+            image = self._client.images.get(self._client_image_name)
+        except docker.errors.ImageNotFound:
+            return None
+        return image.labels.get(label)
 
     def save_container_image(self, output_path: Path) -> None:
         """Commit the running container and save it as a gzipped image tarball."""

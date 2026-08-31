@@ -5,10 +5,11 @@ from unittest.mock import Mock, patch
 import pytest
 from typer.testing import CliRunner
 
+from pitbench.cli.main import app
 from pitbench.harness.agents import AgentName
 from pitbench.harness.cli.harness_cli.runs import (
     _load_agent_entries_from_config,
-    runs_app,
+    _process_agent_kwargs,
 )
 
 
@@ -70,6 +71,37 @@ def test_load_agent_entries_from_config_requires_model(tmp_path: Path):
         _load_agent_entries_from_config(config_file)
 
 
+def test_agent_no_rebuild_is_only_set_explicitly() -> None:
+    assert _process_agent_kwargs(None, []) == {}
+    assert _process_agent_kwargs(None, ["no_rebuild=True"]) == {"no_rebuild": True}
+
+
+@pytest.mark.parametrize(
+    "removed_option",
+    [
+        ["--dataset", "terminal-bench-core"],
+        ["--dataset-name", "terminal-bench-core"],
+        ["--dataset-version", "1.0.0"],
+        ["--registry-url", "https://registry.invalid"],
+        ["--local-registry-path", "registry.json"],
+        ["--task-id", "pyvrp_v0_14_0"],
+        ["--n-tasks", "1"],
+        ["--exclude-task-id", "pyvrp_v0_14_0"],
+        ["--upload-results"],
+    ],
+)
+def test_run_rejects_removed_options(
+    cli_runner: CliRunner, removed_option: list[str]
+) -> None:
+    result = cli_runner.invoke(
+        app,
+        ["run", "--dataset-path", "tasks", "--agent", "nop", *removed_option],
+    )
+
+    assert result.exit_code == 2
+    assert "No such option" in result.output
+
+
 def test_create_accepts_config(cli_runner: CliRunner, tmp_path: Path):
     config_file = tmp_path / "agents.json"
     config_file.write_text(
@@ -95,8 +127,8 @@ def test_create_accepts_config(cli_runner: CliRunner, tmp_path: Path):
         mock_harness_class.return_value = mock_harness
 
         result = cli_runner.invoke(
-            runs_app,
-            ["create", "--config", str(config_file), "--dataset-path", "tasks"],
+            app,
+            ["run", "--config", str(config_file), "--dataset-path", "tasks"],
         )
 
         assert result.exit_code == 0
@@ -153,8 +185,8 @@ def test_create_accepts_config_custom_import_path(
         mock_harness_class.return_value = mock_harness
 
         result = cli_runner.invoke(
-            runs_app,
-            ["create", "--config", str(config_file), "--dataset-path", "tasks"],
+            app,
+            ["run", "--config", str(config_file), "--dataset-path", "tasks"],
         )
 
         assert result.exit_code == 0

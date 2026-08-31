@@ -174,6 +174,9 @@ def _run_agy(mcp_url: str, arguments: list[str]) -> int:
             {
                 "trustedWorkspaces": [str(workspace)],
                 "toolPermission": "request-review",
+                "permissions": {
+                    "allow": ["mcp(pitbench/run_command)"],
+                },
             },
         )
         env = os.environ.copy()

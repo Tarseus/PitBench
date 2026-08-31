@@ -1,6 +1,5 @@
 schema_version: "2.0"
 task_id: highs_v1_15_1
-split: benchmark
 release:
   repository: ERGO-Code/HiGHS
   version: "1.15.1"
@@ -19,18 +18,16 @@ repository:
   clone_url: https://github.com/ERGO-Code/HiGHS.git
   language: cpp
   plugin: pitbench.repositories.highs:HighsRepositoryPlugin
+  editable_paths: [src, build]
 oracle:
   kind: solver_certificate
   source: private://oracles/miplib.json
   objective_sense: minimize
 evaluation:
-  family_plugin: pitbench.families.external:MIPFamily
   budgets_sec: [10.0, 30.0]
   solver_seeds: [0, 1, 2]
   threads: 1
   verifier: private://oracles/verifiers/mip_solution
-  validation_build: {compiler: gcc, flags: [-O1, -g], sanitizers: [address, undefined]}
-  performance_build: {compiler: gcc, flags: [-O3, -DNDEBUG]}
 populations:
   - name: agent_dev
     kind: agent_dev

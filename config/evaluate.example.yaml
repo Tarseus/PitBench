@@ -1,0 +1,42 @@
+# Copy this file to config/evaluate.local.yaml and edit it for one machine.
+# The local file is ignored by Git. Relative paths are resolved from the
+# PitBench repository root. Null proxy values mean direct network access.
+
+paths:
+  output_path: runs
+  workspace_path: .pitbench/tasks
+  private_root: private
+
+# Default: agents receive only the repository snapshot and their native tools.
+# To run a tool-assisted condition, list commands such as [inspect, bench, validate].
+agent_tools: []
+
+tasks:
+  pyvrp_v0_14_0:
+    repository_source: null
+    agent_image: ghcr.io/tarseus/pitbench-pyvrp@sha256:776623be0e47b5f907efc3855886b6cd635b6c09c17f2b8fd4c0597f2f74f445
+    judge_image: ghcr.io/tarseus/pitbench-pyvrp-judge@sha256:c7a4f9abecc90cfcc5e4368ba46a9f35d5f7be2883ac53cff49e7f365f1c79a3
+
+agents:
+  codex:
+    codex_binary: codex
+    codex_auth_path: ~/.codex/auth.json
+    # Native Codex tools run in the solver container. A credential-free frontend
+    # sidecar is its only network peer and bridges to a budgeted host OAuth relay.
+    # Use container for --remote-build or as the MCP compatibility fallback.
+    runner_backend: workspace
+    container_runner_image: python:3.13-slim-bookworm
+    profile_path: null
+    proxy_url: null
+    relay_max_requests: 256
+    relay_max_total_tokens: 10000000
+    relay_max_concurrent_requests: 1
+    relay_max_duration_sec: null
+  antigravity:
+    agy_binary: agy
+    auth_token_path: ~/.gemini/antigravity-cli/antigravity-oauth-token
+    settings_path: ~/.gemini/antigravity-cli/settings.json
+    runner_backend: container
+    container_runner_image: python:3.13-slim-bookworm
+    profile_path: null
+    proxy_url: null

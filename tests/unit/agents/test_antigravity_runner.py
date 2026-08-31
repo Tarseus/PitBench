@@ -74,9 +74,13 @@ def test_runner_installs_exact_mcp_tool_permission(tmp_path, monkeypatch):
     runner_home = tmp_path / "runner-home"
     payload = {
         "auth_token_json": (
-            '{"auth_method":"oauth-personal","token":{"access_token":"test"}}'
+            '{"auth_method":"consumer","token":{"access_token":"test"}}'
         ),
-        "settings_json": ('{"security":{"auth":{"selectedType":"oauth-personal"}}}'),
+        "settings_json": (
+            '{"agentMode":"auto","toolPermission":"always-proceed",'
+            '"trustedWorkspaces":["/host/workspace"],'
+            '"security":{"auth":{"selectedType":"consumer"}}}'
+        ),
     }
     invocation = {}
 
@@ -113,9 +117,22 @@ def test_runner_installs_exact_mcp_tool_permission(tmp_path, monkeypatch):
     cli = json.loads(
         (runner_home / ".gemini" / "antigravity-cli" / "settings.json").read_text()
     )
+    token = json.loads(
+        (
+            runner_home
+            / ".gemini"
+            / "antigravity-cli"
+            / "antigravity-oauth-token"
+        ).read_text()
+    )
     assert shared == {"permissions": {"allow": ["mcp(pitbench/run_command)"]}}
     assert cli["toolPermission"] == "request-review"
-    assert "permissions" not in cli
+    assert cli["permissions"] == {
+        "allow": ["mcp(pitbench/run_command)"],
+    }
+    assert token["auth_method"] == "consumer"
+    legacy = json.loads((runner_home / ".gemini" / "settings.json").read_text())
+    assert legacy["security"]["auth"]["selectedType"] == "consumer"
     assert invocation["stdin"] == -1
     assert all(
         path.stat().st_mode & 0o777 == 0o600

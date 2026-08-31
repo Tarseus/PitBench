@@ -24,6 +24,8 @@ class Terminal:
         livestream: bool = False,
         disable_recording: bool = False,
         history_limit: int | None = None,
+        cpuset_cpus: str | None = None,
+        nested_sandbox: bool = False,
     ):
         self._client_container_name = client_container_name
         self._docker_image_name_prefix = docker_image_name_prefix
@@ -48,6 +50,8 @@ class Terminal:
             sessions_logs_path=sessions_logs_path,
             agent_logs_path=agent_logs_path,
             agent_model_name=agent_model_name,
+            cpuset_cpus=cpuset_cpus,
+            nested_sandbox=nested_sandbox,
         )
 
         self._init_livestreamer()
@@ -188,6 +192,8 @@ def spin_up_terminal(
     cleanup: bool = False,
     livestream: bool = False,
     disable_recording: bool = False,
+    cpuset_cpus: str | None = None,
+    nested_sandbox: bool = False,
 ) -> Generator[Terminal, None, None]:
     terminal = Terminal(
         client_container_name=client_container_name,
@@ -202,6 +208,8 @@ def spin_up_terminal(
         cleanup=cleanup,
         livestream=livestream,
         disable_recording=disable_recording,
+        cpuset_cpus=cpuset_cpus,
+        nested_sandbox=nested_sandbox,
     )
 
     try:
