@@ -110,7 +110,7 @@ class BaseAgent(ABC):
             agent.prompt_template  # -> "./custom_prompt.j2"
 
         Usage with CLI:
-            uv run tb run --agent openhands --task-id hello-world \
+            uv run pitbench run --dataset-path tasks --agent openhands \
                 --agent-kwarg prompt_template=./openhands_template.j2
         """
         return self._prompt_template

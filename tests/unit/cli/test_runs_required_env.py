@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
-from pitbench.harness.cli.harness_cli.runs import runs_app
+from pitbench.cli.main import app
 
 
 @pytest.fixture
@@ -19,8 +19,8 @@ def test_create_remote_build_requires_ec2_instance_type(cli_runner: CliRunner):
         patch("pitbench.harness.cli.harness_cli.runs._print_rich_results"),
     ):
         result = cli_runner.invoke(
-            runs_app,
-            ["create", "--dataset-path", "tasks", "--remote-build", "--agent", "nop"],
+            app,
+            ["run", "--dataset-path", "tasks", "--remote-build", "--agent", "nop"],
         )
 
         assert result.exit_code == 1
@@ -37,8 +37,8 @@ def test_create_remote_build_requires_ec2_use_nvme_storage(cli_runner: CliRunner
         patch("pitbench.harness.cli.harness_cli.runs._print_rich_results"),
     ):
         result = cli_runner.invoke(
-            runs_app,
-            ["create", "--dataset-path", "tasks", "--remote-build", "--agent", "nop"],
+            app,
+            ["run", "--dataset-path", "tasks", "--remote-build", "--agent", "nop"],
         )
 
         assert result.exit_code == 1

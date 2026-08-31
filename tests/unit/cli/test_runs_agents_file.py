@@ -10,7 +10,6 @@ from pitbench.harness.agents import AgentName
 from pitbench.harness.cli.harness_cli.runs import (
     _load_agent_entries_from_config,
     _process_agent_kwargs,
-    runs_app,
 )
 
 
@@ -128,8 +127,8 @@ def test_create_accepts_config(cli_runner: CliRunner, tmp_path: Path):
         mock_harness_class.return_value = mock_harness
 
         result = cli_runner.invoke(
-            runs_app,
-            ["create", "--config", str(config_file), "--dataset-path", "tasks"],
+            app,
+            ["run", "--config", str(config_file), "--dataset-path", "tasks"],
         )
 
         assert result.exit_code == 0
@@ -186,8 +185,8 @@ def test_create_accepts_config_custom_import_path(
         mock_harness_class.return_value = mock_harness
 
         result = cli_runner.invoke(
-            runs_app,
-            ["create", "--config", str(config_file), "--dataset-path", "tasks"],
+            app,
+            ["run", "--config", str(config_file), "--dataset-path", "tasks"],
         )
 
         assert result.exit_code == 0
