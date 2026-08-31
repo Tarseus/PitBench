@@ -208,7 +208,9 @@ def test_cached_base_observations_merge_with_agent_fixture(tmp_path: Path) -> No
     assert {item.code_state for item in observations} == set(CodeState)
 
 
-def test_model_build_fixture_uses_performance_decision_path(tmp_path: Path) -> None:
+def test_model_equivalence_fixture_uses_performance_decision_path(
+    tmp_path: Path,
+) -> None:
     record = next(
         record
         for record in TaskCatalog(ROOT).validate_all()

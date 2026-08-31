@@ -26,7 +26,7 @@ from pitbench.repositories.base import (
     SolverRunSpec,
 )
 from pitbench.schema.observation import CodeState, RunObservation, RunStatus
-from pitbench.schema.task import PitBenchTask, PopulationKind, PopulationSpec, TaskType
+from pitbench.schema.task import PitBenchTask, PopulationKind, PopulationSpec
 
 
 @dataclass(frozen=True)
@@ -53,6 +53,10 @@ def _customer_count(path: Path | None) -> float | None:
     if not isinstance(coordinates, list) or not coordinates:
         return None
     return float(len(coordinates) - 1)
+
+
+def _uses_model_equivalence(task: PitBenchTask) -> bool:
+    return task.evaluation.verifier.rsplit("/", 1)[-1].endswith("model_equivalence")
 
 
 def _limit_solver_cpus(
@@ -92,7 +96,7 @@ class JudgePlan:
             for index in range(min(instances_per_population, population.size)):
                 objective_scored = (
                     population.kind == PopulationKind.JUDGE_ID
-                    and task.task_type not in {TaskType.MODEL_BUILD, TaskType.PRESOLVE}
+                    and not _uses_model_equivalence(task)
                 )
                 cases.append(
                     InstanceCase(
@@ -191,11 +195,7 @@ class JudgePlan:
                 anchor = item.get("optimal_or_bks", item.get("bks"))
                 objective_scored = (
                     population.kind == PopulationKind.JUDGE_ID
-                    and task.task_type
-                    not in {
-                        TaskType.MODEL_BUILD,
-                        TaskType.PRESOLVE,
-                    }
+                    and not _uses_model_equivalence(task)
                 )
                 if uri is None or (objective_scored and anchor is None):
                     raise ValueError(
@@ -272,7 +272,7 @@ class FixtureJudge:
             equivalence_parent_id=case.equivalence_parent_id,
             equivalence_transform=case.equivalence_transform,
         )
-        if task.task_type in {TaskType.MODEL_BUILD, TaskType.PRESOLVE}:
+        if _uses_model_equivalence(task):
             variables = {
                 CodeState.BASE: 9011,
                 CodeState.AGENT: 1200,
@@ -453,16 +453,16 @@ class LocalProcessJudge:
                     slots.put(cpu_ids)
 
             with ThreadPoolExecutor(max_workers=workers) as executor:
-                future_to_job = {
-                    executor.submit(execute, job): job for job in jobs
-                }
+                future_to_job = {executor.submit(execute, job): job for job in jobs}
                 seed_group_totals: dict[tuple[str, str, CodeState, int], int] = {}
                 instance_totals: dict[tuple[str, str], int] = {}
                 for case, state, _, seed, _ in jobs:
                     instance_key = (case.population.name, case.instance_id)
                     seed_key = (*instance_key, state, seed)
                     seed_group_totals[seed_key] = seed_group_totals.get(seed_key, 0) + 1
-                    instance_totals[instance_key] = instance_totals.get(instance_key, 0) + 1
+                    instance_totals[instance_key] = (
+                        instance_totals.get(instance_key, 0) + 1
+                    )
 
                 seed_group_counts: dict[tuple[str, str, CodeState, int], int] = {}
                 instance_counts: dict[tuple[str, str], int] = {}
@@ -476,7 +476,9 @@ class LocalProcessJudge:
                     instance_key = (case.population.name, case.instance_id)
                     seed_key = (*instance_key, state, seed)
                     seed_group_counts[seed_key] = seed_group_counts.get(seed_key, 0) + 1
-                    instance_counts[instance_key] = instance_counts.get(instance_key, 0) + 1
+                    instance_counts[instance_key] = (
+                        instance_counts.get(instance_key, 0) + 1
+                    )
                     if seed_group_counts[seed_key] == seed_group_totals[seed_key]:
                         completed_seed_groups += 1
                     if instance_counts[instance_key] == instance_totals[instance_key]:

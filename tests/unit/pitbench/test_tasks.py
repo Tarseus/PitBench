@@ -5,7 +5,7 @@ import pytest
 from typer.testing import CliRunner
 
 from pitbench.cli.main import app
-from pitbench.schema.task import PopulationKind
+from pitbench.schema.task import PopulationKind, TaskType
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -32,6 +32,25 @@ def test_catalog_contains_release_snapshots() -> None:
         "highs_v1_15_1",
         "choco_v6_0_1",
         "ortools_v9_15",
+    }
+
+
+def test_task_types_classify_heuristic_and_exact_solvers() -> None:
+    records = TaskCatalog(ROOT).validate_all()
+
+    assert {task_type.value for task_type in TaskType} == {
+        "heuristic_solver",
+        "exact_solver",
+    }
+    assert {record.task.task_id: record.task.task_type for record in records} == {
+        "pyvrp_v0_12_2": TaskType.HEURISTIC_SOLVER,
+        "pyvrp_v0_13_0": TaskType.HEURISTIC_SOLVER,
+        "pyvrp_v0_13_4": TaskType.HEURISTIC_SOLVER,
+        "pyvrp_v0_14_0": TaskType.HEURISTIC_SOLVER,
+        "vroom_v1_15_0": TaskType.HEURISTIC_SOLVER,
+        "highs_v1_15_1": TaskType.EXACT_SOLVER,
+        "choco_v6_0_1": TaskType.EXACT_SOLVER,
+        "ortools_v9_15": TaskType.EXACT_SOLVER,
     }
 
 

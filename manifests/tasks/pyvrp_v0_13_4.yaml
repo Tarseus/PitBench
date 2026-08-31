@@ -1,6 +1,5 @@
 schema_version: "2.0"
 task_id: pyvrp_v0_13_4
-split: development
 release:
   repository: PyVRP/PyVRP
   version: "0.13.4"
@@ -9,7 +8,7 @@ release:
   tree_sha: 2d24f7fd1af5b69a732d6baf2ef7d870666eb515
   released_at: 2026-05-20T11:44:49Z
   url: https://github.com/PyVRP/PyVRP/releases/tag/v0.13.4
-task_type: solver_search
+task_type: heuristic_solver
 problem_family: cvrp
 optimization_scope: local_search_and_search_efficiency
 instruction: >-

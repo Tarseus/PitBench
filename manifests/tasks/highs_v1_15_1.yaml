@@ -1,6 +1,5 @@
 schema_version: "2.0"
 task_id: highs_v1_15_1
-split: benchmark
 release:
   repository: ERGO-Code/HiGHS
   version: "1.15.1"

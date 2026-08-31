@@ -10,11 +10,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class TaskType(str, Enum):
-    SOLVER_SEARCH = "solver_search"
     HEURISTIC_SOLVER = "heuristic_solver"
     EXACT_SOLVER = "exact_solver"
-    MODEL_BUILD = "model_build"
-    PRESOLVE = "presolve"
 
 
 class ProblemFamily(str, Enum):
@@ -25,12 +22,6 @@ class ProblemFamily(str, Enum):
 
 class InformationRegime(str, Enum):
     SNAPSHOT_ONLY = "snapshot_only"
-
-
-class TaskSplit(str, Enum):
-    DEVELOPMENT = "development"
-    VALIDATION = "validation"
-    BENCHMARK = "benchmark"
 
 
 class PopulationKind(str, Enum):
@@ -137,7 +128,6 @@ class EvaluationProtocol(BaseModel):
 class PitBenchTask(BaseModel):
     schema_version: Literal["2.0"] = "2.0"
     task_id: str
-    split: TaskSplit
     release: ReleaseSnapshot
     task_type: TaskType
     problem_family: ProblemFamily

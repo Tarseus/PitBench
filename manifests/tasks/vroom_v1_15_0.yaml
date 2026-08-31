@@ -1,6 +1,5 @@
 schema_version: "2.0"
 task_id: vroom_v1_15_0
-split: validation
 release:
   repository: VROOM-Project/vroom
   version: "1.15.0"

@@ -1,6 +1,5 @@
 schema_version: "2.0"
 task_id: choco_v6_0_1
-split: benchmark
 release:
   repository: chocoteam/choco-solver
   version: "6.0.1"
