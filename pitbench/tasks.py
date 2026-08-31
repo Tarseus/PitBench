@@ -61,7 +61,7 @@ class TaskCatalog:
                 f"{task.task_id}: release commit must be a full SHA-1"
             )
         RepositoryPluginRegistry.load(task.repository.plugin)
-        ProblemFamilyRegistry.load(task.evaluation.family_plugin)
+        ProblemFamilyRegistry.load(task.problem_family)
 
         for population in task.populations:
             if population.kind == PopulationKind.AGENT_DEV:

@@ -24,13 +24,10 @@ oracle:
   source: private://oracles/bin_packing.json
   objective_sense: minimize
 evaluation:
-  family_plugin: pitbench.families.external:CPFamily
   budgets_sec: [5.0, 20.0]
   solver_seeds: [0, 1, 2]
   threads: 1
   verifier: private://oracles/verifiers/bin_packing_solution
-  validation_build: {flags: [-ea]}
-  performance_build: {flags: [-server]}
 populations:
   - name: agent_dev
     kind: agent_dev

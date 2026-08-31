@@ -323,7 +323,7 @@ class LocalProcessJudge:
         self.parallel_runs = parallel_runs
         self.progress_callback = progress_callback
         self.repository = RepositoryPluginRegistry.load(task.repository.plugin)
-        self.family = ProblemFamilyRegistry.load(task.evaluation.family_plugin)
+        self.family = ProblemFamilyRegistry.load(task.problem_family)
         if isinstance(self.family, ExternalVerifierFamily):
             self.family.verifier = self.resolver.resolve(task.evaluation.verifier)
 

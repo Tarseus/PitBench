@@ -5,7 +5,8 @@ import pytest
 from typer.testing import CliRunner
 
 from pitbench.cli.main import app
-from pitbench.schema.task import PopulationKind, TaskType
+from pitbench.families.base import ProblemFamilyRegistry
+from pitbench.schema.task import PopulationKind, ProblemFamily, TaskType
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -52,6 +53,12 @@ def test_task_types_classify_heuristic_and_exact_solvers() -> None:
         "choco_v6_0_1": TaskType.EXACT_SOLVER,
         "ortools_v9_15": TaskType.EXACT_SOLVER,
     }
+
+
+def test_problem_families_select_their_canonical_verifier() -> None:
+    assert ProblemFamilyRegistry.load(ProblemFamily.CVRP).name == "cvrp"
+    assert ProblemFamilyRegistry.load(ProblemFamily.MIP).name == "mip"
+    assert ProblemFamilyRegistry.load(ProblemFamily.CP).name == "cp"
 
 
 def test_validate_one_ignores_unrelated_invalid_manifest(tmp_path: Path) -> None:

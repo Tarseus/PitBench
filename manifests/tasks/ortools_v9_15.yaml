@@ -23,13 +23,10 @@ oracle:
     kind: independent_measurement
     source: private://oracles/ortools_v9_15.json
 evaluation:
-  family_plugin: pitbench.families.external:CPFamily
   budgets_sec: [1.0]
   solver_seeds: [0]
   threads: 1
   verifier: private://oracles/verifiers/ortools_model_equivalence
-  validation_build: {flags: [-ea]}
-  performance_build: {flags: [-O3, -DNDEBUG]}
 populations:
   - name: agent_dev
     kind: agent_dev

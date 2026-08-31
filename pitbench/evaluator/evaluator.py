@@ -7,7 +7,7 @@ from pathlib import Path
 from adapters.pitbench.adapter import PitBenchAdapter
 from pitbench.evaluator.artifacts import artifact_ref
 from pitbench.evaluator.docker_judge import DockerJudge
-from pitbench.evaluator.judge import FixtureJudge, JudgePlan, LocalProcessJudge
+from pitbench.evaluator.judge import FixtureJudge, JudgePlan
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest, Evaluator
@@ -71,35 +71,23 @@ class PitBenchEvaluator(Evaluator):
             if missing:
                 raise ValueError(f"real judge missing configuration: {missing}")
             PitBenchAdapter.validate_repository(task, Path(config["base_repository"]))
-            if config.get("unsafe_local_judge", False):
-                observations = LocalProcessJudge(
-                    task=task,
-                    base_repository=Path(config["base_repository"]),
-                    private_root=Path(config["private_root"]),
-                    candidate_patch=request.candidate_patch_path,
-                    output_dir=request.output_dir,
-                    code_states=code_states,
-                    parallel_runs=int(config.get("judge_parallel_runs", 1)),
-                    progress_callback=progress_callback,
-                ).run()
-            else:
-                image = config.get("judge_image") or task.repository.judge_image
-                if not image:
-                    raise ValueError("real judge requires a pinned judge_image")
-                observations = DockerJudge(
-                    image=image,
-                    manifest_path=manifest_path,
-                    base_repository=Path(config["base_repository"]),
-                    private_root=Path(config["private_root"]),
-                    candidate_patch=request.candidate_patch_path,
-                    output_dir=request.output_dir,
-                    cpus=float(config.get("judge_cpus", 8.0)),
-                    memory=str(config.get("judge_memory", "8g")),
-                    cpuset_cpus=config.get("judge_cpuset_cpus"),
-                    code_states=code_states,
-                    parallel_runs=int(config.get("judge_parallel_runs", 1)),
-                    progress_callback=progress_callback,
-                ).run()
+            image = config.get("judge_image") or task.repository.judge_image
+            if not image:
+                raise ValueError("real judge requires a pinned judge_image")
+            observations = DockerJudge(
+                image=image,
+                manifest_path=manifest_path,
+                base_repository=Path(config["base_repository"]),
+                private_root=Path(config["private_root"]),
+                candidate_patch=request.candidate_patch_path,
+                output_dir=request.output_dir,
+                cpus=float(config.get("judge_cpus", 8.0)),
+                memory=str(config.get("judge_memory", "8g")),
+                cpuset_cpus=config.get("judge_cpuset_cpus"),
+                code_states=code_states,
+                parallel_runs=int(config.get("judge_parallel_runs", 1)),
+                progress_callback=progress_callback,
+            ).run()
 
         base_observations_path = config.get("base_observations_path")
         if base_observations_path is not None:

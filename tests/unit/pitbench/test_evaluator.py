@@ -159,6 +159,43 @@ def test_evaluator_rejects_repository_snapshot_mismatch_before_judge(
     docker_judge.assert_not_called()
 
 
+def test_real_evaluation_ignores_legacy_local_judge_flag(tmp_path: Path) -> None:
+    record = TaskCatalog(ROOT).records()[0]
+    output = tmp_path / "output"
+    output.mkdir()
+    candidate = output / "candidate.patch"
+    candidate.write_text("")
+    base_repository = tmp_path / "base"
+    private_root = tmp_path / "private"
+    base_repository.mkdir()
+    private_root.mkdir()
+    request = EvaluationRequest(
+        task_id=record.task.task_id,
+        task_path=ROOT,
+        candidate_patch_path=candidate,
+        candidate_patch_sha256=hashlib.sha256(candidate.read_bytes()).hexdigest(),
+        output_dir=output,
+        agent_name="test",
+        evaluator_config={
+            "manifest_path": str(record.manifest_path),
+            "base_repository": str(base_repository),
+            "private_root": str(private_root),
+            "judge_image": "sha256:" + "a" * 64,
+            "unsafe_local_judge": True,
+        },
+    )
+
+    with (
+        patch("pitbench.evaluator.evaluator.PitBenchAdapter.validate_repository"),
+        patch("pitbench.evaluator.evaluator.DockerJudge") as docker_judge,
+    ):
+        docker_judge.return_value.run.return_value = []
+        envelope = PitBenchEvaluator().envelope(request)
+
+    assert envelope.completed, envelope.error
+    docker_judge.assert_called_once()
+
+
 def test_cached_base_observations_merge_with_agent_fixture(tmp_path: Path) -> None:
     record = next(
         item

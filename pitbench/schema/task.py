@@ -91,13 +91,6 @@ class PopulationSpec(BaseModel):
     shift: str | None = None
 
 
-class BuildSpec(BaseModel):
-    compiler: str | None = None
-    compiler_version: str | None = None
-    flags: list[str] = Field(default_factory=list)
-    sanitizers: list[Literal["address", "undefined"]] = Field(default_factory=list)
-
-
 class DecisionProtocol(BaseModel):
     """Acceptance rule for performance-first solver-improvement tasks."""
 
@@ -105,13 +98,10 @@ class DecisionProtocol(BaseModel):
 
 
 class EvaluationProtocol(BaseModel):
-    family_plugin: str
     budgets_sec: list[float]
     solver_seeds: list[int]
     threads: int = Field(default=1, gt=0)
     verifier: str
-    validation_build: BuildSpec
-    performance_build: BuildSpec
     decision: DecisionProtocol = Field(default_factory=DecisionProtocol)
 
     @model_validator(mode="after")

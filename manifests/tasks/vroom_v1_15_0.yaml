@@ -24,13 +24,10 @@ oracle:
     source: private://oracles/cvrp.json
     objective_sense: minimize
 evaluation:
-  family_plugin: pitbench.families.cvrp:CVRPFamily
   budgets_sec: [1.0, 5.0, 10.0]
   solver_seeds: [0]
   threads: 1
   verifier: cvrp_independent
-  validation_build: {compiler: gcc, flags: [-O1, -g], sanitizers: [address, undefined]}
-  performance_build: {compiler: gcc, flags: [-O3, -DNDEBUG]}
 populations:
   - name: agent_dev
     kind: agent_dev

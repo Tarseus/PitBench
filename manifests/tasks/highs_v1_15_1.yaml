@@ -24,13 +24,10 @@ oracle:
   source: private://oracles/miplib.json
   objective_sense: minimize
 evaluation:
-  family_plugin: pitbench.families.external:MIPFamily
   budgets_sec: [10.0, 30.0]
   solver_seeds: [0, 1, 2]
   threads: 1
   verifier: private://oracles/verifiers/mip_solution
-  validation_build: {compiler: gcc, flags: [-O1, -g], sanitizers: [address, undefined]}
-  performance_build: {compiler: gcc, flags: [-O3, -DNDEBUG]}
 populations:
   - name: agent_dev
     kind: agent_dev
