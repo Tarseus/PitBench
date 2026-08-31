@@ -199,36 +199,6 @@ def _git_paths(repository: Path, *arguments: str) -> list[str]:
     ]
 
 
-def _changed_paths(repository: Path) -> list[str]:
-    tracked = _git_paths(repository, "diff", "--name-only", "HEAD")
-    untracked = _git_paths(repository, "ls-files", "--others", "--exclude-standard")
-    return sorted(set(tracked) | set(untracked))
-
-
-def _workspace_result(
-    config: dict[str, Any], changed_paths: list[str]
-) -> dict[str, Any]:
-    editable = tuple(map(str, config.get("editable_paths", [])))
-    outside_editable_paths = [
-        path
-        for path in changed_paths
-        if not any(
-            path == prefix or path.startswith(f"{prefix}/") for prefix in editable
-        )
-    ]
-    return {
-        "editable_paths": list(editable),
-        "changed_paths": changed_paths,
-        "outside_editable_paths": outside_editable_paths,
-    }
-
-
-def check_command(_: argparse.Namespace) -> int:
-    result = _workspace_result(_config(), _changed_paths(_repository()))
-    print(json.dumps(result, indent=2))
-    return 0
-
-
 def _candidate_patch(repository: Path) -> bytes:
     tracked = subprocess.run(
         [
@@ -270,18 +240,6 @@ def _candidate_patch(repository: Path) -> bytes:
             )
         patch.extend(untracked.stdout)
     return bytes(patch)
-
-
-def diff_command(_: argparse.Namespace) -> int:
-    patch = _candidate_patch(_repository())
-    if not patch:
-        return 0
-    completed = subprocess.run(
-        ["git", "apply", "--stat"],
-        input=patch,
-        check=False,
-    )
-    return completed.returncode
 
 
 def validate_command(_: argparse.Namespace) -> int:
@@ -367,15 +325,9 @@ def parser() -> argparse.ArgumentParser:
         bench.add_argument("--split", default="dev")
         _run_options(bench, instance_required=False)
         bench.set_defaults(handler=bench_command)
-    if "check" in tools:
-        check = commands.add_parser("check")
-        check.set_defaults(handler=check_command)
     if "validate" in tools:
         validate = commands.add_parser("validate")
         validate.set_defaults(handler=validate_command)
-    if "diff" in tools:
-        diff = commands.add_parser("diff")
-        diff.set_defaults(handler=diff_command)
     return result
 
 

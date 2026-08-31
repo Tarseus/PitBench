@@ -204,7 +204,7 @@ def test_task_terminal_async_command_supports_incremental_polling():
         workdir="/workspace/repo",
     )
 
-    started = terminal.start_command("pitbench check", timeout_sec=10)
+    started = terminal.start_command("git status --short", timeout_sec=10)
     deadline = time.monotonic() + 2
     while True:
         result = terminal.poll_command(started["handle"], max_chars=5)

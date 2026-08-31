@@ -105,7 +105,6 @@ def write_agent_tooling(
     if tools & {
         AgentTool.INSPECT,
         AgentTool.WORKSPACE,
-        AgentTool.CHECK,
         AgentTool.VALIDATE,
     }:
         config["editable_paths"] = task.repository.editable_paths

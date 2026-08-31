@@ -148,11 +148,7 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
     assert payload["validation_available"] is True
 
     instance = instances[0].stem
-    for command in (
-        ["bench", "--split", "dev", "--instance", instance, "--dry-run"],
-        ["check"],
-        ["diff"],
-    ):
+    for command in (["bench", "--split", "dev", "--instance", instance, "--dry-run"],):
         subprocess.run(
             [str(executable), *command],
             env=environment,
@@ -167,46 +163,6 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
         if path.is_file()
     )
     assert "private://" not in visible
-
-
-def test_agent_cli_check_reports_workspace_state_without_gating(
-    monkeypatch, tmp_path, capsys
-):
-    from pitbench import agent_cli
-
-    repository = tmp_path / "repo"
-    repository.mkdir()
-    subprocess.run(["git", "init", "--quiet"], cwd=repository, check=True)
-    (repository / "README.md").write_text("fixture\n")
-    subprocess.run(["git", "add", "README.md"], cwd=repository, check=True)
-    subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.name=PitBench",
-            "-c",
-            "user.email=pitbench.invalid",
-            "commit",
-            "--quiet",
-            "-m",
-            "fixture",
-        ],
-        cwd=repository,
-        check=True,
-    )
-    (repository / "outside.txt").write_text("visible but not editable\n")
-    config = tmp_path / "config.json"
-    config.write_text(json.dumps({"editable_paths": ["src"]}))
-    monkeypatch.setenv("PITBENCH_REPO", str(repository))
-    monkeypatch.setenv("PITBENCH_AGENT_CONFIG", str(config))
-
-    assert agent_cli.check_command(SimpleNamespace()) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload == {
-        "editable_paths": ["src"],
-        "changed_paths": ["outside.txt"],
-        "outside_editable_paths": ["outside.txt"],
-    }
 
 
 def test_agent_cli_workspace_verifies_capability_boundary(

@@ -12,9 +12,7 @@ class AgentTool(str, Enum):
     INSPECT = "inspect"
     WORKSPACE = "workspace"
     BENCH = "bench"
-    CHECK = "check"
     VALIDATE = "validate"
-    DIFF = "diff"
 
 
 _DEVELOPMENT_INSTANCE_TOOLS = frozenset({AgentTool.INSPECT, AgentTool.BENCH})
