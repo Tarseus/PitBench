@@ -8,9 +8,11 @@ from adapters.pitbench.adapter import (
     IMAGE_REVISION,
     IMAGE_REVISION_LABEL,
     IMAGE_SOURCE_LABEL,
+    IMAGE_TOOLS_LABEL,
     PitBenchAdapter,
 )
 from adapters.pitbench.git_snapshot import GitSnapshot
+from pitbench.agent_tools import AGENT_TOOLS_METADATA, AgentTool
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -62,19 +64,22 @@ def test_materialized_release_task_has_no_hidden_assets(
     assert not (destination / "solution.sh").exists()
     assert not (destination / "private").exists()
     assert not (destination / "hidden_instances").exists()
-    assert (destination / "dev_instances/population.yaml").is_file()
+    assert not (destination / "dev_instances").exists()
+    assert not (destination / "agent_bin").exists()
+    assert not (destination / "agent_config.json").exists()
+    assert not (destination / "agent_tooling").exists()
+    assert yaml.safe_load((destination / AGENT_TOOLS_METADATA).read_text()) == {
+        "agent_tools": []
+    }
     task_yaml = yaml.safe_load((destination / "task.yaml").read_text())
     assert task_yaml["parser_name"] is None
     assert task_yaml["evaluator_import_path"].endswith(":PitBenchEvaluator")
     assert task_yaml["evaluator_config"]["judge_image"] == "sha256:" + "a" * 64
     assert "read-only outside these editable paths: pyvrp" in task_yaml["instruction"]
-    assert (destination / "agent_bin/pitbench").stat().st_mode & 0o111
-    assert (destination / "agent_config.json").is_file()
-    assert (destination / "agent_tooling/pitbench/agent_cli.py").is_file()
     assert "private://" not in (destination / "Dockerfile").read_text()
     assert (
         "COPY agent_bin/pitbench /usr/local/bin/pitbench"
-        in (destination / "Dockerfile").read_text()
+        not in (destination / "Dockerfile").read_text()
     )
     assert (
         "pip install --break-system-packages --no-cache-dir"
@@ -89,6 +94,7 @@ def test_materialized_release_task_has_no_hidden_assets(
         f'{IMAGE_SOURCE_LABEL}="sha256:{"b" * 64}"'
         in (destination / "Dockerfile").read_text()
     )
+    assert f'{IMAGE_TOOLS_LABEL}="none"' in (destination / "Dockerfile").read_text()
     dockerfile = (destination / "Dockerfile").read_text()
     assert "USER pitbench-agent" in dockerfile
     assert "/workspace/repo/pyvrp" in dockerfile
@@ -104,7 +110,7 @@ def test_materialized_release_task_has_no_hidden_assets(
     assert "PITBENCH_AGENT_UID" in (destination / "docker-compose.yaml").read_text()
     assert (
         'PITBENCH_RUNS: "/pitbench/runs"'
-        in (destination / "docker-compose.yaml").read_text()
+        not in (destination / "docker-compose.yaml").read_text()
     )
 
     legacy_task = task.model_copy(deep=True)
@@ -113,6 +119,28 @@ def test_materialized_release_task_has_no_hidden_assets(
     assert "pip install --break-system-packages --no-cache-dir" in legacy_dockerfile
     assert "COPY repo /workspace/repo" in legacy_dockerfile
     assert "USER pitbench-agent" in legacy_dockerfile
+
+    assisted = tmp_path / "assisted"
+    adapter.materialize(
+        task.task_id,
+        assisted,
+        repository_source=censored,
+        agent_image="sha256:" + "b" * 64,
+        agent_tools=[AgentTool.BENCH],
+    )
+    assert (assisted / "dev_instances/population.yaml").is_file()
+    assert (assisted / "agent_bin/pitbench").stat().st_mode & 0o111
+    tooling_config = yaml.safe_load((assisted / "agent_config.json").read_text())
+    assert tooling_config["agent_tools"] == ["bench"]
+    assert f'{IMAGE_TOOLS_LABEL}="bench"' in (assisted / "Dockerfile").read_text()
+    assert (
+        "COPY agent_bin/pitbench /usr/local/bin/pitbench"
+        in (assisted / "Dockerfile").read_text()
+    )
+    assert (
+        'PITBENCH_RUNS: "/pitbench/runs"'
+        in (assisted / "docker-compose.yaml").read_text()
+    )
 
 
 def test_repository_source_may_match_verified_release_tree(tmp_path: Path) -> None:

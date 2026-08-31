@@ -820,17 +820,6 @@ class Harness:
             raise RuntimeError("repository HEAD capture returned an empty value")
         return head
 
-    @staticmethod
-    def _validate_agent_workspace(terminal: Terminal | RemoteTerminal) -> None:
-        container = terminal.container
-        if container is None:
-            raise RuntimeError("agent container is not running")
-        working_dir = container.attrs.get("Config", {}).get("WorkingDir") or None
-        result = container.exec_run(["pitbench", "workspace"], workdir=working_dir)
-        if result.exit_code != 0:
-            detail = result.output.decode("utf-8", errors="replace")
-            raise RuntimeError(f"agent workspace capability setup failed: {detail}")
-
     @property
     def _log_output_path(self) -> Path:
         return self._run_path / "run.log"
@@ -2221,11 +2210,6 @@ class Harness:
 
             expected_repository_head = None
             if trial_handler.task.evaluator_import_path is not None:
-                if (
-                    trial_handler.task.evaluator_import_path
-                    == "pitbench.evaluator.evaluator:PitBenchEvaluator"
-                ):
-                    self._validate_agent_workspace(terminal)
                 expected_repository_head = self._repository_head(terminal)
 
             agent_class = AgentFactory.get_agent_class(

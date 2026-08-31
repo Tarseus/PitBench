@@ -29,13 +29,13 @@ def test_publication_matrix_covers_every_release_manifest() -> None:
     }
     assert published == expected
 
-    workflow_text = (
-        ROOT / ".github/workflows/publish-solver-images.yml"
-    ).read_text()
+    workflow_text = (ROOT / ".github/workflows/publish-solver-images.yml").read_text()
     assert "Verify downloaded-image execution path" in workflow_text
     assert "--network none" in workflow_text
     assert "pitbench inspect" in workflow_text
     assert "pitbench bench --split dev" in workflow_text
+    assert "--agent-tool inspect" in workflow_text
+    assert "--agent-tool bench" in workflow_text
 
     for task in tasks:
         solver = "pyvrp"
@@ -55,8 +55,11 @@ def test_publication_matrix_covers_every_release_manifest() -> None:
 
 def test_prepared_task_context_excludes_solver_checkout() -> None:
     dockerignore = set(
-        line.strip()
-        for line in PitBenchAdapter._dockerignore().splitlines()
+        line.strip() for line in PitBenchAdapter._dockerignore().splitlines()
+    )
+    assert PitBenchAdapter._dockerignore() == "*\n!Dockerfile\n"
+    dockerignore = set(
+        line.strip() for line in PitBenchAdapter._dockerignore(["bench"]).splitlines()
     )
     assert dockerignore >= {"*", "!agent_tooling/**", "!dev_instances/**"}
     assert "!repo/**" not in dockerignore

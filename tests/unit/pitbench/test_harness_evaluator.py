@@ -44,16 +44,10 @@ class VerdictEvaluator(Evaluator):
 class FakeContainer:
     attrs = {"Config": {"WorkingDir": "/workspace/repo"}}
 
-    def __init__(self, head: str = "a" * 40, workspace_exit_code: int = 0) -> None:
+    def __init__(self, head: str = "a" * 40) -> None:
         self.head = head
-        self.workspace_exit_code = workspace_exit_code
 
     def exec_run(self, command, workdir=None):
-        if command == ["pitbench", "workspace"]:
-            return SimpleNamespace(
-                exit_code=self.workspace_exit_code,
-                output=b'{"enforced": true}\n',
-            )
         if command == ["git", "rev-parse", "HEAD"]:
             return SimpleNamespace(exit_code=0, output=f"{self.head}\n".encode())
         assert workdir == "/workspace/repo"
@@ -168,14 +162,6 @@ def test_harness_rejects_agent_that_changes_repository_head(tmp_path: Path) -> N
         )
 
     assert not (paths.task_output_path / "evaluation/candidate.patch").exists()
-
-
-def test_harness_rejects_unenforced_agent_workspace() -> None:
-    harness = Harness.__new__(Harness)
-    terminal = SimpleNamespace(container=FakeContainer(workspace_exit_code=1))
-
-    with pytest.raises(RuntimeError, match="workspace capability setup failed"):
-        harness._validate_agent_workspace(terminal)
 
 
 def test_pipeline_stage_updates_non_livestream_progress_description() -> None:

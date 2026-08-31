@@ -9,6 +9,7 @@ from typing import Annotated
 import typer
 
 from adapters.pitbench.adapter import PitBenchAdapter
+from pitbench.agent_tools import AgentTool
 from pitbench.cli.doctor import CheckStatus, run_doctor
 from pitbench.cli.evaluate_config import (
     EvaluationConfig,
@@ -209,6 +210,7 @@ def evaluate_task(
             repository_source=resolved_repository_source,
             agent_image=resolved_agent_image,
             judge_image=resolved_judge_image,
+            agent_tools=evaluation_config.agent_tools,
         )
     except TaskNotFoundError as exc:
         available = ", ".join(
@@ -513,6 +515,13 @@ def materialize_task(
         str | None,
         typer.Option(help="Immutable judge image digest or local image ID"),
     ] = None,
+    agent_tools: Annotated[
+        list[AgentTool],
+        typer.Option(
+            "--agent-tool",
+            help="Optional PitBench command exposed inside the task; may be repeated",
+        ),
+    ] = [],
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
 ) -> None:
     repository_root = _root(root)
@@ -525,6 +534,7 @@ def materialize_task(
         repository_source=repository_source,
         agent_image=agent_image,
         judge_image=judge_image,
+        agent_tools=agent_tools,
     )
     typer.echo(f"Materialized {task_id} at {task_dir}")
 

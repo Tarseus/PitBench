@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import subprocess
@@ -7,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from adapters.pitbench.agent_tooling import write_agent_tooling
+from pitbench.agent_tools import AgentTool
 from pitbench.instances import materialize_population
 from pitbench.schema.task import PopulationKind
 from pitbench.tasks import TaskCatalog
@@ -29,6 +31,23 @@ def test_pyvrp_runner_check_imports_native_extension(monkeypatch) -> None:
 
     assert available is False
     assert "pyvrp._pyvrp" in detail
+
+
+def test_agent_cli_exposes_only_configured_commands(monkeypatch, tmp_path) -> None:
+    from pitbench import agent_cli
+
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"agent_tools": ["bench"]}))
+    monkeypatch.setenv("PITBENCH_AGENT_CONFIG", str(config))
+
+    command_parser = agent_cli.parser()
+    subcommands = next(
+        action
+        for action in command_parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+
+    assert set(subcommands.choices) == {"bench"}
 
 
 def test_run_one_reports_timeout_as_failure(monkeypatch, tmp_path, capsys) -> None:
@@ -76,7 +95,12 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
     )
     dev = task_dir / "dev_instances"
     instances = materialize_population(ROOT / development.manifest, dev)
-    write_agent_tooling(repository_root=ROOT, task=record.task, task_dir=task_dir)
+    write_agent_tooling(
+        repository_root=ROOT,
+        task=record.task,
+        task_dir=task_dir,
+        agent_tools=frozenset(AgentTool),
+    )
 
     repository = task_dir / "repo"
     repository.mkdir()
@@ -126,7 +150,6 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
     instance = instances[0].stem
     for command in (
         ["bench", "--split", "dev", "--instance", instance, "--dry-run"],
-        ["profile", "--instance", instance, "--dry-run"],
         ["check"],
         ["diff"],
     ):

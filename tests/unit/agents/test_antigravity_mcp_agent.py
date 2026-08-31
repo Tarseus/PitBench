@@ -49,8 +49,9 @@ def test_antigravity_command_uses_isolated_runner_and_loopback_mcp():
     assert "--dangerously-skip-permissions" not in command
     assert not any("oauth_creds.json" in argument for argument in command)
     prompt = command[command.index("--print") + 1]
-    assert "pitbench validate" in prompt
-    assert "pitbench check" in prompt
+    assert "pitbench validate" not in prompt
+    assert "pitbench check" not in prompt
+    assert "relevant repository tests" in prompt
     assert "Never change a test" in prompt
 
 

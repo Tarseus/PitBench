@@ -38,18 +38,16 @@ You MUST use only the PitBench MCP server's run_command tool for task repository
 inspection, editing, building, profiling, and testing. The runner working directory
 is empty and is not the task repository. You may use customizations supplied by the
 evaluator's trusted Antigravity profile, but all task repository access must go
-through PitBench MCP. Start by running `pwd`, `git status --short`, and `pitbench
-inspect` through the PitBench MCP tool. Keep all changes inside the task repository
-and verify them with the visible PitBench commands.
+through PitBench MCP. Start by running `pwd` and `git status --short` through the
+PitBench MCP tool. Keep all changes inside the task repository and use the repository's
+own build and test commands when helpful.
 
 Treat existing tests as immutable specifications. Never change a test to accommodate
 an implementation change. The repository is read-only outside the editable paths
-reported by `pitbench inspect`; keep implementation changes inside those paths.
-Preserve behavior across every supported problem feature, not only
-the visible development instances. Before finishing, run `pitbench validate` and
-`pitbench check`, inspect `git status --short`, and remove generated output and
-temporary helper files. The final candidate must contain only intentional source
-changes.
+stated in the task; keep implementation changes inside those paths. Preserve behavior
+across every supported problem feature. Before finishing, run relevant repository tests,
+inspect `git status --short`, and remove generated output and temporary helper files.
+The final candidate must contain only intentional source changes.
 
 Task:
 {instruction}
@@ -366,8 +364,8 @@ Task:
             "A transient connection interrupted the previous attempt. Continue from "
             "the existing task repository state instead of restarting. Inspect the "
             "current diff, finish or repair the implementation, remove temporary "
-            "changes, then run pitbench validate and pitbench check before "
-            f"finishing. The original task was:\n{instruction}"
+            "changes, then run relevant repository tests before finishing. The "
+            f"original task was:\n{instruction}"
         )
 
     @classmethod

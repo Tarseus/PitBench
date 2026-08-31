@@ -7,6 +7,10 @@ paths:
   workspace_path: .pitbench/tasks
   private_root: private
 
+# Default: agents receive only the repository snapshot and their native tools.
+# To run a tool-assisted condition, list commands such as [inspect, bench, validate].
+agent_tools: []
+
 tasks:
   pyvrp_v0_14_0:
     repository_source: null

@@ -8,7 +8,9 @@ from adapters.pitbench.adapter import (
     IMAGE_REVISION,
     IMAGE_REVISION_LABEL,
     IMAGE_SOURCE_LABEL,
+    IMAGE_TOOLS_LABEL,
 )
+from pitbench.agent_tools import AgentTool
 from pitbench.cli.evaluate_config import EvaluationConfig
 from pitbench.cli.main import _prepare_task_image, app
 from pitbench.harness.agents import AgentName
@@ -30,6 +32,7 @@ def test_prepare_task_image_reuses_matching_revision(tmp_path: Path) -> None:
         manager.image_label.side_effect = {
             IMAGE_REVISION_LABEL: IMAGE_REVISION,
             IMAGE_SOURCE_LABEL: "python:3.13-bookworm",
+            IMAGE_TOOLS_LABEL: "none",
         }.get
 
         _prepare_task_image(tmp_path, rebuild=False)
@@ -110,6 +113,7 @@ def test_evaluate_materializes_task_and_starts_harness(tmp_path: Path) -> None:
         repository_source=None,
         agent_image=None,
         judge_image=None,
+        agent_tools=[],
     )
     prepare_task_image.assert_called_once_with(
         dataset_path / "pyvrp_v0_14_0", rebuild=False
@@ -172,6 +176,7 @@ paths:
   output_path: local-runs
   workspace_path: local-tasks
   private_root: evaluator-private
+agent_tools: [bench, validate]
 tasks:
   pyvrp_v0_14_0:
     repository_source: snapshots/pyvrp
@@ -220,6 +225,7 @@ agents:
         repository_source=repository_root / "snapshots/pyvrp",
         agent_image="local-agent:prepared",
         judge_image="sha256:local-judge",
+        agent_tools=[AgentTool.BENCH, AgentTool.VALIDATE],
     )
     prepare_task_image.assert_called_once_with(
         expected_dataset / "pyvrp_v0_14_0", rebuild=True

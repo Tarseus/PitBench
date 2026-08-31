@@ -40,17 +40,15 @@ apply_patch, git_status, and git_diff for structured repository work. Use run_co
 for short commands and start_command, poll_command, and cancel_command for long-running
 commands or incremental output. The host working directory is empty and is not the
 task repository. Do not use the host shell or web access. Start with git_status and run
-`pwd` and `pitbench inspect` through run_command. Keep all changes inside the task
-repository and verify them with the visible PitBench commands.
+`pwd` through run_command. Keep all changes inside the task repository and use the
+repository's own build and test commands when helpful.
 
 Treat existing tests as immutable specifications. Never change a test to accommodate
 an implementation change. The repository is read-only outside the editable paths
-reported by `pitbench inspect`; keep implementation changes inside those paths.
-Preserve behavior across every supported problem feature, not only
-the visible development instances. Before finishing, run `pitbench validate` and
-`pitbench check`, inspect git_status, and remove generated output and
-temporary helper files. The final candidate must contain only intentional source
-changes.
+stated in the task; keep implementation changes inside those paths. Preserve behavior
+across every supported problem feature. Before finishing, run relevant repository
+tests, inspect git_status, and remove generated output and temporary helper files. The
+final candidate must contain only intentional source changes.
 
 Task:
 {instruction}
@@ -64,16 +62,14 @@ You are running inside the solver container with the repository at /workspace/re
 Use the normal Codex shell, file, search, and patch capabilities. The command sandbox
 allows repository writes. The container network can reach only the PitBench model
 relay, not the public internet. Do not use web search. Start with `git status --short`,
-`pwd`, and `pitbench inspect`.
+and `pwd`.
 
 Treat existing tests as immutable specifications. Never change a test to accommodate
 an implementation change. The repository is read-only outside the editable paths
-reported by `pitbench inspect`; keep implementation changes inside those paths.
-Preserve behavior across every supported problem feature, not only
-the visible development instances. Before finishing, run `pitbench validate` and
-`pitbench check`, inspect `git status --short`, and remove generated output and
-temporary helper files. The final candidate must contain only intentional source
-changes.
+stated in the task; keep implementation changes inside those paths. Preserve behavior
+across every supported problem feature. Before finishing, run relevant repository
+tests, inspect `git status --short`, and remove generated output and temporary helper
+files. The final candidate must contain only intentional source changes.
 
 Task:
 {instruction}

@@ -383,20 +383,6 @@ class AbstractInstalledAgent(BaseAgent, ABC):
                     ],
                     user="root",
                 )
-                workspace = session.container.exec_run(
-                    ["pitbench", "workspace"],
-                    user="pitbench-agent",
-                    workdir=(
-                        session.container.attrs.get("Config", {}).get("WorkingDir")
-                        or None
-                    ),
-                )
-                if workspace.exit_code != 0:
-                    detail = workspace.output.decode("utf-8", errors="replace")
-                    raise RuntimeError(
-                        "agent workspace capability setup was lost during "
-                        f"installation: {detail}"
-                    )
                 session.send_keys(
                     [
                         "exec su --preserve-environment pitbench-agent",

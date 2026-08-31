@@ -6,6 +6,8 @@ from typing import TypeAlias
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from pitbench.agent_tools import AgentTool
+
 ConfigValue: TypeAlias = str | int | float | bool | None
 
 
@@ -31,6 +33,7 @@ class EvaluationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     paths: EvaluationPaths = Field(default_factory=EvaluationPaths)
+    agent_tools: list[AgentTool] = Field(default_factory=list)
     tasks: dict[str, TaskResources] = Field(default_factory=dict)
     agents: dict[str, dict[str, ConfigValue]] = Field(default_factory=dict)
 

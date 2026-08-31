@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -7,7 +8,9 @@ from adapters.pitbench.adapter import (
     IMAGE_REVISION,
     IMAGE_REVISION_LABEL,
     IMAGE_SOURCE_LABEL,
+    IMAGE_TOOLS_LABEL,
 )
+from pitbench.agent_tools import AGENT_TOOLS_METADATA, agent_tools_label
 from pitbench.harness.handlers.trial_handler import TrialHandler
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
 
@@ -34,9 +37,21 @@ def prepare_task_image(
     expected_source = (
         (task_path / "Dockerfile").read_text().splitlines()[0].removeprefix("FROM ")
     )
+    tools_metadata = task_path / AGENT_TOOLS_METADATA
+    expected_tools = agent_tools_label(
+        json.loads(tools_metadata.read_text()).get("agent_tools", [])
+        if tools_metadata.is_file()
+        else []
+    )
     cached_revision = manager.image_label(IMAGE_REVISION_LABEL)
     cached_source = manager.image_label(IMAGE_SOURCE_LABEL)
-    if rebuild or cached_revision != IMAGE_REVISION or cached_source != expected_source:
+    cached_tools = manager.image_label(IMAGE_TOOLS_LABEL)
+    if (
+        rebuild
+        or cached_revision != IMAGE_REVISION
+        or cached_source != expected_source
+        or cached_tools != expected_tools
+    ):
         progress(f"Building task image {trial.client_image_name}")
         manager.build()
     else:

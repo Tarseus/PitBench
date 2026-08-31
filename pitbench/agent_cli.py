@@ -151,65 +151,6 @@ def bench_command(args: argparse.Namespace) -> int:
     return 0 if all(succeeded) else 1
 
 
-def profile_command(args: argparse.Namespace) -> int:
-    config = _config()
-    instance = _instances(args.instance)[0]
-    seed = args.seed if args.seed is not None else config["solver_seeds"][0]
-    budget = args.budget if args.budget is not None else config["budgets_sec"][0]
-    return 0 if _run_one(config, instance, seed, budget, args.dry_run) else 1
-
-
-def _verify_cvrp(instance_path: Path, solution_path: Path) -> tuple[bool, str]:
-    instance = json.loads(instance_path.read_text())
-    solution = json.loads(solution_path.read_text())
-    coordinates = instance["coordinates"]
-    demands = instance["demands"]
-    capacity = instance["capacity"]
-    depot = int(instance.get("depot", 0))
-    expected = set(range(len(coordinates))) - {depot}
-    visited: list[int] = []
-    for route in solution.get("routes", []):
-        if sum(demands[node] for node in route) > capacity:
-            return False, "route exceeds vehicle capacity"
-        visited.extend(route)
-    if len(visited) != len(set(visited)) or set(visited) != expected:
-        return False, "customers are missing or duplicated"
-    return True, "independent CVRP feasibility check passed"
-
-
-def verify_command(args: argparse.Namespace) -> int:
-    config = _config()
-    run_root = _path("PITBENCH_RUNS", "/pitbench/runs")
-    results = (
-        [Path(args.run)]
-        if args.run
-        else sorted(
-            path for path in run_root.glob("*.json") if ".solution." not in path.name
-        )
-    )
-    if not results:
-        print("no development runs found", file=sys.stderr)
-        return 1
-    instances = {path.stem: path for path in _instances(None)}
-    accepted = True
-    for result_path in results:
-        result = json.loads(result_path.read_text())
-        valid = bool(result.get("valid"))
-        detail = result.get("error") or "runner reported a valid result"
-        if valid and config["problem_family"] == "cvrp":
-            instance_id = result_path.name.split(".seed-", 1)[0]
-            solution = result_path.with_suffix(".solution.json")
-            if not solution.is_file() or instance_id not in instances:
-                valid, detail = False, "solution artifact or instance is missing"
-            else:
-                valid, detail = _verify_cvrp(instances[instance_id], solution)
-        accepted = accepted and valid
-        print(
-            json.dumps({"result": str(result_path), "valid": valid, "detail": detail})
-        )
-    return 0 if accepted else 1
-
-
 def _repository() -> Path:
     return _path("PITBENCH_REPO", "/workspace/repo")
 
@@ -414,26 +355,27 @@ def _run_options(parser: argparse.ArgumentParser, *, instance_required: bool) ->
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="pitbench")
     commands = result.add_subparsers(required=True)
-    inspect_parser = commands.add_parser("inspect")
-    inspect_parser.set_defaults(handler=inspect_command)
-    workspace = commands.add_parser("workspace")
-    workspace.set_defaults(handler=workspace_command)
-    bench = commands.add_parser("bench")
-    bench.add_argument("--split", default="dev")
-    _run_options(bench, instance_required=False)
-    bench.set_defaults(handler=bench_command)
-    profile = commands.add_parser("profile")
-    _run_options(profile, instance_required=True)
-    profile.set_defaults(handler=profile_command)
-    verify = commands.add_parser("verify")
-    verify.add_argument("--run")
-    verify.set_defaults(handler=verify_command)
-    check = commands.add_parser("check")
-    check.set_defaults(handler=check_command)
-    validate = commands.add_parser("validate")
-    validate.set_defaults(handler=validate_command)
-    diff = commands.add_parser("diff")
-    diff.set_defaults(handler=diff_command)
+    tools = set(_config().get("agent_tools", []))
+    if "inspect" in tools:
+        inspect_parser = commands.add_parser("inspect")
+        inspect_parser.set_defaults(handler=inspect_command)
+    if "workspace" in tools:
+        workspace = commands.add_parser("workspace")
+        workspace.set_defaults(handler=workspace_command)
+    if "bench" in tools:
+        bench = commands.add_parser("bench")
+        bench.add_argument("--split", default="dev")
+        _run_options(bench, instance_required=False)
+        bench.set_defaults(handler=bench_command)
+    if "check" in tools:
+        check = commands.add_parser("check")
+        check.set_defaults(handler=check_command)
+    if "validate" in tools:
+        validate = commands.add_parser("validate")
+        validate.set_defaults(handler=validate_command)
+    if "diff" in tools:
+        diff = commands.add_parser("diff")
+        diff.set_defaults(handler=diff_command)
     return result
 
 

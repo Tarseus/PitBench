@@ -83,7 +83,9 @@ jobs:
           uv run pitbench tasks materialize "${{ matrix.task_id }}" \
             --output "$TASK_PATH" \
             --repository-source "$SOURCE_PATH" \
-            --agent-image "$BASE_IMAGE"
+            --agent-image "$BASE_IMAGE" \
+            --agent-tool inspect \
+            --agent-tool bench
           docker build --tag "$THIN_IMAGE" "$TASK_PATH"
           docker run --rm --network none "$THIN_IMAGE" pitbench inspect
           docker run --rm --network none "$THIN_IMAGE" \
