@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,6 +33,7 @@ tasks:
     evaluation_dir.mkdir(parents=True)
     candidate_patch = evaluation_dir / "candidate.patch"
     candidate_patch.write_text("diff --git a/a b/a\n")
+    candidate_patch_sha256 = hashlib.sha256(candidate_patch.read_bytes()).hexdigest()
     manifest_path = repository_root / "manifests/tasks/pyvrp.yaml"
     record = SimpleNamespace(
         manifest_path=manifest_path,
@@ -64,6 +66,8 @@ tasks:
                 "judge",
                 "pyvrp_v0_14_0",
                 str(candidate_patch),
+                "--expected-patch-sha256",
+                candidate_patch_sha256,
                 "--root",
                 str(repository_root),
             ],
@@ -72,6 +76,7 @@ tasks:
     assert result.exit_code == 0, result.output
     request = evaluator_class.return_value.envelope.call_args.args[0]
     assert request.candidate_patch_path == candidate_patch
+    assert request.candidate_patch_sha256 == candidate_patch_sha256
     assert request.output_dir == evaluation_dir
     assert request.evaluator_config["base_repository"] == str(snapshot)
     assert request.evaluator_config["private_root"] == str(private_root)

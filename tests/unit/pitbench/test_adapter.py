@@ -95,9 +95,10 @@ def test_materialized_release_task_has_no_hidden_assets(
     assert dockerignore[0] == "*"
     assert "!repo" not in dockerignore
     assert "network_mode: none" in (destination / "docker-compose.yaml").read_text()
-    assert 'PITBENCH_RUNS: "/pitbench/runs"' in (
-        destination / "docker-compose.yaml"
-    ).read_text()
+    assert (
+        'PITBENCH_RUNS: "/pitbench/runs"'
+        in (destination / "docker-compose.yaml").read_text()
+    )
 
     legacy_task = task.model_copy(deep=True)
     legacy_task.repository.agent_image = None
@@ -126,8 +127,14 @@ def test_repository_source_may_match_verified_release_tree(tmp_path: Path) -> No
 
     task = record.task.model_copy(deep=True)
     task.release.tree_sha = _git(repository, "rev-parse", "HEAD^{tree}")
-    PitBenchAdapter._validate_repository(task, repository)
+    PitBenchAdapter.validate_repository(task, repository)
+
+    dirty_file = repository / "dirty.txt"
+    dirty_file.write_text("not part of the release\n")
+    with pytest.raises(ValueError, match="local modifications"):
+        PitBenchAdapter.validate_repository(task, repository)
+    dirty_file.unlink()
 
     task.release.tree_sha = "0" * 40
     with pytest.raises(ValueError, match="release identity mismatch"):
-        PitBenchAdapter._validate_repository(task, repository)
+        PitBenchAdapter.validate_repository(task, repository)

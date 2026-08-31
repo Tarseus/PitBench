@@ -1,4 +1,6 @@
+import hashlib
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -23,6 +25,7 @@ def test_every_task_runs_explicit_fixture_grid(record, tmp_path: Path) -> None:
             task_id=record.task.task_id,
             task_path=ROOT,
             candidate_patch_path=patch,
+            candidate_patch_sha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
             output_dir=output,
             agent_name="fixture",
             evaluator_config={
@@ -55,6 +58,7 @@ def test_real_evaluation_without_private_assets_fails_closed(tmp_path: Path) -> 
             task_id=record.task.task_id,
             task_path=ROOT,
             candidate_patch_path=patch,
+            candidate_patch_sha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
             output_dir=output,
             agent_name="test",
             evaluator_config={"manifest_path": str(record.manifest_path)},
@@ -62,6 +66,98 @@ def test_real_evaluation_without_private_assets_fails_closed(tmp_path: Path) -> 
     )
     assert envelope.completed is False
     assert "real judge missing configuration" in (envelope.error or "")
+
+
+def test_real_evaluation_requires_captured_patch_identity(tmp_path: Path) -> None:
+    record = TaskCatalog(ROOT).records()[0]
+    output = tmp_path / "output"
+    output.mkdir()
+    candidate = output / "candidate.patch"
+    candidate.write_text("")
+
+    envelope = PitBenchEvaluator().envelope(
+        EvaluationRequest(
+            task_id=record.task.task_id,
+            task_path=ROOT,
+            candidate_patch_path=candidate,
+            output_dir=output,
+            agent_name="test",
+            evaluator_config={"manifest_path": str(record.manifest_path)},
+        )
+    )
+
+    assert envelope.completed is False
+    assert "real judge requires candidate_patch_sha256" in (envelope.error or "")
+
+
+def test_evaluator_rejects_candidate_patch_identity_mismatch(
+    tmp_path: Path,
+) -> None:
+    record = TaskCatalog(ROOT).records()[0]
+    output = tmp_path / "output"
+    output.mkdir()
+    candidate = output / "candidate.patch"
+    candidate.write_text("")
+
+    envelope = PitBenchEvaluator().envelope(
+        EvaluationRequest(
+            task_id=record.task.task_id,
+            task_path=ROOT,
+            candidate_patch_path=candidate,
+            candidate_patch_sha256="f" * 64,
+            output_dir=output,
+            agent_name="test",
+            evaluator_config={
+                "manifest_path": str(record.manifest_path),
+                "fixture_mode": True,
+            },
+        )
+    )
+
+    assert envelope.completed is False
+    assert "candidate patch identity mismatch" in (envelope.error or "")
+
+
+def test_evaluator_rejects_repository_snapshot_mismatch_before_judge(
+    tmp_path: Path,
+) -> None:
+    record = TaskCatalog(ROOT).records()[0]
+    output = tmp_path / "output"
+    output.mkdir()
+    candidate = output / "candidate.patch"
+    candidate.write_text("")
+    base_repository = tmp_path / "base"
+    private_root = tmp_path / "private"
+    base_repository.mkdir()
+    private_root.mkdir()
+    request = EvaluationRequest(
+        task_id=record.task.task_id,
+        task_path=ROOT,
+        candidate_patch_path=candidate,
+        candidate_patch_sha256=hashlib.sha256(candidate.read_bytes()).hexdigest(),
+        output_dir=output,
+        agent_name="test",
+        evaluator_config={
+            "manifest_path": str(record.manifest_path),
+            "base_repository": str(base_repository),
+            "private_root": str(private_root),
+            "judge_image": "sha256:" + "a" * 64,
+        },
+    )
+
+    with (
+        patch(
+            "pitbench.evaluator.evaluator.PitBenchAdapter.validate_repository",
+            side_effect=ValueError("repository release identity mismatch"),
+        ) as validate_repository,
+        patch("pitbench.evaluator.evaluator.DockerJudge") as docker_judge,
+    ):
+        envelope = PitBenchEvaluator().envelope(request)
+
+    assert envelope.completed is False
+    assert "repository release identity mismatch" in (envelope.error or "")
+    validate_repository.assert_called_once_with(record.task, base_repository)
+    docker_judge.assert_not_called()
 
 
 def test_cached_base_observations_merge_with_agent_fixture(tmp_path: Path) -> None:

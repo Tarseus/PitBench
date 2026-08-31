@@ -641,6 +641,7 @@ class Harness:
         terminal: Terminal | RemoteTerminal,
         trial_handler: TrialHandler,
         results: TrialResults,
+        expected_repository_head: str,
         agent_label: str,
         model_name: str | None,
     ) -> None:
@@ -652,6 +653,12 @@ class Harness:
         if container is None:
             raise RuntimeError("agent container is not running")
         working_dir = container.attrs.get("Config", {}).get("WorkingDir") or None
+        actual_repository_head = self._repository_head(terminal)
+        if actual_repository_head != expected_repository_head:
+            raise RuntimeError(
+                "agent changed repository HEAD: "
+                f"{actual_repository_head} != {expected_repository_head}"
+            )
         captured = container.exec_run(
             [
                 "sh",
@@ -670,6 +677,7 @@ class Harness:
             raise RuntimeError(f"candidate patch capture failed: {detail}")
         if not isinstance(captured.output, bytes):
             raise TypeError("container returned a non-bytes patch")
+        candidate_patch_sha256 = hashlib.sha256(captured.output).hexdigest()
         candidate_patch.write_bytes(captured.output)
 
         if getattr(self, "_defer_evaluation", False):
@@ -689,6 +697,7 @@ class Harness:
             task_id=trial_handler.task_id,
             task_path=trial_handler.task_paths.input_path,
             candidate_patch_path=candidate_patch,
+            candidate_patch_sha256=candidate_patch_sha256,
             output_dir=output_dir,
             agent_name=agent_label,
             model_name=model_name,
@@ -743,6 +752,23 @@ class Harness:
             task_id=trial_handler.task_id,
             trial_name=trial_handler.trial_name,
         )
+
+    @staticmethod
+    def _repository_head(terminal: Terminal | RemoteTerminal) -> str:
+        container = terminal.container
+        if container is None:
+            raise RuntimeError("agent container is not running")
+        working_dir = container.attrs.get("Config", {}).get("WorkingDir") or None
+        result = container.exec_run(["git", "rev-parse", "HEAD"], workdir=working_dir)
+        if result.exit_code != 0:
+            detail = result.output.decode("utf-8", errors="replace")
+            raise RuntimeError(f"repository HEAD capture failed: {detail}")
+        if not isinstance(result.output, bytes):
+            raise TypeError("container returned a non-bytes repository HEAD")
+        head = result.output.decode("ascii").strip()
+        if not head:
+            raise RuntimeError("repository HEAD capture returned an empty value")
+        return head
 
     @property
     def _log_output_path(self) -> Path:
@@ -2132,6 +2158,12 @@ class Harness:
                     results.trial_ended_at = datetime.now(timezone.utc).isoformat()
                     return results
 
+            expected_repository_head = (
+                self._repository_head(terminal)
+                if trial_handler.task.evaluator_import_path is not None
+                else None
+            )
+
             session = _create_tracked_session(
                 "agent",
                 is_active_stream=self._livestream,
@@ -2283,10 +2315,12 @@ class Harness:
                 }
 
             if trial_handler.task.evaluator_import_path is not None:
+                assert expected_repository_head is not None
                 self._evaluate_candidate(
                     terminal=terminal,
                     trial_handler=trial_handler,
                     results=results,
+                    expected_repository_head=expected_repository_head,
                     agent_label=resolved_agent_label,
                     model_name=model_name or self._model_name,
                 )

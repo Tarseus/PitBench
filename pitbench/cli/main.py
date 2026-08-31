@@ -266,6 +266,13 @@ def judge_candidate(
     candidate_patch: Annotated[
         Path, typer.Argument(help="Previously captured candidate.patch")
     ],
+    expected_patch_sha256: Annotated[
+        str,
+        typer.Option(
+            "--expected-patch-sha256",
+            help="SHA256 recorded when the agent candidate was captured",
+        ),
+    ],
     output_dir: Annotated[
         Path | None,
         typer.Option(
@@ -330,6 +337,14 @@ def judge_candidate(
             f"Candidate patch does not exist: {patch_path}",
             param_hint="CANDIDATE_PATCH",
         )
+    normalized_patch_sha256 = expected_patch_sha256.lower()
+    if len(normalized_patch_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in normalized_patch_sha256
+    ):
+        raise typer.BadParameter(
+            "Expected patch SHA256 must contain exactly 64 hexadecimal characters",
+            param_hint="--expected-patch-sha256",
+        )
 
     configured_paths = evaluation_config.paths
     configured_resources = evaluation_config.resources_for(task_id)
@@ -374,6 +389,7 @@ def judge_candidate(
             task_id=task_id,
             task_path=repository_root,
             candidate_patch_path=patch_path,
+            candidate_patch_sha256=normalized_patch_sha256,
             output_dir=resolved_output_dir,
             agent_name="replay",
             model_name=None,

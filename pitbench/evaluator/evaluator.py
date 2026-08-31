@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 from collections import Counter
 from pathlib import Path
 
+from adapters.pitbench.adapter import PitBenchAdapter
 from pitbench.evaluator.artifacts import artifact_ref
 from pitbench.evaluator.docker_judge import DockerJudge
 from pitbench.evaluator.judge import FixtureJudge, JudgePlan, LocalProcessJudge
@@ -23,7 +25,7 @@ from pitbench.schema.task import PitBenchTask
 
 class PitBenchEvaluator(Evaluator):
     name = "pitbench"
-    version = "3"
+    version = "4"
 
     def evaluate(self, request: EvaluationRequest) -> EvaluationResult:
         config = request.evaluator_config
@@ -36,12 +38,24 @@ class PitBenchEvaluator(Evaluator):
             raise ValueError("task ID does not match evaluator manifest")
 
         patch_exists = request.candidate_patch_path.is_file()
+        fixture_mode = bool(config.get("fixture_mode", False))
+        if patch_exists:
+            actual_patch_sha256 = hashlib.sha256(
+                request.candidate_patch_path.read_bytes()
+            ).hexdigest()
+            if request.candidate_patch_sha256 is None:
+                if not fixture_mode:
+                    raise ValueError("real judge requires candidate_patch_sha256")
+            elif actual_patch_sha256 != request.candidate_patch_sha256:
+                raise ValueError(
+                    "candidate patch identity mismatch: "
+                    f"{actual_patch_sha256} != {request.candidate_patch_sha256}"
+                )
         policy = (
             PatchPolicy().inspect(request.candidate_patch_path)
             if patch_exists
             else PatchPolicyResult(accepted=False, violations=["patch missing"])
         )
-        fixture_mode = bool(config.get("fixture_mode", False))
         code_states = tuple(
             CodeState(value)
             for value in config.get("code_states", [state.value for state in CodeState])
@@ -64,6 +78,7 @@ class PitBenchEvaluator(Evaluator):
             missing = [key for key in required if key not in config]
             if missing:
                 raise ValueError(f"real judge missing configuration: {missing}")
+            PitBenchAdapter.validate_repository(task, Path(config["base_repository"]))
             if config.get("unsafe_local_judge", False):
                 observations = LocalProcessJudge(
                     task=task,

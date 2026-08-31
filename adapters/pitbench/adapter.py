@@ -102,7 +102,7 @@ class PitBenchAdapter:
             ).create(repository, task_dir / "agent_repo.bundle")
         else:
             shutil.copytree(repository_source, repository)
-            self._validate_repository(task, repository)
+            self.validate_repository(task, repository)
 
         development = next(
             population
@@ -133,7 +133,7 @@ class PitBenchAdapter:
         return task_dir
 
     @staticmethod
-    def _validate_repository(task: PitBenchTask, repository: Path) -> None:
+    def validate_repository(task: PitBenchTask, repository: Path) -> None:
         import subprocess
 
         head = subprocess.check_output(
@@ -159,6 +159,19 @@ class PitBenchAdapter:
         ).splitlines()
         if refs or remotes:
             raise ValueError("repository source is not time-censored")
+        status = subprocess.check_output(
+            [
+                "git",
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+                "--ignored=matching",
+            ],
+            cwd=repository,
+            text=True,
+        ).splitlines()
+        if status:
+            raise ValueError("repository source has local modifications")
 
     def _write_task_yaml(
         self,
