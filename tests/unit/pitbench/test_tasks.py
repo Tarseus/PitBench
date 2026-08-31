@@ -26,11 +26,15 @@ def test_release_identity_and_private_judge_assets() -> None:
         assert len(record.task.release.base_commit) == 40
         if record.task.task_id.startswith("pyvrp_"):
             assert record.task.repository.agent_image == (
-                "ghcr.io/tarseus/pitbench-pyvrp:"
-                f"{record.task.release.base_commit}"
+                f"ghcr.io/tarseus/pitbench-pyvrp:{record.task.release.base_commit}"
             )
         else:
             assert record.task.repository.agent_image is None
+        assert record.task.repository.editable_paths
+        assert all(
+            path not in {"", "."} and not path.startswith(("/", ".git"))
+            for path in record.task.repository.editable_paths
+        )
         assert record.task.information_regime.value == "snapshot_only"
         for population in record.task.populations:
             if population.kind == PopulationKind.AGENT_DEV:

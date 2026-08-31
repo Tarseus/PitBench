@@ -226,7 +226,7 @@ ALL_PROXY= all_proxy= uv run pytest -q tests/unit
 PitBench/
 ├── pitbench/
 │   ├── harness/         # Agent execution sandbox, loopback MCP terminal & container orchestration
-│   ├── evaluator/       # Isolated read-only judge (DockerJudge/FixtureJudge) & PatchPolicy
+│   ├── evaluator/       # Isolated read-only judge and evaluation input validation
 │   ├── metrics/         # PerformanceReport, Cluster Bootstrap 95% CI & decision policies
 │   ├── schema/          # Pydantic data schemas (RunObservation, EvaluationResult, PitBenchTask)
 │   ├── repositories/    # Solver build and execution plugins

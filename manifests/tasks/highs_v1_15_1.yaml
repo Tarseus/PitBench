@@ -19,6 +19,7 @@ repository:
   clone_url: https://github.com/ERGO-Code/HiGHS.git
   language: cpp
   plugin: pitbench.repositories.highs:HighsRepositoryPlugin
+  editable_paths: [src, build]
 oracle:
   kind: solver_certificate
   source: private://oracles/miplib.json

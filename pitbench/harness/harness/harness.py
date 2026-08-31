@@ -28,6 +28,9 @@ from tenacity import RetryError
 from pitbench.harness.agents.agent_factory import AgentFactory
 from pitbench.harness.agents.agent_name import AgentName
 from pitbench.harness.agents.base_agent import AgentResult, BaseAgent
+from pitbench.harness.agents.installed_agents.abstract_installed_agent import (
+    AbstractInstalledAgent,
+)
 from pitbench.harness.config import config as harness_config
 from pitbench.harness.dataset.dataset import Dataset
 from pitbench.harness.db import upload_results_to_db
@@ -659,26 +662,73 @@ class Harness:
                 "agent changed repository HEAD: "
                 f"{actual_repository_head} != {expected_repository_head}"
             )
-        captured = container.exec_run(
+        tracked = container.exec_run(
             [
-                "sh",
-                "-lc",
-                (
-                    "git add -N -- . ':(exclude).pitbench' "
-                    "':(exclude).pitbench/**' && "
-                    "git diff --binary --no-ext-diff HEAD -- . "
-                    "':(exclude).pitbench' ':(exclude).pitbench/**'"
-                ),
+                "git",
+                "diff",
+                "--binary",
+                "--no-ext-diff",
+                "HEAD",
+                "--",
+                ".",
+                ":(exclude).pitbench",
+                ":(exclude).pitbench/**",
             ],
             workdir=working_dir,
         )
-        if captured.exit_code != 0:
-            detail = captured.output.decode("utf-8", errors="replace")
+        if tracked.exit_code != 0:
+            detail = tracked.output.decode("utf-8", errors="replace")
             raise RuntimeError(f"candidate patch capture failed: {detail}")
-        if not isinstance(captured.output, bytes):
+        if not isinstance(tracked.output, bytes):
             raise TypeError("container returned a non-bytes patch")
-        candidate_patch_sha256 = hashlib.sha256(captured.output).hexdigest()
-        candidate_patch.write_bytes(captured.output)
+        untracked_paths = container.exec_run(
+            [
+                "git",
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "-z",
+                "--",
+                ".",
+                ":(exclude).pitbench",
+                ":(exclude).pitbench/**",
+            ],
+            workdir=working_dir,
+        )
+        if untracked_paths.exit_code != 0:
+            detail = untracked_paths.output.decode("utf-8", errors="replace")
+            raise RuntimeError(f"candidate path capture failed: {detail}")
+        if not isinstance(untracked_paths.output, bytes):
+            raise TypeError("container returned non-bytes candidate paths")
+
+        patch = bytearray(tracked.output)
+        for raw_path in untracked_paths.output.split(b"\0"):
+            if not raw_path:
+                continue
+            path = raw_path.decode("utf-8", errors="surrogateescape")
+            untracked = container.exec_run(
+                [
+                    "git",
+                    "diff",
+                    "--binary",
+                    "--no-ext-diff",
+                    "--no-index",
+                    "--",
+                    "/dev/null",
+                    path,
+                ],
+                workdir=working_dir,
+            )
+            if untracked.exit_code not in {0, 1}:
+                detail = untracked.output.decode("utf-8", errors="replace")
+                raise RuntimeError(f"untracked patch capture failed: {detail}")
+            if not isinstance(untracked.output, bytes):
+                raise TypeError("container returned a non-bytes untracked patch")
+            patch.extend(untracked.output)
+
+        payload = bytes(patch)
+        candidate_patch_sha256 = hashlib.sha256(payload).hexdigest()
+        candidate_patch.write_bytes(payload)
 
         if getattr(self, "_defer_evaluation", False):
             self._trace_pipeline(
@@ -769,6 +819,17 @@ class Harness:
         if not head:
             raise RuntimeError("repository HEAD capture returned an empty value")
         return head
+
+    @staticmethod
+    def _validate_agent_workspace(terminal: Terminal | RemoteTerminal) -> None:
+        container = terminal.container
+        if container is None:
+            raise RuntimeError("agent container is not running")
+        working_dir = container.attrs.get("Config", {}).get("WorkingDir") or None
+        result = container.exec_run(["pitbench", "workspace"], workdir=working_dir)
+        if result.exit_code != 0:
+            detail = result.output.decode("utf-8", errors="replace")
+            raise RuntimeError(f"agent workspace capability setup failed: {detail}")
 
     @property
     def _log_output_path(self) -> Path:
@@ -2158,16 +2219,23 @@ class Harness:
                     results.trial_ended_at = datetime.now(timezone.utc).isoformat()
                     return results
 
-            expected_repository_head = (
-                self._repository_head(terminal)
-                if trial_handler.task.evaluator_import_path is not None
-                else None
-            )
+            expected_repository_head = None
+            if trial_handler.task.evaluator_import_path is not None:
+                if (
+                    trial_handler.task.evaluator_import_path
+                    == "pitbench.evaluator.evaluator:PitBenchEvaluator"
+                ):
+                    self._validate_agent_workspace(terminal)
+                expected_repository_head = self._repository_head(terminal)
 
+            agent_class = AgentFactory.get_agent_class(
+                agent_name=agent_name,
+                import_path=agent_import_path,
+            )
             session = _create_tracked_session(
                 "agent",
                 is_active_stream=self._livestream,
-                as_configured_user=True,
+                as_configured_user=not issubclass(agent_class, AbstractInstalledAgent),
                 recording_filename=recording_filename,
             )
 

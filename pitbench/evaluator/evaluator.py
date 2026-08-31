@@ -8,7 +8,6 @@ from adapters.pitbench.adapter import PitBenchAdapter
 from pitbench.evaluator.artifacts import artifact_ref
 from pitbench.evaluator.docker_judge import DockerJudge
 from pitbench.evaluator.judge import FixtureJudge, JudgePlan, LocalProcessJudge
-from pitbench.evaluator.patch_policy import PatchPolicy, PatchPolicyResult
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest, Evaluator
@@ -25,7 +24,7 @@ from pitbench.schema.task import PitBenchTask
 
 class PitBenchEvaluator(Evaluator):
     name = "pitbench"
-    version = "4"
+    version = "5"
 
     def evaluate(self, request: EvaluationRequest) -> EvaluationResult:
         config = request.evaluator_config
@@ -51,20 +50,13 @@ class PitBenchEvaluator(Evaluator):
                     "candidate patch identity mismatch: "
                     f"{actual_patch_sha256} != {request.candidate_patch_sha256}"
                 )
-        policy = (
-            PatchPolicy().inspect(request.candidate_patch_path)
-            if patch_exists
-            else PatchPolicyResult(accepted=False, violations=["patch missing"])
-        )
         code_states = tuple(
             CodeState(value)
             for value in config.get("code_states", [state.value for state in CodeState])
         )
         validity = evaluator_validity(
             patch_exists=patch_exists,
-            policy_passed=policy.accepted,
             fixture_mode=fixture_mode,
-            policy_violations=policy.violations,
         )
         if not validity.accepted:
             observations = []

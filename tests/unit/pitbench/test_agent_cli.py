@@ -88,7 +88,7 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
     payload = json.loads(inspected.stdout)
     assert payload["task_id"] == record.task.task_id
     assert len(payload["development_instances"]) == development.size
-    assert "tests" in payload["protected_paths"]
+    assert payload["editable_paths"] == record.task.repository.editable_paths
     assert payload["validation_available"] is True
 
     instance = instances[0].stem
@@ -114,7 +114,9 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
     assert "private://" not in visible
 
 
-def test_agent_cli_check_rejects_protected_changes(monkeypatch, tmp_path, capsys):
+def test_agent_cli_check_reports_workspace_state_without_gating(
+    monkeypatch, tmp_path, capsys
+):
     from pitbench import agent_cli
 
     repository = tmp_path / "repo"
@@ -137,17 +139,49 @@ def test_agent_cli_check_rejects_protected_changes(monkeypatch, tmp_path, capsys
         cwd=repository,
         check=True,
     )
-    tests = repository / "tests"
-    tests.mkdir()
-    (tests / "test_solver.py").write_text("assert True\n")
+    (repository / "outside.txt").write_text("visible but not editable\n")
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"protected_paths": ["tests"]}))
+    config.write_text(json.dumps({"editable_paths": ["src"]}))
     monkeypatch.setenv("PITBENCH_REPO", str(repository))
     monkeypatch.setenv("PITBENCH_AGENT_CONFIG", str(config))
 
-    assert agent_cli.check_command(SimpleNamespace()) == 1
+    assert agent_cli.check_command(SimpleNamespace()) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["violations"] == ["protected path: tests/test_solver.py"]
+    assert payload == {
+        "editable_paths": ["src"],
+        "changed_paths": ["outside.txt"],
+        "outside_editable_paths": ["outside.txt"],
+    }
+
+
+def test_agent_cli_workspace_verifies_capability_boundary(
+    monkeypatch, tmp_path, capsys
+):
+    from pitbench import agent_cli
+
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    git_dir = repository / ".git"
+    git_dir.mkdir()
+    editable = repository / "src"
+    editable.mkdir()
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"editable_paths": ["src"]}))
+    monkeypatch.setenv("PITBENCH_REPO", str(repository))
+    monkeypatch.setenv("PITBENCH_AGENT_CONFIG", str(config))
+
+    git_dir.chmod(0o555)
+    repository.chmod(0o555)
+    try:
+        assert agent_cli.workspace_command(SimpleNamespace()) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["enforced"] is True
+        assert payload["repository_root_writable"] is False
+        assert payload["git_metadata_writable"] is False
+        assert payload["editable_paths_writable"] == {"src": True}
+    finally:
+        repository.chmod(0o755)
+        git_dir.chmod(0o755)
 
 
 def test_agent_cli_validate_uses_clean_clone_and_candidate_patch(monkeypatch, tmp_path):
@@ -181,7 +215,7 @@ def test_agent_cli_validate_uses_clean_clone_and_candidate_patch(monkeypatch, tm
     config.write_text(
         json.dumps(
             {
-                "protected_paths": ["tests"],
+                "editable_paths": ["src"],
                 "validation_commands": [
                     {
                         "argv": [
@@ -205,4 +239,9 @@ def test_agent_cli_validate_uses_clean_clone_and_candidate_patch(monkeypatch, tm
     monkeypatch.setenv("PITBENCH_REPO", str(repository))
     monkeypatch.setenv("PITBENCH_AGENT_CONFIG", str(config))
 
+    index_before = (repository / ".git/index").read_bytes()
     assert agent_cli.validate_command(SimpleNamespace()) == 0
+    assert (repository / ".git/index").read_bytes() == index_before
+    assert "?? candidate.txt" in subprocess.check_output(
+        ["git", "status", "--short"], cwd=repository, text=True
+    )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import shutil
 from pathlib import Path
 
@@ -62,7 +63,7 @@ _PREBUILD_COMMANDS = {
 
 # Increment when the generated task image or bundled public tooling becomes
 # incompatible with an image produced by an earlier PitBench checkout.
-IMAGE_REVISION = "2"
+IMAGE_REVISION = "3"
 IMAGE_REVISION_LABEL = "org.pitbench.image-revision"
 IMAGE_SOURCE_LABEL = "org.pitbench.image-source"
 
@@ -182,8 +183,13 @@ class PitBenchAdapter:
         *,
         judge_image: str | None = None,
     ) -> None:
+        editable_paths = ", ".join(task.repository.editable_paths)
         payload = {
-            "instruction": task.instruction,
+            "instruction": (
+                f"{task.instruction}\n\n"
+                "The repository is read-only outside these editable paths: "
+                f"{editable_paths}. Keep all implementation changes inside them."
+            ),
             "author_name": "PitBench",
             "author_email": "benchmark@pitbench.invalid",
             "difficulty": "hard",
@@ -210,7 +216,7 @@ class PitBenchAdapter:
         plugin = task.repository.plugin
         prepared_image = image_override or task.repository.agent_image
         if prepared_image is not None:
-            return PitBenchAdapter._prepared_dockerfile(prepared_image)
+            return PitBenchAdapter._prepared_dockerfile(prepared_image, task)
 
         image = _AGENT_IMAGES[plugin]
         packages = (
@@ -224,7 +230,9 @@ class PitBenchAdapter:
             else ""
         )
         prebuild = _PREBUILD_COMMANDS.get(plugin, "")
+        workspace_permissions = PitBenchAdapter._workspace_permissions(task)
         return f"""FROM {image}
+USER root
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y {packages} \\
     && rm -rf /var/lib/apt/lists/*
 {install_python}ENV PIP_NO_BUILD_ISOLATION=1
@@ -232,10 +240,10 @@ RUN mkdir -p /logs /agent-logs /pitbench/dev_instances
 COPY agent_tooling /opt/pitbench-tooling
 COPY agent_bin/pitbench /usr/local/bin/pitbench
 COPY agent_config.json /pitbench/config.json
+RUN chmod 0755 /usr/local/bin/pitbench
 RUN rm -rf /workspace/repo
 COPY repo /workspace/repo
-{prebuild}COPY dev_instances /pitbench/dev_instances
-RUN chmod 0755 /usr/local/bin/pitbench
+{prebuild}{workspace_permissions}COPY dev_instances /pitbench/dev_instances
 LABEL {IMAGE_REVISION_LABEL}="{IMAGE_REVISION}" \
       {IMAGE_SOURCE_LABEL}="{image}"
 ENV PYTHONPATH=/opt/pitbench-tooling
@@ -244,19 +252,44 @@ CMD ["sh", "-c", "sleep infinity"]
 """
 
     @staticmethod
-    def _prepared_dockerfile(image: str) -> str:
+    def _prepared_dockerfile(image: str, task: PitBenchTask) -> str:
+        workspace_permissions = PitBenchAdapter._workspace_permissions(task)
         return f"""FROM {image}
+USER root
 RUN mkdir -p /logs /agent-logs /pitbench/dev_instances
 COPY agent_tooling /opt/pitbench-tooling
 COPY agent_bin/pitbench /usr/local/bin/pitbench
 COPY agent_config.json /pitbench/config.json
 COPY dev_instances /pitbench/dev_instances
 RUN chmod 0755 /usr/local/bin/pitbench
-LABEL {IMAGE_REVISION_LABEL}="{IMAGE_REVISION}" \
+{workspace_permissions}LABEL {IMAGE_REVISION_LABEL}="{IMAGE_REVISION}" \
       {IMAGE_SOURCE_LABEL}="{image}"
 ENV PYTHONPATH=/opt/pitbench-tooling
 WORKDIR /workspace/repo
 CMD ["sh", "-c", "sleep infinity"]
+"""
+
+    @staticmethod
+    def _workspace_permissions(task: PitBenchTask) -> str:
+        editable = " ".join(
+            shlex.quote(f"/workspace/repo/{path}")
+            for path in task.repository.editable_paths
+        )
+        return f"""ARG PITBENCH_AGENT_UID=1000
+ARG PITBENCH_AGENT_GID=1000
+USER root
+RUN groupadd --non-unique --gid ${{PITBENCH_AGENT_GID}} pitbench-agent \
+    && useradd --non-unique --uid ${{PITBENCH_AGENT_UID}} \
+       --gid ${{PITBENCH_AGENT_GID}} --create-home --shell /bin/bash pitbench-agent \
+    && chown -R root:root /workspace/repo \
+    && chmod -R a=rX /workspace/repo \
+    && mkdir -p {editable} /pitbench/runs \
+    && chown -R ${{PITBENCH_AGENT_UID}}:${{PITBENCH_AGENT_GID}} \
+       {editable} /pitbench/runs /logs /agent-logs \
+    && chmod -R u+rwX {editable} /pitbench/runs /logs /agent-logs \
+    && git config --system --add safe.directory /workspace/repo
+ENV HOME=/home/pitbench-agent
+USER pitbench-agent
 """
 
     @staticmethod
@@ -279,9 +312,14 @@ CMD ["sh", "-c", "sleep infinity"]
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        PITBENCH_AGENT_UID: ${T_BENCH_AGENT_UID:-1000}
+        PITBENCH_AGENT_GID: ${T_BENCH_AGENT_GID:-1000}
     image: ${T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME}
     container_name: ${T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME}
     network_mode: none
+    security_opt:
+      - no-new-privileges:true
     command: ["sh", "-c", "sleep infinity"]
     volumes:
       - ${T_BENCH_TASK_LOGS_PATH}:${T_BENCH_CONTAINER_LOGS_PATH}

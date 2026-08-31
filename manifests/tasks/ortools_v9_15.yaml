@@ -19,6 +19,7 @@ repository:
   clone_url: https://github.com/google/or-tools.git
   language: cpp_java
   plugin: pitbench.repositories.ortools:OrToolsRepositoryPlugin
+  editable_paths: [ortools, build]
 oracle:
     kind: independent_measurement
     source: private://oracles/ortools_v9_15.json

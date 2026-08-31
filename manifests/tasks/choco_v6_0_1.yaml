@@ -19,6 +19,7 @@ repository:
   clone_url: https://github.com/chocoteam/choco-solver.git
   language: java
   plugin: pitbench.repositories.choco:ChocoRepositoryPlugin
+  editable_paths: [solver]
 oracle:
   kind: solver_certificate
   source: private://oracles/bin_packing.json

@@ -4,7 +4,6 @@ import json
 import shutil
 from pathlib import Path
 
-from pitbench.evaluator.patch_policy import PatchPolicy
 from pitbench.repositories.base import BuildKind, RepositoryPluginRegistry
 from pitbench.schema.task import PitBenchTask
 
@@ -86,7 +85,7 @@ def write_agent_tooling(
         "threads": task.evaluation.threads,
         "runner": _RUNNERS[task.repository.plugin],
         "runner_requirement": _REQUIREMENTS[task.repository.plugin],
-        "protected_paths": list(PatchPolicy.DEFAULT_PROTECTED),
+        "editable_paths": task.repository.editable_paths,
         "validation_commands": [
             command.model_dump(mode="json")
             for command in repository.build_commands(BuildKind.VALIDATION)

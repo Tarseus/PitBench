@@ -43,8 +43,9 @@ inspect` through the PitBench MCP tool. Keep all changes inside the task reposit
 and verify them with the visible PitBench commands.
 
 Treat existing tests as immutable specifications. Never change a test to accommodate
-an implementation change. The protected paths reported by `pitbench inspect` must
-not be modified. Preserve behavior across every supported problem feature, not only
+an implementation change. The repository is read-only outside the editable paths
+reported by `pitbench inspect`; keep implementation changes inside those paths.
+Preserve behavior across every supported problem feature, not only
 the visible development instances. Before finishing, run `pitbench validate` and
 `pitbench check`, inspect `git status --short`, and remove generated output and
 temporary helper files. The final candidate must contain only intentional source
@@ -364,8 +365,8 @@ Task:
         return (
             "A transient connection interrupted the previous attempt. Continue from "
             "the existing task repository state instead of restarting. Inspect the "
-            "current diff, finish or repair the implementation, remove forbidden or "
-            "temporary changes, then run pitbench validate and pitbench check before "
+            "current diff, finish or repair the implementation, remove temporary "
+            "changes, then run pitbench validate and pitbench check before "
             f"finishing. The original task was:\n{instruction}"
         )
 

@@ -11,7 +11,6 @@ from pitbench.schema.observation import CodeState, RunObservation
 
 class ValidityCode(str, Enum):
     PATCH_APPLY = "patch_apply"
-    PATCH_POLICY = "patch_policy"
     VALIDATION_BUILD = "validation_build"
     SANITIZER = "sanitizer"
     SOLUTION = "solution"

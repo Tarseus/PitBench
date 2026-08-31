@@ -67,6 +67,7 @@ def test_materialized_release_task_has_no_hidden_assets(
     assert task_yaml["parser_name"] is None
     assert task_yaml["evaluator_import_path"].endswith(":PitBenchEvaluator")
     assert task_yaml["evaluator_config"]["judge_image"] == "sha256:" + "a" * 64
+    assert "read-only outside these editable paths: pyvrp" in task_yaml["instruction"]
     assert (destination / "agent_bin/pitbench").stat().st_mode & 0o111
     assert (destination / "agent_config.json").is_file()
     assert (destination / "agent_tooling/pitbench/agent_cli.py").is_file()
@@ -88,6 +89,10 @@ def test_materialized_release_task_has_no_hidden_assets(
         f'{IMAGE_SOURCE_LABEL}="sha256:{"b" * 64}"'
         in (destination / "Dockerfile").read_text()
     )
+    dockerfile = (destination / "Dockerfile").read_text()
+    assert "USER pitbench-agent" in dockerfile
+    assert "/workspace/repo/pyvrp" in dockerfile
+    assert "chmod -R a=rX /workspace/repo" in dockerfile
     assert (
         (destination / "Dockerfile").read_text().startswith("FROM sha256:" + "b" * 64)
     )
@@ -95,6 +100,8 @@ def test_materialized_release_task_has_no_hidden_assets(
     assert dockerignore[0] == "*"
     assert "!repo" not in dockerignore
     assert "network_mode: none" in (destination / "docker-compose.yaml").read_text()
+    assert "no-new-privileges:true" in (destination / "docker-compose.yaml").read_text()
+    assert "PITBENCH_AGENT_UID" in (destination / "docker-compose.yaml").read_text()
     assert (
         'PITBENCH_RUNS: "/pitbench/runs"'
         in (destination / "docker-compose.yaml").read_text()
@@ -105,6 +112,7 @@ def test_materialized_release_task_has_no_hidden_assets(
     legacy_dockerfile = adapter._dockerfile(legacy_task)
     assert "pip install --break-system-packages --no-cache-dir" in legacy_dockerfile
     assert "COPY repo /workspace/repo" in legacy_dockerfile
+    assert "USER pitbench-agent" in legacy_dockerfile
 
 
 def test_repository_source_may_match_verified_release_tree(tmp_path: Path) -> None:

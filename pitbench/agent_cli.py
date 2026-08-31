@@ -62,6 +62,7 @@ def _runner_available(config: dict[str, Any]) -> tuple[bool, str]:
 def inspect_command(_: argparse.Namespace) -> int:
     config = _config()
     available, detail = _runner_available(config)
+    workspace = _workspace_capability(config, _repository())
     payload = {
         "task_id": config["task_id"],
         "task_type": config["task_type"],
@@ -72,7 +73,8 @@ def inspect_command(_: argparse.Namespace) -> int:
         "development_instances": [path.name for path in _instances(None)],
         "runner_available": available,
         "runner_detail": detail,
-        "protected_paths": config.get("protected_paths", []),
+        "editable_paths": config.get("editable_paths", []),
+        "workspace": workspace,
         "validation_available": bool(config.get("validation_commands")),
     }
     print(json.dumps(payload, indent=2))
@@ -204,6 +206,36 @@ def _repository() -> Path:
     return _path("PITBENCH_REPO", "/workspace/repo")
 
 
+def _workspace_capability(config: dict[str, Any], repository: Path) -> dict[str, Any]:
+    editable = tuple(map(str, config.get("editable_paths", [])))
+    editable_writable = {
+        path: (repository / path).is_dir() and os.access(repository / path, os.W_OK)
+        for path in editable
+    }
+    root_writable = os.access(repository, os.W_OK)
+    git_writable = os.access(repository / ".git", os.W_OK)
+    effective_uid = os.geteuid()
+    return {
+        "enforced": (
+            effective_uid != 0
+            and not root_writable
+            and not git_writable
+            and bool(editable_writable)
+            and all(editable_writable.values())
+        ),
+        "effective_uid": effective_uid,
+        "repository_root_writable": root_writable,
+        "git_metadata_writable": git_writable,
+        "editable_paths_writable": editable_writable,
+    }
+
+
+def workspace_command(_: argparse.Namespace) -> int:
+    result = _workspace_capability(_config(), _repository())
+    print(json.dumps(result, indent=2))
+    return 0 if result["enforced"] else 1
+
+
 def _git_paths(repository: Path, *arguments: str) -> list[str]:
     completed = subprocess.run(
         ["git", *arguments, "-z", "--", *_CANDIDATE_PATHS],
@@ -224,38 +256,32 @@ def _changed_paths(repository: Path) -> list[str]:
     return sorted(set(tracked) | set(untracked))
 
 
-def _policy_result(config: dict[str, Any], changed_paths: list[str]) -> dict[str, Any]:
-    protected = tuple(map(str, config.get("protected_paths", [])))
-    violations = sorted(
-        f"protected path: {path}"
+def _workspace_result(
+    config: dict[str, Any], changed_paths: list[str]
+) -> dict[str, Any]:
+    editable = tuple(map(str, config.get("editable_paths", [])))
+    outside_editable_paths = [
+        path
         for path in changed_paths
-        if any(path == prefix or path.startswith(f"{prefix}/") for prefix in protected)
-    )
+        if not any(
+            path == prefix or path.startswith(f"{prefix}/") for prefix in editable
+        )
+    ]
     return {
-        "accepted": not violations,
+        "editable_paths": list(editable),
         "changed_paths": changed_paths,
-        "violations": violations,
+        "outside_editable_paths": outside_editable_paths,
     }
 
 
 def check_command(_: argparse.Namespace) -> int:
-    result = _policy_result(_config(), _changed_paths(_repository()))
+    result = _workspace_result(_config(), _changed_paths(_repository()))
     print(json.dumps(result, indent=2))
-    return 0 if result["accepted"] else 1
-
-
-def _prepare_candidate_index(repository: Path) -> None:
-    subprocess.run(
-        ["git", "add", "-N", "--", *_CANDIDATE_PATHS],
-        cwd=repository,
-        check=True,
-        capture_output=True,
-    )
+    return 0
 
 
 def _candidate_patch(repository: Path) -> bytes:
-    _prepare_candidate_index(repository)
-    completed = subprocess.run(
+    tracked = subprocess.run(
         [
             "git",
             "diff",
@@ -269,17 +295,42 @@ def _candidate_patch(repository: Path) -> bytes:
         check=True,
         capture_output=True,
     )
-    return completed.stdout
+    patch = bytearray(tracked.stdout)
+    for path in _git_paths(repository, "ls-files", "--others", "--exclude-standard"):
+        untracked = subprocess.run(
+            [
+                "git",
+                "diff",
+                "--binary",
+                "--no-ext-diff",
+                "--no-index",
+                "--",
+                "/dev/null",
+                path,
+            ],
+            cwd=repository,
+            check=False,
+            capture_output=True,
+        )
+        if untracked.returncode not in {0, 1}:
+            raise subprocess.CalledProcessError(
+                untracked.returncode,
+                untracked.args,
+                output=untracked.stdout,
+                stderr=untracked.stderr,
+            )
+        patch.extend(untracked.stdout)
+    return bytes(patch)
 
 
 def diff_command(_: argparse.Namespace) -> int:
-    repository = _repository()
-    _prepare_candidate_index(repository)
+    patch = _candidate_patch(_repository())
+    if not patch:
+        return 0
     completed = subprocess.run(
-        ["git", "diff", "--stat", "HEAD", "--", *_CANDIDATE_PATHS],
-        cwd=repository,
+        ["git", "apply", "--stat"],
+        input=patch,
         check=False,
-        text=True,
     )
     return completed.returncode
 
@@ -287,11 +338,6 @@ def diff_command(_: argparse.Namespace) -> int:
 def validate_command(_: argparse.Namespace) -> int:
     config = _config()
     repository = _repository()
-    policy = _policy_result(config, _changed_paths(repository))
-    if not policy["accepted"]:
-        print(json.dumps(policy, indent=2), file=sys.stderr)
-        return 1
-
     commands = config.get("validation_commands") or []
     if not commands:
         print("public validation is unavailable for this task", file=sys.stderr)
@@ -362,6 +408,8 @@ def parser() -> argparse.ArgumentParser:
     commands = result.add_subparsers(required=True)
     inspect_parser = commands.add_parser("inspect")
     inspect_parser.set_defaults(handler=inspect_command)
+    workspace = commands.add_parser("workspace")
+    workspace.set_defaults(handler=workspace_command)
     bench = commands.add_parser("bench")
     bench.add_argument("--split", default="dev")
     _run_options(bench, instance_required=False)

@@ -279,6 +279,12 @@ class AbstractInstalledAgent(BaseAgent, ABC):
     ) -> AgentResult:
         self._set_portkey_context(portkey_metadata, portkey_trace_id)
         try:
+            configured_user = session.container.attrs["Config"].get("User", "")
+            drop_privileges_after_install = configured_user == "pitbench-agent"
+            if drop_privileges_after_install:
+                session.container.exec_run(
+                    ["mkdir", "-p", "/installed-agent"], user="root"
+                )
             session.copy_to_container(
                 self._install_agent_script_path,
                 container_dir="/installed-agent",
@@ -287,6 +293,7 @@ class AbstractInstalledAgent(BaseAgent, ABC):
 
             # Execute outside the session to avoid exposing the env variables.
             env_setup_content = self._create_env_setup_file()
+            setup_user = "root" if drop_privileges_after_install else configured_user
             session.container.exec_run(
                 [
                     "sh",
@@ -295,24 +302,36 @@ class AbstractInstalledAgent(BaseAgent, ABC):
                         f"echo {shlex.quote(env_setup_content)} > "
                         "/installed-agent/setup-env.sh"
                     ),
-                ]
+                ],
+                user=setup_user,
             )
 
             extra_files = self._extra_setup_files()
             for file_path, content in extra_files.items():
                 parent_dir = str(Path(file_path).parent)
                 session.container.exec_run(
-                    ["sh", "-c", f"mkdir -p {shlex.quote(parent_dir)}"]
+                    ["sh", "-c", f"mkdir -p {shlex.quote(parent_dir)}"],
+                    user=setup_user,
                 )
                 session.container.exec_run(
                     [
                         "sh",
                         "-c",
                         f"echo {shlex.quote(content)} > {shlex.quote(file_path)}",
-                    ]
+                    ],
+                    user=setup_user,
                 )
 
             # Set up environment variables
+            if drop_privileges_after_install:
+                session.send_keys(
+                    [
+                        "export HOME=/home/pitbench-agent USER=pitbench-agent",
+                        "Enter",
+                    ],
+                    block=True,
+                    max_timeout_sec=float("inf"),
+                )
             session.send_keys(
                 [
                     "source /installed-agent/setup-env.sh",
@@ -351,6 +370,45 @@ class AbstractInstalledAgent(BaseAgent, ABC):
                     total_output_tokens=output_tokens,
                     total_cost=cost,
                     failure_mode=FailureMode.AGENT_INSTALLATION_FAILED,
+                )
+
+            if drop_privileges_after_install:
+                session.container.exec_run(
+                    [
+                        "chown",
+                        "-R",
+                        "pitbench-agent:pitbench-agent",
+                        "/home/pitbench-agent",
+                        "/installed-agent",
+                    ],
+                    user="root",
+                )
+                workspace = session.container.exec_run(
+                    ["pitbench", "workspace"],
+                    user="pitbench-agent",
+                    workdir=(
+                        session.container.attrs.get("Config", {}).get("WorkingDir")
+                        or None
+                    ),
+                )
+                if workspace.exit_code != 0:
+                    detail = workspace.output.decode("utf-8", errors="replace")
+                    raise RuntimeError(
+                        "agent workspace capability setup was lost during "
+                        f"installation: {detail}"
+                    )
+                session.send_keys(
+                    [
+                        "exec su --preserve-environment pitbench-agent",
+                        "Enter",
+                    ],
+                    block=False,
+                    min_timeout_sec=0.2,
+                )
+                session.send_keys(
+                    ["true", "Enter"],
+                    block=True,
+                    max_timeout_sec=float("inf"),
                 )
 
             # If installation succeeded, run the agent commands

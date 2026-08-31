@@ -19,6 +19,7 @@ repository:
   clone_url: https://github.com/VROOM-Project/vroom.git
   language: cpp
   plugin: pitbench.repositories.vroom:VroomRepositoryPlugin
+  editable_paths: [src, include, bin, obj]
 oracle:
     kind: best_known_solution
     source: private://oracles/cvrp.json

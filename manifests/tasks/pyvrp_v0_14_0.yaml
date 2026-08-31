@@ -21,6 +21,7 @@ repository:
   clone_url: https://github.com/PyVRP/PyVRP.git
   language: cpp_python
   plugin: pitbench.repositories.pyvrp:PyVRPRepositoryPlugin
+  editable_paths: [pyvrp]
   agent_image: ghcr.io/tarseus/pitbench-pyvrp:5d9776a954b810bdb3fe71d47b1e7de7cffe90d2
 oracle:
     kind: best_known_solution

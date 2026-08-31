@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal, Self
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class TaskType(str, Enum):
@@ -53,8 +53,24 @@ class RepositorySpec(BaseModel):
     clone_url: str
     language: str
     plugin: str
+    editable_paths: list[str] = Field(min_length=1)
     agent_image: str | None = None
     judge_image: str | None = None
+
+    @field_validator("editable_paths")
+    @classmethod
+    def validate_editable_paths(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("repository editable paths must be unique")
+        for value in values:
+            path = PurePosixPath(value)
+            if value in {"", "."} or path.is_absolute() or ".." in path.parts:
+                raise ValueError(
+                    "repository editable paths must be relative subdirectories"
+                )
+            if path.parts[0] == ".git":
+                raise ValueError("repository .git metadata cannot be editable")
+        return values
 
 
 class OracleReference(BaseModel):

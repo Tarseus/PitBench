@@ -96,3 +96,20 @@ def test_nested_sandbox_uses_scoped_compose_override() -> None:
     assert "seccomp=unconfined" in content
     assert "apparmor=unconfined" in content
     override.unlink()
+
+
+def test_agent_identity_cannot_be_overridden_to_root(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("T_BENCH_AGENT_UID", "0")
+    monkeypatch.setenv("T_BENCH_AGENT_GID", "0")
+    monkeypatch.setattr("docker.from_env", Mock(return_value=Mock()))
+
+    manager = DockerComposeManager(
+        client_container_name="test-container",
+        client_image_name="test-image",
+        docker_compose_path=tmp_path / "docker-compose.yaml",
+    )
+
+    assert manager.env["T_BENCH_AGENT_UID"] != "0"
+    assert manager.env["T_BENCH_AGENT_GID"] != "0"

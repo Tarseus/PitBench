@@ -44,16 +44,26 @@ class VerdictEvaluator(Evaluator):
 class FakeContainer:
     attrs = {"Config": {"WorkingDir": "/workspace/repo"}}
 
-    def __init__(self, head: str = "a" * 40) -> None:
+    def __init__(self, head: str = "a" * 40, workspace_exit_code: int = 0) -> None:
         self.head = head
+        self.workspace_exit_code = workspace_exit_code
 
     def exec_run(self, command, workdir=None):
+        if command == ["pitbench", "workspace"]:
+            return SimpleNamespace(
+                exit_code=self.workspace_exit_code,
+                output=b'{"enforced": true}\n',
+            )
         if command == ["git", "rev-parse", "HEAD"]:
             return SimpleNamespace(exit_code=0, output=f"{self.head}\n".encode())
-        assert "git diff --binary --no-ext-diff HEAD" in command[-1]
-        assert "':(exclude).pitbench/**'" in command[-1]
         assert workdir == "/workspace/repo"
-        return SimpleNamespace(exit_code=0, output=b"diff --git a/a.py b/a.py\n")
+        if command[:2] == ["git", "diff"] and "HEAD" in command:
+            assert ":(exclude).pitbench/**" in command
+            return SimpleNamespace(exit_code=0, output=b"diff --git a/a.py b/a.py\n")
+        if command[:2] == ["git", "ls-files"]:
+            assert ":(exclude).pitbench/**" in command
+            return SimpleNamespace(exit_code=0, output=b"")
+        raise AssertionError(f"unexpected command: {command}")
 
 
 def test_harness_treats_evaluator_payload_as_opaque(tmp_path: Path) -> None:
@@ -158,6 +168,14 @@ def test_harness_rejects_agent_that_changes_repository_head(tmp_path: Path) -> N
         )
 
     assert not (paths.task_output_path / "evaluation/candidate.patch").exists()
+
+
+def test_harness_rejects_unenforced_agent_workspace() -> None:
+    harness = Harness.__new__(Harness)
+    terminal = SimpleNamespace(container=FakeContainer(workspace_exit_code=1))
+
+    with pytest.raises(RuntimeError, match="workspace capability setup failed"):
+        harness._validate_agent_workspace(terminal)
 
 
 def test_pipeline_stage_updates_non_livestream_progress_description() -> None:

@@ -5,7 +5,6 @@ from unittest.mock import patch
 import pytest
 
 from pitbench.evaluator.evaluator import PitBenchEvaluator
-from pitbench.evaluator.patch_policy import PatchPolicy
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.schema.observation import CodeState
@@ -247,45 +246,32 @@ def test_model_build_fixture_uses_performance_decision_path(tmp_path: Path) -> N
     assert "sensitivity_complete" not in decision
 
 
-def test_patch_policy_protects_judge_surfaces(tmp_path: Path) -> None:
-    patch = tmp_path / "candidate.patch"
-    patch.write_text(
+def test_evaluator_does_not_gate_candidate_paths(tmp_path: Path) -> None:
+    record = TaskCatalog(ROOT).records()[0]
+    output = tmp_path / "output"
+    output.mkdir()
+    candidate = output / "candidate.patch"
+    candidate.write_text(
         "diff --git a/pitbench/evaluator/judge.py b/pitbench/evaluator/judge.py\n"
         "--- a/pitbench/evaluator/judge.py\n"
         "+++ b/pitbench/evaluator/judge.py\n"
     )
-    result = PatchPolicy().inspect(patch)
-    assert result.accepted is False
-    assert result.violations == ["protected path: pitbench/evaluator/judge.py"]
+    envelope = PitBenchEvaluator().envelope(
+        EvaluationRequest(
+            task_id=record.task.task_id,
+            task_path=ROOT,
+            candidate_patch_path=candidate,
+            candidate_patch_sha256=hashlib.sha256(candidate.read_bytes()).hexdigest(),
+            output_dir=output,
+            agent_name="fixture",
+            evaluator_config={
+                "manifest_path": str(record.manifest_path),
+                "fixture_mode": True,
+                "fixture_instances_per_population": 1,
+            },
+        )
+    )
 
-
-@pytest.mark.parametrize(
-    "patch_text",
-    [
-        (
-            "diff --git a/tests/test_solver.py b/tests/test_solver.py\n"
-            "deleted file mode 100644\n"
-            "--- a/tests/test_solver.py\n"
-            "+++ /dev/null\n"
-        ),
-        (
-            "diff --git a/tests/data.bin b/tests/data.bin\n"
-            "index 1234567..7654321 100644\n"
-            "GIT binary patch\n"
-        ),
-    ],
-)
-def test_patch_policy_protects_deleted_and_binary_paths(
-    tmp_path: Path, patch_text: str
-) -> None:
-    patch = tmp_path / "candidate.patch"
-    patch.write_text(patch_text)
-
-    result = PatchPolicy().inspect(patch)
-
-    assert result.accepted is False
-    assert result.violations == [
-        "protected path: tests/data.bin"
-        if "data.bin" in patch_text
-        else "protected path: tests/test_solver.py"
-    ]
+    assert envelope.completed is True
+    assert envelope.payload["validity"]["accepted"] is True
+    assert envelope.payload["summary"]["observation_count"] > 0

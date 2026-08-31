@@ -1,5 +1,6 @@
 import gzip
 import io
+import os
 import shutil
 import subprocess
 import tarfile
@@ -17,6 +18,8 @@ from pitbench.harness.utils.logger import logger
 
 
 class DockerComposeEnvVars(EnvModel):
+    agent_uid: int | None = None
+    agent_gid: int | None = None
     task_docker_client_container_name: str | None = None
     task_docker_client_image_name: str | None = None
     task_docker_name_prefix: str | None = None
@@ -71,7 +74,11 @@ class DockerComposeManager:
         self._compose_override_path: Path | None = None
         self._logger = logger.getChild(__name__)
 
+        agent_uid = os.getuid() or 1000
+        agent_gid = os.getgid() or 1000
         self.env = DockerComposeEnvVars(
+            agent_uid=agent_uid,
+            agent_gid=agent_gid,
             task_docker_client_image_name=self._client_image_name,
             task_docker_client_container_name=self._client_container_name,
             task_docker_name_prefix=self._docker_name_prefix,
@@ -90,6 +97,8 @@ class DockerComposeManager:
             ),
             agent_model_name=agent_model_name,
         ).to_env_dict(include_os_env=True)
+        self.env["T_BENCH_AGENT_UID"] = str(agent_uid)
+        self.env["T_BENCH_AGENT_GID"] = str(agent_gid)
 
         # Add benchmark tuning environment variables for single-threaded
         # library operation. These ensure consistent performance by
