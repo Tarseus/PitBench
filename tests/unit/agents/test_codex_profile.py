@@ -75,6 +75,18 @@ def test_profiles_cli_initializes_non_secret_overlay(tmp_path: Path) -> None:
     assert f"sha256={profile.sha256}" in result.output
 
 
+def test_profiles_cli_preserves_yaml_keyword_as_codex_name(tmp_path: Path) -> None:
+    destination = tmp_path / "keyword"
+
+    result = CliRunner().invoke(
+        app,
+        ["profiles", "init", "true", "--output", str(destination)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert CodexProfile.load(destination).name == "true"
+
+
 def test_profiles_cli_validates_profile(tmp_path: Path) -> None:
     root = _profile(tmp_path / "profile")
 

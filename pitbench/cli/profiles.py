@@ -54,7 +54,7 @@ def init_agent_profile(
             "\n".join(
                 [
                     'schema_version: "1.0"',
-                    f"name: {name}",
+                    f'name: "{name}"',
                     "codex_home: codex-home",
                     f"allow_hooks: {str(allow_hooks).lower()}",
                     "",
@@ -74,7 +74,7 @@ def init_agent_profile(
             "\n".join(
                 [
                     'schema_version: "1.0"',
-                    f"name: {name}",
+                    f'name: "{name}"',
                     "gemini_config: gemini-config",
                     f"allow_hooks: {str(allow_hooks).lower()}",
                     "",

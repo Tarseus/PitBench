@@ -89,6 +89,26 @@ def test_profiles_cli_initializes_antigravity_overlay(tmp_path: Path) -> None:
     assert f"sha256={profile.sha256}" in result.output
 
 
+def test_profiles_cli_preserves_numeric_antigravity_name(tmp_path: Path) -> None:
+    destination = tmp_path / "numeric"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "profiles",
+            "init",
+            "123",
+            "--agent",
+            "antigravity",
+            "--output",
+            str(destination),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert AntigravityProfile.load(destination).name == "123"
+
+
 def test_profiles_cli_infers_antigravity_profile_type(tmp_path: Path) -> None:
     root = _profile(tmp_path / "profile")
     result = CliRunner().invoke(app, ["profiles", "validate", str(root)])

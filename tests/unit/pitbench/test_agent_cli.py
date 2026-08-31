@@ -31,6 +31,38 @@ def test_pyvrp_runner_check_imports_native_extension(monkeypatch) -> None:
     assert "pyvrp._pyvrp" in detail
 
 
+def test_run_one_reports_timeout_as_failure(monkeypatch, tmp_path, capsys) -> None:
+    from pitbench import agent_cli
+
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    runs = tmp_path / "runs"
+    instance = tmp_path / "dev_001.json"
+    instance.write_text("{}\n")
+    monkeypatch.setenv("PITBENCH_REPO", str(repository))
+    monkeypatch.setenv("PITBENCH_RUNS", str(runs))
+    monkeypatch.setattr(
+        agent_cli.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+        ),
+    )
+
+    succeeded = agent_cli._run_one(
+        {"runner": ["solver", "{instance}"], "threads": 1},
+        instance,
+        seed=7,
+        budget=10,
+        dry_run=False,
+    )
+
+    assert succeeded is False
+    assert capsys.readouterr().err == (
+        "runner timed out after 70 seconds: dev_001.json\n"
+    )
+
+
 @pytest.mark.parametrize(
     "record", TaskCatalog(ROOT).records(), ids=lambda item: item.task.task_id
 )

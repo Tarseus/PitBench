@@ -110,14 +110,22 @@ def _run_one(
         print(f"runner unavailable: {detail}", file=sys.stderr)
         return False
     started = time.perf_counter()
-    completed = subprocess.run(
-        command,
-        cwd=_path("PITBENCH_REPO", "/workspace/repo"),
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=budget + 60,
-    )
+    timeout = budget + 60
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=_path("PITBENCH_REPO", "/workspace/repo"),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"runner timed out after {timeout:g} seconds: {instance.name}",
+            file=sys.stderr,
+        )
+        return False
     output.with_suffix(".stdout.log").write_text(completed.stdout)
     output.with_suffix(".stderr.log").write_text(completed.stderr)
     payload = {
