@@ -56,7 +56,7 @@ tasks:
     )
 
     with (
-        patch("pitbench.cli.main.TaskCatalog.validate_all", return_value=[record]),
+        patch("pitbench.cli.main.TaskCatalog.validate_one", return_value=record),
         patch("pitbench.cli.main.PitBenchEvaluator") as evaluator_class,
     ):
         evaluator_class.return_value.envelope.return_value = envelope

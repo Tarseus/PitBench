@@ -32,7 +32,7 @@ from pitbench.metrics.performance_report import (
     format_performance_report,
 )
 from pitbench.schema.task import PopulationKind
-from pitbench.tasks import TaskCatalog
+from pitbench.tasks import TaskCatalog, TaskNotFoundError
 
 app = typer.Typer(help="PitBench task, execution harness, and evaluation tooling.")
 tasks_app = typer.Typer(help="Validate and smoke-test benchmark tasks.")
@@ -210,7 +210,7 @@ def evaluate_task(
             agent_image=resolved_agent_image,
             judge_image=resolved_judge_image,
         )
-    except StopIteration as exc:
+    except TaskNotFoundError as exc:
         available = ", ".join(
             record.task.task_id
             for record in TaskCatalog(repository_root).validate_all()
@@ -321,12 +321,8 @@ def judge_candidate(
         typer.echo(f"Loaded evaluation config {resolved_config_path}")
 
     try:
-        record = next(
-            record
-            for record in TaskCatalog(repository_root).validate_all()
-            if record.task.task_id == task_id
-        )
-    except StopIteration as exc:
+        record = TaskCatalog(repository_root).validate_one(task_id)
+    except TaskNotFoundError as exc:
         raise typer.BadParameter(
             f"Unknown task '{task_id}'", param_hint="TASK_ID"
         ) from exc

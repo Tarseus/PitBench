@@ -198,11 +198,7 @@ def _load_context(
 
     task: TaskRecord | None = None
     try:
-        task = next(
-            record
-            for record in TaskCatalog(repository_root).validate_all()
-            if record.task.task_id == _PYVRP_TASK_ID
-        )
+        task = TaskCatalog(repository_root).validate_one(_PYVRP_TASK_ID)
     except Exception as error:
         checks.append(
             _check(

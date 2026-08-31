@@ -47,7 +47,7 @@ def test_materialized_release_task_has_no_hidden_assets(
 
     local_record = record.__class__(local_manifest, task)
     adapter = PitBenchAdapter(ROOT, ROOT / "private")
-    adapter.catalog.validate_all = lambda: [local_record]
+    adapter.catalog.validate_one = lambda task_id: local_record
     censored = tmp_path / "censored"
     GitSnapshot(clone_url=str(source), base_commit=local_base).create(censored)
     destination = tmp_path / "materialized"

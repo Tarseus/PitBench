@@ -1,4 +1,7 @@
+import shutil
 from pathlib import Path
+
+import pytest
 
 from pitbench.schema.task import PopulationKind
 from pitbench.tasks import TaskCatalog
@@ -18,6 +21,28 @@ def test_catalog_contains_release_snapshots() -> None:
         "choco_v6_0_1",
         "ortools_v9_15",
     }
+
+
+def test_validate_one_ignores_unrelated_invalid_manifest(tmp_path: Path) -> None:
+    task_id = "pyvrp_v0_14_0"
+    source = TaskCatalog(ROOT).validate_one(task_id)
+    manifest = tmp_path / "manifests/tasks" / source.manifest_path.name
+    manifest.parent.mkdir(parents=True)
+    shutil.copy2(source.manifest_path, manifest)
+    for population in source.task.populations:
+        if population.kind != PopulationKind.AGENT_DEV:
+            continue
+        source_population = ROOT / population.manifest
+        target_population = tmp_path / population.manifest
+        target_population.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_population, target_population)
+
+    (manifest.parent / "unrelated.yaml").write_text("not: a valid task\n")
+    catalog = TaskCatalog(tmp_path)
+
+    assert catalog.validate_one(task_id).task.task_id == task_id
+    with pytest.raises(ValueError):
+        catalog.validate_all()
 
 
 def test_release_identity_and_private_judge_assets() -> None:

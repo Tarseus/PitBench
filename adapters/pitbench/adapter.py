@@ -85,11 +85,7 @@ class PitBenchAdapter:
         agent_image: str | None = None,
         judge_image: str | None = None,
     ) -> Path:
-        record = next(
-            record
-            for record in self.catalog.validate_all()
-            if record.task.task_id == task_id
-        )
+        record = self.catalog.validate_one(task_id)
         task = record.task
         task_dir = destination.resolve()
         if task_dir.exists():
