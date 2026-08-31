@@ -1,6 +1,5 @@
 schema_version: "2.0"
 task_id: ortools_v9_15
-split: benchmark
 release:
   repository: google/or-tools
   version: "9.15"
@@ -8,7 +7,7 @@ release:
   base_commit: 551ad10d94835c99e5e1e684500d3db398c0e345
   released_at: 2026-01-12T15:38:30Z
   url: https://github.com/google/or-tools/releases/tag/v9.15
-task_type: model_build
+task_type: exact_solver
 problem_family: cp
 optimization_scope: model_build_efficiency
 instruction: >-
@@ -19,17 +18,15 @@ repository:
   clone_url: https://github.com/google/or-tools.git
   language: cpp_java
   plugin: pitbench.repositories.ortools:OrToolsRepositoryPlugin
+  editable_paths: [ortools, build]
 oracle:
     kind: independent_measurement
     source: private://oracles/ortools_v9_15.json
 evaluation:
-  family_plugin: pitbench.families.external:CPFamily
   budgets_sec: [1.0]
   solver_seeds: [0]
   threads: 1
   verifier: private://oracles/verifiers/ortools_model_equivalence
-  validation_build: {flags: [-ea]}
-  performance_build: {flags: [-O3, -DNDEBUG]}
 populations:
   - name: agent_dev
     kind: agent_dev

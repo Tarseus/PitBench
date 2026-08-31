@@ -8,9 +8,9 @@ import tarfile
 from pathlib import Path
 from typing import Optional
 
-import docker
 from docker.models.containers import Container
 
+import docker
 from pitbench.harness.utils.logger import logger
 
 from ..base import RemoteBuilder
@@ -90,6 +90,8 @@ class EC2RemoteBuilder(RemoteBuilder):
     def _prepare_environment_variables(self) -> None:
         """Prepare environment variables for the remote build."""
         standard_env = {
+            "T_BENCH_AGENT_UID": "1000",
+            "T_BENCH_AGENT_GID": "1000",
             "T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME": self.client_container_name
             or "",
             "T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME": self.client_image_name or "",
@@ -110,6 +112,8 @@ class EC2RemoteBuilder(RemoteBuilder):
 
         # Merge with existing environment and provided env vars
         self.env_vars = {**os.environ, **standard_env, **self.env_vars}
+        self.env_vars["T_BENCH_AGENT_UID"] = "1000"
+        self.env_vars["T_BENCH_AGENT_GID"] = "1000"
 
         # Remove None values
         self.env_vars = {k: v for k, v in self.env_vars.items() if v is not None}

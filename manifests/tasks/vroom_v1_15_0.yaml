@@ -1,6 +1,5 @@
 schema_version: "2.0"
 task_id: vroom_v1_15_0
-split: validation
 release:
   repository: VROOM-Project/vroom
   version: "1.15.0"
@@ -19,18 +18,16 @@ repository:
   clone_url: https://github.com/VROOM-Project/vroom.git
   language: cpp
   plugin: pitbench.repositories.vroom:VroomRepositoryPlugin
+  editable_paths: [src, include, bin, obj]
 oracle:
     kind: best_known_solution
     source: private://oracles/cvrp.json
     objective_sense: minimize
 evaluation:
-  family_plugin: pitbench.families.cvrp:CVRPFamily
   budgets_sec: [1.0, 5.0, 10.0]
   solver_seeds: [0]
   threads: 1
   verifier: cvrp_independent
-  validation_build: {compiler: gcc, flags: [-O1, -g], sanitizers: [address, undefined]}
-  performance_build: {compiler: gcc, flags: [-O3, -DNDEBUG]}
 populations:
   - name: agent_dev
     kind: agent_dev

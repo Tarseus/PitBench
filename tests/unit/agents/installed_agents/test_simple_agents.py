@@ -11,7 +11,6 @@ import pytest
 from pitbench.harness.agents.installed_agents.claude_code.claude_code_agent import (
     ClaudeCodeAgent,
 )
-from pitbench.harness.agents.installed_agents.codex.codex_agent import CodexAgent
 from pitbench.harness.agents.installed_agents.gemini_cli.gemini_cli_agent import (
     GeminiCliAgent,
 )
@@ -34,7 +33,6 @@ class TestSimpleAgentTemplates:
     @pytest.mark.parametrize(
         "agent_class,template_name",
         [
-            (CodexAgent, "codex-setup.sh.j2"),
             (ClaudeCodeAgent, "claude-code-setup.sh.j2"),
             (GeminiCliAgent, "gemini-cli-setup.sh.j2"),
             (GrokCliAgent, "grok-cli-setup.sh.j2"),
@@ -67,7 +65,6 @@ class TestSimpleAgentTemplates:
     @pytest.mark.parametrize(
         "agent_class",
         [
-            CodexAgent,
             ClaudeCodeAgent,
             GeminiCliAgent,
             GrokCliAgent,
@@ -76,10 +73,7 @@ class TestSimpleAgentTemplates:
     )
     def test_agent_default_template_variables(self, agent_class):
         """Test these agents default to latest version when no version is specified."""
-        if agent_class == CodexAgent:
-            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                agent = agent_class(model_name="gpt-4")
-        elif agent_class == ClaudeCodeAgent:
+        if agent_class == ClaudeCodeAgent:
             with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
                 agent = agent_class()
         elif agent_class == GeminiCliAgent:

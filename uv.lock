@@ -1038,7 +1038,7 @@ wheels = [
 ]
 
 [[package]]
-name = "fc-eval"
+name = "pitbench"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

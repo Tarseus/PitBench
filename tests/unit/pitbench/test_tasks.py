@@ -1,9 +1,25 @@
+import shutil
 from pathlib import Path
 
-from pitbench.schema.task import PopulationKind
+import pytest
+from typer.testing import CliRunner
+
+from pitbench.cli.main import app
+from pitbench.families.base import ProblemFamilyRegistry
+from pitbench.schema.task import PopulationKind, ProblemFamily, TaskType
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_fixture_command_replaces_smoke_command() -> None:
+    fixture = CliRunner().invoke(app, ["tasks", "fixture", "--help"])
+    smoke = CliRunner().invoke(app, ["tasks", "smoke"])
+
+    assert fixture.exit_code == 0
+    assert "deterministic evaluator contract fixture" in fixture.output
+    assert smoke.exit_code == 2
+    assert "No such command 'smoke'" in smoke.output
 
 
 def test_catalog_contains_release_snapshots() -> None:
@@ -20,10 +36,68 @@ def test_catalog_contains_release_snapshots() -> None:
     }
 
 
+def test_task_types_classify_heuristic_and_exact_solvers() -> None:
+    records = TaskCatalog(ROOT).validate_all()
+
+    assert {task_type.value for task_type in TaskType} == {
+        "heuristic_solver",
+        "exact_solver",
+    }
+    assert {record.task.task_id: record.task.task_type for record in records} == {
+        "pyvrp_v0_12_2": TaskType.HEURISTIC_SOLVER,
+        "pyvrp_v0_13_0": TaskType.HEURISTIC_SOLVER,
+        "pyvrp_v0_13_4": TaskType.HEURISTIC_SOLVER,
+        "pyvrp_v0_14_0": TaskType.HEURISTIC_SOLVER,
+        "vroom_v1_15_0": TaskType.HEURISTIC_SOLVER,
+        "highs_v1_15_1": TaskType.EXACT_SOLVER,
+        "choco_v6_0_1": TaskType.EXACT_SOLVER,
+        "ortools_v9_15": TaskType.EXACT_SOLVER,
+    }
+
+
+def test_problem_families_select_their_canonical_verifier() -> None:
+    assert ProblemFamilyRegistry.load(ProblemFamily.CVRP).name == "cvrp"
+    assert ProblemFamilyRegistry.load(ProblemFamily.MIP).name == "mip"
+    assert ProblemFamilyRegistry.load(ProblemFamily.CP).name == "cp"
+
+
+def test_validate_one_ignores_unrelated_invalid_manifest(tmp_path: Path) -> None:
+    task_id = "pyvrp_v0_14_0"
+    source = TaskCatalog(ROOT).validate_one(task_id)
+    manifest = tmp_path / "manifests/tasks" / source.manifest_path.name
+    manifest.parent.mkdir(parents=True)
+    shutil.copy2(source.manifest_path, manifest)
+    for population in source.task.populations:
+        if population.kind != PopulationKind.AGENT_DEV:
+            continue
+        source_population = ROOT / population.manifest
+        target_population = tmp_path / population.manifest
+        target_population.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_population, target_population)
+
+    (manifest.parent / "unrelated.yaml").write_text("not: a valid task\n")
+    catalog = TaskCatalog(tmp_path)
+
+    assert catalog.validate_one(task_id).task.task_id == task_id
+    with pytest.raises(ValueError):
+        catalog.validate_all()
+
+
 def test_release_identity_and_private_judge_assets() -> None:
     for record in TaskCatalog(ROOT).validate_all():
         assert record.task.release.tag.startswith("v")
         assert len(record.task.release.base_commit) == 40
+        if record.task.task_id.startswith("pyvrp_"):
+            assert record.task.repository.agent_image == (
+                f"ghcr.io/tarseus/pitbench-pyvrp:{record.task.release.base_commit}"
+            )
+        else:
+            assert record.task.repository.agent_image is None
+        assert record.task.repository.editable_paths
+        assert all(
+            path not in {"", "."} and not path.startswith(("/", ".git"))
+            for path in record.task.repository.editable_paths
+        )
         assert record.task.information_regime.value == "snapshot_only"
         for population in record.task.populations:
             if population.kind == PopulationKind.AGENT_DEV:

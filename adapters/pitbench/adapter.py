@@ -1,18 +1,30 @@
 from __future__ import annotations
 
+import json
+import shlex
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
 
 import yaml
 
 from adapters.pitbench.agent_tooling import write_agent_tooling
 from adapters.pitbench.git_snapshot import GitSnapshot
+from pitbench.agent_tools import (
+    AGENT_TOOLS_METADATA,
+    AgentTool,
+    agent_tool_names,
+    agent_tools_label,
+    needs_development_instances,
+    needs_run_directory,
+    normalize_agent_tools,
+)
 from pitbench.instances import materialize_population
 from pitbench.schema.task import PitBenchTask, PopulationKind
 from pitbench.tasks import TaskCatalog
 
 _AGENT_IMAGES = {
-    "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin": "python:3.13-bookworm",
+    "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin": "python:3.13-trixie",
     "pitbench.repositories.vroom:VroomRepositoryPlugin": "ubuntu:22.04",
     "pitbench.repositories.highs:HighsRepositoryPlugin": "ubuntu:24.04",
     "pitbench.repositories.choco:ChocoRepositoryPlugin": (
@@ -60,6 +72,13 @@ _PREBUILD_COMMANDS = {
     ),
 }
 
+# Increment when the generated task image or bundled public tooling becomes
+# incompatible with an image produced by an earlier PitBench checkout.
+IMAGE_REVISION = "4"
+IMAGE_REVISION_LABEL = "org.pitbench.image-revision"
+IMAGE_SOURCE_LABEL = "org.pitbench.image-source"
+IMAGE_TOOLS_LABEL = "org.pitbench.agent-tools"
+
 
 class PitBenchAdapter:
     """Materialize an agent-safe PitBench task from a PitBench manifest."""
@@ -77,13 +96,11 @@ class PitBenchAdapter:
         repository_source: Path | None = None,
         agent_image: str | None = None,
         judge_image: str | None = None,
+        agent_tools: Iterable[AgentTool | str] = (),
     ) -> Path:
-        record = next(
-            record
-            for record in self.catalog.validate_all()
-            if record.task.task_id == task_id
-        )
+        record = self.catalog.validate_one(task_id)
         task = record.task
+        tools = normalize_agent_tools(agent_tools)
         task_dir = destination.resolve()
         if task_dir.exists():
             raise FileExistsError(task_dir)
@@ -96,16 +113,20 @@ class PitBenchAdapter:
             ).create(repository, task_dir / "agent_repo.bundle")
         else:
             shutil.copytree(repository_source, repository)
-            self._validate_repository(task, repository)
+            self.validate_repository(task, repository)
 
-        development = next(
-            population
-            for population in task.populations
-            if population.kind == PopulationKind.AGENT_DEV
-        )
-        materialize_population(
-            self.repository_root / development.manifest,
-            task_dir / "dev_instances",
+        if needs_development_instances(tools):
+            development = next(
+                population
+                for population in task.populations
+                if population.kind == PopulationKind.AGENT_DEV
+            )
+            materialize_population(
+                self.repository_root / development.manifest,
+                task_dir / "dev_instances",
+            )
+        (task_dir / AGENT_TOOLS_METADATA).write_text(
+            json.dumps({"agent_tools": agent_tool_names(tools)}, indent=2) + "\n"
         )
         self._write_task_yaml(
             task,
@@ -113,18 +134,26 @@ class PitBenchAdapter:
             repository,
             task_dir,
             judge_image=judge_image,
+            agent_tools=tools,
         )
-        write_agent_tooling(
-            repository_root=self.repository_root, task=task, task_dir=task_dir
-        )
+        if tools:
+            write_agent_tooling(
+                repository_root=self.repository_root,
+                task=task,
+                task_dir=task_dir,
+                agent_tools=tools,
+            )
+        prepared_image = agent_image or task.repository.agent_image
         (task_dir / "Dockerfile").write_text(
-            self._dockerfile(task, image_override=agent_image)
+            self._dockerfile(task, image_override=agent_image, agent_tools=tools)
         )
-        (task_dir / "docker-compose.yaml").write_text(self._compose())
+        if prepared_image is not None:
+            (task_dir / ".dockerignore").write_text(self._dockerignore(tools))
+        (task_dir / "docker-compose.yaml").write_text(self._compose(tools))
         return task_dir
 
     @staticmethod
-    def _validate_repository(task: PitBenchTask, repository: Path) -> None:
+    def validate_repository(task: PitBenchTask, repository: Path) -> None:
         import subprocess
 
         head = subprocess.check_output(
@@ -150,6 +179,19 @@ class PitBenchAdapter:
         ).splitlines()
         if refs or remotes:
             raise ValueError("repository source is not time-censored")
+        status = subprocess.check_output(
+            [
+                "git",
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+                "--ignored=matching",
+            ],
+            cwd=repository,
+            text=True,
+        ).splitlines()
+        if status:
+            raise ValueError("repository source has local modifications")
 
     def _write_task_yaml(
         self,
@@ -159,9 +201,21 @@ class PitBenchAdapter:
         task_dir: Path,
         *,
         judge_image: str | None = None,
+        agent_tools: frozenset[AgentTool] = frozenset(),
     ) -> None:
+        editable_paths = ", ".join(task.repository.editable_paths)
+        instruction = (
+            f"{task.instruction}\n\n"
+            "The repository is read-only outside these editable paths: "
+            f"{editable_paths}. Keep all implementation changes inside them."
+        )
+        if agent_tools:
+            commands = ", ".join(
+                f"`pitbench {tool}`" for tool in agent_tool_names(agent_tools)
+            )
+            instruction += f"\n\nOptional PitBench helper commands: {commands}."
         payload = {
-            "instruction": task.instruction,
+            "instruction": instruction,
             "author_name": "PitBench",
             "author_email": "benchmark@pitbench.invalid",
             "difficulty": "hard",
@@ -184,9 +238,21 @@ class PitBenchAdapter:
         (task_dir / "task.yaml").write_text(yaml.safe_dump(payload, sort_keys=False))
 
     @staticmethod
-    def _dockerfile(task: PitBenchTask, *, image_override: str | None = None) -> str:
+    def _dockerfile(
+        task: PitBenchTask,
+        *,
+        image_override: str | None = None,
+        agent_tools: Iterable[AgentTool | str] = (),
+    ) -> str:
         plugin = task.repository.plugin
-        image = image_override or task.repository.agent_image or _AGENT_IMAGES[plugin]
+        tools = normalize_agent_tools(agent_tools)
+        prepared_image = image_override or task.repository.agent_image
+        if prepared_image is not None:
+            return PitBenchAdapter._prepared_dockerfile(
+                prepared_image, task, agent_tools=tools
+            )
+
+        image = _AGENT_IMAGES[plugin]
         packages = (
             "git tmux asciinema python3 python3-pip time " + _BUILD_PACKAGES[plugin]
         )
@@ -198,41 +264,138 @@ class PitBenchAdapter:
             else ""
         )
         prebuild = _PREBUILD_COMMANDS.get(plugin, "")
+        tooling_layers = PitBenchAdapter._tooling_layers(tools)
+        development_copy = PitBenchAdapter._development_copy(tools)
+        workspace_permissions = PitBenchAdapter._workspace_permissions(
+            task, include_runs=needs_run_directory(tools)
+        )
+        pythonpath = "ENV PYTHONPATH=/opt/pitbench-tooling\n" if tools else ""
         return f"""FROM {image}
+USER root
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y {packages} \\
     && rm -rf /var/lib/apt/lists/*
 {install_python}ENV PIP_NO_BUILD_ISOLATION=1
-RUN mkdir -p /logs /agent-logs /pitbench/dev_instances
-COPY agent_tooling /opt/pitbench-tooling
-COPY agent_bin/pitbench /usr/local/bin/pitbench
-COPY agent_config.json /pitbench/config.json
+RUN mkdir -p /logs /agent-logs
+{tooling_layers}
 RUN rm -rf /workspace/repo
 COPY repo /workspace/repo
-{prebuild}COPY dev_instances /pitbench/dev_instances
-RUN chmod 0755 /usr/local/bin/pitbench
-ENV PYTHONPATH=/opt/pitbench-tooling
-WORKDIR /workspace/repo
+{prebuild}{workspace_permissions}{development_copy}LABEL {IMAGE_REVISION_LABEL}="{IMAGE_REVISION}" \
+      {IMAGE_SOURCE_LABEL}="{image}" \
+      {IMAGE_TOOLS_LABEL}="{agent_tools_label(tools)}"
+{pythonpath}WORKDIR /workspace/repo
 CMD ["sh", "-c", "sleep infinity"]
 """
 
     @staticmethod
-    def _compose() -> str:
-        return """services:
+    def _prepared_dockerfile(
+        image: str, task: PitBenchTask, *, agent_tools: frozenset[AgentTool]
+    ) -> str:
+        tooling_layers = PitBenchAdapter._tooling_layers(agent_tools)
+        development_copy = PitBenchAdapter._development_copy(agent_tools)
+        workspace_permissions = PitBenchAdapter._workspace_permissions(
+            task, include_runs=needs_run_directory(agent_tools)
+        )
+        pythonpath = "ENV PYTHONPATH=/opt/pitbench-tooling\n" if agent_tools else ""
+        return f"""FROM {image}
+USER root
+RUN mkdir -p /logs /agent-logs
+{tooling_layers}{development_copy}{workspace_permissions}LABEL {IMAGE_REVISION_LABEL}="{IMAGE_REVISION}" \
+      {IMAGE_SOURCE_LABEL}="{image}" \
+      {IMAGE_TOOLS_LABEL}="{agent_tools_label(agent_tools)}"
+{pythonpath}WORKDIR /workspace/repo
+CMD ["sh", "-c", "sleep infinity"]
+"""
+
+    @staticmethod
+    def _tooling_layers(agent_tools: frozenset[AgentTool]) -> str:
+        if not agent_tools:
+            return ""
+        return """RUN mkdir -p /pitbench
+COPY agent_tooling /opt/pitbench-tooling
+COPY agent_bin/pitbench /usr/local/bin/pitbench
+COPY agent_config.json /pitbench/config.json
+RUN chmod 0755 /usr/local/bin/pitbench
+"""
+
+    @staticmethod
+    def _development_copy(agent_tools: frozenset[AgentTool]) -> str:
+        if not needs_development_instances(agent_tools):
+            return ""
+        return "COPY dev_instances /pitbench/dev_instances\n"
+
+    @staticmethod
+    def _workspace_permissions(task: PitBenchTask, *, include_runs: bool) -> str:
+        editable_paths = [
+            shlex.quote(f"/workspace/repo/{path}")
+            for path in task.repository.editable_paths
+        ]
+        writable_paths = [*editable_paths, "/logs", "/agent-logs"]
+        if include_runs:
+            writable_paths.append("/pitbench/runs")
+        writable = " ".join(writable_paths)
+        return f"""ARG PITBENCH_AGENT_UID=1000
+ARG PITBENCH_AGENT_GID=1000
+USER root
+RUN groupadd --non-unique --gid ${{PITBENCH_AGENT_GID}} pitbench-agent \
+    && useradd --non-unique --uid ${{PITBENCH_AGENT_UID}} \
+       --gid ${{PITBENCH_AGENT_GID}} --create-home --shell /bin/bash pitbench-agent \
+    && chown -R root:root /workspace/repo \
+    && chmod -R a=rX /workspace/repo \
+    && mkdir -p {writable} \
+    && chown -R ${{PITBENCH_AGENT_UID}}:${{PITBENCH_AGENT_GID}} \
+       {writable} \
+    && chmod -R u+rwX {writable} \
+    && git config --system --add safe.directory /workspace/repo
+ENV HOME=/home/pitbench-agent
+USER pitbench-agent
+"""
+
+    @staticmethod
+    def _dockerignore(agent_tools: Iterable[AgentTool | str] = ()) -> str:
+        tools = normalize_agent_tools(agent_tools)
+        paths = ["*", "!Dockerfile"]
+        if tools:
+            paths.extend(
+                [
+                    "!agent_tooling/",
+                    "!agent_tooling/**",
+                    "!agent_bin/",
+                    "!agent_bin/**",
+                    "!agent_config.json",
+                ]
+            )
+        if needs_development_instances(tools):
+            paths.extend(["!dev_instances/", "!dev_instances/**"])
+        return "\n".join(paths) + "\n"
+
+    @staticmethod
+    def _compose(agent_tools: Iterable[AgentTool | str] = ()) -> str:
+        runs_environment = (
+            '      PITBENCH_RUNS: "/pitbench/runs"\n'
+            if needs_run_directory(agent_tools)
+            else ""
+        )
+        return f"""services:
   client:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ${T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME}
-    container_name: ${T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME}
+      args:
+        PITBENCH_AGENT_UID: ${{T_BENCH_AGENT_UID:-1000}}
+        PITBENCH_AGENT_GID: ${{T_BENCH_AGENT_GID:-1000}}
+    image: ${{T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME}}
+    container_name: ${{T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME}}
     network_mode: none
+    security_opt:
+      - no-new-privileges:true
     command: ["sh", "-c", "sleep infinity"]
     volumes:
-      - ${T_BENCH_TASK_LOGS_PATH}:${T_BENCH_CONTAINER_LOGS_PATH}
-      - ${T_BENCH_TASK_AGENT_LOGS_PATH}:${T_BENCH_CONTAINER_AGENT_LOGS_PATH}
+      - ${{T_BENCH_TASK_LOGS_PATH}}:${{T_BENCH_CONTAINER_LOGS_PATH}}
+      - ${{T_BENCH_TASK_AGENT_LOGS_PATH}}:${{T_BENCH_CONTAINER_AGENT_LOGS_PATH}}
     environment:
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
-      PYTHONHASHSEED: "0"
+{runs_environment}      PYTHONHASHSEED: "0"
       TZ: "UTC"
 """

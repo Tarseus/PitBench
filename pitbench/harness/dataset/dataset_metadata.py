@@ -13,7 +13,7 @@ class DatasetMetadata(BaseModel):
     version: str
     created_at: datetime
     updated_at: datetime
-    fc_eval_version: str
+    pitbench_version: str
     source_url: str | None = None
 
     @classmethod
