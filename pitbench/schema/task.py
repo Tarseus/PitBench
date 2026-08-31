@@ -91,10 +91,24 @@ class PopulationSpec(BaseModel):
     shift: str | None = None
 
 
+class SensitivityProtocol(BaseModel):
+    """Frozen panels used to populate the three input-sensitivity dimensions."""
+
+    scale_descriptor: Literal["customer_count", "model_variables"] | None = None
+    equivalence_transform: Literal["customer_relabel"] | None = None
+    equivalence_instances_per_population: int = Field(default=0, ge=0)
+    equivalence_budgets_sec: list[float] = Field(default_factory=list)
+    equivalence_solver_seeds: list[int] = Field(default_factory=list)
+
+
 class DecisionProtocol(BaseModel):
-    """Acceptance rule for performance-first solver-improvement tasks."""
+    """Versioned Pareto-style acceptance rule for solver-improvement tasks."""
 
     minimum_success_rate_delta: float = 0.0
+    minimum_operational_speedup: float = Field(default=0.95, gt=0)
+    minimum_cpu_speedup: float = Field(default=0.95, gt=0)
+    maximum_peak_rss_ratio: float = Field(default=1.05, gt=0)
+    require_complete_sensitivity: bool = False
 
 
 class EvaluationProtocol(BaseModel):
@@ -102,6 +116,7 @@ class EvaluationProtocol(BaseModel):
     solver_seeds: list[int]
     threads: int = Field(default=1, gt=0)
     verifier: str
+    sensitivity: SensitivityProtocol = Field(default_factory=SensitivityProtocol)
     decision: DecisionProtocol = Field(default_factory=DecisionProtocol)
 
     @model_validator(mode="after")
@@ -112,6 +127,22 @@ class EvaluationProtocol(BaseModel):
             raise ValueError("at least one solver seed is required")
         if len(set(self.solver_seeds)) != len(self.solver_seeds):
             raise ValueError("solver seeds must be unique")
+        sensitivity = self.sensitivity
+        if sensitivity.equivalence_transform is not None:
+            if sensitivity.equivalence_instances_per_population == 0:
+                raise ValueError(
+                    "equivalence panel requires at least one instance per population"
+                )
+            unknown_budgets = set(sensitivity.equivalence_budgets_sec) - set(
+                self.budgets_sec
+            )
+            unknown_seeds = set(sensitivity.equivalence_solver_seeds) - set(
+                self.solver_seeds
+            )
+            if unknown_budgets or unknown_seeds:
+                raise ValueError(
+                    "equivalence budgets and seeds must belong to the evaluation grid"
+                )
         return self
 
 

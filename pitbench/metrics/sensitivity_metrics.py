@@ -1207,4 +1207,3 @@ def format_sensitivity_report_table(report: SensitivityReport) -> str:
     for r in rows:
         lines.append(f"{r[0]:<38} | {r[1]:<12} | {r[2]:<12} | {r[3]:<20}")
     return "\n".join(lines)
-

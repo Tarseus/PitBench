@@ -571,4 +571,3 @@ def test_complete_sensitivity_report() -> None:
     assert "Problem Scalability" in table_str
     assert "Cross-Population Generalization" in table_str
     assert "Sensitivity Summary Matrix" in table_str
-

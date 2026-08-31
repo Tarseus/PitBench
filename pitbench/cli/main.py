@@ -28,9 +28,14 @@ from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.harness.handlers.trial_handler import TrialHandler
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
 from pitbench.instances import materialize_population
-from pitbench.metrics.performance_report import (
-    compute_performance_report,
-    format_performance_report,
+from pitbench.metrics.behavior_metrics import compute_behavior_metric_report
+from pitbench.metrics.outcome_metrics import (
+    compute_outcome_metrics,
+    format_outcome_report_table,
+)
+from pitbench.metrics.sensitivity_metrics import (
+    compute_sensitivity_report,
+    format_sensitivity_report_table,
 )
 from pitbench.schema.task import PopulationKind
 from pitbench.tasks import TaskCatalog, TaskNotFoundError
@@ -598,7 +603,7 @@ def report_command(
         typer.Option("--json", help="Output report as structured JSON"),
     ] = False,
 ) -> None:
-    """Generate the performance-first PitBench evaluation report."""
+    """Generate complete PitBench evaluation report (Outcome 3D + Sensitivity)."""
     target = path.resolve()
     if target.is_dir():
         parquet_file = target / "trials.parquet"
@@ -622,10 +627,16 @@ def report_command(
     else:
         observations = ObservationStore.read(target)
 
-    performance_report = compute_performance_report(observations)
+    outcome_report = compute_outcome_metrics(observations)
+    sensitivity_report = compute_sensitivity_report(observations)
+    behavior_report = compute_behavior_metric_report(observations)
 
     if json_output:
-        combined = {"performance": performance_report.model_dump()}
+        combined = {
+            "outcomes": outcome_report.model_dump(),
+            "sensitivity": sensitivity_report.model_dump(),
+            "behavior": behavior_report.model_dump(),
+        }
         typer.echo(json.dumps(combined, indent=2))
         return
 
@@ -634,7 +645,33 @@ def report_command(
     typer.echo(f"  Total observations: {len(observations)}")
     typer.echo("========================================================\n")
 
-    typer.echo(format_performance_report(performance_report))
+    typer.echo("=== I. Outcome 3D (Performance, Reliability, Resource) ===")
+    typer.echo(format_outcome_report_table(outcome_report))
+
+    typer.echo("\n=== II. Sensitivity Dimensions & Summary Matrix ===")
+    typer.echo(format_sensitivity_report_table(sensitivity_report))
+
+    typer.echo("\n=== III. Population-Conditional Solver Distances ===")
+    for item in behavior_report.slices:
+        coordinates = ", ".join(
+            f"{name}={coordinate.distance:.6g}"
+            if coordinate.distance is not None
+            else f"{name}=undefined"
+            for name, coordinate in (
+                ("performance", item.performance),
+                ("reliability", item.reliability),
+                ("resource", item.resource),
+            )
+        )
+        typer.echo(
+            f"{item.population} @ {item.budget_sec:g}s, p={item.p:g}: {coordinates}"
+        )
+
+    if outcome_report.by_population:
+        typer.echo("\n--- By Population Outcome Breakdown ---")
+        for pop_name, pop_report in outcome_report.by_population.items():
+            typer.echo(f"\n[Population: {pop_name}]")
+            typer.echo(format_outcome_report_table(pop_report))
 
 
 if __name__ == "__main__":
