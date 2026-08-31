@@ -131,6 +131,15 @@ def test_evaluate_materializes_task_and_starts_harness(tmp_path: Path) -> None:
     assert harness_kwargs["agent_kwargs"] == [
         "proxy_url=http://127.0.0.1:7897",
     ]
+    assert "WARNING: evaluation config is absent" in result.output
+    assert "WARNING: private_root is not configured" in result.output
+    assert "WARNING: agent_tools is not configured" in result.output
+    assert "WARNING: repository_source for pyvrp_v0_14_0 is not configured" in (
+        result.output
+    )
+    assert "WARNING: agent_image for pyvrp_v0_14_0 is not configured" in (result.output)
+    assert "WARNING: judge_image for pyvrp_v0_14_0 is not configured" in (result.output)
+    assert "WARNING: agent parameters for codex are not configured" in result.output
 
 
 def test_evaluate_stops_when_materialization_fails(tmp_path: Path) -> None:
@@ -240,6 +249,7 @@ agents:
         "reasoning_effort=xhigh",
     ]
     assert "Loaded evaluation config" in result.output
+    assert "WARNING:" not in result.output
 
 
 @pytest.mark.parametrize("command", ["matrix", "matrix-status"])

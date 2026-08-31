@@ -51,6 +51,10 @@ def _root(value: Path | None) -> Path:
     return (value or Path.cwd()).resolve()
 
 
+def _warning(message: str) -> None:
+    typer.echo(f"WARNING: {message}", err=True)
+
+
 def _prepare_task_image(task_path: Path, *, rebuild: bool) -> None:
     prepare_task_image(
         task_path,
@@ -171,9 +175,37 @@ def evaluate_task(
     )
     if resolved_config_path is not None:
         typer.echo(f"Loaded evaluation config {resolved_config_path}")
+    else:
+        _warning("evaluation config is absent; using built-in configuration defaults")
 
     configured_paths = evaluation_config.paths
     configured_resources = evaluation_config.resources_for(task_id)
+    if output_path is None and "output_path" not in configured_paths.model_fields_set:
+        _warning("output_path is not configured; using default runs")
+    if (
+        workspace_path is None
+        and "workspace_path" not in configured_paths.model_fields_set
+    ):
+        _warning("workspace_path is not configured; using default .pitbench/tasks")
+    if private_root is None and "private_root" not in configured_paths.model_fields_set:
+        _warning("private_root is not configured; using default private")
+    if "agent_tools" not in evaluation_config.model_fields_set:
+        _warning("agent_tools is not configured; using default []")
+    if repository_source is None and configured_resources.repository_source is None:
+        _warning(
+            f"repository_source for {task_id} is not configured; using the task "
+            "manifest release snapshot"
+        )
+    if agent_image is None and configured_resources.agent_image is None:
+        _warning(
+            f"agent_image for {task_id} is not configured; using the task manifest "
+            "image default"
+        )
+    if judge_image is None and configured_resources.judge_image is None:
+        _warning(
+            f"judge_image for {task_id} is not configured; using the task manifest "
+            "image default"
+        )
     resolved_output_path = resolve_repository_path(
         repository_root, output_path or configured_paths.output_path
     )
@@ -226,6 +258,11 @@ def evaluate_task(
     _prepare_task_image(task_path, rebuild=rebuild or resolved_agent_image is not None)
     typer.echo(f"Starting evaluation run {resolved_run_id}")
     configured_agent_values = evaluation_config.kwargs_for(agent.value)
+    if agent.value not in evaluation_config.agents:
+        _warning(
+            f"agent parameters for {agent.value} are not configured; unspecified "
+            "settings use agent defaults"
+        )
     if configured_agent_values.get("profile_path"):
         configured_agent_values["profile_path"] = str(
             resolve_repository_path(
@@ -321,6 +358,8 @@ def judge_candidate(
     )
     if resolved_config_path is not None:
         typer.echo(f"Loaded evaluation config {resolved_config_path}")
+    else:
+        _warning("evaluation config is absent; using built-in configuration defaults")
 
     try:
         record = TaskCatalog(repository_root).validate_one(task_id)
@@ -346,6 +385,8 @@ def judge_candidate(
 
     configured_paths = evaluation_config.paths
     configured_resources = evaluation_config.resources_for(task_id)
+    if private_root is None and "private_root" not in configured_paths.model_fields_set:
+        _warning("private_root is not configured; using default private")
     resolved_private_root = resolve_repository_path(
         repository_root, private_root or configured_paths.private_root
     )
@@ -369,6 +410,11 @@ def judge_candidate(
         or configured_resources.judge_image
         or record.task.repository.judge_image
     )
+    if judge_image is None and configured_resources.judge_image is None:
+        _warning(
+            f"judge_image for {task_id} is not configured; using the task manifest "
+            "image default"
+        )
     if not resolved_judge_image:
         raise typer.BadParameter(
             "Judge requires --judge-image or tasks.<task_id>.judge_image in the "
