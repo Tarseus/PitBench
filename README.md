@@ -204,7 +204,7 @@ uv run pitbench report \
 uv run pitbench tasks validate
 
 # Run the deterministic evaluator fixture
-uv run pitbench tasks smoke --instances-per-population 1
+uv run pitbench tasks fixture --instances-per-population 1
 
 # Run the unit suite
 ALL_PROXY= all_proxy= uv run pytest -q tests/unit

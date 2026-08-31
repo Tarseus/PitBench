@@ -2,11 +2,23 @@ import shutil
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from pitbench.cli.main import app
 from pitbench.schema.task import PopulationKind
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_fixture_command_replaces_smoke_command() -> None:
+    fixture = CliRunner().invoke(app, ["tasks", "fixture", "--help"])
+    smoke = CliRunner().invoke(app, ["tasks", "smoke"])
+
+    assert fixture.exit_code == 0
+    assert "deterministic evaluator contract fixture" in fixture.output
+    assert smoke.exit_code == 2
+    assert "No such command 'smoke'" in smoke.output
 
 
 def test_catalog_contains_release_snapshots() -> None:

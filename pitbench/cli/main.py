@@ -428,17 +428,16 @@ def validate_tasks(
     typer.echo(f"Validated {len(records)} task manifests")
 
 
-@tasks_app.command("smoke")
-def smoke_tasks(
+@tasks_app.command("fixture")
+def fixture_tasks(
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
     instances_per_population: Annotated[
-        int, typer.Option(min=1, help="Synthetic cases per hidden population")
+        int, typer.Option(min=1, help="Synthetic cases per judge population")
     ] = 1,
 ) -> None:
-    """Run the explicit deterministic contract fixture for every task.
+    """Run the deterministic evaluator contract fixture for every task.
 
-    This command never claims to execute a solver or hidden judge. Production smoke
-    tests use ``--real`` once private assets and judge images are provisioned.
+    This command does not build repositories, run solvers, or load private judge data.
     """
     repository_root = _root(root)
     records = TaskCatalog(repository_root).validate_all()
