@@ -1,5 +1,5 @@
 [project]
-name = "pitbench"
+name = "fc-eval"
 version = "0.1.0"
 description = "Evaluation infrastructure for coding agents improving CO solvers."
 readme = "README.md"

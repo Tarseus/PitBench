@@ -1,5 +1,6 @@
 schema_version: "2.0"
 task_id: choco_v6_0_1
+split: benchmark
 release:
   repository: chocoteam/choco-solver
   version: "6.0.1"
@@ -18,16 +19,18 @@ repository:
   clone_url: https://github.com/chocoteam/choco-solver.git
   language: java
   plugin: pitbench.repositories.choco:ChocoRepositoryPlugin
-  editable_paths: [solver]
 oracle:
   kind: solver_certificate
   source: private://oracles/bin_packing.json
   objective_sense: minimize
 evaluation:
+  family_plugin: pitbench.families.external:CPFamily
   budgets_sec: [5.0, 20.0]
   solver_seeds: [0, 1, 2]
   threads: 1
   verifier: private://oracles/verifiers/bin_packing_solution
+  validation_build: {flags: [-ea]}
+  performance_build: {flags: [-server]}
 populations:
   - name: agent_dev
     kind: agent_dev

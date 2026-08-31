@@ -12,13 +12,9 @@ __pycache__/
 # Local environments and secrets
 .env
 .venv/
-/config/*.local.yaml
 
 # Editor and OS files
 .DS_Store
-
-# Local review notes
-/docs/
 
 # LaTeX build products
 *.aux
@@ -42,6 +38,5 @@ results/*
 runs/
 .pitbench-runs/
 .pitbench/
-/runs/
 
 *.pdf

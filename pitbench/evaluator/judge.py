@@ -6,15 +6,12 @@ import os
 import shutil
 import subprocess
 import tempfile
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from queue import Queue
-from typing import Callable
 
 import yaml
 
+from pitbench.distribution.transforms import relabel_cvrp_customers
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.families.base import ProblemFamilyRegistry
 from pitbench.families.external import ExternalVerifierFamily
@@ -26,7 +23,7 @@ from pitbench.repositories.base import (
     SolverRunSpec,
 )
 from pitbench.schema.observation import CodeState, RunObservation, RunStatus
-from pitbench.schema.task import PitBenchTask, PopulationKind, PopulationSpec
+from pitbench.schema.task import PitBenchTask, PopulationKind, PopulationSpec, TaskType
 
 
 @dataclass(frozen=True)
@@ -55,29 +52,6 @@ def _customer_count(path: Path | None) -> float | None:
     return float(len(coordinates) - 1)
 
 
-def _uses_model_equivalence(task: PitBenchTask) -> bool:
-    return task.evaluation.verifier.rsplit("/", 1)[-1].endswith("model_equivalence")
-
-
-def _limit_solver_cpus(
-    command: CommandSpec,
-    threads: int,
-    cpu_ids: tuple[int, ...] | None = None,
-) -> CommandSpec:
-    """Bind a solver process to its declared CPU count without throttling builds."""
-
-    available = sorted(cpu_ids or os.sched_getaffinity(0))
-    if threads > len(available):
-        raise ValueError(
-            f"solver requests {threads} threads but only {len(available)} CPUs are "
-            "available"
-        )
-    cpu_list = ",".join(str(cpu) for cpu in available[:threads])
-    return command.model_copy(
-        update={"argv": ["taskset", "--cpu-list", cpu_list, *command.argv]}
-    )
-
-
 class JudgePlan:
     """Expands task protocol into a common-random-number evaluation grid."""
 
@@ -96,7 +70,8 @@ class JudgePlan:
             for index in range(min(instances_per_population, population.size)):
                 objective_scored = (
                     population.kind == PopulationKind.JUDGE_ID
-                    and not _uses_model_equivalence(task)
+                    and task.task_type
+                    not in {TaskType.MODEL_BUILD, TaskType.PRESOLVE}
                 )
                 cases.append(
                     InstanceCase(
@@ -195,7 +170,11 @@ class JudgePlan:
                 anchor = item.get("optimal_or_bks", item.get("bks"))
                 objective_scored = (
                     population.kind == PopulationKind.JUDGE_ID
-                    and not _uses_model_equivalence(task)
+                    and task.task_type
+                    not in {
+                        TaskType.MODEL_BUILD,
+                        TaskType.PRESOLVE,
+                    }
                 )
                 if uri is None or (objective_scored and anchor is None):
                     raise ValueError(
@@ -213,6 +192,54 @@ class JudgePlan:
                 )
         return cls(task, cases)
 
+    def with_equivalence_panel(self, root: Path) -> "JudgePlan":
+        protocol = self.task.evaluation.sensitivity
+        if protocol.equivalence_transform is None:
+            return self
+        if self.task.problem_family.value != "cvrp":
+            raise ValueError("customer relabel equivalence is only defined for CVRP")
+
+        variants: list[InstanceCase] = []
+        by_population: dict[str, list[InstanceCase]] = {}
+        for case in self.cases:
+            by_population.setdefault(case.population.name, []).append(case)
+        for population_name, cases in sorted(by_population.items()):
+            selected = sorted(cases, key=lambda item: item.instance_id)[
+                : protocol.equivalence_instances_per_population
+            ]
+            for index, case in enumerate(selected):
+                if case.path is None or case.path.suffix.lower() != ".json":
+                    continue
+                original = json.loads(case.path.read_text())
+                transformed = relabel_cvrp_customers(
+                    original,
+                    seed=17_000 + index,
+                )
+                transform_id = f"{case.instance_id}__equiv_relabel"
+                path = root / population_name / f"{transform_id}.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(transformed, indent=2))
+                variants.append(
+                    InstanceCase(
+                        population=case.population,
+                        instance_id=transform_id,
+                        path=path,
+                        anchor=case.anchor,
+                        problem_scale=case.problem_scale,
+                        equivalence_parent_id=case.instance_id,
+                        equivalence_transform="customer_relabel",
+                        solver_seeds=(
+                            tuple(protocol.equivalence_solver_seeds)
+                            or tuple(self.task.evaluation.solver_seeds)
+                        ),
+                        budgets_sec=(
+                            tuple(protocol.equivalence_budgets_sec)
+                            or (max(self.task.evaluation.budgets_sec),)
+                        ),
+                    )
+                )
+        return JudgePlan(self.task, [*self.cases, *variants])
+
 
 class FixtureJudge:
     """Deterministic contract smoke test; never selected implicitly."""
@@ -222,11 +249,7 @@ class FixtureJudge:
         CodeState.AGENT: 0.82,
     }
 
-    def run(
-        self,
-        plan: JudgePlan,
-        code_states: tuple[CodeState, ...] = tuple(CodeState),
-    ) -> list[RunObservation]:
+    def run(self, plan: JudgePlan) -> list[RunObservation]:
         observations: list[RunObservation] = []
         task = plan.task
         for case in plan.cases:
@@ -234,7 +257,7 @@ class FixtureJudge:
             budgets = case.budgets_sec or tuple(task.evaluation.budgets_sec)
             for seed in seeds:
                 for budget in budgets:
-                    for state in code_states:
+                    for state in CodeState:
                         observations.append(
                             self._observation(task, case, state, seed, budget)
                         )
@@ -272,7 +295,7 @@ class FixtureJudge:
             equivalence_parent_id=case.equivalence_parent_id,
             equivalence_transform=case.equivalence_transform,
         )
-        if _uses_model_equivalence(task):
+        if task.task_type in {TaskType.MODEL_BUILD, TaskType.PRESOLVE}:
             variables = {
                 CodeState.BASE: 9011,
                 CodeState.AGENT: 1200,
@@ -308,22 +331,16 @@ class LocalProcessJudge:
         task: PitBenchTask,
         base_repository: Path,
         private_root: Path,
-        candidate_patch: Path | None,
+        candidate_patch: Path,
         output_dir: Path,
-        code_states: tuple[CodeState, ...] = tuple(CodeState),
-        parallel_runs: int = 1,
-        progress_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.task = task
         self.base_repository = base_repository
         self.resolver = PrivateAssetResolver(private_root)
         self.candidate_patch = candidate_patch
         self.output_dir = output_dir
-        self.code_states = code_states
-        self.parallel_runs = parallel_runs
-        self.progress_callback = progress_callback
         self.repository = RepositoryPluginRegistry.load(task.repository.plugin)
-        self.family = ProblemFamilyRegistry.load(task.problem_family)
+        self.family = ProblemFamilyRegistry.load(task.evaluation.family_plugin)
         if isinstance(self.family, ExternalVerifierFamily):
             self.family.verifier = self.resolver.resolve(task.evaluation.verifier)
 
@@ -342,11 +359,7 @@ class LocalProcessJudge:
         )
 
     def _state_patch(self, state: CodeState) -> Path | None:
-        if state == CodeState.BASE:
-            return None
-        if self.candidate_patch is None:
-            raise ValueError("agent judge state requires a candidate patch")
-        return self.candidate_patch
+        return None if state == CodeState.BASE else self.candidate_patch
 
     def _workspace(self, state: CodeState, root: Path, build_kind: BuildKind) -> Path:
         root.mkdir(parents=True, exist_ok=True)
@@ -373,12 +386,6 @@ class LocalProcessJudge:
                 )
         return workspace
 
-    def _progress(self, message: str) -> None:
-        if self.progress_callback is not None:
-            self.progress_callback(message)
-        else:
-            print(f"PITBENCH_PROGRESS {message}", flush=True)
-
     def run(self) -> list[RunObservation]:
         observations: list[RunObservation] = []
         with tempfile.TemporaryDirectory(prefix="pitbench-judge-") as temporary:
@@ -387,37 +394,15 @@ class LocalProcessJudge:
                 self.task,
                 self.resolver,
                 generated_root=root / "generated-populations",
-            )
-            total_solver_runs = sum(
-                len(case.solver_seeds or tuple(self.task.evaluation.solver_seeds))
-                * len(case.budgets_sec or tuple(self.task.evaluation.budgets_sec))
-                * len(self.code_states)
-                for case in plan.cases
-            )
-            self._progress(
-                f"Judge plan: {len(plan.cases)} instances, "
-                f"{total_solver_runs} solver runs"
-            )
-            for state in self.code_states:
-                started = time.monotonic()
-                self._progress(f"Judge validation build: {state.value}")
+            ).with_equivalence_panel(root / "equivalence-panel")
+            for state in CodeState:
                 self._workspace(state, root / "validation", BuildKind.VALIDATION)
-                self._progress(
-                    f"Judge validation build complete: {state.value} in "
-                    f"{time.monotonic() - started:.1f}s"
-                )
-            workspaces = {}
-            for state in self.code_states:
-                started = time.monotonic()
-                self._progress(f"Judge performance build: {state.value}")
-                workspaces[state] = self._workspace(
+            workspaces = {
+                state: self._workspace(
                     state, root / "performance", BuildKind.PERFORMANCE
                 )
-                self._progress(
-                    f"Judge performance build complete: {state.value} in "
-                    f"{time.monotonic() - started:.1f}s"
-                )
-            jobs = []
+                for state in CodeState
+            }
             for case in plan.cases:
                 if case.path is None:
                     raise RuntimeError("real judge case has no instance path")
@@ -426,83 +411,9 @@ class LocalProcessJudge:
                 for seed in seeds:
                     for budget in budgets:
                         for state, workspace in workspaces.items():
-                            jobs.append((case, state, workspace, seed, budget))
-
-            available = sorted(os.sched_getaffinity(0))
-            threads = self.task.evaluation.threads
-            possible_slots = len(available) // threads
-            workers = min(self.parallel_runs, possible_slots, len(jobs))
-            if workers < 1:
-                raise ValueError(
-                    f"judge requires {threads} CPUs per run but only "
-                    f"{len(available)} are available"
-                )
-            slots: Queue[tuple[int, ...]] = Queue()
-            for index in range(workers):
-                start = index * threads
-                slots.put(tuple(available[start : start + threads]))
-
-            def execute(job):
-                cpu_ids = slots.get()
-                try:
-                    case, state, workspace, seed, budget = job
-                    return self._run_case(
-                        workspace, case, state, seed, budget, cpu_ids=cpu_ids
-                    )
-                finally:
-                    slots.put(cpu_ids)
-
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                future_to_job = {executor.submit(execute, job): job for job in jobs}
-                seed_group_totals: dict[tuple[str, str, CodeState, int], int] = {}
-                instance_totals: dict[tuple[str, str], int] = {}
-                for case, state, _, seed, _ in jobs:
-                    instance_key = (case.population.name, case.instance_id)
-                    seed_key = (*instance_key, state, seed)
-                    seed_group_totals[seed_key] = seed_group_totals.get(seed_key, 0) + 1
-                    instance_totals[instance_key] = (
-                        instance_totals.get(instance_key, 0) + 1
-                    )
-
-                seed_group_counts: dict[tuple[str, str, CodeState, int], int] = {}
-                instance_counts: dict[tuple[str, str], int] = {}
-                completed_seed_groups = 0
-                completed_instances = 0
-                valid_count = 0
-                for future in as_completed(future_to_job):
-                    observation = future.result()
-                    observations.append(observation)
-                    case, state, _, seed, _ = future_to_job[future]
-                    instance_key = (case.population.name, case.instance_id)
-                    seed_key = (*instance_key, state, seed)
-                    seed_group_counts[seed_key] = seed_group_counts.get(seed_key, 0) + 1
-                    instance_counts[instance_key] = (
-                        instance_counts.get(instance_key, 0) + 1
-                    )
-                    if seed_group_counts[seed_key] == seed_group_totals[seed_key]:
-                        completed_seed_groups += 1
-                    if instance_counts[instance_key] == instance_totals[instance_key]:
-                        completed_instances += 1
-                    valid_count += int(observation.valid)
-                    self._progress(
-                        f"Judge progress: instances {completed_instances}/"
-                        f"{len(instance_totals)}, seed groups {completed_seed_groups}/"
-                        f"{len(seed_group_totals)}, solver runs {len(observations)}/"
-                        f"{len(jobs)}, valid {valid_count}"
-                    )
-            observations.sort(
-                key=lambda item: (
-                    item.population,
-                    item.instance_id,
-                    item.solver_seed,
-                    item.budget_sec,
-                    item.code_state.value,
-                )
-            )
-            self._progress(
-                f"Judge solver grid complete: {valid_count}/{len(observations)} "
-                "valid observations"
-            )
+                            observations.append(
+                                self._run_case(workspace, case, state, seed, budget)
+                            )
         return observations
 
     def _run_case(
@@ -512,8 +423,6 @@ class LocalProcessJudge:
         state: CodeState,
         seed: int,
         budget: float,
-        *,
-        cpu_ids: tuple[int, ...] | None = None,
     ) -> RunObservation:
         run_dir = (
             self.output_dir / state.value / case.population.name / case.instance_id
@@ -522,20 +431,15 @@ class LocalProcessJudge:
         stem = f"seed-{seed}-budget-{budget:g}"
         output = run_dir / f"{stem}.json"
         trajectory = run_dir / f"{stem}.trajectory.jsonl"
-        threads = self.task.evaluation.threads
-        command = _limit_solver_cpus(
-            self.repository.run_command(
-                SolverRunSpec(
-                    instance_path=case.path,
-                    output_path=output,
-                    trajectory_path=trajectory,
-                    solver_seed=seed,
-                    budget_sec=budget,
-                    threads=threads,
-                )
-            ),
-            threads,
-            cpu_ids,
+        command = self.repository.run_command(
+            SolverRunSpec(
+                instance_path=case.path,
+                output_path=output,
+                trajectory_path=trajectory,
+                solver_seed=seed,
+                budget_sec=budget,
+                threads=self.task.evaluation.threads,
+            )
         )
         try:
             completed = self._run(command, workspace)

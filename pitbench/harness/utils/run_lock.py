@@ -419,12 +419,12 @@ class RunLock(BaseModel):
         """Validate that the directory structure matches the expected naming convention.
 
         Args:
-            lock_file_path: Path to the pitbench.lock file
+            lock_file_path: Path to the fc.lock file
 
         Raises:
             ValueError: If validation fails
         """
-        # Get the run directory (where pitbench.lock resides)
+        # Get the run directory (where fc.lock resides)
         run_dir = lock_file_path.parent
 
         # Validate that the folder name matches run_id
@@ -432,7 +432,7 @@ class RunLock(BaseModel):
         if run_dir.name != expected_run_id:
             raise ValueError(
                 f"Folder name '{run_dir.name}' does not match run_id "
-                f"'{expected_run_id}' in pitbench.lock"
+                f"'{expected_run_id}' in fc.lock"
             )
 
         # Get all directories in the run folder (these should be task directories)
@@ -478,20 +478,20 @@ class RunLock(BaseModel):
                         f"does not match task folder name '{task_name}'"
                     )
 
-                # Validate that run_id matches pitbench.lock
+                # Validate that run_id matches fc.lock
                 if trial_run_id != expected_run_id:
                     raise ValueError(
                         f"Run-id '{trial_run_id}' in trial '{trial_name}' "
-                        f"does not match run_id '{expected_run_id}' in pitbench.lock"
+                        f"does not match run_id '{expected_run_id}' in fc.lock"
                     )
 
-                # Validate that total_attempt_num matches pitbench.lock
+                # Validate that total_attempt_num matches fc.lock
                 total_attempts = int(total_attempts_str)
                 if total_attempts != self.run_config.n_attempts:
                     raise ValueError(
                         f"Total attempt number {total_attempts} in trial "
                         f"'{trial_name}' does not match n_attempts "
-                        f"{self.run_config.n_attempts} in pitbench.lock"
+                        f"{self.run_config.n_attempts} in fc.lock"
                     )
 
                 attempts.add(int(attempt_str))

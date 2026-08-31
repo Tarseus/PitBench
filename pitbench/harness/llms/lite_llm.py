@@ -165,7 +165,7 @@ class LiteLLM(BaseLLM):
                 **kwargs,
             )
         except Exception as e:
-            # Return the pitbench exception
+            # Return the fc-eval exception
             if isinstance(e, LiteLLMContextWindowExceededError):
                 raise ContextLengthExceededError
             if isinstance(e, LiteLLMAuthenticationError):
@@ -173,7 +173,7 @@ class LiteLLM(BaseLLM):
             raise e
 
         if isinstance(response, CustomStreamWrapper):
-            raise NotImplementedError("Streaming is not supported for PitBench yet")
+            raise NotImplementedError("Streaming is not supported for FC-Eval yet")
 
         # Sometimes the LLM returns a response with a finish reason of "length"
         # This typically means we hit the max_tokens limit, not the context window

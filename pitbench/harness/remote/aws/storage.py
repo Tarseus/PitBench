@@ -41,7 +41,7 @@ class S3Transfer:
             )
         else:
             # Default to general purpose bucket
-            self.bucket_name = os.environ.get("PITBENCH_S3_BUCKET", "pitbench")
+            self.bucket_name = os.environ.get("FC_EVAL_S3_BUCKET", "fc-eval")
         self.logger = logger.getChild(__name__)
 
         self.s3_client = GLOBAL_S3_CLIENT
@@ -55,7 +55,7 @@ class S3Transfer:
             )
         return self.bucket_name
 
-    def upload_data(self, data: bytes, key_prefix: str = "pitbench") -> str:
+    def upload_data(self, data: bytes, key_prefix: str = "fc-eval") -> str:
         """Upload data to S3 and return the key.
 
         Args:
@@ -160,7 +160,7 @@ class S3Transfer:
         except Exception as e:
             self.logger.warning(f"Failed to delete S3 object {s3_key}: {e}")
 
-    def create_temp_key(self, prefix: str = "pitbench", suffix: str = ".tar") -> str:
+    def create_temp_key(self, prefix: str = "fc-eval", suffix: str = ".tar") -> str:
         """Create a temporary S3 key.
 
         Args:

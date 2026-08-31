@@ -9,11 +9,6 @@ from pitbench.repositories.base import (
 class PyVRPRepositoryPlugin(RepositoryPlugin):
     name = "pyvrp"
     _PYTHON = ".pitbench-venv/bin/python"
-    # This test pins the exact local-search trace and move count. Those are
-    # performance-policy outputs, not correctness contracts for this benchmark.
-    _TRAJECTORY_REGRESSION_TESTS = (
-        "tests/search/test_LocalSearch.py::test_debug_operator_logs",
-    )
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         create_environment = CommandSpec(
@@ -59,10 +54,6 @@ class PyVRPRepositoryPlugin(RepositoryPlugin):
                         "addopts=",
                         "tests",
                         "--ignore=tests/plotting",
-                        *[
-                            f"--deselect={test}"
-                            for test in self._TRAJECTORY_REGRESSION_TESTS
-                        ],
                     ],
                     env={
                         "ASAN_OPTIONS": (

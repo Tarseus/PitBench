@@ -18,6 +18,6 @@ def test_registry_version_lookup_matches_distribution_metadata(monkeypatch) -> N
 
     client = RegistryClient(local_registry_path=ROOT / "registry.json")
 
-    assert project["name"] == DISTRIBUTION_NAME == "pitbench"
+    assert project["name"] == DISTRIBUTION_NAME == "fc-eval"
     assert requested == [project["name"]]
     assert client._current_version == project["version"]

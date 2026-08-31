@@ -1,1 +1,3 @@
-"""CLI support for the active PitBench harness command."""
+from pitbench.harness.cli.wizard import Wizard
+
+__all__ = ["Wizard"]

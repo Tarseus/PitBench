@@ -12,14 +12,14 @@ from packaging.version import Version
 from pydantic import BaseModel
 
 DEFAULT_PASSWORD = "TERMINAL-BENCH-ADAPTED-DATASET"
-DISTRIBUTION_NAME = "pitbench"
+DISTRIBUTION_NAME = "fc-eval"
 
 
 class RegistryRow(BaseModel):
     name: str
     version: str
     description: str | None = None
-    pitbench_version: str
+    fc_eval_version: str
     github_url: str
     dataset_path: str
     branch: str
@@ -27,25 +27,25 @@ class RegistryRow(BaseModel):
     task_id_subset: list[str] | None = None
 
     def _get_latest_version(self) -> str:
-        """Get the latest version of pitbench from PyPI.
+        """Get the latest version of fc-eval from PyPI.
 
         Returns:
             str: The latest version string
         """
-        response = requests.get("https://pypi.org/pypi/pitbench/json")
+        response = requests.get("https://pypi.org/pypi/fc-eval/json")
         response.raise_for_status()
         return response.json()["info"]["version"]
 
     def is_compatible_with(self, version: str) -> bool:
-        """Check if this dataset is compatible with the given pitbench version.
+        """Check if this dataset is compatible with the given fc-eval version.
 
         Args:
-            version: The version of pitbench to check compatibility with
+            version: The version of fc-eval to check compatibility with
 
         Returns:
             bool: True if the version is compatible
         """
-        if self.pitbench_version.lower() == "latest":
+        if self.fc_eval_version.lower() == "latest":
             try:
                 latest_version = self._get_latest_version()
                 return Version(version) >= Version(latest_version)
@@ -53,7 +53,7 @@ class RegistryRow(BaseModel):
                 return True
 
         try:
-            spec = SpecifierSet(self.pitbench_version)
+            spec = SpecifierSet(self.fc_eval_version)
             tb_version = Version(version)
             return tb_version in spec
         except Exception:
@@ -89,7 +89,7 @@ class Registry(BaseModel):
 
 class RegistryClient:
     DEFAULT_REGISTRY_URL = (
-        "https://raw.githubusercontent.com/Tarseus/PitBench/main/registry.json"
+        "https://raw.githubusercontent.com/formula-code/fc-eval/main/registry.json"
     )
 
     def __init__(
@@ -101,7 +101,7 @@ class RegistryClient:
         self.local_registry_path = local_registry_path
         self._current_version = importlib.metadata.version(DISTRIBUTION_NAME)
 
-    CACHE_DIR = Path.home() / ".cache" / "pitbench"
+    CACHE_DIR = Path.home() / ".cache" / "fc-eval"
 
     def get_datasets(self) -> list[RegistryRow]:
         """Fetch and return the list of datasets from the registry.
@@ -140,7 +140,7 @@ class RegistryClient:
         return dataset
 
     def get_compatible_datasets(self) -> list[RegistryRow]:
-        """Get only the datasets that are compatible with the current pitbench
+        """Get only the datasets that are compatible with the current fc-eval
         version.
 
         Returns:
@@ -226,8 +226,8 @@ class RegistryClient:
         if not dataset.is_compatible_with(self._current_version):
             raise ValueError(
                 f"Dataset {name} version {version} is not compatible with "
-                f"pitbench version {self._current_version}. Compatible versions: "
-                f"{dataset.pitbench_version}. Install a compatible version and "
+                f"fc-eval version {self._current_version}. Compatible versions: "
+                f"{dataset.fc_eval_version}. Install a compatible version and "
                 "rerun the command."
             )
 

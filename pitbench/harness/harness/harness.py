@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import boto3
 from rich.progress import (
@@ -28,9 +28,6 @@ from tenacity import RetryError
 from pitbench.harness.agents.agent_factory import AgentFactory
 from pitbench.harness.agents.agent_name import AgentName
 from pitbench.harness.agents.base_agent import AgentResult, BaseAgent
-from pitbench.harness.agents.installed_agents.abstract_installed_agent import (
-    AbstractInstalledAgent,
-)
 from pitbench.harness.config import config as harness_config
 from pitbench.harness.dataset.dataset import Dataset
 from pitbench.harness.db import upload_results_to_db
@@ -90,15 +87,6 @@ class MultiAgentConfig:
 
 
 class Harness:
-    _PROGRESS_STAGE_LABELS = {
-        "trial.execute": "Trial",
-        "terminal.lifecycle": "Task container",
-        "setup.execute": "Setup",
-        "agent.execute": "Coding agent",
-        "tests.execute": "Visible tests",
-        "evaluator.execute": "Independent evaluation",
-    }
-
     def __init__(
         self,
         output_path: Path,
@@ -137,10 +125,6 @@ class Harness:
         ec2_use_nvme_storage: bool = True,
         ec2_root_volume_size: int = 50,
         history_limit: int | None = None,
-        defer_evaluation: bool = False,
-        agent_cpuset_cpus: str | None = None,
-        progress_bar: bool = True,
-        progress_callback: Callable[[str], None] | None = None,
     ):
         """
         Runs the Terminal-Bench harness.
@@ -243,14 +227,9 @@ class Harness:
         self._ec2_instance_ami = ec2_instance_ami
         self._ec2_use_nvme_storage = ec2_use_nvme_storage
         self._ec2_root_volume_size = ec2_root_volume_size
-        self._validate_remote_workspace_compatibility()
 
         # Terminal configuration
         self._history_limit = history_limit
-        self._defer_evaluation = defer_evaluation
-        self._agent_cpuset_cpus = agent_cpuset_cpus
-        self._progress_bar = progress_bar
-        self._external_progress_callback = progress_callback
 
         # Check if we're resuming from an existing run
         self._is_resuming = self._run_path.exists()
@@ -551,58 +530,6 @@ class Harness:
             trial_name=trial_name,
             error=error,
         )
-        self._update_progress_from_stage(
-            stage=stage,
-            status=status,
-            task_id=task_id,
-            trial_name=trial_name,
-        )
-
-    def _update_progress_from_stage(
-        self,
-        *,
-        stage: str,
-        status: str,
-        task_id: str | None,
-        trial_name: str | None,
-    ) -> None:
-        """Reflect pipeline stage changes in the non-livestream progress bar."""
-        label = self._PROGRESS_STAGE_LABELS.get(stage)
-        if label is None:
-            return
-        suffix = {
-            "started": label,
-            "completed": f"{label} complete",
-            "failed": f"{label} failed",
-        }.get(status)
-        if suffix is not None:
-            self._update_progress_detail(task_id, trial_name, suffix)
-
-    def _update_progress_detail(
-        self,
-        task_id: str | None,
-        trial_name: str | None,
-        detail: str,
-    ) -> None:
-        external_callback = getattr(self, "_external_progress_callback", None)
-        if external_callback is not None:
-            external_callback(detail)
-        display = getattr(self, "_progress_display", None)
-        if display is None:
-            return
-        context = task_id or trial_name or "run"
-        description = (
-            f"Running tasks ({display['completed']}/{display['total']}, "
-            f"Accuracy: {display['accuracy']:.2%}) — {context}: {detail}"
-        )
-        update: dict[str, Any] = {"description": description}
-        solver_runs = re.search(r"solver runs (\d+)/(\d+)", detail)
-        if solver_runs is not None:
-            update.update(
-                completed=int(solver_runs.group(1)),
-                total=int(solver_runs.group(2)),
-            )
-        display["progress"].update(display["task"], **update)
 
     @staticmethod
     def _trace_file_input(path: Path) -> dict[str, Any]:
@@ -644,7 +571,6 @@ class Harness:
         terminal: Terminal | RemoteTerminal,
         trial_handler: TrialHandler,
         results: TrialResults,
-        expected_repository_head: str,
         agent_label: str,
         model_name: str | None,
     ) -> None:
@@ -656,89 +582,16 @@ class Harness:
         if container is None:
             raise RuntimeError("agent container is not running")
         working_dir = container.attrs.get("Config", {}).get("WorkingDir") or None
-        actual_repository_head = self._repository_head(terminal)
-        if actual_repository_head != expected_repository_head:
-            raise RuntimeError(
-                "agent changed repository HEAD: "
-                f"{actual_repository_head} != {expected_repository_head}"
-            )
-        tracked = container.exec_run(
-            [
-                "git",
-                "diff",
-                "--binary",
-                "--no-ext-diff",
-                "HEAD",
-                "--",
-                ".",
-                ":(exclude).pitbench",
-                ":(exclude).pitbench/**",
-            ],
+        captured = container.exec_run(
+            ["sh", "-lc", "git add -N . && git diff --binary --no-ext-diff HEAD"],
             workdir=working_dir,
         )
-        if tracked.exit_code != 0:
-            detail = tracked.output.decode("utf-8", errors="replace")
+        if captured.exit_code != 0:
+            detail = captured.output.decode("utf-8", errors="replace")
             raise RuntimeError(f"candidate patch capture failed: {detail}")
-        if not isinstance(tracked.output, bytes):
+        if not isinstance(captured.output, bytes):
             raise TypeError("container returned a non-bytes patch")
-        untracked_paths = container.exec_run(
-            [
-                "git",
-                "ls-files",
-                "--others",
-                "--exclude-standard",
-                "-z",
-                "--",
-                ".",
-                ":(exclude).pitbench",
-                ":(exclude).pitbench/**",
-            ],
-            workdir=working_dir,
-        )
-        if untracked_paths.exit_code != 0:
-            detail = untracked_paths.output.decode("utf-8", errors="replace")
-            raise RuntimeError(f"candidate path capture failed: {detail}")
-        if not isinstance(untracked_paths.output, bytes):
-            raise TypeError("container returned non-bytes candidate paths")
-
-        patch = bytearray(tracked.output)
-        for raw_path in untracked_paths.output.split(b"\0"):
-            if not raw_path:
-                continue
-            path = raw_path.decode("utf-8", errors="surrogateescape")
-            untracked = container.exec_run(
-                [
-                    "git",
-                    "diff",
-                    "--binary",
-                    "--no-ext-diff",
-                    "--no-index",
-                    "--",
-                    "/dev/null",
-                    path,
-                ],
-                workdir=working_dir,
-            )
-            if untracked.exit_code not in {0, 1}:
-                detail = untracked.output.decode("utf-8", errors="replace")
-                raise RuntimeError(f"untracked patch capture failed: {detail}")
-            if not isinstance(untracked.output, bytes):
-                raise TypeError("container returned a non-bytes untracked patch")
-            patch.extend(untracked.output)
-
-        payload = bytes(patch)
-        candidate_patch_sha256 = hashlib.sha256(payload).hexdigest()
-        candidate_patch.write_bytes(payload)
-
-        if getattr(self, "_defer_evaluation", False):
-            self._trace_pipeline(
-                stage="candidate.capture",
-                status="completed",
-                outputs={"candidate_patch": self._trace_artifact(candidate_patch)},
-                task_id=trial_handler.task_id,
-                trial_name=trial_handler.trial_name,
-            )
-            return
+        candidate_patch.write_bytes(captured.output)
 
         evaluator = EvaluatorFactory.from_import_path(
             trial_handler.task.evaluator_import_path
@@ -747,45 +600,17 @@ class Harness:
             task_id=trial_handler.task_id,
             task_path=trial_handler.task_paths.input_path,
             candidate_patch_path=candidate_patch,
-            candidate_patch_sha256=candidate_patch_sha256,
             output_dir=output_dir,
             agent_name=agent_label,
             model_name=model_name,
-            evaluator_config={
-                **trial_handler.task.evaluator_config,
-                "_progress_callback": partial(
-                    self._update_progress_detail,
-                    trial_handler.task_id,
-                    trial_handler.trial_name,
-                ),
-            },
+            evaluator_config=trial_handler.task.evaluator_config,
             telemetry={
                 "total_input_tokens": results.total_input_tokens,
                 "total_output_tokens": results.total_output_tokens,
                 "total_cost": results.total_cost,
             },
         )
-        self._trace_pipeline(
-            stage="evaluator.execute",
-            status="started",
-            inputs={
-                "evaluator_import_path": trial_handler.task.evaluator_import_path,
-                "candidate_patch_path": candidate_patch,
-            },
-            task_id=trial_handler.task_id,
-            trial_name=trial_handler.trial_name,
-        )
-        try:
-            results.evaluation = evaluator.envelope(request)
-        except Exception as exc:
-            self._trace_pipeline(
-                stage="evaluator.execute",
-                status="failed",
-                task_id=trial_handler.task_id,
-                trial_name=trial_handler.trial_name,
-                error=exc,
-            )
-            raise
+        results.evaluation = evaluator.envelope(request)
         results.is_resolved = results.evaluation.is_resolved
         self._trace_pipeline(
             stage="evaluator.execute",
@@ -803,30 +628,21 @@ class Harness:
             trial_name=trial_handler.trial_name,
         )
 
-    @staticmethod
-    def _repository_head(terminal: Terminal | RemoteTerminal) -> str:
-        container = terminal.container
-        if container is None:
-            raise RuntimeError("agent container is not running")
-        working_dir = container.attrs.get("Config", {}).get("WorkingDir") or None
-        result = container.exec_run(["git", "rev-parse", "HEAD"], workdir=working_dir)
-        if result.exit_code != 0:
-            detail = result.output.decode("utf-8", errors="replace")
-            raise RuntimeError(f"repository HEAD capture failed: {detail}")
-        if not isinstance(result.output, bytes):
-            raise TypeError("container returned a non-bytes repository HEAD")
-        head = result.output.decode("ascii").strip()
-        if not head:
-            raise RuntimeError("repository HEAD capture returned an empty value")
-        return head
-
     @property
     def _log_output_path(self) -> Path:
         return self._run_path / "run.log"
 
     @property
     def _run_lock_path(self) -> Path:
-        return self._run_path / "pitbench.lock"
+        fc_lock = self._run_path / "fc.lock"
+        if fc_lock.exists():
+            return fc_lock
+        # Backward compatibility: check for legacy tb.lock
+        tb_lock = self._run_path / "tb.lock"
+        if tb_lock.exists():
+            return tb_lock
+        # Default to new name for new runs
+        return fc_lock
 
     def _validate_resume_configuration(self) -> None:
         """Validate that the current run configuration matches the lock file."""
@@ -931,31 +747,6 @@ class Harness:
             import_path=effective_agent_import_path,
             **resolved_agent_kwargs,
         )
-
-    def _needs_nested_command_sandbox(self) -> bool:
-        """Whether this task container must support Codex bubblewrap nesting."""
-        if not self._is_multi_agent:
-            return (
-                self._agent_name == AgentName.CODEX
-                and self._agent_kwargs.get("runner_backend") == "workspace"
-            )
-        if self._agent_configs is None:
-            return False
-        for config in self._agent_configs:
-            kwargs = {**self._agent_kwargs, **config.agent_kwargs}
-            if (
-                config.agent_name == AgentName.CODEX
-                and kwargs.get("runner_backend") == "workspace"
-            ):
-                return True
-        return False
-
-    def _validate_remote_workspace_compatibility(self) -> None:
-        if self._remote_build and self._needs_nested_command_sandbox():
-            raise ValueError(
-                "Codex runner_backend=workspace is not supported with "
-                "--remote-build; use runner_backend=container for remote trials"
-            )
 
     def _init_dataset(self) -> None:
         if self._dataset_config:
@@ -1070,7 +861,7 @@ class Harness:
         file_handler.setLevel(logging.DEBUG)
         logger.addHandler(file_handler)
 
-        if not self._livestream and getattr(self, "_progress_bar", True):
+        if not self._livestream:
             console_handler = logging.StreamHandler()
             console_handler.setLevel(self._log_level)
             logger.addHandler(console_handler)
@@ -1853,7 +1644,6 @@ class Harness:
                 livestream=self._livestream,
                 disable_recording=trial_handler.task.disable_asciinema,
                 history_limit=self._history_limit,
-                nested_sandbox=self._needs_nested_command_sandbox(),
             )
 
         self._trace_pipeline(
@@ -2208,18 +1998,10 @@ class Harness:
                     results.trial_ended_at = datetime.now(timezone.utc).isoformat()
                     return results
 
-            expected_repository_head = None
-            if trial_handler.task.evaluator_import_path is not None:
-                expected_repository_head = self._repository_head(terminal)
-
-            agent_class = AgentFactory.get_agent_class(
-                agent_name=agent_name,
-                import_path=agent_import_path,
-            )
             session = _create_tracked_session(
                 "agent",
                 is_active_stream=self._livestream,
-                as_configured_user=not issubclass(agent_class, AbstractInstalledAgent),
+                as_configured_user=True,
                 recording_filename=recording_filename,
             )
 
@@ -2274,13 +2056,6 @@ class Harness:
                     agent_import_path=agent_import_path,
                     model_name=model_name,
                     per_agent_kwargs=per_agent_kwargs,
-                )
-                task_agent.set_progress_callback(
-                    partial(
-                        self._update_progress_detail,
-                        trial_handler.task_id,
-                        trial_handler.trial_name,
-                    )
                 )
             except Exception as exc:
                 self._trace_pipeline(
@@ -2367,12 +2142,10 @@ class Harness:
                 }
 
             if trial_handler.task.evaluator_import_path is not None:
-                assert expected_repository_head is not None
                 self._evaluate_candidate(
                     terminal=terminal,
                     trial_handler=trial_handler,
                     results=results,
-                    expected_repository_head=expected_repository_head,
                     agent_label=resolved_agent_label,
                     model_name=model_name or self._model_name,
                 )
@@ -2682,8 +2455,6 @@ class Harness:
                 cleanup=self._cleanup,
                 livestream=self._livestream,
                 disable_recording=trial_handler.task.disable_asciinema,
-                cpuset_cpus=self._agent_cpuset_cpus,
-                nested_sandbox=self._needs_nested_command_sandbox(),
             )
 
         self._trace_pipeline(
@@ -3500,51 +3271,40 @@ class Harness:
             },
         )
 
-        total_tasks = len(self._dataset) * self._n_attempts
-        progress = None
-        progress_task = None
-        if not self._livestream:
-            progress = Progress(
-                SpinnerColumn(),
-                TextColumn("{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TimeElapsedColumn(),
-            )
-            progress.start()
-            progress_task = progress.add_task(
-                f"Running tasks (0/{total_tasks}, Accuracy: {results.accuracy:.2%})",
-                total=total_tasks,
-            )
-            self._progress_display = {
-                "progress": progress,
-                "task": progress_task,
-                "completed": len(results.results),
-                "total": total_tasks,
-                "accuracy": results.accuracy,
-            }
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_task = {}
+            for task_path in self._dataset:
+                for attempt in range(1, self._n_attempts + 1):
+                    trial_name = self._get_trial_name(task_path, attempt)
+                    future = executor.submit(
+                        self._execute_single_trial,
+                        trial_name=trial_name,
+                        task_path=task_path,
+                    )
+                    future_to_task[future] = (trial_name, attempt)
 
-        try:
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_task = {}
-                for task_path in self._dataset:
-                    for attempt in range(1, self._n_attempts + 1):
-                        trial_name = self._get_trial_name(task_path, attempt)
-                        future = executor.submit(
-                            self._execute_single_trial,
-                            trial_name=trial_name,
-                            task_path=task_path,
-                        )
-                        future_to_task[future] = (trial_name, attempt)
+            total_tasks = len(self._dataset) * self._n_attempts
 
-                if self._livestream or progress is None:
-                    for future in as_completed(future_to_task):
-                        trial_results = future.result()
-                        results.results.append(trial_results)
-                        self._write_results(results)
-                else:
-                    assert progress is not None
-                    assert progress_task is not None
+            if self._livestream:
+                for future in as_completed(future_to_task):
+                    trial_results = future.result()
+                    results.results.append(trial_results)
+
+                    self._write_results(results)
+            else:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    TimeElapsedColumn(),
+                ) as progress:
+                    task = progress.add_task(
+                        f"Running tasks (0/{total_tasks}, "
+                        f"Accuracy: {results.accuracy:.2%})",
+                        total=total_tasks,
+                    )
+
                     for future in as_completed(future_to_task):
                         trial_results = future.result()
 
@@ -3570,27 +3330,18 @@ class Harness:
 
                         task_name = trial_results.task_id
                         status = "✓" if trial_results.is_resolved else "✗"
+
                         completed_tasks = len(results.results)
-                        self._progress_display.update(
-                            {
-                                "completed": completed_tasks,
-                                "accuracy": results.accuracy,
-                            }
-                        )
+
                         progress.update(
-                            progress_task,
-                            completed=completed_tasks,
-                            total=total_tasks,
+                            task,
+                            advance=1,
                             description=(
                                 f"Running tasks ({completed_tasks}/{total_tasks}, "
-                                f"Accuracy: {results.accuracy:.2%}) — "
+                                f"Accuracy: {results.accuracy:.2%}) - "
                                 f"Last: {task_name} {status}"
                             ),
                         )
-        finally:
-            self._progress_display = None
-            if progress is not None:
-                progress.stop()
 
         self._trace_pipeline(
             stage="tasks.dispatch",

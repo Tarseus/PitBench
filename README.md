@@ -1,273 +1,189 @@
-# PitBench: Benchmarking Coding Agents on Real-World Solver Improvement
+# PitBench
 
-*A repository-level benchmark for combinatorial optimization solvers.*
+PitBench evaluates coding agents that improve real combinatorial-optimization
+solvers, providing full execution harness, isolated Docker judging, and
+6-dimensional (Outcome 3D + Sensitivity 3D) evaluation metrics.
 
-PitBench is a benchmark for evaluating whether coding agents can make
-statistically significant, generalizable performance improvements to mature
-combinatorial optimization solver repositories.
+## Evaluation contract
 
-<p align="center">
-  <img src="https://img.shields.io/badge/PitBench-Benchmark-8A2BE2?style=for-the-badge&logo=github&logoColor=white" alt="PitBench Benchmark">
-  <img src="https://img.shields.io/badge/Domain-Combinatorial%20Optimization%20%26%20OR-0A7A5E?style=for-the-badge&logo=target&logoColor=white" alt="Combinatorial Optimization">
-  <img src="https://img.shields.io/badge/Current%20Track-PyVRP-1F6FEB?style=for-the-badge" alt="Current track: PyVRP">
-  <img src="https://img.shields.io/badge/Evaluation-Performance--First-EA580C?style=for-the-badge&logo=speedtest&logoColor=white" alt="Performance First">
-  <img src="https://img.shields.io/badge/Sandbox-Docker%20Isolated-3776AB?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
-  <img src="https://img.shields.io/badge/License-BSD%203--Clause-gray?style=for-the-badge" alt="License">
-</p>
+The PitBench execution harness creates the task environment, runs an agent, captures a
+binary candidate patch, executes isolated judging, and stores the evaluation results.
 
-<p align="center">
-  <a href="#-quickstart">
-    <img src="https://img.shields.io/badge/%F0%9F%9A%80%20Quickstart-0A7A5E?style=flat-square" alt="Quickstart">
-  </a>
-  <a href="#-current-combinatorial-optimization-tasks">
-    <img src="https://img.shields.io/badge/%F0%9F%93%A6%20Task%20Snapshots-1F6FEB?style=flat-square" alt="Task snapshots">
-  </a>
-  <a href="#%EF%B8%8F-the-three-pillars-of-pitbench">
-    <img src="https://img.shields.io/badge/%F0%9F%8F%9B%EF%B8%8F%20Three%20Pillars-7C3AED?style=flat-square" alt="Pillars">
-  </a>
-  <a href="#-roadmap--future-directions">
-    <img src="https://img.shields.io/badge/%F0%9F%A7%AD%20Roadmap-EA580C?style=flat-square" alt="Roadmap">
-  </a>
-  <a href="#-citation">
-    <img src="https://img.shields.io/badge/%F0%9F%93%9D%20Citation-475569?style=flat-square" alt="Citation">
-  </a>
-</p>
-
----
-
-## 🎯 Why Combinatorial Optimization (CO)?
-
-**Combinatorial Optimization (CO)** is the algorithmic backbone of modern logistics, supply chains, manufacturing, and scheduling. Developing and accelerating high-performance solvers requires mathematical insight, intricate search heuristics, and low-level systems programming. PitBench is designed for repository-level evaluation of CO solvers; **PyVRP is the first implemented track**, currently represented by four release snapshots, rather than the boundary of the benchmark.
-
-Unlike general repository-level coding benchmarks, solver optimization must preserve problem semantics while evaluating a randomized quality-time process:
-
-* 🧠 **Complex Algorithmic Search Spaces**: PyVRP relies on Hybrid Genetic Search, local search neighborhoods, population management, and adaptive control.
-* ⚡ **High-Performance Hybrid Architectures**: Solvers heavily utilize C++/Python hybrid designs (e.g., C++ computational kernels exposed via Pybind11 / Cython) where minor changes can break memory invariants or cause severe algorithmic regressions.
-* ⏱️ **Stochastic Quality-Time Tradeoffs**: Combinatorial search is inherently randomized. Speedup is meaningless if solution quality (optimality gap) degrades. Benchmarking must evaluate the quality-time Pareto frontier under fixed computational budgets.
-
-**PitBench provides a problem-aware testbed for agentic performance engineering on real CO solver repositories.**
-
----
-
-## 🌟 Key Highlights
-
-1. **Repository-Level CO Solver Optimization**
-   Agents modify real solver repositories rather than isolated algorithm exercises. The current implementation uses PyVRP release snapshots.
-
-2. **Four PyVRP Release Snapshots**
-   The supported tasks cover PyVRP v0.12.2, v0.13.0, v0.13.4, and v0.14.0 using common instances, seeds, and budgets.
-
-3. **CO-Specific Quality-Time Performance-First Protocol**
-   Evaluates true algorithmic improvements by measuring **normalized optimality gap reductions ($\Delta \text{gap} = \text{gap}_{\text{base}} - \text{gap}_{\text{agent}}$)** against official **Best-Known-Solutions (CVRPLIB-X BKS)** under **fixed time budgets (`budget_sec` = 1s, 5s, 10s)**, paired across identical solver seeds with **5,000 instance-cluster bootstrap 95% confidence intervals**.
-
-4. **Prepared Docker Environments**
-   PyVRP native extensions are compiled in prepared, commit-tagged images. Agent execution is network-disabled, while evaluator-owned hidden assets are supplied only to a separate judge environment.
-
----
-
-## 🏛️ The Three Pillars of PitBench
+PitBench records the raw grid
 
 ```
-                       ┌──────────────────────────────────────────────────────────┐
-                       │               PitBench Evaluation Pipeline               │
-                       └────────────────────────────┬─────────────────────────────┘
-                                                    │
-        ┌───────────────────────────────────────────┼───────────────────────────────────────────┐
-        ▼                                           ▼                                           ▼
-┌───────────────────────────────┐   ┌───────────────────────────────┐   ┌───────────────────────────────┐
-│   1. Quality-Time Contract    │   │  2. Randomized Repeatability  │   │  3. Held-Out Generalization   │
-├───────────────────────────────┤   ├───────────────────────────────┤   ├───────────────────────────────┤
-│ • Fixed budgets (1s/5s/10s)  │   │ • Multi-seed paired trials    │   │ • Evaluate on unseen instances│
-│ • Anchored to optimum / BKS   │   │ • Instance-cluster bootstrap  │   │ • Retention on hidden shifts  │
-│ • True Gap Reduction:         │   │ • Strict 95% confidence bounds│   │ • Check retention beyond dev  │
-│   Δgap = gap_base - gap_agent │   │ • Paired seed evidence        │   │   on judge_shift              │
-└───────────────────────────────┘   └───────────────────────────────┘   └───────────────────────────────┘
+task × code_state × population × instance × solver_seed × budget
 ```
 
-### 1. Quality-Time Performance First
-- **Quality and time stay coupled**: Faster execution is not treated as an improvement when independently verified solution quality regresses.
-- **Independent Solution Verifiers**: Evaluator-owned verifiers check route feasibility and capacity constraints, and recompute objective values. BKS anchors then define normalized gaps.
+where `code_state` is `base` or `agent`. Validity is separate from performance.
+Problem-level optimum/BKS oracles anchor solution quality; they are not code
+references.
 
-### 2. Randomized Repeatability & Statistical Rigor
-- Metaheuristics and randomized search algorithms exhibit high variance across seeds.
-- PyVRP evaluations pair Base and Agent across five solver seeds and compute **instance-cluster bootstrap 95% confidence intervals (CI95)**. An improvement claim is accepted only when the lower bound is strictly positive ($CI_{\text{lower}} > 0$).
+A production evaluation destroys the agent environment and launches a fresh,
+network-disabled judge container from a digest-pinned image. Hidden instances,
+independent verifiers, and oracle data are mounted only there.
+`fixture_mode` is explicit, deterministic, and cannot be reported as a real solver
+result.
 
-### 3. Generalization across Problem Topologies (Held-Out Retention)
-- Evaluations test both calibration instances (`judge_id`) and unseen structural shift instances (`judge_shift`, e.g., clustered customer distributions, skewed demand profiles).
-- The report shows whether the measured improvement is retained on the declared hidden-shift population; it does not claim universal generalization.
+Production PyVRP evaluation populates two independent three-dimensional views:
 
----
+- outcome coordinates: performance, reliability, and resource consumption;
+- input sensitivity directions: certified representation equivalence, frozen
+  customer-count scale, and an independently seeded shifted population.
 
-## 📦 Current Combinatorial Optimization Tasks
+The evaluator also publishes the three population-conditional empirical Wasserstein
+solver distances instead of collapsing unlike outcome units into one scalar. The
+main quality result uses only the BKS-anchored `judge_id` population; equivalence and
+shift panels remain diagnostics and cannot bias the primary gap or runtime summary.
+CPU time and peak RSS are captured for every driver process. A versioned,
+manifest-declared Pareto gate turns the evaluator-owned report into the generic
+resolved verdict and fails closed when a required six-dimensional panel is missing.
 
-| Task ID | Solver & Version | Problem Family | Architecture | Optimization Scope |
-| :--- | :--- | :--- | :--- | :--- |
-| `pyvrp_v0_12_2` | **PyVRP** v0.12.2 | CVRP | C++ / Python (Pybind11) | Search and local-search efficiency |
-| `pyvrp_v0_13_0` | **PyVRP** v0.13.0 | CVRP | C++ / Python (Pybind11) | Search and local-search efficiency |
-| `pyvrp_v0_13_4` | **PyVRP** v0.13.4 | CVRP | C++ / Python (Pybind11) | Search and local-search efficiency |
-| `pyvrp_v0_14_0` | **PyVRP** v0.14.0 | CVRP | C++ / Python (Pybind11) | Search and local-search efficiency |
+## Implemented release snapshots
 
----
+- `pyvrp_v0_12_2`: PyVRP v0.12.2, CVRP search track.
+- `pyvrp_v0_13_0`: PyVRP v0.13.0, CVRP search track.
+- `pyvrp_v0_13_4`: PyVRP v0.13.4, CVRP search track.
+- `pyvrp_v0_14_0`: PyVRP v0.14.0, CVRP search track.
+- `vroom_v1_15_0`: VROOM v1.15.0, heuristic routing track.
+- `highs_v1_15_1`: HiGHS v1.15.1, exact MIP track.
+- `choco_v6_0_1`: Choco v6.0.1, CP track.
+- `ortools_v9_15`: OR-Tools v9.15, model-build auxiliary track.
 
-## 🚀 Quickstart
+Every task fixes a public release tag to its full commit SHA and declares a
+snapshot-only information regime, repository/family plugins, build protocols,
+explicit RNG dimensions, and agent-dev/hidden population definitions.
+The four PyVRP snapshots share the same generated development population and the
+same 38-instance CVRPLIB-X calibration population with published BKS anchors, so
+cross-version comparisons use common instances, seeds, and budgets.
+They also share a hash-pinned 10-instance hidden structural-shift generator and a
+bounded customer-relabel equivalence panel.
 
-PitBench requires Linux x86-64, Python 3.12+, [uv](https://github.com/astral-sh/uv),
-Docker Engine with Compose, and an installed and authenticated Codex or
-Antigravity CLI. Formal runs also require the evaluator-provided private bundle
-and configured agent and judge images.
-
-With those prerequisites provisioned, install PitBench and start a Codex run in
-four commands:
+## Commands
 
 ```bash
-git clone https://github.com/Tarseus/PitBench.git && cd PitBench
-uv sync
-cp config/evaluate.example.yaml config/evaluate.local.yaml
-uv run pitbench evaluate pyvrp_v0_14_0 \
-  --agent codex \
-  --model gpt-5.6-sol \
-  --agent-kwarg reasoning_effort=xhigh
-```
-
-Use Antigravity by replacing the final command with:
-
-```bash
-uv run pitbench evaluate pyvrp_v0_14_0 \
-  --agent antigravity \
-  --model gemini-3.1-pro-high
-```
-
-The default Codex configuration uses `runner_backend: workspace`. Codex and its
-native shell/file tools run inside the solver container, while a separate relay
-frontend sidecar is its only permitted network peer. That sidecar has no internet
-route or credential; it bridges over a per-run Unix socket to a host relay that
-holds OAuth, accepts only Responses requests for the assigned model, rejects web
-search, and applies per-trial request/concurrency admission limits, a
-response-accounted token cutoff, and a request-boundary duration cutoff.
-Codex's network proxy allowlists only the frontend sidecar IP plus container-local
-loopback.
-The run starts only after a real Codex shell probe demonstrates that the relay is
-reachable, the public internet is not, and no relay credential exists in the shell.
-A `profile_path` overlay may include user-installed
-plugins, skills, hooks, and local MCP servers; server-backed connectors remain
-offline unless PitBench is explicitly extended with a separately isolated
-capability relay.
-
-`runner_backend: container` remains available as the compatibility fallback.
-It runs the locally installed CLI in a short-lived control-plane container and
-uses the bounded PitBench MCP tool surface to operate on the offline solver
-container. Neither backend mounts the host home or Docker socket into the agent.
-Remote builds currently require `runner_backend: container`; PitBench rejects the
-workspace backend before allocating remote resources.
-Set `proxy_url` only on machines that require one for model access.
-
-If the run cannot start, diagnose the current shell and machine with
-`uv run pitbench doctor pyvrp`. Custom Codex and Antigravity profiles can be
-created with `pitbench profiles init` and selected through `profile_path` in the
-local configuration. PitBench records the runner image ID and profile hash with
-every trial.
-
-### Schedule multiple agents externally
-
-Each `pitbench evaluate` invocation evaluates one externally selected agent on
-one PyVRP snapshot task. Agent/model selection and batch scheduling stay outside
-the benchmark task definition. The bundled shell script is an example serial
-scheduler whose list of agents can be edited by the caller:
-
-```bash
-scripts/run-pyvrp-model-matrix.sh pyvrp_v0_14_0
-```
-
-The script makes independent `pitbench evaluate` calls in sequence and records
-their command logs plus `status.tsv`. Other schedulers can invoke the same
-single-agent command concurrently or serially without a PitBench-specific
-matrix schema.
-
-### Generate a Performance-First Report
-
-Each trial stores observations under `runs/<run_id>/<task_id>/<trial_name>/evaluation/trials.parquet`. The report command accepts either that file or its containing `evaluation/` directory:
-
-```bash
-uv run pitbench report \
-  runs/<run_id>/<task_id>/<trial_name>/evaluation
-
-uv run pitbench report \
-  runs/<run_id>/<task_id>/<trial_name>/evaluation --json
-```
-
----
-
-## 🛠️ Verification & Developer Tooling
-
-```bash
-# Validate task manifests and contracts
+uv sync --group dev
 uv run pitbench tasks validate
-
-# Run the deterministic evaluator fixture
-uv run pitbench tasks fixture --instances-per-population 1
-
-# Run the unit suite
-ALL_PROXY= all_proxy= uv run pytest -q tests/unit
+uv run pitbench tasks materialize-dev --output dataset/dev
+uv run pitbench tasks smoke --instances-per-population 1
+uv run pytest -q tests/unit/pitbench
+uv run pytest -q tests/unit -m 'not docker'
 ```
 
----
+The outcome geometries, population-conditional solver pseudometric, empirical
+stochasticity, and instance-space sensitivity definitions are specified in
+[`docs/solver-behavior-metric-definition.md`](docs/solver-behavior-metric-definition.md).
+The provable instance-space metric and upper-bound certificates are specified in
+[`docs/cvrp-problem-metric-definition.md`](docs/cvrp-problem-metric-definition.md).
 
-## 🧭 Roadmap & Future Directions
+## Codex agent with a ChatGPT subscription
 
-- [ ] **Broader Combinatorial Optimization Problem Domains**
-- [ ] **Advanced Sensitivity & Distributional Metrics**
-- [ ] **Hardware-Isolated Distributed Cloud Infrastructure**
+PitBench runs Codex on the host while exposing only a loopback MCP command surface
+for the assigned, network-disabled task container. Log in and install the isolated
+runner once:
 
----
-
-## 📂 Repository Layout
-
-```
-PitBench/
-├── pitbench/
-│   ├── harness/         # Agent execution sandbox, loopback MCP terminal & container orchestration
-│   ├── evaluator/       # Isolated read-only judge and evaluation input validation
-│   ├── metrics/         # PerformanceReport, Cluster Bootstrap 95% CI & decision policies
-│   ├── schema/          # Pydantic data schemas (RunObservation, EvaluationResult, PitBenchTask)
-│   ├── repositories/    # Solver build and execution plugins
-│   ├── families/        # Independent CVRP verification
-│   ├── instances/       # CO instance generation and materialization tooling
-│   └── cli/             # Unified CLI (`run/evaluate/judge/report/tasks`)
-├── scripts/             # Optional external scheduling and maintenance scripts
-├── manifests/tasks/      # Public task specifications
-├── adapters/pitbench/    # Prepared PyVRP Docker adapter
-├── private/              # Maintainer-provisioned hidden evaluation assets
-└── tests/unit/           # Unit test suite
+```bash
+codex login
+sudo scripts/install-codex-runner.sh
 ```
 
----
+Re-run the installer after upgrading Codex because it copies the pinned executables.
 
-## 🏷️ Keywords & Topics
-
-`combinatorial-optimization` • `operations-research` • `llm-agents` • `code-optimization` • `pyvrp` • `vehicle-routing-problem` • `performance-engineering`
-
----
-
-## 📝 Citation
-
-If you use PitBench in your research, please cite our work:
-
-```bibtex
-@misc{pitbench2026,
-  title={PitBench: Benchmarking Coding Agents on Real-World Solver Improvement},
-  author={Tarseus Team and Contributors},
-  year={2026},
-  publisher={GitHub},
-  howpublished={\url{https://github.com/Tarseus/PitBench}}
-}
+```bash
+uv run pitbench tasks materialize-dev --output dataset/dev
+uv run pitbench run \
+  --dataset-path dataset/dev \
+  --agent codex \
+  --model gpt-5.6-terra \
+  --n-concurrent 1
 ```
 
----
+The runner passes subscription authentication through standard input into a
+temporary directory, removes it after the run, and executes as `pitbench-codex`, a
+dedicated system user without Docker socket access. No API key or auth file is
+mounted into the task container. Before exposing the task MCP endpoint, the agent
+runs a bounded control-plane preflight with the selected model. Backend or proxy
+failures therefore stop within 120 seconds and are recorded as
+`codex-preflight.jsonl` and `codex-preflight.stderr.log`; the solver container stays
+network-disabled throughout.
 
-## License
+When the host requires an outbound proxy, pass it explicitly to the isolated runner:
 
-PitBench is distributed under the [BSD 3-Clause License](LICENSE). The root
-license retains the FormulaCode Developers notice and adds the PitBench
-Contributors notice for subsequent work. See
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for provenance; the FormulaCode
-snapshot under `upstream/` retains its original license unchanged.
+```bash
+uv run pitbench run \
+  --dataset-path dataset/dev \
+  --agent codex \
+  --model gpt-5.6-terra \
+  --agent-kwarg proxy_url=http://127.0.0.1:7897
+```
+
+The proxy applies only to host Codex. The task container remains offline, and the
+loopback MCP endpoint remains in `NO_PROXY`.
+
+## Antigravity agent with a Google subscription
+
+PitBench can also run the host Antigravity CLI (`agy`) through the same bounded
+loopback MCP surface. Complete the normal interactive sign-in and install the
+isolated runner once:
+
+```bash
+agy
+sudo scripts/install-antigravity-runner.sh
+```
+
+Re-run the installer after upgrading `agy` because it copies the executable used by
+the dedicated runner account.
+
+```bash
+uv run pitbench tasks materialize-dev --output dataset/dev
+uv run pitbench run \
+  --dataset-path dataset/dev \
+  --agent antigravity \
+  --model gemini-3.1-pro-high \
+  --n-concurrent 1
+```
+
+The runner copies only Antigravity's OAuth token and authentication mode through
+standard input into temporary files with mode `0600`. It runs as
+`pitbench-agy`, which has no Docker socket access, and removes the temporary HOME
+after every trial. The task container remains network-disabled and receives no
+credential files. PitBench deliberately does not enable Antigravity's
+`--dangerously-skip-permissions` mode: the temporary settings allow only
+`mcp(pitbench/run_command)`.
+
+Materialized tasks expose the same agent-side developer interface:
+
+```bash
+pitbench inspect
+pitbench bench --split dev
+pitbench bench --split dev --instance dev_0000
+pitbench profile --instance dev_0000
+pitbench verify
+pitbench diff
+```
+
+`tasks smoke` validates the full evaluator/storage contract with synthetic fixture
+observations. It does not execute the public solvers. Real evaluation additionally
+requires time-censored repository snapshots, private hidden assets, immutable Java
+runners
+for the Choco/OR-Tools tracks, and digest-pinned repository judge images.
+
+## Layout
+
+```
+pitbench/harness/       execution harness, agent loopback, Docker sandboxes
+pitbench/evaluator/     patch policy, isolated judge, artifact/Parquet storage
+pitbench/repositories/  build/run plugins for solver repositories
+pitbench/families/      independent CVRP and private MIP/CP verifier contracts
+pitbench/metrics/       6D outcome & sensitivity metrics, summary matrix
+pitbench/distribution/  research-only population discrepancy layer
+pitbench/schema/        task, validity, observation, and result contracts
+adapters/pitbench/      time-censored Git snapshot tooling
+manifests/              public task and agent-development population definitions
+private/                hidden instances, verifiers, and oracle data
+upstream/               untouched reference implementation
+```
+
+`pitbench/evaluator` is benchmark truth. `pitbench/distribution` is an analysis
+layer: Wasserstein, MMD, energy distance, or another discrepancy can change without
+rerunning agents or changing judge validity.

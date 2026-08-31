@@ -10,17 +10,13 @@ from pathlib import Path
 
 from pitbench.harness.agents.agent_name import AgentName
 from pitbench.harness.agents.base_agent import AgentResult, BaseAgent
-from pitbench.harness.agents.codex_container import CodexContainerRunner
-from pitbench.harness.agents.codex_profile import CodexProfile
-from pitbench.harness.agents.codex_relay import CodexModelRelay
-from pitbench.harness.agents.codex_workspace import CodexWorkspaceRuntime
 from pitbench.harness.agents.failure_mode import FailureMode
 from pitbench.harness.agents.host_mcp import LoopbackMCPServer, TaskTerminal
 from pitbench.harness.terminal.tmux_session import TmuxSession
 
 
 class CodexMCPAgent(BaseAgent):
-    """Run Codex through MCP isolation or directly inside the task container."""
+    """Run host Codex as a no-Docker user against an offline task container."""
 
     _PROXY_KEYS = {
         "ALL_PROXY",
@@ -34,21 +30,11 @@ class CodexMCPAgent(BaseAgent):
     }
     _PROMPT = """You are improving a solver in an isolated PitBench task.
 
-You MUST use only the pitbench MCP tools for repository inspection, editing,
-building, profiling, and testing. Prefer read_file, list_files, search_files,
-apply_patch, git_status, and git_diff for structured repository work. Use run_command
-for short commands and start_command, poll_command, and cancel_command for long-running
-commands or incremental output. The host working directory is empty and is not the
-task repository. Do not use the host shell or web access. Start with git_status and run
-`pwd` through run_command. Keep all changes inside the task repository and use the
-repository's own build and test commands when helpful.
-
-Treat existing tests as immutable specifications. Never change a test to accommodate
-an implementation change. The repository is read-only outside the editable paths
-stated in the task; keep implementation changes inside those paths. Preserve behavior
-across every supported problem feature. Before finishing, run relevant repository
-tests, inspect git_status, and remove generated output and temporary helper files. The
-final candidate must contain only intentional source changes.
+You MUST use only the pitbench MCP run_command tool for repository inspection,
+editing, building, profiling, and testing. The host working directory is empty and is
+not the task repository. Do not use the host shell or web access. Start by running
+`pwd`, `git status --short`, and `pitbench inspect` through the MCP tool. Keep all
+changes inside the task repository and verify them with the visible PitBench commands.
 
 Task:
 {instruction}
@@ -56,26 +42,6 @@ Task:
     _CONTROL_PLANE_PROMPT = (
         "Reply with exactly PITBENCH_CODEX_CONTROL_PLANE_OK. Do not use tools."
     )
-    _WORKSPACE_PROMPT = """You are improving a solver in an isolated PitBench task.
-
-You are running inside the solver container with the repository at /workspace/repo.
-Use the normal Codex shell, file, search, and patch capabilities. The command sandbox
-allows repository writes. The container network can reach only the PitBench model
-relay, not the public internet. Do not use web search. Start with `git status --short`,
-and `pwd`.
-
-Treat existing tests as immutable specifications. Never change a test to accommodate
-an implementation change. The repository is read-only outside the editable paths
-stated in the task; keep implementation changes inside those paths. Preserve behavior
-across every supported problem feature. Before finishing, run relevant repository
-tests, inspect `git status --short`, and remove generated output and temporary helper
-files. The final candidate must contain only intentional source changes.
-
-Task:
-{instruction}
-"""
-    _WORKSPACE_RELAY_MARKER = "PITBENCH_RELAY_REACHABLE"
-    _WORKSPACE_PUBLIC_BLOCKED_MARKER = "PITBENCH_PUBLIC_BLOCKED"
 
     @staticmethod
     def name() -> str:
@@ -89,19 +55,11 @@ Task:
         codex_auth_path: str = "~/.codex/auth.json",
         runner_path: str = "/usr/local/libexec/pitbench-codex-runner",
         runner_user: str = "pitbench-codex",
-        runner_backend: str = "host",
-        container_runner_image: str = "python:3.13-slim-bookworm",
-        profile_path: str | None = None,
         container_workdir: str = "/workspace/repo",
         timeout_sec: float = 3500.0,
         control_plane_preflight: bool = True,
         control_plane_timeout_sec: float = 120.0,
         proxy_url: str | None = None,
-        reasoning_effort: str | None = None,
-        relay_max_requests: int = 256,
-        relay_max_total_tokens: int = 10_000_000,
-        relay_max_concurrent_requests: int = 1,
-        relay_max_duration_sec: float | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -110,48 +68,11 @@ Task:
         self._codex_auth_path = Path(codex_auth_path).expanduser()
         self._runner_path = Path(runner_path)
         self._runner_user = runner_user
-        if runner_backend not in {"host", "container", "workspace"}:
-            raise ValueError(
-                "runner_backend must be 'host', 'container', or 'workspace'"
-            )
-        if runner_backend == "host" and profile_path is not None:
-            raise ValueError(
-                "Codex profiles require runner_backend=container or workspace"
-            )
-        self._runner_backend = runner_backend
-        self._container_runner_image = container_runner_image
-        self._profile = (
-            CodexProfile.load(Path(profile_path)) if profile_path is not None else None
-        )
-        self._container_runner: CodexContainerRunner | None = None
-        self._runner_metadata: dict[str, object] = {
-            "schema_version": "1.0",
-            "backend": "host",
-            "profile": None,
-        }
         self._container_workdir = container_workdir
         self._timeout_sec = timeout_sec
         self._control_plane_preflight = control_plane_preflight
         self._control_plane_timeout_sec = control_plane_timeout_sec
         self._proxy_url = proxy_url
-        self._reasoning_effort = reasoning_effort
-        self._relay_max_requests = relay_max_requests
-        self._relay_max_total_tokens = relay_max_total_tokens
-        self._relay_max_concurrent_requests = relay_max_concurrent_requests
-        self._relay_max_duration_sec = (
-            relay_max_duration_sec
-            if relay_max_duration_sec is not None
-            else timeout_sec + control_plane_timeout_sec + 60
-        )
-        budgets = {
-            "relay_max_requests": self._relay_max_requests,
-            "relay_max_total_tokens": self._relay_max_total_tokens,
-            "relay_max_concurrent_requests": self._relay_max_concurrent_requests,
-            "relay_max_duration_sec": self._relay_max_duration_sec,
-        }
-        invalid = [name for name, value in budgets.items() if value <= 0]
-        if invalid:
-            raise ValueError(f"relay budgets must be positive: {', '.join(invalid)}")
         self._process: subprocess.Popen[str] | None = None
         self._process_lock = threading.Lock()
         self._cancelled = threading.Event()
@@ -169,12 +90,14 @@ Task:
     def _subscription_env() -> dict[str, str]:
         env = os.environ.copy()
         env.pop("OPENAI_API_KEY", None)
-        for key in CodexMCPAgent._PROXY_KEYS:
-            env.pop(key, None)
         no_proxy = [
-            "127.0.0.1",
-            "localhost",
+            item.strip()
+            for item in env.get("NO_PROXY", env.get("no_proxy", "")).split(",")
+            if item.strip()
         ]
+        for host in ("127.0.0.1", "localhost"):
+            if host not in no_proxy:
+                no_proxy.append(host)
         env["NO_PROXY"] = ",".join(no_proxy)
         env["no_proxy"] = env["NO_PROXY"]
         return env
@@ -207,21 +130,6 @@ Task:
             raise RuntimeError(
                 "Host Codex is not logged in with ChatGPT. Run `codex login` first."
             )
-        if self._runner_backend == "container":
-            self._container_runner = CodexContainerRunner(
-                image=self._container_runner_image,
-                codex_binary=Path(codex_binary),
-                profile=self._profile,
-            )
-            self._runner_metadata = self._container_runner.prepare()
-            return
-        if self._runner_backend == "workspace":
-            self._runner_metadata = {
-                "schema_version": "1.0",
-                "backend": "workspace",
-                "profile": self._profile.metadata() if self._profile else None,
-            }
-            return
         if not self._runner_path.is_file():
             raise RuntimeError(
                 "The isolated Codex runner is not installed. Run "
@@ -254,11 +162,12 @@ Task:
         if check.get("docker_socket_access") or "docker" in check.get("groups", []):
             raise RuntimeError("Isolated Codex runner still has Docker access")
 
-    def _runner_command_prefix(self) -> list[str]:
-        if self._runner_backend == "container":
-            if self._container_runner is None:
-                raise RuntimeError("Codex container runner has not passed preflight")
-            return self._container_runner.command_prefix()
+    def _build_command(
+        self,
+        *,
+        mcp_url: str,
+        instruction: str,
+    ) -> list[str]:
         return [
             "sudo",
             "-n",
@@ -266,64 +175,49 @@ Task:
             self._runner_user,
             "--",
             str(self._runner_path),
-        ]
-
-    def _codex_exec_prefix(self) -> list[str]:
-        command = ["exec"]
-        if self._runner_backend == "host":
-            command.append("--ignore-user-config")
-        command.extend(
-            [
-                "--ephemeral",
-                "--json",
-                "--color",
-                "never",
-                "--sandbox",
-                "read-only",
-                "--skip-git-repo-check",
-                "--model",
-                self._model_name,
-            ]
-        )
-        return command
-
-    def _build_command(
-        self,
-        *,
-        mcp_url: str,
-        instruction: str,
-    ) -> list[str]:
-        command = [*self._runner_command_prefix(), *self._codex_exec_prefix()]
-        command.extend(self._reasoning_effort_args())
-        command.extend(
-            [
-                "-c",
-                f"mcp_servers.pitbench.url={json.dumps(mcp_url)}",
-                "-c",
-                'mcp_servers.pitbench.default_tools_approval_mode="approve"',
-                "--",
-                self._PROMPT.format(instruction=self._render_instruction(instruction)),
-            ]
-        )
-        return command
-
-    def _reasoning_effort_args(self) -> list[str]:
-        if self._reasoning_effort is None:
-            return []
-        return [
+            "exec",
+            "--ignore-user-config",
+            "--ephemeral",
+            "--json",
+            "--color",
+            "never",
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check",
+            "--model",
+            self._model_name,
             "-c",
-            f"model_reasoning_effort={json.dumps(self._reasoning_effort)}",
+            f"mcp_servers.pitbench.url={json.dumps(mcp_url)}",
+            "-c",
+            'mcp_servers.pitbench.default_tools_approval_mode="approve"',
+            "--",
+            self._PROMPT.format(instruction=self._render_instruction(instruction)),
         ]
 
     def _build_control_plane_command(self) -> list[str]:
-        command = [*self._runner_command_prefix(), *self._codex_exec_prefix()]
-        command.extend(self._reasoning_effort_args())
-        command.extend(["--", self._CONTROL_PLANE_PROMPT])
-        return command
+        return [
+            "sudo",
+            "-n",
+            "-u",
+            self._runner_user,
+            "--",
+            str(self._runner_path),
+            "exec",
+            "--ignore-user-config",
+            "--ephemeral",
+            "--json",
+            "--color",
+            "never",
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check",
+            "--model",
+            self._model_name,
+            "--",
+            self._CONTROL_PLANE_PROMPT,
+        ]
 
     def _runner_payload(self, env: dict[str, str]) -> str:
-        if self._runner_backend == "workspace":
-            return ""
         try:
             auth_json = self._codex_auth_path.read_text()
             json.loads(auth_json)
@@ -332,104 +226,7 @@ Task:
                 f"Invalid host Codex login file: {self._codex_auth_path}"
             ) from error
         proxy_env = {key: env[key] for key in self._PROXY_KEYS if env.get(key)}
-        return json.dumps(
-            {
-                "auth_json": auth_json,
-                "proxy_env": proxy_env,
-                "allow_hooks": bool(self._profile and self._profile.allow_hooks),
-                "profile_sha256": self._profile.sha256 if self._profile else None,
-            }
-        )
-
-    def _workspace_exec_prefix(
-        self,
-        *,
-        runtime: CodexWorkspaceRuntime,
-        relay: CodexModelRelay,
-    ) -> list[str]:
-        command = [
-            *runtime.command_prefix(),
-            "--profile",
-            runtime.config_profile_name,
-            "--ask-for-approval",
-            "never",
-        ]
-        if self._profile is not None and self._profile.allow_hooks:
-            command.append("--dangerously-bypass-hook-trust")
-        command.extend(
-            [
-                "exec",
-                "--strict-config",
-                "--ephemeral",
-                "--json",
-                "--color",
-                "never",
-                "--skip-git-repo-check",
-                "--model",
-                self._model_name,
-                "-C",
-                self._container_workdir,
-                "-c",
-                'model_provider="pitbench_relay"',
-                "-c",
-                'model_providers.pitbench_relay.name="PitBench Relay"',
-                "-c",
-                "model_providers.pitbench_relay.base_url=" + json.dumps(relay.url),
-                "-c",
-                'model_providers.pitbench_relay.wire_api="responses"',
-                "-c",
-                "model_providers.pitbench_relay.supports_websockets=false",
-                "-c",
-                'web_search="disabled"',
-                "-c",
-                "features.unified_exec=true",
-                "-c",
-                "shell_environment_policy.ignore_default_excludes=false",
-                "-c",
-                "check_for_update_on_startup=false",
-                "-c",
-                "feedback.enabled=false",
-                "-c",
-                'history.persistence="none"',
-            ]
-        )
-        command.extend(self._reasoning_effort_args())
-        return command
-
-    def _build_workspace_command(
-        self,
-        *,
-        runtime: CodexWorkspaceRuntime,
-        relay: CodexModelRelay,
-        instruction: str,
-    ) -> list[str]:
-        return [
-            *self._workspace_exec_prefix(runtime=runtime, relay=relay),
-            "--",
-            self._WORKSPACE_PROMPT.format(
-                instruction=self._render_instruction(instruction)
-            ),
-        ]
-
-    def _build_workspace_sandbox_probe(
-        self,
-        *,
-        runtime: CodexWorkspaceRuntime,
-        script: str,
-    ) -> list[str]:
-        return [
-            *runtime.command_prefix(),
-            "sandbox",
-            "-p",
-            runtime.config_profile_name,
-            "-P",
-            runtime.permission_profile_name,
-            "-C",
-            self._container_workdir,
-            "python3",
-            "-c",
-            script,
-        ]
+        return json.dumps({"auth_json": auth_json, "proxy_env": proxy_env})
 
     @staticmethod
     def _has_completed_turn(output: str) -> bool:
@@ -549,247 +346,6 @@ Task:
                 return True
         return False
 
-    @staticmethod
-    def _has_successful_workspace_call(output: str) -> bool:
-        for line in output.splitlines():
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if event.get("type") != "item.completed":
-                continue
-            item = event.get("item") or {}
-            if (
-                item.get("type") == "command_execution"
-                and item.get("status") == "completed"
-                and item.get("exit_code") == 0
-            ):
-                return True
-        return False
-
-    def _update_live_progress(self, line: str, counts: dict[str, int]) -> None:
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            return
-        if event.get("type") != "item.completed":
-            return
-        item = event.get("item") or {}
-        if item.get("type") in {"mcp_tool_call", "command_execution"}:
-            counts["tool_calls"] += 1
-        elif item.get("type") == "agent_message":
-            counts["messages"] += 1
-        else:
-            return
-        self._report_progress(
-            f"Agent: tool calls {counts['tool_calls']} · messages {counts['messages']}"
-        )
-
-    def _stream_process(
-        self,
-        process: subprocess.Popen[str],
-        runner_payload: str,
-    ) -> tuple[str, str, int]:
-        stdout_lines: list[str] = []
-        stderr_lines: list[str] = []
-        counts = {"tool_calls": 0, "messages": 0}
-
-        def read_stdout() -> None:
-            if process.stdout is None:
-                return
-            for line in process.stdout:
-                stdout_lines.append(line)
-                self._update_live_progress(line, counts)
-
-        def read_stderr() -> None:
-            if process.stderr is None:
-                return
-            stderr_lines.extend(process.stderr)
-
-        stdout_reader = threading.Thread(target=read_stdout, daemon=True)
-        stderr_reader = threading.Thread(target=read_stderr, daemon=True)
-        stdout_reader.start()
-        stderr_reader.start()
-        try:
-            if process.stdin is not None:
-                try:
-                    process.stdin.write(runner_payload)
-                except BrokenPipeError:
-                    pass
-                finally:
-                    process.stdin.close()
-            process.wait(timeout=self._timeout_sec)
-        except subprocess.TimeoutExpired:
-            self._cancelled.set()
-            self._terminate_process(process)
-        finally:
-            stdout_reader.join()
-            stderr_reader.join()
-        return "".join(stdout_lines), "".join(stderr_lines), process.returncode or 0
-
-    def _check_workspace_isolation(
-        self,
-        *,
-        runtime: CodexWorkspaceRuntime,
-        relay: CodexModelRelay,
-        env: dict[str, str],
-        logging_dir: Path | None,
-    ) -> None:
-        relay_script = (
-            "import os,urllib.error,urllib.request; "
-            "assert 'PITBENCH_RELAY_TOKEN' not in os.environ; "
-            f"url='http://{relay.container_ip}:{relay.port}/responses'; "
-            "\ntry: urllib.request.urlopen(url,timeout=10)\n"
-            "except urllib.error.HTTPError: pass\n"
-            f"print('{self._WORKSPACE_RELAY_MARKER}')"
-        )
-        public_script = (
-            "import urllib.error,urllib.request; "
-            "\ntry: urllib.request.urlopen('http://1.1.1.1',timeout=10)\n"
-            "except urllib.error.HTTPError as error:\n"
-            " assert error.code == 403\n"
-            f" print('{self._WORKSPACE_PUBLIC_BLOCKED_MARKER}')\n"
-            "else: raise SystemExit('public network unexpectedly reachable')"
-        )
-        results: list[tuple[str, str, int]] = []
-        for script in (relay_script, public_script):
-            process = subprocess.Popen(
-                self._build_workspace_sandbox_probe(runtime=runtime, script=script),
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
-            )
-            self._set_process(process)
-            try:
-                stdout, stderr = process.communicate(
-                    timeout=self._control_plane_timeout_sec
-                )
-            except subprocess.TimeoutExpired as error:
-                self._terminate_process(process)
-                process.communicate()
-                raise RuntimeError(
-                    "Codex workspace isolation preflight timed out"
-                ) from error
-            finally:
-                self._set_process(None)
-            results.append((stdout, stderr, process.returncode or 0))
-        relay_stdout, relay_stderr, relay_status = results[0]
-        public_stdout, public_stderr, public_status = results[1]
-        transcript = (
-            "[relay stdout]\n"
-            + relay_stdout
-            + "[relay stderr]\n"
-            + relay_stderr
-            + "[public stdout]\n"
-            + public_stdout
-            + "[public stderr]\n"
-            + public_stderr
-        )
-        if logging_dir is not None:
-            (logging_dir / "codex-preflight.log").write_text(transcript)
-        if (
-            relay_status != 0
-            or self._WORKSPACE_RELAY_MARKER not in relay_stdout
-            or public_status != 0
-            or self._WORKSPACE_PUBLIC_BLOCKED_MARKER not in public_stdout
-        ):
-            raise RuntimeError(
-                "Codex workspace did not prove that shell networking is limited "
-                "to the model relay; workspace backend refuses to continue: "
-                f"{transcript.strip()}"
-            )
-
-    def _perform_workspace_task(
-        self,
-        *,
-        instruction: str,
-        session: TmuxSession,
-        logging_dir: Path | None,
-        codex_binary: str,
-        env: dict[str, str],
-    ) -> AgentResult:
-        runtime = CodexWorkspaceRuntime(
-            container=session.container,
-            codex_binary=Path(codex_binary),
-            profile=self._profile,
-        )
-        relay_log = (
-            logging_dir / "codex-relay.jsonl" if logging_dir is not None else None
-        )
-        stdout = ""
-        stderr = ""
-        return_code = 1
-        with runtime:
-            if runtime.network is None or runtime.container_ip is None:
-                raise RuntimeError("Codex workspace network was not initialized")
-            with CodexModelRelay(
-                auth_path=self._codex_auth_path,
-                model=self._model_name,
-                allowed_client_ip=runtime.container_ip,
-                network=runtime.network,
-                image=session.container.image.id,
-                log_path=relay_log,
-                proxy_url=self._proxy_url,
-                max_requests=self._relay_max_requests,
-                max_total_tokens=self._relay_max_total_tokens,
-                max_concurrent_requests=self._relay_max_concurrent_requests,
-                max_duration_sec=self._relay_max_duration_sec,
-            ) as relay:
-                if relay.container_ip is None:
-                    raise RuntimeError("Codex relay sidecar address is unavailable")
-                runtime.configure_relay(relay.container_ip)
-                self._runner_metadata = runtime.metadata()
-                self._runner_metadata["relay"] = relay.metadata()
-                if logging_dir is not None:
-                    (logging_dir / "codex-runner.json").write_text(
-                        json.dumps(self._runner_metadata, indent=2, sort_keys=True)
-                        + "\n"
-                    )
-                if self._control_plane_preflight:
-                    self._check_workspace_isolation(
-                        runtime=runtime,
-                        relay=relay,
-                        env=env,
-                        logging_dir=logging_dir,
-                    )
-                process = subprocess.Popen(
-                    self._build_workspace_command(
-                        runtime=runtime,
-                        relay=relay,
-                        instruction=instruction,
-                    ),
-                    env=env,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    start_new_session=True,
-                )
-                self._set_process(process)
-                try:
-                    stdout, stderr, return_code = self._stream_process(process, "")
-                finally:
-                    self._set_process(None)
-        if logging_dir is not None:
-            (logging_dir / "codex.jsonl").write_text(stdout)
-            (logging_dir / "codex.stderr.log").write_text(stderr)
-        input_tokens, output_tokens = self._parse_usage(stdout)
-        if self._cancelled.is_set():
-            failure_mode = FailureMode.AGENT_TIMEOUT
-        elif return_code != 0 or not self._has_successful_workspace_call(stdout):
-            failure_mode = FailureMode.UNKNOWN_AGENT_ERROR
-        else:
-            failure_mode = FailureMode.NONE
-        return AgentResult(
-            total_input_tokens=input_tokens,
-            total_output_tokens=output_tokens,
-            total_cost=0.0,
-            failure_mode=failure_mode,
-        )
-
     def _set_process(self, process: subprocess.Popen[str] | None) -> None:
         with self._process_lock:
             self._process = process
@@ -827,22 +383,10 @@ Task:
         codex_binary = self._resolved_codex_binary()
         env = self._runtime_env()
         self._preflight(codex_binary, env)
+        runner_payload = self._runner_payload(env)
         self._cancelled.clear()
         if logging_dir is not None:
             logging_dir.mkdir(parents=True, exist_ok=True)
-        if self._runner_backend == "workspace":
-            return self._perform_workspace_task(
-                instruction=instruction,
-                session=session,
-                logging_dir=logging_dir,
-                codex_binary=codex_binary,
-                env=env,
-            )
-        runner_payload = self._runner_payload(env)
-        if logging_dir is not None:
-            (logging_dir / "codex-runner.json").write_text(
-                json.dumps(self._runner_metadata, indent=2, sort_keys=True) + "\n"
-            )
         if self._control_plane_preflight:
             self._check_control_plane(runner_payload, logging_dir)
         terminal_log = (
@@ -874,9 +418,16 @@ Task:
             )
             self._set_process(process)
             try:
-                stdout, stderr, return_code = self._stream_process(
-                    process, runner_payload
+                stdout, stderr = process.communicate(
+                    input=runner_payload,
+                    timeout=self._timeout_sec,
                 )
+                return_code = process.returncode
+            except subprocess.TimeoutExpired:
+                self._cancelled.set()
+                self._terminate_process(process)
+                stdout, stderr = process.communicate()
+                return_code = process.returncode
             finally:
                 self._set_process(None)
         if logging_dir is not None:

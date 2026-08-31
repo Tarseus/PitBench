@@ -63,7 +63,7 @@ class Dataset:
         """Initialize the dataset.
 
         Args:
-            name: Name of the dataset to cache from pitbench server
+            name: Name of the dataset to cache from fc-eval server
             version: Version of the dataset to cache
             path: Path to the dataset directory
             task_ids: Optional list of specific task IDs or glob patterns to load.
@@ -93,7 +93,7 @@ class Dataset:
         self._validate_task_paths()
 
     def _get_cache_path(self, name: str, version: str) -> Path:
-        return Path.home() / ".cache/pitbench" / name / version
+        return Path.home() / ".cache/fc-eval" / name / version
 
     def _cache_dataset(
         self,
@@ -102,13 +102,13 @@ class Dataset:
         cache_path: Path | None = None,
         overwrite: bool = False,
     ) -> Path:
-        """Cache a dataset from pitbench server.
+        """Cache a dataset from fc-eval server.
 
         Args:
             name: Name of the dataset
             version: Version of the dataset (X.Y.Z format)
             cache_path: Optional path to cache the dataset. If not provided, will use
-                ~/.cache/pitbench/<name>/<version>
+                ~/.cache/fc-eval/<name>/<version>
             overwrite: If True, overwrite the cached dataset if it already exists
 
         Returns:

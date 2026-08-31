@@ -34,18 +34,8 @@ class ProblemFamilyPlugin(ABC):
 
 
 class ProblemFamilyRegistry:
-    _PLUGIN_PATHS = {
-        "cvrp": "pitbench.families.cvrp:CVRPFamily",
-        "mip": "pitbench.families.external:MIPFamily",
-        "cp": "pitbench.families.external:CPFamily",
-    }
-
     @staticmethod
-    def load(family: str) -> ProblemFamilyPlugin:
-        try:
-            import_path = ProblemFamilyRegistry._PLUGIN_PATHS[family]
-        except KeyError as error:
-            raise ValueError(f"unsupported problem family: {family}") from error
+    def load(import_path: str) -> ProblemFamilyPlugin:
         if ":" not in import_path:
             raise ValueError("family plugin must be 'module:Class'")
         module_name, class_name = import_path.split(":", 1)

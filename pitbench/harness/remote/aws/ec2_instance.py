@@ -63,10 +63,10 @@ class EC2InstanceManager:
                 # Create security group with unique timestamp
                 # Add microseconds to avoid collisions in rapid parallel runs
                 timestamp = time.time()
-                sg_name = f"pitbench-{int(timestamp * 1000)}"
+                sg_name = f"fc-eval-{int(timestamp * 1000)}"
 
                 response = self.ec2_client.create_security_group(
-                    GroupName=sg_name, Description="PitBench EC2 Security Group"
+                    GroupName=sg_name, Description="FC Eval EC2 Security Group"
                 )
                 sg_id = response["GroupId"]
 
@@ -365,9 +365,9 @@ sysctl -p || true
                             "Tags": [
                                 {
                                     "Key": "Name",
-                                    "Value": f"pitbench{name_suffix}",
+                                    "Value": f"fc-eval{name_suffix}",
                                 },
-                                {"Key": "Project", "Value": "pitbench"},
+                                {"Key": "Project", "Value": "fc-eval"},
                             ],
                         }
                     ],
@@ -621,7 +621,7 @@ class EC2Instance:
         Behavior:
         - Builds a safe shell line, optionally switching to `user` and `workdir`.
         - Always configures SSM output to
-          `s3://{self.s3_transfer.bucket_name}/pitbench/{instance_id}/...`.
+          `s3://{self.s3_transfer.bucket_name}/fc-eval/{instance_id}/...`.
         - Reads inline stdout/stderr from `get_command_invocation`, and when S3
           output URLs are present it attempts to read those objects via
           `S3Transfer` (with fallback to inline output if S3 reads fail or are
@@ -642,7 +642,7 @@ class EC2Instance:
 
             output_kwargs = {
                 "OutputS3BucketName": self.s3_transfer.bucket_name,
-                "OutputS3KeyPrefix": f"pitbench/{self.instance_id}",
+                "OutputS3KeyPrefix": f"fc-eval/{self.instance_id}",
             }
 
             # Send command.

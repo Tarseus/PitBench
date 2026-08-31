@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import re
 import subprocess
-from collections import deque
 from pathlib import Path
-from typing import Callable
 
 from pitbench.evaluator.storage import ObservationStore
-from pitbench.schema.observation import CodeState, RunObservation
+from pitbench.schema.observation import RunObservation
 
 
 class DockerJudge:
@@ -22,12 +20,8 @@ class DockerJudge:
         private_root: Path,
         candidate_patch: Path,
         output_dir: Path,
-        cpus: float = 8.0,
+        cpus: float = 1.0,
         memory: str = "8g",
-        cpuset_cpus: str | None = None,
-        code_states: tuple[CodeState, ...] = tuple(CodeState),
-        parallel_runs: int = 1,
-        progress_callback: Callable[[str], None] | None = None,
     ) -> None:
         digest_pinned = re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image)
         local_image_id = re.fullmatch(r"sha256:[0-9a-f]{64}", image)
@@ -41,10 +35,6 @@ class DockerJudge:
         self.output_dir = output_dir.resolve()
         self.cpus = cpus
         self.memory = memory
-        self.cpuset_cpus = cpuset_cpus
-        self.code_states = code_states
-        self.parallel_runs = parallel_runs
-        self.progress_callback = progress_callback
 
     def run(self) -> list[RunObservation]:
         package_root = Path(__file__).resolve().parents[2]
@@ -95,34 +85,17 @@ class DockerJudge:
             "--observations",
             "/output/judge-observations.jsonl",
         ]
-        if self.cpuset_cpus is not None:
-            command[command.index("--memory"):command.index("--memory")] = [
-                "--cpuset-cpus",
-                self.cpuset_cpus,
-            ]
-        command.extend(["--parallel-runs", str(self.parallel_runs)])
-        for state in self.code_states:
-            command.extend(["--code-state", state.value])
-        process = subprocess.Popen(
+        completed = subprocess.run(
             command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            check=False,
+            capture_output=True,
             text=True,
-            bufsize=1,
         )
-        recent_output: deque[str] = deque(maxlen=100)
-        if process.stdout is not None:
-            for raw_line in process.stdout:
-                line = raw_line.rstrip()
-                if line:
-                    recent_output.append(line)
-                    prefix = "PITBENCH_PROGRESS "
-                    if line.startswith(prefix) and self.progress_callback is not None:
-                        self.progress_callback(line.removeprefix(prefix))
-        returncode = process.wait()
-        if returncode:
-            detail = "\n".join(recent_output) or "no diagnostic was emitted"
-            raise RuntimeError(f"isolated judge failed: {detail}")
+        if completed.returncode:
+            raise RuntimeError(
+                "isolated judge failed: "
+                + (completed.stderr.strip() or completed.stdout.strip())
+            )
         if not observations.is_file():
             raise RuntimeError("isolated judge produced no observations")
         return ObservationStore.read_jsonl(observations)

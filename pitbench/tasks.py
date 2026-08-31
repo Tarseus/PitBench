@@ -15,10 +15,6 @@ class TaskValidationError(ValueError):
     pass
 
 
-class TaskNotFoundError(TaskValidationError):
-    pass
-
-
 @dataclass(frozen=True)
 class TaskRecord:
     manifest_path: Path
@@ -36,18 +32,10 @@ class TaskCatalog:
         self.root = root.resolve()
         self.manifest_dir = self.root / "manifests" / "tasks"
 
-    @staticmethod
-    def _load_record(path: Path) -> TaskRecord:
-        record = TaskRecord(path, PitBenchTask.from_yaml(path))
-        if record.task.task_id != path.stem:
-            raise TaskValidationError(
-                f"{path}: task ID {record.task.task_id!r} must match manifest filename"
-            )
-        return record
-
     def records(self) -> list[TaskRecord]:
         records = [
-            self._load_record(path) for path in sorted(self.manifest_dir.glob("*.yaml"))
+            TaskRecord(path, PitBenchTask.from_yaml(path))
+            for path in sorted(self.manifest_dir.glob("*.yaml"))
         ]
         ids = [record.task.task_id for record in records]
         if len(ids) != len(set(ids)):
@@ -61,7 +49,7 @@ class TaskCatalog:
                 f"{task.task_id}: release commit must be a full SHA-1"
             )
         RepositoryPluginRegistry.load(task.repository.plugin)
-        ProblemFamilyRegistry.load(task.problem_family)
+        ProblemFamilyRegistry.load(task.evaluation.family_plugin)
 
         for population in task.populations:
             if population.kind == PopulationKind.AGENT_DEV:
@@ -92,16 +80,6 @@ class TaskCatalog:
                 raise TaskValidationError(
                     f"{task.task_id}: judge population must use private:// storage"
                 )
-
-    def validate_one(self, task_id: str) -> TaskRecord:
-        if not task_id or Path(task_id).name != task_id:
-            raise TaskNotFoundError(f"unknown task ID: {task_id}")
-        manifest_path = self.manifest_dir / f"{task_id}.yaml"
-        if not manifest_path.is_file():
-            raise TaskNotFoundError(f"unknown task ID: {task_id}")
-        record = self._load_record(manifest_path)
-        self.validate(record)
-        return record
 
     def validate_all(self) -> list[TaskRecord]:
         records = self.records()

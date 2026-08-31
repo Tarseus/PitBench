@@ -1,85 +1,16 @@
-import argparse
 import json
 import os
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from adapters.pitbench.agent_tooling import write_agent_tooling
-from pitbench.agent_tools import AgentTool
 from pitbench.instances import materialize_population
 from pitbench.schema.task import PopulationKind
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
-
-
-def test_pyvrp_runner_check_imports_native_extension(monkeypatch) -> None:
-    from pitbench import agent_cli
-
-    monkeypatch.setattr(
-        agent_cli.importlib,
-        "import_module",
-        lambda name: (_ for _ in ()).throw(ModuleNotFoundError("pyvrp._pyvrp")),
-    )
-
-    available, detail = agent_cli._runner_available(
-        {"runner_requirement": "pyvrp_import"}
-    )
-
-    assert available is False
-    assert "pyvrp._pyvrp" in detail
-
-
-def test_agent_cli_exposes_only_configured_commands(monkeypatch, tmp_path) -> None:
-    from pitbench import agent_cli
-
-    config = tmp_path / "config.json"
-    config.write_text(json.dumps({"agent_tools": ["bench"]}))
-    monkeypatch.setenv("PITBENCH_AGENT_CONFIG", str(config))
-
-    command_parser = agent_cli.parser()
-    subcommands = next(
-        action
-        for action in command_parser._actions
-        if isinstance(action, argparse._SubParsersAction)
-    )
-
-    assert set(subcommands.choices) == {"bench"}
-
-
-def test_run_one_reports_timeout_as_failure(monkeypatch, tmp_path, capsys) -> None:
-    from pitbench import agent_cli
-
-    repository = tmp_path / "repo"
-    repository.mkdir()
-    runs = tmp_path / "runs"
-    instance = tmp_path / "dev_001.json"
-    instance.write_text("{}\n")
-    monkeypatch.setenv("PITBENCH_REPO", str(repository))
-    monkeypatch.setenv("PITBENCH_RUNS", str(runs))
-    monkeypatch.setattr(
-        agent_cli.subprocess,
-        "run",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            subprocess.TimeoutExpired(args[0], kwargs["timeout"])
-        ),
-    )
-
-    succeeded = agent_cli._run_one(
-        {"runner": ["solver", "{instance}"], "threads": 1},
-        instance,
-        seed=7,
-        budget=10,
-        dry_run=False,
-    )
-
-    assert succeeded is False
-    assert capsys.readouterr().err == (
-        "runner timed out after 70 seconds: dev_001.json\n"
-    )
 
 
 @pytest.mark.parametrize(
@@ -95,12 +26,7 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
     )
     dev = task_dir / "dev_instances"
     instances = materialize_population(ROOT / development.manifest, dev)
-    write_agent_tooling(
-        repository_root=ROOT,
-        task=record.task,
-        task_dir=task_dir,
-        agent_tools=frozenset(AgentTool),
-    )
+    write_agent_tooling(repository_root=ROOT, task=record.task, task_dir=task_dir)
 
     repository = task_dir / "repo"
     repository.mkdir()
@@ -144,11 +70,13 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
     payload = json.loads(inspected.stdout)
     assert payload["task_id"] == record.task.task_id
     assert len(payload["development_instances"]) == development.size
-    assert payload["editable_paths"] == record.task.repository.editable_paths
-    assert payload["validation_available"] is True
 
     instance = instances[0].stem
-    for command in (["bench", "--split", "dev", "--instance", instance, "--dry-run"],):
+    for command in (
+        ["bench", "--split", "dev", "--instance", instance, "--dry-run"],
+        ["profile", "--instance", instance, "--dry-run"],
+        ["diff"],
+    ):
         subprocess.run(
             [str(executable), *command],
             env=environment,
@@ -163,96 +91,3 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
         if path.is_file()
     )
     assert "private://" not in visible
-
-
-def test_agent_cli_workspace_verifies_capability_boundary(
-    monkeypatch, tmp_path, capsys
-):
-    from pitbench import agent_cli
-
-    repository = tmp_path / "repo"
-    repository.mkdir()
-    git_dir = repository / ".git"
-    git_dir.mkdir()
-    editable = repository / "src"
-    editable.mkdir()
-    config = tmp_path / "config.json"
-    config.write_text(json.dumps({"editable_paths": ["src"]}))
-    monkeypatch.setenv("PITBENCH_REPO", str(repository))
-    monkeypatch.setenv("PITBENCH_AGENT_CONFIG", str(config))
-
-    git_dir.chmod(0o555)
-    repository.chmod(0o555)
-    try:
-        assert agent_cli.workspace_command(SimpleNamespace()) == 0
-        payload = json.loads(capsys.readouterr().out)
-        assert payload["enforced"] is True
-        assert payload["repository_root_writable"] is False
-        assert payload["git_metadata_writable"] is False
-        assert payload["editable_paths_writable"] == {"src": True}
-    finally:
-        repository.chmod(0o755)
-        git_dir.chmod(0o755)
-
-
-def test_agent_cli_validate_uses_clean_clone_and_candidate_patch(monkeypatch, tmp_path):
-    from pitbench import agent_cli
-
-    repository = tmp_path / "repo"
-    repository.mkdir()
-    subprocess.run(["git", "init", "--quiet"], cwd=repository, check=True)
-    (repository / "README.md").write_text("fixture\n")
-    subprocess.run(["git", "add", "README.md"], cwd=repository, check=True)
-    subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.name=PitBench",
-            "-c",
-            "user.email=pitbench.invalid",
-            "commit",
-            "--quiet",
-            "-m",
-            "fixture",
-        ],
-        cwd=repository,
-        check=True,
-    )
-    (repository / "candidate.txt").write_text("changed\n")
-    generated = repository / ".pitbench/runs"
-    generated.mkdir(parents=True)
-    (generated / "result.json").write_text("{}\n")
-    config = tmp_path / "config.json"
-    config.write_text(
-        json.dumps(
-            {
-                "editable_paths": ["src"],
-                "validation_commands": [
-                    {
-                        "argv": [
-                            "python",
-                            "-c",
-                            (
-                                "from pathlib import Path; "
-                                "assert Path('candidate.txt').read_text() == "
-                                "'changed\\n'; "
-                                "assert not Path('.pitbench/runs/result.json').exists()"
-                            ),
-                        ],
-                        "cwd": ".",
-                        "env": {},
-                        "timeout_sec": 30,
-                    }
-                ],
-            }
-        )
-    )
-    monkeypatch.setenv("PITBENCH_REPO", str(repository))
-    monkeypatch.setenv("PITBENCH_AGENT_CONFIG", str(config))
-
-    index_before = (repository / ".git/index").read_bytes()
-    assert agent_cli.validate_command(SimpleNamespace()) == 0
-    assert (repository / ".git/index").read_bytes() == index_before
-    assert "?? candidate.txt" in subprocess.check_output(
-        ["git", "status", "--short"], cwd=repository, text=True
-    )

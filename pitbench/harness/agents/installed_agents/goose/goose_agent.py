@@ -52,8 +52,8 @@ class GooseAgent(AbstractInstalledAgent):
         return yaml.dump(
             {
                 "version": "1.0.0",
-                "title": "pitbench",
-                "description": "pitbench recipe",
+                "title": "fc-eval",
+                "description": "fc-eval recipe",
                 "instructions": (
                     "You are given a task and you need to complete it. "
                     "You are currently executing in a docker container where you are "
@@ -73,14 +73,14 @@ class GooseAgent(AbstractInstalledAgent):
         recipe_yaml = self._create_recipe_yaml(instruction)
 
         make_recipe_command = TerminalCommand(
-            command=f"cat > ~/pitbench-recipe.yaml << 'EOF'\n{recipe_yaml}EOF",
+            command=f"cat > ~/fc-eval-recipe.yaml << 'EOF'\n{recipe_yaml}EOF",
             min_timeout_sec=1.0,
             block=False,
             append_enter=True,
         )
 
         launch_goose_command = TerminalCommand(
-            command="goose run --recipe ~/pitbench-recipe.yaml",
+            command="goose run --recipe ~/fc-eval-recipe.yaml",
             min_timeout_sec=0.0,
             max_timeout_sec=float("inf"),
             block=True,

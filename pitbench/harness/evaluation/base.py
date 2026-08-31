@@ -14,7 +14,6 @@ class EvaluationRequest(BaseModel):
     task_id: str
     task_path: Path
     candidate_patch_path: Path
-    candidate_patch_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     output_dir: Path
     agent_name: str
     model_name: str | None = None

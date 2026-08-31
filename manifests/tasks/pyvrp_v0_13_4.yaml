@@ -1,5 +1,6 @@
 schema_version: "2.0"
 task_id: pyvrp_v0_13_4
+split: development
 release:
   repository: PyVRP/PyVRP
   version: "0.13.4"
@@ -8,31 +9,48 @@ release:
   tree_sha: 2d24f7fd1af5b69a732d6baf2ef7d870666eb515
   released_at: 2026-05-20T11:44:49Z
   url: https://github.com/PyVRP/PyVRP/releases/tag/v0.13.4
-task_type: heuristic_solver
+task_type: solver_search
 problem_family: cvrp
 optimization_scope: local_search_and_search_efficiency
 instruction: >-
-  Improve solver performance while preserving buildability, feasibility, objective
-  semantics, and solution format compatibility. Search policies and trajectories may
-  change. Use only the visible development instances.
+  Improve solver performance while preserving feasibility, objective semantics, and
+  accepted solution behavior. Use only the visible development instances.
 information_regime: snapshot_only
 repository:
   clone_url: https://github.com/PyVRP/PyVRP.git
   language: cpp_python
   plugin: pitbench.repositories.pyvrp:PyVRPRepositoryPlugin
-  editable_paths: [pyvrp]
-  agent_image: ghcr.io/tarseus/pitbench-pyvrp:18815548d04a90a0e5eea2a0bed53a81ea9d2d49
 oracle:
     kind: best_known_solution
     source: private://calibration/cvrplib_x/oracle.yaml
     objective_sense: minimize
 evaluation:
+  family_plugin: pitbench.families.cvrp:CVRPFamily
   budgets_sec: [1.0, 5.0, 10.0]
   solver_seeds: [0, 1, 2, 3, 4]
   threads: 1
   verifier: cvrp_independent
+  validation_build:
+    compiler: gcc
+    compiler_version: 13.3.0
+    flags: [-O1, -g]
+    sanitizers: [address, undefined]
+  performance_build:
+    compiler: gcc
+    compiler_version: 13.3.0
+    flags: [-O3, -DNDEBUG]
+  sensitivity:
+    scale_descriptor: customer_count
+    equivalence_transform: customer_relabel
+    equivalence_instances_per_population: 4
+    equivalence_budgets_sec: [5.0]
+    equivalence_solver_seeds: [0, 1, 2, 3, 4]
   decision:
     minimum_success_rate_delta: 0.0
+    minimum_operational_speedup: 0.95
+    minimum_cpu_speedup: 0.95
+    maximum_peak_rss_ratio: 1.05
+    require_complete_sensitivity: true
 populations:
   - name: agent_dev
     kind: agent_dev
