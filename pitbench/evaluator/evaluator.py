@@ -54,11 +54,11 @@ class PitBenchEvaluator(Evaluator):
             CodeState(value)
             for value in config.get("code_states", [state.value for state in CodeState])
         )
-        validity = evaluator_validity(
+        preflight_validity = evaluator_validity(
             patch_exists=patch_exists,
             fixture_mode=fixture_mode,
         )
-        if not validity.accepted:
+        if not preflight_validity.accepted:
             observations = []
         elif fixture_mode:
             limit = int(config.get("fixture_instances_per_population", 2))
@@ -97,6 +97,12 @@ class PitBenchEvaluator(Evaluator):
             if any(item.code_state != CodeState.BASE for item in cached_base):
                 raise ValueError("cached BASE artifact contains non-BASE observations")
             observations = [*cached_base, *observations]
+
+        validity = evaluator_validity(
+            patch_exists=patch_exists,
+            fixture_mode=fixture_mode,
+            observations=observations,
+        )
 
         parquet_path = request.output_dir / "trials.parquet"
         ObservationStore.write(parquet_path, observations)

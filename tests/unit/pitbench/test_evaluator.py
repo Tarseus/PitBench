@@ -7,7 +7,7 @@ import pytest
 from pitbench.evaluator.evaluator import PitBenchEvaluator
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.harness.evaluation import EvaluationRequest
-from pitbench.schema.observation import CodeState
+from pitbench.schema.observation import CodeState, RunObservation, RunStatus
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -314,3 +314,50 @@ def test_evaluator_does_not_gate_candidate_paths(tmp_path: Path) -> None:
     assert envelope.completed is True
     assert envelope.payload["validity"]["accepted"] is True
     assert envelope.payload["summary"]["observation_count"] > 0
+
+
+def test_semantically_invalid_agent_run_disqualifies_candidate(
+    tmp_path: Path,
+) -> None:
+    record = TaskCatalog(ROOT).records()[0]
+    output = tmp_path / "output"
+    output.mkdir()
+    candidate = output / "candidate.patch"
+    candidate.write_text("")
+    invalid = RunObservation(
+        task_id=record.task.task_id,
+        code_state=CodeState.AGENT,
+        population="judge_id",
+        population_kind="judge_id",
+        instance_id="invalid",
+        instance_seed=0,
+        solver_seed=0,
+        budget_sec=1.0,
+        status=RunStatus.INVALID,
+        valid=False,
+    )
+
+    with patch(
+        "pitbench.evaluator.evaluator.FixtureJudge.run",
+        return_value=[invalid],
+    ):
+        envelope = PitBenchEvaluator().envelope(
+            EvaluationRequest(
+                task_id=record.task.task_id,
+                task_path=ROOT,
+                candidate_patch_path=candidate,
+                output_dir=output,
+                agent_name="fixture",
+                evaluator_config={
+                    "manifest_path": str(record.manifest_path),
+                    "fixture_mode": True,
+                },
+            )
+        )
+
+    assert envelope.completed is True
+    assert envelope.payload["validity"]["accepted"] is False
+    assert envelope.payload["validity"]["checks"][-1]["code"] == "solution"
+    assert envelope.payload["observations"][0]["status"] == "invalid"
+    assert envelope.payload["summary"]["performance"] is not None
+    assert envelope.payload["summary"]["decision"]["is_resolved"] is False
