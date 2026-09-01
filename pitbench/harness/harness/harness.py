@@ -1522,6 +1522,7 @@ class Harness:
                 trial_handler.task.max_agent_timeout_sec
                 * self._global_timeout_multiplier
             )
+        wall_timeout_sec = agent.wall_timeout_sec(agent_timeout_sec)
 
         try:
             result = asyncio.run(
@@ -1529,7 +1530,7 @@ class Harness:
                     trial_handler=trial_handler,
                     session=session,
                     logging_dir=trial_handler.trial_paths.agent_logging_dir,
-                    timeout_sec=agent_timeout_sec,
+                    timeout_sec=wall_timeout_sec,
                     agent=agent,
                     portkey_metadata=portkey_metadata,
                     portkey_trace_id=portkey_trace_id,
@@ -1551,7 +1552,7 @@ class Harness:
                 )
             self._logger.warning(
                 f"Agent timed out after "
-                f"{agent_timeout_sec}s for task "
+                f"{wall_timeout_sec}s for task "
                 f"{trial_handler.task_id}."
             )
 

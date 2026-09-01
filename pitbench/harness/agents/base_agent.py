@@ -139,6 +139,10 @@ class BaseAgent(ABC):
         """Cancel in-flight work after a harness timeout."""
         return None
 
+    def wall_timeout_sec(self, active_timeout_sec: float) -> float:
+        """Return the wall-clock timeout needed for an active-time budget."""
+        return active_timeout_sec
+
     @abstractmethod
     def perform_task(
         self,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -59,6 +60,14 @@ Task:
         "stream was interrupted",
         "temporarily unavailable",
     )
+    _QUOTA_MARKER = "individual quota reached"
+    _QUOTA_RESET_PATTERN = re.compile(
+        r"resets in\s+"
+        r"(?:(?P<hours>\d+)h)?"
+        r"(?:(?P<minutes>\d+)m)?"
+        r"(?:(?P<seconds>\d+)s)?",
+        re.IGNORECASE,
+    )
 
     @staticmethod
     def name() -> str:
@@ -82,6 +91,9 @@ Task:
         effort: str | None = None,
         proxy_url: str | None = None,
         network_retries: int = 1,
+        quota_retries: int = 1,
+        quota_max_wait_sec: float = 7200.0,
+        quota_retry_buffer_sec: float = 5.0,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -116,6 +128,15 @@ Task:
         if network_retries not in {0, 1}:
             raise ValueError("network_retries must be 0 or 1")
         self._network_retries = network_retries
+        if quota_retries < 0:
+            raise ValueError("quota_retries must be non-negative")
+        if quota_max_wait_sec <= 0:
+            raise ValueError("quota_max_wait_sec must be positive")
+        if quota_retry_buffer_sec < 0:
+            raise ValueError("quota_retry_buffer_sec must be non-negative")
+        self._quota_retries = quota_retries
+        self._quota_max_wait_sec = quota_max_wait_sec
+        self._quota_retry_buffer_sec = quota_retry_buffer_sec
         self._process: subprocess.Popen[str] | None = None
         self._process_lock = threading.Lock()
         self._cancelled = threading.Event()
@@ -358,6 +379,29 @@ Task:
         combined = "\n".join(messages).lower()
         return any(marker in combined for marker in cls._RETRYABLE_NETWORK_MARKERS)
 
+    @classmethod
+    def _quota_retry_delay(cls, output: str, stderr: str) -> float | None:
+        messages = [stderr]
+        for event in cls._events(output):
+            if event.get("event") != "result":
+                continue
+            result = event.get("result") or {}
+            if result.get("status") == "SUCCESS":
+                return None
+            messages.extend(
+                [str(result.get("error") or ""), str(result.get("response") or "")]
+            )
+        combined = "\n".join(messages)
+        if cls._QUOTA_MARKER not in combined.lower():
+            return None
+        match = cls._QUOTA_RESET_PATTERN.search(combined)
+        if match is None or not any(match.groupdict().values()):
+            return None
+        hours = int(match.group("hours") or 0)
+        minutes = int(match.group("minutes") or 0)
+        seconds = int(match.group("seconds") or 0)
+        return float(hours * 3600 + minutes * 60 + seconds)
+
     @staticmethod
     def _continuation_instruction(instruction: str) -> str:
         return (
@@ -367,6 +411,19 @@ Task:
             "changes, then run relevant repository tests before finishing. The "
             f"original task was:\n{instruction}"
         )
+
+    @staticmethod
+    def _quota_continuation_instruction(instruction: str) -> str:
+        return (
+            "The previous attempt paused because the Antigravity quota was reached. "
+            "Continue from the existing task repository state instead of restarting. "
+            "Inspect the current diff, finish or repair the implementation, remove "
+            "temporary changes, then run relevant repository tests before finishing. "
+            f"The original task was:\n{instruction}"
+        )
+
+    def wall_timeout_sec(self, active_timeout_sec: float) -> float:
+        return active_timeout_sec + self._quota_retries * self._quota_max_wait_sec
 
     @classmethod
     def _has_successful_mcp_call(cls, output: str) -> bool:
@@ -450,7 +507,9 @@ Task:
             if mcp_server.url is None:
                 raise RuntimeError("PitBench MCP server URL is unavailable")
             attempt_instruction = instruction
-            for attempt in range(self._network_retries + 1):
+            network_attempts = 0
+            quota_attempts = 0
+            while True:
                 process = subprocess.Popen(
                     self._build_command(
                         mcp_url=mcp_server.url,
@@ -486,17 +545,48 @@ Task:
                 if attempt_stderr and not attempt_stderr.endswith("\n"):
                     stderr += "\n"
 
-                should_retry = (
-                    attempt < self._network_retries
+                if self._has_successful_result(attempt_stdout):
+                    break
+
+                quota_delay = self._quota_retry_delay(
+                    attempt_stdout, attempt_stderr
+                )
+                quota_wait = (
+                    quota_delay + self._quota_retry_buffer_sec
+                    if quota_delay is not None
+                    else None
+                )
+                if (
+                    quota_wait is not None
+                    and quota_attempts < self._quota_retries
+                    and quota_wait <= self._quota_max_wait_sec
+                    and not self._cancelled.is_set()
+                ):
+                    quota_attempts += 1
+                    deadline += quota_wait
+                    self._report_progress(
+                        "Antigravity quota reached; waiting "
+                        f"{quota_wait:g}s before retry "
+                        f"{quota_attempts}/{self._quota_retries}"
+                    )
+                    if self._cancelled.wait(quota_wait):
+                        break
+                    attempt_instruction = self._quota_continuation_instruction(
+                        instruction
+                    )
+                    continue
+
+                should_retry_network = (
+                    network_attempts < self._network_retries
                     and not self._cancelled.is_set()
                     and time.monotonic() < deadline
-                    and not self._has_successful_result(attempt_stdout)
                     and self._has_retryable_network_error(
                         attempt_stdout, attempt_stderr
                     )
                 )
-                if not should_retry:
+                if not should_retry_network:
                     break
+                network_attempts += 1
                 attempt_instruction = self._continuation_instruction(instruction)
         if logging_dir is not None:
             (logging_dir / "antigravity.jsonl").write_text(stdout)

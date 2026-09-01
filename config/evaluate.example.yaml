@@ -40,3 +40,7 @@ agents:
     container_runner_image: python:3.13-slim-bookworm
     profile_path: null
     proxy_url: null
+    # Quota waits do not consume the task's active agent-time budget.
+    quota_retries: 1
+    quota_max_wait_sec: 7200
+    quota_retry_buffer_sec: 5

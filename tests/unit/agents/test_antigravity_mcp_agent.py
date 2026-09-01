@@ -205,6 +205,45 @@ def test_antigravity_combines_retry_usage_and_detects_network_errors():
     assert AntigravityMCPAgent._parse_usage(f"{failed}\n{succeeded}") == (17, 5)
 
 
+@pytest.mark.parametrize(
+    ("reset", "expected"),
+    [
+        ("9m56s", 596.0),
+        ("57m0s", 3420.0),
+        ("1h47m38s", 6458.0),
+    ],
+)
+def test_antigravity_parses_quota_reset_delay(reset, expected):
+    failed = json.dumps(
+        {
+            "event": "result",
+            "result": {
+                "status": "ERROR",
+                "error": (
+                    "Individual quota reached. Please upgrade your subscription "
+                    f"to increase your limits. Resets in {reset}."
+                ),
+            },
+        }
+    )
+
+    assert AntigravityMCPAgent._quota_retry_delay(failed, "") == expected
+
+
+def test_antigravity_ignores_quota_text_without_reset_delay():
+    failed = json.dumps(
+        {
+            "event": "result",
+            "result": {
+                "status": "ERROR",
+                "error": "Individual quota reached.",
+            },
+        }
+    )
+
+    assert AntigravityMCPAgent._quota_retry_delay(failed, "") is None
+
+
 def test_antigravity_rejects_more_than_one_network_retry():
     with pytest.raises(ValueError, match="network_retries must be 0 or 1"):
         AntigravityMCPAgent(model_name="gemini-3.7-flash-high", network_retries=2)
@@ -285,6 +324,89 @@ def test_antigravity_retries_network_failure_in_existing_workspace(tmp_path):
     assert "Continue from the existing task repository state" in retry_prompt
     assert result.failure_mode == FailureMode.NONE
     assert (result.total_input_tokens, result.total_output_tokens) == (17, 5)
+
+
+def test_antigravity_waits_for_quota_reset_then_retries(tmp_path):
+    failed = json.dumps(
+        {
+            "event": "result",
+            "result": {
+                "status": "ERROR",
+                "error": (
+                    "Individual quota reached. Please upgrade your subscription "
+                    "to increase your limits. Resets in 9m56s."
+                ),
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            },
+        }
+    )
+    completed_tool = json.dumps(
+        {
+            "event": "step_update",
+            "step_update": {
+                "state": "DONE",
+                "tool_info": {
+                    "name": "call_mcp_tool",
+                    "parameters": {
+                        "server_name": "pitbench",
+                        "tool_name": "run_command",
+                    },
+                    "output": {"exit_code": 0},
+                },
+            },
+        }
+    )
+    succeeded = "\n".join(
+        [
+            completed_tool,
+            json.dumps(
+                {
+                    "event": "result",
+                    "result": {
+                        "status": "SUCCESS",
+                        "usage": {"input_tokens": 7, "output_tokens": 2},
+                    },
+                }
+            ),
+        ]
+    )
+    first_process = MagicMock(returncode=0)
+    first_process.communicate.return_value = (failed, "")
+    second_process = MagicMock(returncode=0)
+    second_process.communicate.return_value = (succeeded, "")
+    agent = AntigravityMCPAgent(model_name="gemini-3.7-flash-high")
+    agent._resolved_agy_binary = MagicMock(return_value="/usr/bin/agy")
+    agent._runtime_env = MagicMock(return_value={})
+    agent._preflight = MagicMock()
+    agent._runner_payload = MagicMock(return_value="{}")
+
+    with (
+        patch(
+            "pitbench.harness.agents.antigravity_mcp_agent.LoopbackMCPServer"
+        ) as server_class,
+        patch(
+            "pitbench.harness.agents.antigravity_mcp_agent.subprocess.Popen",
+            side_effect=[first_process, second_process],
+        ) as popen,
+        patch.object(agent._cancelled, "wait", return_value=False) as wait,
+    ):
+        server_class.return_value.__enter__.return_value.url = (
+            "http://127.0.0.1:43210/mcp"
+        )
+        result = agent.perform_task(
+            "Improve it.",
+            SimpleNamespace(container=MagicMock()),
+            logging_dir=tmp_path,
+        )
+
+    wait.assert_called_once_with(601.0)
+    assert popen.call_count == 2
+    retry_command = popen.call_args_list[1].args[0]
+    retry_prompt = retry_command[retry_command.index("--print") + 1]
+    assert "quota was reached" in retry_prompt
+    assert result.failure_mode == FailureMode.NONE
+    assert (result.total_input_tokens, result.total_output_tokens) == (7, 2)
+    assert agent.wall_timeout_sec(3600) == 10800
 
 
 def test_antigravity_requires_completed_pitbench_mcp_call():

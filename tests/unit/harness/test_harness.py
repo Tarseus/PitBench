@@ -3,11 +3,14 @@
 import json
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 
 from pitbench.harness.agents import AgentName
+from pitbench.harness.agents.base_agent import AgentResult
+from pitbench.harness.agents.failure_mode import FailureMode
 from pitbench.harness.harness.harness import Harness
 from pitbench.harness.utils.run_lock import (
     MULTI_AGENT_GLOBAL_KWARGS_KEY,
@@ -81,6 +84,41 @@ class TestHarnessInitialization:
 
         harness._agent_kwargs = {"runner_backend": "container"}
         assert harness._needs_nested_command_sandbox() is False
+
+
+    def test_agent_can_extend_wall_timeout_without_changing_active_budget(
+        self, tmp_path
+    ):
+        harness = object.__new__(Harness)
+        harness._global_agent_timeout_sec = None
+        harness._global_timeout_multiplier = 1.0
+        harness._logger = Mock()
+        captured = {}
+
+        async def run_agent_with_timeout(**kwargs):
+            captured.update(kwargs)
+            return AgentResult()
+
+        harness._run_agent_with_timeout = run_agent_with_timeout
+        agent = Mock()
+        agent.wall_timeout_sec.return_value = 10800.0
+        trial_handler = SimpleNamespace(
+            instruction="Improve it.",
+            task_id="task-1",
+            task=SimpleNamespace(max_agent_timeout_sec=3600.0),
+            trial_paths=SimpleNamespace(agent_logging_dir=tmp_path),
+        )
+
+        result, failure_mode = harness._run_agent(
+            session=Mock(),
+            trial_handler=trial_handler,
+            agent=agent,
+        )
+
+        agent.wall_timeout_sec.assert_called_once_with(3600.0)
+        assert captured["timeout_sec"] == 10800.0
+        assert result == AgentResult()
+        assert failure_mode == FailureMode.NONE
 
     def test_remote_build_rejects_codex_workspace_backend(self):
         harness = object.__new__(Harness)
