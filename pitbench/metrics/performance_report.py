@@ -231,6 +231,8 @@ def _budget_performance(
 
 def compute_performance_report(
     observations: Sequence[RunObservation],
+    *,
+    primary_budget_sec: float,
 ) -> PerformanceReport:
     originals = [
         item for item in observations if item.equivalence_parent_id is None
@@ -246,6 +248,14 @@ def compute_performance_report(
 
     instance_set_kinds = sorted(by_kind)
     primary_kind = "judge_id" if "judge_id" in by_kind else instance_set_kinds[0]
+    primary_kind_budgets = {
+        item.budget_sec for item in by_kind[primary_kind]
+    }
+    if primary_budget_sec not in primary_kind_budgets:
+        raise ValueError(
+            f"declared primary budget {primary_budget_sec:g}s has no observations "
+            f"for primary instance set {primary_kind!r}"
+        )
     instance_sets: dict[str, InstanceSetPerformance] = {}
     for kind_index, kind in enumerate(instance_set_kinds):
         by_budget = {}
@@ -261,10 +271,7 @@ def compute_performance_report(
             by_budget=by_budget,
         )
 
-    primary_budget = max(
-        item.budget_sec for item in by_kind[primary_kind]
-    )
-    primary = instance_sets[primary_kind].by_budget[f"{primary_budget:g}"]
+    primary = instance_sets[primary_kind].by_budget[f"{primary_budget_sec:g}"]
 
     held_out_retention: list[HeldOutRetention] = []
     if "judge_id" in instance_sets and "judge_shift" in instance_sets:
@@ -290,7 +297,7 @@ def compute_performance_report(
 
     return PerformanceReport(
         primary_instance_set_kind=primary_kind,
-        primary_budget_sec=primary_budget,
+        primary_budget_sec=primary_budget_sec,
         solver_seeds=solver_seeds,
         budgets_sec=budgets,
         primary=primary,

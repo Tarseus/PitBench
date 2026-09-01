@@ -99,7 +99,10 @@ def test_pyvrp_plan_materializes_performance_first_panel(
         assert verified.feasible
         assert verified.objective == case.anchor
 
-    performance = compute_performance_report(observations)
+    performance = compute_performance_report(
+        observations,
+        primary_budget_sec=task.evaluation.primary_budget_sec,
+    )
     decision = compute_performance_decision(
         performance,
         task.evaluation.decision,

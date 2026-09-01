@@ -25,6 +25,7 @@ oracle:
   objective_sense: minimize
 evaluation:
   budgets_sec: [10.0, 30.0]
+  primary_budget_sec: 30.0
   solver_seeds: [0, 1, 2]
   threads: 1
   verifier: private://oracles/verifiers/mip_solution

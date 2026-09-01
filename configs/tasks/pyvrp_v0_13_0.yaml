@@ -28,6 +28,7 @@ oracle:
     objective_sense: minimize
 evaluation:
   budgets_sec: [1.0, 5.0, 10.0]
+  primary_budget_sec: 10.0
   solver_seeds: [0, 1, 2, 3, 4]
   threads: 1
   verifier: cvrp_independent

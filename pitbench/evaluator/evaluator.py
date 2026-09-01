@@ -123,7 +123,14 @@ class PitBenchEvaluator(Evaluator):
                 media_type="application/vnd.apache.parquet",
             ),
         )
-        performance = compute_performance_report(observations) if observations else None
+        performance = (
+            compute_performance_report(
+                observations,
+                primary_budget_sec=task.evaluation.primary_budget_sec,
+            )
+            if observations
+            else None
+        )
         if performance is None:
             decision = None
         else:

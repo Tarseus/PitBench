@@ -32,7 +32,7 @@ from pitbench.metrics.performance_report import (
     compute_performance_report,
     format_performance_report,
 )
-from pitbench.schema.task import InstanceSetKind
+from pitbench.schema.task import InstanceSetKind, PitBenchTask
 from pitbench.tasks import TaskCatalog, TaskNotFoundError
 
 app = typer.Typer(help="PitBench task, execution harness, and evaluation tooling.")
@@ -593,6 +593,16 @@ def report_command(
             help="Path to trials.parquet, observations file, or evaluation directory"
         ),
     ],
+    task_config: Annotated[
+        Path,
+        typer.Option(
+            "--task-config",
+            help="Task config declaring the report's primary budget",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Output report as structured JSON"),
@@ -622,7 +632,20 @@ def report_command(
     else:
         observations = ObservationStore.read(target)
 
-    performance_report = compute_performance_report(observations)
+    task = PitBenchTask.from_yaml(task_config)
+    observation_task_ids = {item.task_id for item in observations}
+    if observation_task_ids != {task.task_id}:
+        observed = ", ".join(sorted(observation_task_ids)) or "none"
+        raise typer.BadParameter(
+            f"task ID mismatch: observations={observed}; "
+            f"task-config={task.task_id}",
+            param_hint="--task-config",
+        )
+
+    performance_report = compute_performance_report(
+        observations,
+        primary_budget_sec=task.evaluation.primary_budget_sec,
+    )
 
     if json_output:
         combined = {"performance": performance_report.model_dump()}

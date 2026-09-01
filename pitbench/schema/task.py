@@ -102,6 +102,7 @@ class DecisionProtocol(BaseModel):
 
 class EvaluationProtocol(BaseModel):
     budgets_sec: list[float]
+    primary_budget_sec: float = Field(gt=0)
     solver_seeds: list[int]
     threads: int = Field(default=1, gt=0)
     verifier: str
@@ -111,6 +112,8 @@ class EvaluationProtocol(BaseModel):
     def validate_grid(self) -> Self:
         if not self.budgets_sec or any(value <= 0 for value in self.budgets_sec):
             raise ValueError("evaluation budgets must be positive")
+        if self.primary_budget_sec not in self.budgets_sec:
+            raise ValueError("primary budget must belong to evaluation budgets")
         if not self.solver_seeds:
             raise ValueError("at least one solver seed is required")
         if len(set(self.solver_seeds)) != len(self.solver_seeds):

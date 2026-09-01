@@ -332,7 +332,7 @@ def test_semantically_invalid_agent_run_disqualifies_candidate(
         instance_id="invalid",
         instance_seed=0,
         solver_seed=0,
-        budget_sec=1.0,
+        budget_sec=record.task.evaluation.primary_budget_sec,
         status=RunStatus.INVALID,
         valid=False,
     )

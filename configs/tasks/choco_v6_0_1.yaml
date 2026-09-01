@@ -25,6 +25,7 @@ oracle:
   objective_sense: minimize
 evaluation:
   budgets_sec: [5.0, 20.0]
+  primary_budget_sec: 20.0
   solver_seeds: [0, 1, 2]
   threads: 1
   verifier: private://oracles/verifiers/bin_packing_solution

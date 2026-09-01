@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from pitbench.cli.main import app
@@ -21,6 +22,7 @@ def _observation(
     solver_seed: int,
     gap: float | None,
     *,
+    budget_sec: float = 5.0,
     valid: bool = True,
     status: RunStatus = RunStatus.COMPLETED,
 ) -> RunObservation:
@@ -32,7 +34,7 @@ def _observation(
         instance_id=instance_id,
         instance_seed=17,
         solver_seed=solver_seed,
-        budget_sec=5.0,
+        budget_sec=budget_sec,
         status=status,
         valid=valid,
         normalized_gap=gap,
@@ -69,7 +71,7 @@ def _paired_panel() -> list[RunObservation]:
 
 
 def test_performance_report_pairs_seeds_and_bootstraps_instances() -> None:
-    report = compute_performance_report(_paired_panel())
+    report = compute_performance_report(_paired_panel(), primary_budget_sec=5.0)
 
     assert report.primary_instance_set_kind == "judge_id"
     assert report.primary_budget_sec == 5.0
@@ -110,15 +112,55 @@ def test_performance_report_tracks_invalid_runs() -> None:
         )
     )
 
-    report = compute_performance_report(observations)
+    report = compute_performance_report(observations, primary_budget_sec=5.0)
 
     assert report.primary.agent.total_runs == 5
     assert report.primary.agent.valid_runs == 4
     assert report.primary.agent.failure_counts == {"timed_out": 1}
 
 
+def test_declared_primary_budget_is_not_replaced_by_larger_budget() -> None:
+    observations = _paired_panel()
+    observations.extend(
+        [
+            _observation(
+                CodeState.BASE,
+                "judge_id",
+                "diagnostic",
+                0,
+                0.20,
+                budget_sec=10.0,
+            ),
+            _observation(
+                CodeState.AGENT,
+                "judge_id",
+                "diagnostic",
+                0,
+                0.10,
+                budget_sec=10.0,
+            ),
+        ]
+    )
+
+    report = compute_performance_report(observations, primary_budget_sec=5.0)
+
+    assert report.budgets_sec == [5.0, 10.0]
+    assert report.primary_budget_sec == 5.0
+    assert report.primary.budget_sec == 5.0
+
+
+def test_performance_report_rejects_missing_primary_budget() -> None:
+    with pytest.raises(
+        ValueError,
+        match="declared primary budget 10s has no observations",
+    ):
+        compute_performance_report(_paired_panel(), primary_budget_sec=10.0)
+
+
 def test_format_performance_report_is_performance_only() -> None:
-    rendered = format_performance_report(compute_performance_report(_paired_panel()))
+    rendered = format_performance_report(
+        compute_performance_report(_paired_panel(), primary_budget_sec=5.0)
+    )
 
     assert "quality-time performance" in rendered
     assert "Held-out instance-set retention" in rendered
@@ -130,14 +172,42 @@ def test_format_performance_report_is_performance_only() -> None:
 def test_report_command_supports_structured_output(tmp_path: Path) -> None:
     path = tmp_path / "trials.parquet"
     ObservationStore.write(path, _paired_panel())
+    task_config = tmp_path / "task-config.yaml"
+    source = Path(__file__).resolve().parents[3] / "configs/tasks/pyvrp_v0_14_0.yaml"
+    payload = yaml.safe_load(source.read_text())
+    payload["task_id"] = "performance"
+    payload["evaluation"]["primary_budget_sec"] = 5.0
+    task_config.write_text(yaml.safe_dump(payload, sort_keys=False))
     runner = CliRunner()
 
-    text_result = runner.invoke(app, ["report", str(path)])
+    text_result = runner.invoke(
+        app,
+        ["report", str(path), "--task-config", str(task_config)],
+    )
     assert text_result.exit_code == 0
     assert "quality-time performance" in text_result.output
 
-    json_result = runner.invoke(app, ["report", str(path), "--json"])
+    json_result = runner.invoke(
+        app,
+        ["report", str(path), "--task-config", str(task_config), "--json"],
+    )
     assert json_result.exit_code == 0
     assert '"performance"' in json_result.output
     assert '"mean_gap_reduction"' in json_result.output
     assert '"sensitivity"' not in json_result.output
+
+
+def test_report_command_rejects_task_config_mismatch(tmp_path: Path) -> None:
+    path = tmp_path / "trials.parquet"
+    ObservationStore.write(path, _paired_panel())
+    task_config = (
+        Path(__file__).resolve().parents[3] / "configs/tasks/pyvrp_v0_14_0.yaml"
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["report", str(path), "--task-config", str(task_config)],
+    )
+
+    assert result.exit_code == 2
+    assert "task ID mismatch" in result.output

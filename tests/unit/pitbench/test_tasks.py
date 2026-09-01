@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 
 from pitbench.cli.main import app
 from pitbench.families.base import ProblemFamilyRegistry
-from pitbench.schema.task import InstanceSetKind, ProblemFamily, TaskType
+from pitbench.schema.task import InstanceSetKind, PitBenchTask, ProblemFamily, TaskType
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -53,6 +53,18 @@ def test_task_types_classify_heuristic_and_exact_solvers() -> None:
         "choco_v6_0_1": TaskType.EXACT_SOLVER,
         "ortools_v9_15": TaskType.EXACT_SOLVER,
     }
+
+
+def test_primary_budget_must_belong_to_evaluation_budgets() -> None:
+    task = TaskCatalog(ROOT).validate_one("pyvrp_v0_14_0").task
+    payload = task.model_dump()
+    payload["evaluation"]["primary_budget_sec"] = 60.0
+
+    with pytest.raises(
+        ValueError,
+        match="primary budget must belong to evaluation budgets",
+    ):
+        PitBenchTask.model_validate(payload)
 
 
 def test_problem_families_select_their_canonical_verifier() -> None:

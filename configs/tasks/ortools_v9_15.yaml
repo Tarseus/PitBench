@@ -24,6 +24,7 @@ oracle:
     source: private://oracles/ortools_v9_15.json
 evaluation:
   budgets_sec: [1.0]
+  primary_budget_sec: 1.0
   solver_seeds: [0]
   threads: 1
   verifier: private://oracles/verifiers/ortools_model_equivalence
