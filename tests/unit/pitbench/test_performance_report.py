@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 from pitbench.cli.main import app
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.metrics.performance_report import (
+    PerformanceClassification,
     compute_performance_report,
     format_performance_report,
 )
@@ -73,6 +74,7 @@ def _paired_panel() -> list[RunObservation]:
 def test_performance_report_pairs_seeds_and_bootstraps_instances() -> None:
     report = compute_performance_report(_paired_panel(), primary_budget_sec=5.0)
 
+    assert report.classification is PerformanceClassification.IMPROVED
     assert report.primary_instance_set_kind == "judge_id"
     assert report.primary_budget_sec == 5.0
     assert report.solver_seeds == [0, 1]
@@ -119,6 +121,47 @@ def test_performance_report_tracks_invalid_runs() -> None:
     assert report.primary.agent.failure_counts == {"timed_out": 1}
 
 
+@pytest.mark.parametrize(
+    ("deltas", "expected"),
+    (
+        ([0.05], PerformanceClassification.IMPROVED),
+        ([-0.05], PerformanceClassification.REGRESSED),
+        ([-0.05, 0.05], PerformanceClassification.INCONCLUSIVE),
+    ),
+)
+def test_performance_classification_uses_primary_gain_interval(
+    deltas: list[float],
+    expected: PerformanceClassification,
+) -> None:
+    observations: list[RunObservation] = []
+    for index, delta in enumerate(deltas):
+        observations.extend(
+            [
+                _observation(CodeState.BASE, "judge_id", f"i{index}", 0, 0.2),
+                _observation(
+                    CodeState.AGENT,
+                    "judge_id",
+                    f"i{index}",
+                    0,
+                    0.2 - delta,
+                ),
+            ]
+        )
+
+    report = compute_performance_report(observations, primary_budget_sec=5.0)
+
+    assert report.classification is expected
+
+
+def test_performance_classification_is_incomplete_without_paired_interval() -> None:
+    report = compute_performance_report(
+        [_observation(CodeState.BASE, "judge_id", "i1", 0, 0.2)],
+        primary_budget_sec=5.0,
+    )
+
+    assert report.classification is PerformanceClassification.INCOMPLETE
+
+
 def test_gap_summaries_weight_per_instance_seed_means_equally() -> None:
     observations: list[RunObservation] = []
     for seed in (0, 1, 2):
@@ -150,9 +193,7 @@ def test_gap_summaries_weight_per_instance_seed_means_equally() -> None:
         assert interval is not None
         assert interval.level == 0.95
         assert interval.resamples == 5000
-        assert interval.method == (
-            "instance bootstrap over per-instance seed means"
-        )
+        assert interval.method == ("instance bootstrap over per-instance seed means")
 
 
 def test_gap_summaries_exclude_zero_valid_seed_instances() -> None:
@@ -238,6 +279,7 @@ def test_format_performance_report_is_performance_only() -> None:
     )
 
     assert "quality-time performance" in rendered
+    assert "Classification: improved" in rendered
     assert "Held-out instance-set retention" in rendered
     assert "Repeatability evidence" in rendered
     assert "95% CI" in rendered

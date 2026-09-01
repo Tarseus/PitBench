@@ -245,7 +245,7 @@ def test_cached_base_observations_merge_with_agent_fixture(tmp_path: Path) -> No
     assert {item.code_state for item in observations} == set(CodeState)
 
 
-def test_model_equivalence_fixture_uses_performance_decision_path(
+def test_model_equivalence_fixture_uses_performance_result_path(
     tmp_path: Path,
 ) -> None:
     record = next(
@@ -274,15 +274,10 @@ def test_model_equivalence_fixture_uses_performance_decision_path(
     )
 
     assert envelope.completed, envelope.error
-    decision = envelope.payload["summary"]["decision"]
-    assert decision["policy_name"] == "pitbench-performance-first"
-    assert decision["performance_complete"] is False
-    assert decision["classification"] == "incomplete"
-    assert "is_resolved" not in decision
+    performance = envelope.payload["summary"]["performance"]
+    assert performance["classification"] == "incomplete"
+    assert "decision" not in envelope.payload["summary"]
     assert "is_resolved" not in envelope.model_dump()
-    assert "outcome_complete" not in decision
-    assert "resource_telemetry_complete" not in decision
-    assert "sensitivity_complete" not in decision
 
 
 def test_evaluator_does_not_gate_candidate_paths(tmp_path: Path) -> None:
@@ -360,3 +355,4 @@ def test_semantically_invalid_agent_run_disqualifies_candidate(
     assert envelope.payload["validity"]["checks"][-1]["code"] == "solution"
     assert envelope.payload["observations"][0]["status"] == "invalid"
     assert envelope.payload["summary"]["performance"] is not None
+    assert envelope.payload["summary"]["performance"]["classification"] == "incomplete"

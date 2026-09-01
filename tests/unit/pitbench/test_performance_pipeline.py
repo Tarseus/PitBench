@@ -14,8 +14,10 @@ from pitbench.drivers.common import write_result
 from pitbench.evaluator.judge import FixtureJudge, JudgePlan
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.families.cvrp import CVRPFamily
-from pitbench.metrics.decision_metrics import compute_performance_decision
-from pitbench.metrics.performance_report import compute_performance_report
+from pitbench.metrics.performance_report import (
+    PerformanceClassification,
+    compute_performance_report,
+)
 from pitbench.schema.task import PitBenchTask
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -103,18 +105,11 @@ def test_pyvrp_plan_materializes_performance_first_panel(
         observations,
         primary_budget_sec=task.evaluation.primary_budget_sec,
     )
-    decision = compute_performance_decision(
-        performance,
-        task.evaluation.decision,
-        validity_accepted=True,
-    )
     assert performance.budgets_sec == [1.0, 5.0, 10.0]
     assert performance.solver_seeds == [0, 1, 2, 3, 4]
     assert performance.primary.paired.paired_instances == 38
     assert len(performance.held_out_retention) == 3
-    assert decision.repeatability_complete
-    assert decision.held_out_complete
-    assert decision.classification == "improved"
+    assert performance.classification is PerformanceClassification.IMPROVED
 
 
 def test_driver_result_includes_terminated_child_resource_usage(tmp_path: Path) -> None:

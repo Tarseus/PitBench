@@ -5,6 +5,7 @@ import random
 import statistics
 from collections import Counter, defaultdict
 from collections.abc import Sequence
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
@@ -13,6 +14,13 @@ from pitbench.schema.observation import CodeState, RunObservation, RunStatus
 BOOTSTRAP_RESAMPLES = 5000
 BOOTSTRAP_SEED = 20260824
 INSTANCE_BOOTSTRAP_METHOD = "instance bootstrap over per-instance seed means"
+
+
+class PerformanceClassification(str, Enum):
+    IMPROVED = "improved"
+    REGRESSED = "regressed"
+    INCONCLUSIVE = "inconclusive"
+    INCOMPLETE = "incomplete"
 
 
 class ConfidenceInterval(BaseModel):
@@ -67,6 +75,7 @@ class HeldOutRetention(BaseModel):
 
 
 class PerformanceReport(BaseModel):
+    classification: PerformanceClassification
     primary_instance_set_kind: str
     primary_budget_sec: float = Field(gt=0)
     solver_seeds: list[int]
@@ -114,9 +123,7 @@ def _gap_estimate(
     seed: int,
 ) -> GapEstimate:
     valid = [
-        item
-        for item in observations
-        if item.valid and item.normalized_gap is not None
+        item for item in observations if item.valid and item.normalized_gap is not None
     ]
     values_by_instance: dict[tuple[str, str], list[float]] = defaultdict(list)
     for item in valid:
@@ -128,9 +135,7 @@ def _gap_estimate(
         statistics.fmean(values) for values in values_by_instance.values()
     ]
     failure_counts = Counter(
-        item.status.value
-        for item in observations
-        if item.status != RunStatus.COMPLETED
+        item.status.value for item in observations if item.status != RunStatus.COMPLETED
     )
     return GapEstimate(
         total_runs=len(observations),
@@ -197,9 +202,7 @@ def _paired_gap_evidence(
         else:
             agent_worse += 1
 
-    cluster_means = [
-        statistics.fmean(values) for values in deltas_by_instance.values()
-    ]
+    cluster_means = [statistics.fmean(values) for values in deltas_by_instance.values()]
     return PairedGapEvidence(
         paired_runs=len(deltas),
         paired_instances=len(deltas_by_instance),
@@ -207,9 +210,7 @@ def _paired_gap_evidence(
         agent_better=agent_better,
         equal=equal,
         agent_worse=agent_worse,
-        mean_gap_reduction=(
-            statistics.fmean(cluster_means) if cluster_means else None
-        ),
+        mean_gap_reduction=(statistics.fmean(cluster_means) if cluster_means else None),
         mean_gap_reduction_ci95=_cluster_mean_ci(
             deltas_by_instance,
             seed=seed,
@@ -243,9 +244,7 @@ def compute_performance_report(
     *,
     primary_budget_sec: float,
 ) -> PerformanceReport:
-    originals = [
-        item for item in observations if item.equivalence_parent_id is None
-    ]
+    originals = [item for item in observations if item.equivalence_parent_id is None]
     if not originals:
         raise ValueError("performance report requires original observations")
 
@@ -257,9 +256,7 @@ def compute_performance_report(
 
     instance_set_kinds = sorted(by_kind)
     primary_kind = "judge_id" if "judge_id" in by_kind else instance_set_kinds[0]
-    primary_kind_budgets = {
-        item.budget_sec for item in by_kind[primary_kind]
-    }
+    primary_kind_budgets = {item.budget_sec for item in by_kind[primary_kind]}
     if primary_budget_sec not in primary_kind_budgets:
         raise ValueError(
             f"declared primary budget {primary_budget_sec:g}s has no observations "
@@ -281,6 +278,15 @@ def compute_performance_report(
         )
 
     primary = instance_sets[primary_kind].by_budget[f"{primary_budget_sec:g}"]
+    primary_ci = primary.paired.mean_gap_reduction_ci95
+    if primary_ci is None:
+        classification = PerformanceClassification.INCOMPLETE
+    elif primary_ci.lower > 0:
+        classification = PerformanceClassification.IMPROVED
+    elif primary_ci.upper < 0:
+        classification = PerformanceClassification.REGRESSED
+    else:
+        classification = PerformanceClassification.INCONCLUSIVE
 
     held_out_retention: list[HeldOutRetention] = []
     if "judge_id" in instance_sets and "judge_shift" in instance_sets:
@@ -305,6 +311,7 @@ def compute_performance_report(
             )
 
     return PerformanceReport(
+        classification=classification,
         primary_instance_set_kind=primary_kind,
         primary_budget_sec=primary_budget_sec,
         solver_seeds=solver_seeds,
@@ -322,6 +329,7 @@ def _format_gap(value: float | None) -> str:
 def format_performance_report(report: PerformanceReport) -> str:
     lines = [
         "Independent validity and quality-time performance",
+        f"Classification: {report.classification.value}",
         "",
         "Instance set | Budget | Base valid | Agent valid | Base mean gap | "
         "Agent mean gap | Base-Agent gap reduction (95% CI) | "
@@ -384,6 +392,7 @@ __all__ = [
     "GapEstimate",
     "HeldOutRetention",
     "PairedGapEvidence",
+    "PerformanceClassification",
     "PerformanceReport",
     "InstanceSetPerformance",
     "compute_performance_report",

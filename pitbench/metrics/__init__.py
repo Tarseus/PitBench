@@ -1,8 +1,4 @@
 from pitbench.metrics.aggregation import group_by_instance_seed
-from pitbench.metrics.decision_metrics import (
-    PerformanceDecision,
-    compute_performance_decision,
-)
 from pitbench.metrics.gain import patch_gain
 from pitbench.metrics.performance_report import (
     BudgetPerformance,
@@ -11,6 +7,7 @@ from pitbench.metrics.performance_report import (
     HeldOutRetention,
     InstanceSetPerformance,
     PairedGapEvidence,
+    PerformanceClassification,
     PerformanceReport,
     compute_performance_report,
     format_performance_report,
@@ -23,10 +20,9 @@ __all__ = [
     "GapEstimate",
     "HeldOutRetention",
     "PairedGapEvidence",
-    "PerformanceDecision",
+    "PerformanceClassification",
     "PerformanceReport",
     "InstanceSetPerformance",
-    "compute_performance_decision",
     "compute_performance_report",
     "format_performance_report",
     "group_by_instance_seed",

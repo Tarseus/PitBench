@@ -11,7 +11,6 @@ from pitbench.evaluator.judge import FixtureJudge, JudgePlan
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest, Evaluator
-from pitbench.metrics.decision_metrics import compute_performance_decision
 from pitbench.metrics.performance_report import compute_performance_report
 from pitbench.schema.evaluation import (
     ArtifactManifest,
@@ -131,14 +130,6 @@ class PitBenchEvaluator(Evaluator):
             if observations
             else None
         )
-        if performance is None:
-            decision = None
-        else:
-            decision = compute_performance_decision(
-                performance,
-                task.evaluation.decision,
-                validity_accepted=validity.accepted,
-            )
         return EvaluationResult(
             task_id=task.task_id,
             validity=validity,
@@ -149,6 +140,5 @@ class PitBenchEvaluator(Evaluator):
                 valid_observation_count=sum(item.valid for item in observations),
                 counts_by_state=dict(counts),
                 performance=performance,
-                decision=decision,
             ),
         )
