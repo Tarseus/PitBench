@@ -19,8 +19,8 @@ from pitbench.agent_tools import (
     needs_run_directory,
     normalize_agent_tools,
 )
-from pitbench.instances import materialize_population
-from pitbench.schema.task import PitBenchTask, PopulationKind
+from pitbench.instances import materialize_instance_set
+from pitbench.schema.task import InstanceSetKind, PitBenchTask
 from pitbench.tasks import TaskCatalog
 
 _AGENT_IMAGES = {
@@ -81,7 +81,7 @@ IMAGE_TOOLS_LABEL = "org.pitbench.agent-tools"
 
 
 class PitBenchAdapter:
-    """Materialize an agent-safe PitBench task from a PitBench manifest."""
+    """Materialize an agent-safe PitBench task from a task config."""
 
     def __init__(self, repository_root: Path, private_root: Path) -> None:
         self.repository_root = repository_root.resolve()
@@ -117,12 +117,12 @@ class PitBenchAdapter:
 
         if needs_development_instances(tools):
             development = next(
-                population
-                for population in task.populations
-                if population.kind == PopulationKind.AGENT_DEV
+                instance_set
+                for instance_set in task.instance_sets
+                if instance_set.kind == InstanceSetKind.AGENT_DEV
             )
-            materialize_population(
-                self.repository_root / development.manifest,
+            materialize_instance_set(
+                self.repository_root / development.instance_set_config,
                 task_dir / "dev_instances",
             )
         (task_dir / AGENT_TOOLS_METADATA).write_text(
@@ -130,7 +130,7 @@ class PitBenchAdapter:
         )
         self._write_task_yaml(
             task,
-            record.manifest_path,
+            record.task_config_path,
             repository,
             task_dir,
             judge_image=judge_image,
@@ -196,7 +196,7 @@ class PitBenchAdapter:
     def _write_task_yaml(
         self,
         task: PitBenchTask,
-        manifest: Path,
+        task_config: Path,
         repository: Path,
         task_dir: Path,
         *,
@@ -224,7 +224,7 @@ class PitBenchAdapter:
             "parser_name": None,
             "evaluator_import_path": ("pitbench.evaluator.evaluator:PitBenchEvaluator"),
             "evaluator_config": {
-                "manifest_path": str(manifest.resolve()),
+                "task_config_path": str(task_config.resolve()),
                 "base_repository": str(repository.resolve()),
                 "private_root": str(self.private_root),
             },

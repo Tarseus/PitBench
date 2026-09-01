@@ -21,7 +21,7 @@ def test_private_asset_hash_is_verified(tmp_path: Path) -> None:
         resolver.resolve("private://oracle.json", "0" * 64)
 
 
-def test_judge_plan_accepts_calibration_oracle_manifest(tmp_path: Path) -> None:
+def test_judge_plan_accepts_calibration_oracle_config(tmp_path: Path) -> None:
     instance = tmp_path / "instance.json"
     instance.write_text("{}")
     oracle = tmp_path / "oracle.yaml"
@@ -38,16 +38,16 @@ def test_judge_plan_accepts_calibration_oracle_manifest(tmp_path: Path) -> None:
             }
         )
     )
-    task = PitBenchTask.from_yaml(ROOT / "manifests/tasks/pyvrp_v0_13_4.yaml")
-    development, judge, *_ = task.populations
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_13_4.yaml")
+    development, judge, *_ = task.instance_sets
     task = task.model_copy(
         update={
-            "populations": [
+            "instance_sets": [
                 development,
                 judge.model_copy(
                     update={
-                        "manifest": "private://oracle.yaml",
-                        "manifest_sha256": None,
+                        "instance_set_config": "private://oracle.yaml",
+                        "instance_set_config_sha256": None,
                         "size": 1,
                     }
                 ),
@@ -55,7 +55,7 @@ def test_judge_plan_accepts_calibration_oracle_manifest(tmp_path: Path) -> None:
         }
     )
 
-    plan = JudgePlan.from_private_manifests(task, PrivateAssetResolver(tmp_path))
+    plan = JudgePlan.from_private_instance_set_configs(task, PrivateAssetResolver(tmp_path))
 
     assert len(plan.cases) == 1
     assert plan.cases[0].path == instance
@@ -67,22 +67,22 @@ def test_judge_plan_allows_missing_anchor_for_non_objective_tasks(
 ) -> None:
     instance = tmp_path / "instance.json"
     instance.write_text("{}")
-    manifest = tmp_path / "manifest.yaml"
-    manifest.write_text(
+    instance_set_config = tmp_path / "instance-set-config.yaml"
+    instance_set_config.write_text(
         yaml.safe_dump(
             {"instances": [{"id": "model-1", "uri": "private://instance.json"}]}
         )
     )
-    task = PitBenchTask.from_yaml(ROOT / "manifests/tasks/ortools_v9_15.yaml")
-    development, judge, *_ = task.populations
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/ortools_v9_15.yaml")
+    development, judge, *_ = task.instance_sets
     task = task.model_copy(
         update={
-            "populations": [
+            "instance_sets": [
                 development,
                 judge.model_copy(
                     update={
-                        "manifest": "private://manifest.yaml",
-                        "manifest_sha256": None,
+                        "instance_set_config": "private://instance-set-config.yaml",
+                        "instance_set_config_sha256": None,
                         "size": 1,
                     }
                 ),
@@ -90,7 +90,7 @@ def test_judge_plan_allows_missing_anchor_for_non_objective_tasks(
         }
     )
 
-    plan = JudgePlan.from_private_manifests(task, PrivateAssetResolver(tmp_path))
+    plan = JudgePlan.from_private_instance_set_configs(task, PrivateAssetResolver(tmp_path))
 
     assert len(plan.cases) == 1
     assert plan.cases[0].path == instance
@@ -100,8 +100,8 @@ def test_judge_plan_allows_missing_anchor_for_non_objective_tasks(
 def test_judge_plan_requires_anchor_for_objective_tasks(tmp_path: Path) -> None:
     instance = tmp_path / "instance.json"
     instance.write_text("{}")
-    manifest = tmp_path / "manifest.yaml"
-    manifest.write_text(
+    instance_set_config = tmp_path / "instance-set-config.yaml"
+    instance_set_config.write_text(
         yaml.safe_dump(
             {
                 "instances": [
@@ -110,16 +110,16 @@ def test_judge_plan_requires_anchor_for_objective_tasks(tmp_path: Path) -> None:
             }
         )
     )
-    task = PitBenchTask.from_yaml(ROOT / "manifests/tasks/pyvrp_v0_13_4.yaml")
-    development, judge, *_ = task.populations
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_13_4.yaml")
+    development, judge, *_ = task.instance_sets
     task = task.model_copy(
         update={
-            "populations": [
+            "instance_sets": [
                 development,
                 judge.model_copy(
                     update={
-                        "manifest": "private://manifest.yaml",
-                        "manifest_sha256": None,
+                        "instance_set_config": "private://instance-set-config.yaml",
+                        "instance_set_config_sha256": None,
                         "size": 1,
                     }
                 ),
@@ -128,4 +128,4 @@ def test_judge_plan_requires_anchor_for_objective_tasks(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="incomplete instance"):
-        JudgePlan.from_private_manifests(task, PrivateAssetResolver(tmp_path))
+        JudgePlan.from_private_instance_set_configs(task, PrivateAssetResolver(tmp_path))

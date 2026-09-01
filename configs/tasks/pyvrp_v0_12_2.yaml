@@ -1,13 +1,13 @@
-schema_version: "2.0"
-task_id: pyvrp_v0_14_0
+schema_version: "3.0"
+task_id: pyvrp_v0_12_2
 release:
   repository: PyVRP/PyVRP
-  version: "0.14.0"
-  tag: v0.14.0
-  base_commit: 5d9776a954b810bdb3fe71d47b1e7de7cffe90d2
-  tree_sha: 6587bf9f3e09a7c8ac7807e07b23704d30b8067a
-  released_at: 2026-08-20T08:15:37Z
-  url: https://github.com/PyVRP/PyVRP/releases/tag/v0.14.0
+  version: "0.12.2"
+  tag: v0.12.2
+  base_commit: ea0c4211819edac6fd920413ad7508cc9ad56e0e
+  tree_sha: d04db06800f97816a4a973a846a68562efb70ccf
+  released_at: 2025-11-25T11:10:28Z
+  url: https://github.com/PyVRP/PyVRP/releases/tag/v0.12.2
 task_type: heuristic_solver
 problem_family: cvrp
 optimization_scope: local_search_and_search_efficiency
@@ -21,7 +21,7 @@ repository:
   language: cpp_python
   plugin: pitbench.repositories.pyvrp:PyVRPRepositoryPlugin
   editable_paths: [pyvrp]
-  agent_image: ghcr.io/tarseus/pitbench-pyvrp:5d9776a954b810bdb3fe71d47b1e7de7cffe90d2
+  agent_image: ghcr.io/tarseus/pitbench-pyvrp:ea0c4211819edac6fd920413ad7508cc9ad56e0e
 oracle:
     kind: best_known_solution
     source: private://calibration/cvrplib_x/oracle.yaml
@@ -33,22 +33,22 @@ evaluation:
   verifier: cvrp_independent
   decision:
     minimum_success_rate_delta: 0.0
-populations:
+instance_sets:
   - name: agent_dev
     kind: agent_dev
-    manifest: manifests/populations/pyvrp_cvrp_v1_dev.yaml
-    manifest_sha256: d851fcc1ea58a86e0a38d2b36b6f997bc8f3797cae62c77f9ed48b7d1c341cbd
+    instance_set_config: configs/instance_sets/pyvrp_cvrp_v1_dev.yaml
+    instance_set_config_sha256: d851fcc1ea58a86e0a38d2b36b6f997bc8f3797cae62c77f9ed48b7d1c341cbd
     size: 10
     randomness: {instance_seed: 13400, coordinate_seed: 13401, demand_seed: 13402}
   - name: judge_id
     kind: judge_id
-    manifest: private://calibration/cvrplib_x/oracle.yaml
-    manifest_sha256: 84833f98c4d1f2480889ed8f5f0b9046402bc899fd06f8a6b7602f186cc8ca13
+    instance_set_config: private://calibration/cvrplib_x/oracle.yaml
+    instance_set_config_sha256: 84833f98c4d1f2480889ed8f5f0b9046402bc899fd06f8a6b7602f186cc8ca13
     size: 38
     randomness: {instance_seed: 17}
   - name: judge_shift
     kind: judge_shift
-    manifest: private://populations/pyvrp_cvrp_shift_v1.yaml
-    manifest_sha256: 164b75f46a82ba164393d2b63b692ff4e4cf2a8f37e1579aee64bf4e71f7ecde
+    instance_set_config: private://instance_sets/pyvrp_cvrp_shift_v1.yaml
+    instance_set_config_sha256: 164b75f46a82ba164393d2b63b692ff4e4cf2a8f37e1579aee64bf4e71f7ecde
     size: 10
     randomness: {instance_seed: 27100, coordinate_seed: 27101, demand_seed: 27102}

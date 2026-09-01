@@ -11,7 +11,7 @@ from pitbench.schema.task import PitBenchTask
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--task-config", type=Path, required=True)
     parser.add_argument("--base-repository", type=Path, required=True)
     parser.add_argument("--private-root", type=Path, required=True)
     parser.add_argument("--candidate-patch", type=Path, required=True)
@@ -24,7 +24,7 @@ def main() -> None:
         choices=[state.value for state in CodeState],
     )
     args = parser.parse_args()
-    task = PitBenchTask.from_yaml(args.manifest)
+    task = PitBenchTask.from_yaml(args.task_config)
     observations = LocalProcessJudge(
         task=task,
         base_repository=args.base_repository,

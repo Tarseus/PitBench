@@ -1,4 +1,4 @@
-schema_version: "2.0"
+schema_version: "3.0"
 task_id: ortools_v9_15
 release:
   repository: google/or-tools
@@ -27,20 +27,20 @@ evaluation:
   solver_seeds: [0]
   threads: 1
   verifier: private://oracles/verifiers/ortools_model_equivalence
-populations:
+instance_sets:
   - name: agent_dev
     kind: agent_dev
-    manifest: manifests/populations/ortools_v9_15_dev.yaml
+    instance_set_config: configs/instance_sets/ortools_v9_15_dev.yaml
     size: 5
     randomness: {instance_seed: 91500}
   - name: judge_id
     kind: judge_id
-    manifest: private://hidden_instances/ortools_v9_15/judge_id.yaml
+    instance_set_config: private://hidden_instances/ortools_v9_15/judge_id.yaml
     size: 30
     randomness: {instance_seed: 91510}
   - name: constant_reuse_shift
     kind: judge_shift
-    manifest: private://hidden_instances/ortools_v9_15/constant_reuse_shift.yaml
+    instance_set_config: private://hidden_instances/ortools_v9_15/constant_reuse_shift.yaml
     size: 30
     shift: constant_reuse_factor
     randomness: {instance_seed: 91520}

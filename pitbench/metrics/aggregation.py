@@ -11,7 +11,7 @@ def group_by_instance_seed(
     grouped: dict[tuple[str, str, int], list[RunObservation]] = defaultdict(list)
     for observation in observations:
         key = (
-            observation.population,
+            observation.instance_set,
             observation.instance_id,
             observation.solver_seed,
         )

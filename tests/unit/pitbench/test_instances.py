@@ -6,19 +6,19 @@ import numpy as np
 import pytest
 
 from pitbench.families.cvrp import CVRPFamily
-from pitbench.instances import make_euclidean_cvrp_instance, materialize_population
+from pitbench.instances import make_euclidean_cvrp_instance, materialize_instance_set
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_all_visible_populations_materialize(tmp_path: Path) -> None:
+def test_all_visible_instance_sets_materialize(tmp_path: Path) -> None:
     for record in TaskCatalog(ROOT).validate_all():
-        population = record.task.populations[0]
-        paths = materialize_population(
-            ROOT / population.manifest, tmp_path / record.task.task_id
+        instance_set = record.task.instance_sets[0]
+        paths = materialize_instance_set(
+            ROOT / instance_set.instance_set_config, tmp_path / record.task.task_id
         )
-        assert len(paths) == population.size
+        assert len(paths) == instance_set.size
         assert all(path.is_file() and path.stat().st_size > 0 for path in paths)
 
 

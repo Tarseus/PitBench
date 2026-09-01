@@ -11,8 +11,8 @@ def _observation(state: CodeState, status: RunStatus) -> RunObservation:
     return RunObservation(
         task_id="validity",
         code_state=state,
-        population="judge_id",
-        population_kind="judge_id",
+        instance_set="judge_id",
+        instance_set_kind="judge_id",
         instance_id="instance",
         instance_seed=0,
         solver_seed=0,

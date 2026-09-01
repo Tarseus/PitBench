@@ -51,7 +51,7 @@ def test_solver_cpu_affinity_uses_assigned_worker_slot() -> None:
 
 
 def test_local_judge_runs_grid_on_distinct_cpu_slots(tmp_path: Path) -> None:
-    population = SimpleNamespace(
+    instance_set = SimpleNamespace(
         name="judge_id",
         kind=SimpleNamespace(value="judge_id"),
         randomness=SimpleNamespace(
@@ -59,7 +59,7 @@ def test_local_judge_runs_grid_on_distinct_cpu_slots(tmp_path: Path) -> None:
         ),
     )
     case = InstanceCase(
-        population=population,
+        instance_set=instance_set,
         instance_id="one",
         path=tmp_path / "one.json",
         anchor=1.0,
@@ -91,8 +91,8 @@ def test_local_judge_runs_grid_on_distinct_cpu_slots(tmp_path: Path) -> None:
         return RunObservation(
             task_id="task",
             code_state=state,
-            population="judge_id",
-            population_kind="judge_id",
+            instance_set="judge_id",
+            instance_set_kind="judge_id",
             instance_id="one",
             instance_seed=1,
             solver_seed=seed,
@@ -104,7 +104,7 @@ def test_local_judge_runs_grid_on_distinct_cpu_slots(tmp_path: Path) -> None:
     judge._run_case = run_case
     plan = JudgePlan(task, [case])
     with (
-        patch.object(JudgePlan, "from_private_manifests", return_value=plan),
+        patch.object(JudgePlan, "from_private_instance_set_configs", return_value=plan),
         patch("pitbench.evaluator.judge.os.sched_getaffinity", return_value={3, 7}),
     ):
         observations = judge.run()

@@ -9,19 +9,19 @@ from pitbench.schema.observation import CodeState, RunObservation, RunStatus
 
 
 def _judge(tmp_path: Path, image: str) -> DockerJudge:
-    manifest = tmp_path / "task.yaml"
+    task_config = tmp_path / "task.yaml"
     repository = tmp_path / "repository"
     private = tmp_path / "private"
     candidate = tmp_path / "candidate.patch"
     output = tmp_path / "output"
-    manifest.write_text("task_id: test\n")
+    task_config.write_text("task_id: test\n")
     repository.mkdir()
     private.mkdir()
     candidate.write_text("")
     output.mkdir()
     return DockerJudge(
         image=image,
-        manifest_path=manifest,
+        task_config_path=task_config,
         base_repository=repository,
         private_root=private,
         candidate_patch=candidate,
@@ -47,7 +47,7 @@ def test_docker_judge_disables_network_and_reads_observations(tmp_path: Path) ->
     observation = RunObservation(
         task_id="test",
         code_state=CodeState.AGENT,
-        population="judge_id",
+        instance_set="judge_id",
         instance_id="one",
         instance_seed=1,
         solver_seed=0,

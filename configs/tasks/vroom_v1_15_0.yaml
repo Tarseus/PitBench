@@ -1,4 +1,4 @@
-schema_version: "2.0"
+schema_version: "3.0"
 task_id: vroom_v1_15_0
 release:
   repository: VROOM-Project/vroom
@@ -28,20 +28,20 @@ evaluation:
   solver_seeds: [0]
   threads: 1
   verifier: cvrp_independent
-populations:
+instance_sets:
   - name: agent_dev
     kind: agent_dev
-    manifest: manifests/populations/vroom_v1_15_0_dev.yaml
+    instance_set_config: configs/instance_sets/vroom_v1_15_0_dev.yaml
     size: 10
     randomness: {instance_seed: 11500, coordinate_seed: 11501, demand_seed: 11502}
   - name: judge_id
     kind: judge_id
-    manifest: private://hidden_instances/vroom_v1_15_0/judge_id.yaml
+    instance_set_config: private://hidden_instances/vroom_v1_15_0/judge_id.yaml
     size: 100
     randomness: {instance_seed: 11510, coordinate_seed: 11511, demand_seed: 11512}
   - name: demand_skewed
     kind: judge_shift
-    manifest: private://hidden_instances/vroom_v1_15_0/demand_skewed.yaml
+    instance_set_config: private://hidden_instances/vroom_v1_15_0/demand_skewed.yaml
     size: 100
     shift: demand_skewed
     randomness: {instance_seed: 11510, coordinate_seed: 11511, demand_seed: 11522}

@@ -24,7 +24,7 @@ class InformationRegime(str, Enum):
     SNAPSHOT_ONLY = "snapshot_only"
 
 
-class PopulationKind(str, Enum):
+class InstanceSetKind(str, Enum):
     AGENT_DEV = "agent_dev"
     JUDGE_ID = "judge_id"
     JUDGE_SHIFT = "judge_shift"
@@ -81,11 +81,14 @@ class RandomnessSpec(BaseModel):
     demand_seed: int | None = None
 
 
-class PopulationSpec(BaseModel):
+class InstanceSetSpec(BaseModel):
     name: str
-    kind: PopulationKind
-    manifest: str
-    manifest_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    kind: InstanceSetKind
+    instance_set_config: str
+    instance_set_config_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     size: int = Field(gt=0)
     randomness: RandomnessSpec
     shift: str | None = None
@@ -116,7 +119,7 @@ class EvaluationProtocol(BaseModel):
 
 
 class PitBenchTask(BaseModel):
-    schema_version: Literal["2.0"] = "2.0"
+    schema_version: Literal["3.0"] = "3.0"
     task_id: str
     release: ReleaseSnapshot
     task_type: TaskType
@@ -127,19 +130,19 @@ class PitBenchTask(BaseModel):
     repository: RepositorySpec
     oracle: OracleReference
     evaluation: EvaluationProtocol
-    populations: list[PopulationSpec]
+    instance_sets: list[InstanceSetSpec]
 
     @model_validator(mode="after")
-    def validate_population_roles(self) -> Self:
-        kinds = {population.kind for population in self.populations}
-        required = {PopulationKind.AGENT_DEV, PopulationKind.JUDGE_ID}
+    def validate_instance_set_roles(self) -> Self:
+        kinds = {instance_set.kind for instance_set in self.instance_sets}
+        required = {InstanceSetKind.AGENT_DEV, InstanceSetKind.JUDGE_ID}
         missing = required - kinds
         if missing:
             missing_values = sorted(kind.value for kind in missing)
-            raise ValueError(f"missing required population kinds: {missing_values}")
-        names = [population.name for population in self.populations]
+            raise ValueError(f"missing required instance-set kinds: {missing_values}")
+        names = [instance_set.name for instance_set in self.instance_sets]
         if len(names) != len(set(names)):
-            raise ValueError("population names must be unique")
+            raise ValueError("instance-set names must be unique")
         return self
 
     @classmethod

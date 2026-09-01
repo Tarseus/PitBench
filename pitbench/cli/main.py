@@ -27,12 +27,12 @@ from pitbench.harness.cli.harness_cli.runs import create as run_harness
 from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.harness.handlers.trial_handler import TrialHandler
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
-from pitbench.instances import materialize_population
+from pitbench.instances import materialize_instance_set
 from pitbench.metrics.performance_report import (
     compute_performance_report,
     format_performance_report,
 )
-from pitbench.schema.task import PopulationKind
+from pitbench.schema.task import InstanceSetKind
 from pitbench.tasks import TaskCatalog, TaskNotFoundError
 
 app = typer.Typer(help="PitBench task, execution harness, and evaluation tooling.")
@@ -194,16 +194,16 @@ def evaluate_task(
     if repository_source is None and configured_resources.repository_source is None:
         _warning(
             f"repository_source for {task_id} is not configured; using the task "
-            "manifest release snapshot"
+            "task-config release snapshot"
         )
     if agent_image is None and configured_resources.agent_image is None:
         _warning(
-            f"agent_image for {task_id} is not configured; using the task manifest "
+            f"agent_image for {task_id} is not configured; using the task config "
             "image default"
         )
     if judge_image is None and configured_resources.judge_image is None:
         _warning(
-            f"judge_image for {task_id} is not configured; using the task manifest "
+            f"judge_image for {task_id} is not configured; using the task config "
             "image default"
         )
     resolved_output_path = resolve_repository_path(
@@ -412,7 +412,7 @@ def judge_candidate(
     )
     if judge_image is None and configured_resources.judge_image is None:
         _warning(
-            f"judge_image for {task_id} is not configured; using the task manifest "
+            f"judge_image for {task_id} is not configured; using the task config "
             "image default"
         )
     if not resolved_judge_image:
@@ -438,7 +438,7 @@ def judge_candidate(
             agent_name="replay",
             model_name=None,
             evaluator_config={
-                "manifest_path": str(record.manifest_path),
+                "task_config_path": str(record.task_config_path),
                 "base_repository": str(resolved_repository_source),
                 "private_root": str(resolved_private_root),
                 "judge_image": resolved_judge_image,
@@ -472,15 +472,15 @@ def validate_tasks(
 ) -> None:
     records = TaskCatalog(_root(root)).validate_all()
     for record in records:
-        typer.echo(f"OK {record.task.task_id} {record.manifest_sha256[:12]}")
-    typer.echo(f"Validated {len(records)} task manifests")
+        typer.echo(f"OK {record.task.task_id} {record.task_config_sha256[:12]}")
+    typer.echo(f"Validated {len(records)} task configs")
 
 
 @tasks_app.command("fixture")
 def fixture_tasks(
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
-    instances_per_population: Annotated[
-        int, typer.Option(min=1, help="Synthetic cases per judge population")
+    instances_per_instance_set: Annotated[
+        int, typer.Option(min=1, help="Synthetic cases per judge instance set")
     ] = 1,
 ) -> None:
     """Run the deterministic evaluator contract fixture for every task.
@@ -506,9 +506,9 @@ def fixture_tasks(
                     agent_name="fixture",
                     model_name=None,
                     evaluator_config={
-                        "manifest_path": str(record.manifest_path),
+                        "task_config_path": str(record.task_config_path),
                         "fixture_mode": True,
-                        "fixture_instances_per_population": instances_per_population,
+                        "fixture_instances_per_instance_set": instances_per_instance_set,
                     },
                 )
             )
@@ -530,13 +530,13 @@ def materialize_dev(
     repository_root = _root(root)
     records = TaskCatalog(repository_root).validate_all()
     for record in records:
-        population = next(
+        instance_set = next(
             item
-            for item in record.task.populations
-            if item.kind == PopulationKind.AGENT_DEV
+            for item in record.task.instance_sets
+            if item.kind == InstanceSetKind.AGENT_DEV
         )
-        paths = materialize_population(
-            repository_root / population.manifest,
+        paths = materialize_instance_set(
+            repository_root / instance_set.instance_set_config,
             output / record.task.task_id,
         )
         typer.echo(f"OK {record.task.task_id} instances={len(paths)}")

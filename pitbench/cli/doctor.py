@@ -203,9 +203,9 @@ def _load_context(
         checks.append(
             _check(
                 CheckStatus.FAIL,
-                "task manifest",
+                "task config",
                 f"cannot validate {_PYVRP_TASK_ID}: {error}",
-                "Restore the tracked task and population manifests, then run "
+                "Restore the tracked task and instance-set configs, then run "
                 "`uv run pitbench tasks validate`.",
             )
         )
@@ -213,8 +213,8 @@ def _load_context(
         checks.append(
             _check(
                 CheckStatus.PASS,
-                "task manifest",
-                f"{_PYVRP_TASK_ID} {task.manifest_sha256[:12]}",
+                "task config",
+                f"{_PYVRP_TASK_ID} {task.task_config_sha256[:12]}",
             )
         )
     return _DoctorContext(repository_root, resolved_config, config, task), checks
@@ -225,14 +225,14 @@ def _private_assets_check(context: _DoctorContext) -> DoctorCheck:
         return _check(
             CheckStatus.WARN,
             "private assets",
-            "not checked because the task manifest is invalid",
+            "not checked because the task config is invalid",
         )
     private_root = resolve_repository_path(
         context.repository_root, context.config.paths.private_root
     )
     try:
         with tempfile.TemporaryDirectory(prefix="pitbench-doctor-") as generated:
-            plan = JudgePlan.from_private_manifests(
+            plan = JudgePlan.from_private_instance_set_configs(
                 context.task.task,
                 PrivateAssetResolver(private_root),
                 generated_root=Path(generated),
@@ -328,7 +328,7 @@ def _image_checks(
                 _check(
                     CheckStatus.WARN,
                     "images",
-                    "not checked because the task manifest is invalid",
+                    "not checked because the task config is invalid",
                 )
             ],
             [],

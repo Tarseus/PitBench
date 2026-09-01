@@ -9,8 +9,8 @@ import pytest
 
 from adapters.pitbench.agent_tooling import write_agent_tooling
 from pitbench.agent_tools import AgentTool
-from pitbench.instances import materialize_population
-from pitbench.schema.task import PopulationKind
+from pitbench.instances import materialize_instance_set
+from pitbench.schema.task import InstanceSetKind
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -90,11 +90,11 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
     task_dir.mkdir()
     development = next(
         item
-        for item in record.task.populations
-        if item.kind == PopulationKind.AGENT_DEV
+        for item in record.task.instance_sets
+        if item.kind == InstanceSetKind.AGENT_DEV
     )
     dev = task_dir / "dev_instances"
-    instances = materialize_population(ROOT / development.manifest, dev)
+    instances = materialize_instance_set(ROOT / development.instance_set_config, dev)
     write_agent_tooling(
         repository_root=ROOT,
         task=record.task,

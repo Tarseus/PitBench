@@ -42,12 +42,12 @@ def test_materialized_release_task_has_no_hidden_assets(
 
     task = record.task.model_copy(deep=True)
     task.release.base_commit = local_base
-    local_manifest = tmp_path / "manifest.yaml"
-    payload = yaml.safe_load(record.manifest_path.read_text())
+    local_task_config = tmp_path / "task-config.yaml"
+    payload = yaml.safe_load(record.task_config_path.read_text())
     payload["release"]["base_commit"] = local_base
-    local_manifest.write_text(yaml.safe_dump(payload, sort_keys=False))
+    local_task_config.write_text(yaml.safe_dump(payload, sort_keys=False))
 
-    local_record = record.__class__(local_manifest, task)
+    local_record = record.__class__(local_task_config, task)
     adapter = PitBenchAdapter(ROOT, ROOT / "private")
     adapter.catalog.validate_one = lambda task_id: local_record
     censored = tmp_path / "censored"
@@ -128,7 +128,7 @@ def test_materialized_release_task_has_no_hidden_assets(
         agent_image="sha256:" + "b" * 64,
         agent_tools=[AgentTool.BENCH],
     )
-    assert (assisted / "dev_instances/population.yaml").is_file()
+    assert (assisted / "dev_instances/instance_set_config.yaml").is_file()
     assert (assisted / "agent_bin/pitbench").stat().st_mode & 0o111
     tooling_config = yaml.safe_load((assisted / "agent_config.json").read_text())
     assert tooling_config["agent_tools"] == ["bench"]

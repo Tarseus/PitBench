@@ -17,7 +17,7 @@ class DockerJudge:
         self,
         *,
         image: str,
-        manifest_path: Path,
+        task_config_path: Path,
         base_repository: Path,
         private_root: Path,
         candidate_patch: Path,
@@ -34,7 +34,7 @@ class DockerJudge:
         if digest_pinned is None and local_image_id is None:
             raise ValueError("judge image must be pinned by sha256 digest")
         self.image = image
-        self.manifest_path = manifest_path.resolve()
+        self.task_config_path = task_config_path.resolve()
         self.base_repository = base_repository.resolve()
         self.private_root = private_root.resolve()
         self.candidate_patch = candidate_patch.resolve()
@@ -69,7 +69,7 @@ class DockerJudge:
             "--volume",
             f"{package_root}:/opt/pitbench:ro",
             "--volume",
-            f"{self.manifest_path}:/input/task.yaml:ro",
+            f"{self.task_config_path}:/input/task.yaml:ro",
             "--volume",
             f"{self.base_repository}:/input/base:ro",
             "--volume",
@@ -82,7 +82,7 @@ class DockerJudge:
             "python",
             "-m",
             "pitbench.evaluator.runner",
-            "--manifest",
+            "--task-config",
             "/input/task.yaml",
             "--base-repository",
             "/input/base",

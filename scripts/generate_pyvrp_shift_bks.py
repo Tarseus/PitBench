@@ -13,7 +13,7 @@ from typing import Any
 import yaml
 
 from pitbench.families.cvrp import CVRPFamily
-from pitbench.instances.generate import materialize_generated_population
+from pitbench.instances.generate import materialize_generated_instance_set
 
 
 def _sha256(path: Path) -> str:
@@ -77,7 +77,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate independently verified empirical BKS anchors."
     )
-    parser.add_argument("--population-manifest", type=Path, required=True)
+    parser.add_argument("--instance-set-config", type=Path, required=True)
     parser.add_argument("--solver-python", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--budget-sec", type=float, default=30.0)
@@ -93,14 +93,14 @@ def main() -> None:
     if not args.seeds or len(set(args.seeds)) != len(args.seeds):
         raise ValueError("seeds must be non-empty and unique")
 
-    payload = yaml.safe_load(args.population_manifest.read_text())
+    payload = yaml.safe_load(args.instance_set_config.read_text())
     args.output_dir.mkdir(parents=True, exist_ok=True)
     verifier = CVRPFamily()
     solver_version = _solver_version(args.solver_python)
 
     with tempfile.TemporaryDirectory(prefix="pitbench-shift-bks-") as temporary:
         root = Path(temporary)
-        instances = materialize_generated_population(
+        instances = materialize_generated_instance_set(
             payload,
             root / "instances",
             expected_visibility="judge",
@@ -179,7 +179,7 @@ def main() -> None:
         "objective_sense": "minimize",
         "distance_metric": "EUC_2D",
         "generated_at": datetime.now(UTC).isoformat(),
-        "population_manifest_sha256": _sha256(args.population_manifest),
+        "instance_set_config_sha256": _sha256(args.instance_set_config),
         "solver": {"name": "PyVRP", "version": solver_version},
         "protocol": {
             "budget_sec": args.budget_sec,

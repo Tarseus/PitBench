@@ -17,7 +17,7 @@ def test_missing_candidate_is_a_typed_invalid_result(tmp_path: Path) -> None:
             output_dir=tmp_path,
             agent_name="test",
             evaluator_config={
-                "manifest_path": str(record.manifest_path),
+                "task_config_path": str(record.task_config_path),
                 "fixture_mode": True,
             },
         )

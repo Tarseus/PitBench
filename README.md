@@ -94,7 +94,8 @@ Unlike general repository-level coding benchmarks, solver optimization must pres
 
 ### 3. Generalization across Problem Topologies (Held-Out Retention)
 - Evaluations test both calibration instances (`judge_id`) and unseen structural shift instances (`judge_shift`, e.g., clustered customer distributions, skewed demand profiles).
-- The report shows whether the measured improvement is retained on the declared hidden-shift population; it does not claim universal generalization.
+- The report shows whether the measured improvement is retained on the declared
+  hidden-shift instance set; it does not claim universal generalization.
 
 ---
 
@@ -200,11 +201,11 @@ uv run pitbench report \
 ## 🛠️ Verification & Developer Tooling
 
 ```bash
-# Validate task manifests and contracts
+# Validate task configs and contracts
 uv run pitbench tasks validate
 
 # Run the deterministic evaluator fixture
-uv run pitbench tasks fixture --instances-per-population 1
+uv run pitbench tasks fixture --instances-per-instance-set 1
 
 # Run the unit suite
 ALL_PROXY= all_proxy= uv run pytest -q tests/unit
@@ -234,7 +235,8 @@ PitBench/
 │   ├── instances/       # CO instance generation and materialization tooling
 │   └── cli/             # Unified CLI (`run/evaluate/judge/report/tasks`)
 ├── scripts/             # Optional external scheduling and maintenance scripts
-├── manifests/tasks/      # Public task specifications
+├── configs/tasks/        # Public task configs
+├── configs/instance_sets/ # Public instance-set configs
 ├── adapters/pitbench/    # Prepared PyVRP Docker adapter
 ├── private/              # Maintainer-provisioned hidden evaluation assets
 └── tests/unit/           # Unit test suite

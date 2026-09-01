@@ -34,9 +34,9 @@ tasks:
     candidate_patch = evaluation_dir / "candidate.patch"
     candidate_patch.write_text("diff --git a/a b/a\n")
     candidate_patch_sha256 = hashlib.sha256(candidate_patch.read_bytes()).hexdigest()
-    manifest_path = repository_root / "manifests/tasks/pyvrp.yaml"
+    task_config_path = repository_root / "configs/tasks/pyvrp.yaml"
     record = SimpleNamespace(
-        manifest_path=manifest_path,
+        task_config_path=task_config_path,
         task=SimpleNamespace(
             task_id="pyvrp_v0_14_0",
             repository=SimpleNamespace(judge_image=None),

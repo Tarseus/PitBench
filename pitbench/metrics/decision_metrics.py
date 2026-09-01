@@ -50,7 +50,7 @@ def compute_performance_decision(
         ),
         None,
     )
-    shift_cell = report.populations.get("judge_shift")
+    shift_cell = report.instance_sets.get("judge_shift")
     shift_budget = (
         shift_cell.by_budget.get(f"{report.primary_budget_sec:g}")
         if shift_cell is not None
@@ -73,8 +73,8 @@ def compute_performance_decision(
         missing.append("paired judge-ID/hidden-shift evidence is incomplete")
 
     regressions: list[str] = []
-    for population in report.populations.values():
-        cell = population.by_budget.get(f"{report.primary_budget_sec:g}")
+    for instance_set in report.instance_sets.values():
+        cell = instance_set.by_budget.get(f"{report.primary_budget_sec:g}")
         if cell is None:
             continue
         base_success = (
@@ -90,7 +90,7 @@ def compute_performance_decision(
         if agent_success - base_success < protocol.minimum_success_rate_delta:
             regressions.append(
                 f"independently verified run validity regressed on "
-                f"{population.population_kind}"
+                f"{instance_set.instance_set_kind}"
             )
     primary_ci = paired.mean_gap_reduction_ci95
     if primary_ci is not None and primary_ci.upper < 0:

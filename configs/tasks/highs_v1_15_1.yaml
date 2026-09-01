@@ -1,4 +1,4 @@
-schema_version: "2.0"
+schema_version: "3.0"
 task_id: highs_v1_15_1
 release:
   repository: ERGO-Code/HiGHS
@@ -28,20 +28,20 @@ evaluation:
   solver_seeds: [0, 1, 2]
   threads: 1
   verifier: private://oracles/verifiers/mip_solution
-populations:
+instance_sets:
   - name: agent_dev
     kind: agent_dev
-    manifest: manifests/populations/highs_v1_15_1_dev.yaml
+    instance_set_config: configs/instance_sets/highs_v1_15_1_dev.yaml
     size: 5
     randomness: {instance_seed: 115100}
   - name: judge_id
     kind: judge_id
-    manifest: private://hidden_instances/highs_v1_15_1/judge_id.yaml
+    instance_set_config: private://hidden_instances/highs_v1_15_1/judge_id.yaml
     size: 30
     randomness: {instance_seed: 115110}
   - name: non_scheduling_mip
     kind: judge_shift
-    manifest: private://hidden_instances/highs_v1_15_1/non_scheduling_mip.yaml
+    instance_set_config: private://hidden_instances/highs_v1_15_1/non_scheduling_mip.yaml
     size: 30
     shift: non_scheduling_structure
     randomness: {instance_seed: 115120}

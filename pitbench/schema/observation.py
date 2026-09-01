@@ -21,8 +21,8 @@ class RunStatus(str, Enum):
 class RunObservation(BaseModel):
     task_id: str
     code_state: CodeState
-    population: str
-    population_kind: str | None = None
+    instance_set: str
+    instance_set_kind: str | None = None
     instance_id: str
     instance_seed: int
     coordinate_seed: int | None = None

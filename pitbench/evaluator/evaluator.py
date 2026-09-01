@@ -31,10 +31,10 @@ class PitBenchEvaluator(Evaluator):
         progress_callback = config.get("_progress_callback")
         if not callable(progress_callback):
             progress_callback = None
-        manifest_path = Path(config["manifest_path"])
-        task = PitBenchTask.from_yaml(manifest_path)
+        task_config_path = Path(config["task_config_path"])
+        task = PitBenchTask.from_yaml(task_config_path)
         if task.task_id != request.task_id:
-            raise ValueError("task ID does not match evaluator manifest")
+            raise ValueError("task ID does not match evaluator task config")
 
         patch_exists = request.candidate_patch_path.is_file()
         fixture_mode = bool(config.get("fixture_mode", False))
@@ -61,7 +61,7 @@ class PitBenchEvaluator(Evaluator):
         if not preflight_validity.accepted:
             observations = []
         elif fixture_mode:
-            limit = int(config.get("fixture_instances_per_population", 2))
+            limit = int(config.get("fixture_instances_per_instance_set", 2))
             observations = FixtureJudge().run(
                 JudgePlan.fixture(task, limit), code_states=code_states
             )
@@ -76,7 +76,7 @@ class PitBenchEvaluator(Evaluator):
                 raise ValueError("real judge requires a pinned judge_image")
             observations = DockerJudge(
                 image=image,
-                manifest_path=manifest_path,
+                task_config_path=task_config_path,
                 base_repository=Path(config["base_repository"]),
                 private_root=Path(config["private_root"]),
                 candidate_patch=request.candidate_patch_path,

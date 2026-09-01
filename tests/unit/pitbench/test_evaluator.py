@@ -28,9 +28,9 @@ def test_every_task_runs_explicit_fixture_grid(record, tmp_path: Path) -> None:
             output_dir=output,
             agent_name="fixture",
             evaluator_config={
-                "manifest_path": str(record.manifest_path),
+                "task_config_path": str(record.task_config_path),
                 "fixture_mode": True,
-                "fixture_instances_per_population": 1,
+                "fixture_instances_per_instance_set": 1,
             },
         )
     )
@@ -60,7 +60,7 @@ def test_real_evaluation_without_private_assets_fails_closed(tmp_path: Path) -> 
             candidate_patch_sha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
             output_dir=output,
             agent_name="test",
-            evaluator_config={"manifest_path": str(record.manifest_path)},
+            evaluator_config={"task_config_path": str(record.task_config_path)},
         )
     )
     assert envelope.completed is False
@@ -81,7 +81,7 @@ def test_real_evaluation_requires_captured_patch_identity(tmp_path: Path) -> Non
             candidate_patch_path=candidate,
             output_dir=output,
             agent_name="test",
-            evaluator_config={"manifest_path": str(record.manifest_path)},
+            evaluator_config={"task_config_path": str(record.task_config_path)},
         )
     )
 
@@ -107,7 +107,7 @@ def test_evaluator_rejects_candidate_patch_identity_mismatch(
             output_dir=output,
             agent_name="test",
             evaluator_config={
-                "manifest_path": str(record.manifest_path),
+                "task_config_path": str(record.task_config_path),
                 "fixture_mode": True,
             },
         )
@@ -137,7 +137,7 @@ def test_evaluator_rejects_repository_snapshot_mismatch_before_judge(
         output_dir=output,
         agent_name="test",
         evaluator_config={
-            "manifest_path": str(record.manifest_path),
+            "task_config_path": str(record.task_config_path),
             "base_repository": str(base_repository),
             "private_root": str(private_root),
             "judge_image": "sha256:" + "a" * 64,
@@ -177,7 +177,7 @@ def test_real_evaluation_ignores_legacy_local_judge_flag(tmp_path: Path) -> None
         output_dir=output,
         agent_name="test",
         evaluator_config={
-            "manifest_path": str(record.manifest_path),
+            "task_config_path": str(record.task_config_path),
             "base_repository": str(base_repository),
             "private_root": str(private_root),
             "judge_image": "sha256:" + "a" * 64,
@@ -209,9 +209,9 @@ def test_cached_base_observations_merge_with_agent_fixture(tmp_path: Path) -> No
     base_dir.mkdir()
     agent_dir.mkdir()
     common = {
-        "manifest_path": str(record.manifest_path),
+        "task_config_path": str(record.task_config_path),
         "fixture_mode": True,
-        "fixture_instances_per_population": 1,
+        "fixture_instances_per_instance_set": 1,
     }
     base = PitBenchEvaluator().envelope(
         EvaluationRequest(
@@ -266,9 +266,9 @@ def test_model_equivalence_fixture_uses_performance_decision_path(
             output_dir=output,
             agent_name="fixture",
             evaluator_config={
-                "manifest_path": str(record.manifest_path),
+                "task_config_path": str(record.task_config_path),
                 "fixture_mode": True,
-                "fixture_instances_per_population": 1,
+                "fixture_instances_per_instance_set": 1,
             },
         )
     )
@@ -304,9 +304,9 @@ def test_evaluator_does_not_gate_candidate_paths(tmp_path: Path) -> None:
             output_dir=output,
             agent_name="fixture",
             evaluator_config={
-                "manifest_path": str(record.manifest_path),
+                "task_config_path": str(record.task_config_path),
                 "fixture_mode": True,
-                "fixture_instances_per_population": 1,
+                "fixture_instances_per_instance_set": 1,
             },
         )
     )
@@ -327,8 +327,8 @@ def test_semantically_invalid_agent_run_disqualifies_candidate(
     invalid = RunObservation(
         task_id=record.task.task_id,
         code_state=CodeState.AGENT,
-        population="judge_id",
-        population_kind="judge_id",
+        instance_set="judge_id",
+        instance_set_kind="judge_id",
         instance_id="invalid",
         instance_seed=0,
         solver_seed=0,
@@ -349,7 +349,7 @@ def test_semantically_invalid_agent_run_disqualifies_candidate(
                 output_dir=output,
                 agent_name="fixture",
                 evaluator_config={
-                    "manifest_path": str(record.manifest_path),
+                    "task_config_path": str(record.task_config_path),
                     "fixture_mode": True,
                 },
             )

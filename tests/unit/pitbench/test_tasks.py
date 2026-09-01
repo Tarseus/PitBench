@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 
 from pitbench.cli.main import app
 from pitbench.families.base import ProblemFamilyRegistry
-from pitbench.schema.task import PopulationKind, ProblemFamily, TaskType
+from pitbench.schema.task import InstanceSetKind, ProblemFamily, TaskType
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -61,21 +61,21 @@ def test_problem_families_select_their_canonical_verifier() -> None:
     assert ProblemFamilyRegistry.load(ProblemFamily.CP).name == "cp"
 
 
-def test_validate_one_ignores_unrelated_invalid_manifest(tmp_path: Path) -> None:
+def test_validate_one_ignores_unrelated_invalid_task_config(tmp_path: Path) -> None:
     task_id = "pyvrp_v0_14_0"
     source = TaskCatalog(ROOT).validate_one(task_id)
-    manifest = tmp_path / "manifests/tasks" / source.manifest_path.name
-    manifest.parent.mkdir(parents=True)
-    shutil.copy2(source.manifest_path, manifest)
-    for population in source.task.populations:
-        if population.kind != PopulationKind.AGENT_DEV:
+    task_config = tmp_path / "configs/tasks" / source.task_config_path.name
+    task_config.parent.mkdir(parents=True)
+    shutil.copy2(source.task_config_path, task_config)
+    for instance_set in source.task.instance_sets:
+        if instance_set.kind != InstanceSetKind.AGENT_DEV:
             continue
-        source_population = ROOT / population.manifest
-        target_population = tmp_path / population.manifest
-        target_population.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_population, target_population)
+        source_instance_set = ROOT / instance_set.instance_set_config
+        target_instance_set = tmp_path / instance_set.instance_set_config
+        target_instance_set.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_instance_set, target_instance_set)
 
-    (manifest.parent / "unrelated.yaml").write_text("not: a valid task\n")
+    (task_config.parent / "unrelated.yaml").write_text("not: a valid task\n")
     catalog = TaskCatalog(tmp_path)
 
     assert catalog.validate_one(task_id).task.task_id == task_id
@@ -99,12 +99,12 @@ def test_release_identity_and_private_judge_assets() -> None:
             for path in record.task.repository.editable_paths
         )
         assert record.task.information_regime.value == "snapshot_only"
-        for population in record.task.populations:
-            if population.kind == PopulationKind.AGENT_DEV:
-                assert not population.manifest.startswith("private://")
-                assert "private://" not in (ROOT / population.manifest).read_text()
+        for instance_set in record.task.instance_sets:
+            if instance_set.kind == InstanceSetKind.AGENT_DEV:
+                assert not instance_set.instance_set_config.startswith("private://")
+                assert "private://" not in (ROOT / instance_set.instance_set_config).read_text()
             else:
-                assert population.manifest.startswith("private://")
+                assert instance_set.instance_set_config.startswith("private://")
 
 
 def test_pyvrp_snapshots_use_verified_release_commits_and_common_protocol() -> None:
@@ -137,12 +137,12 @@ def test_pyvrp_snapshots_use_verified_release_commits_and_common_protocol() -> N
             task.evaluation.threads,
             tuple(
                 (
-                    population.name,
-                    population.manifest,
-                    population.size,
-                    population.randomness.model_dump_json(),
+                    instance_set.name,
+                    instance_set.instance_set_config,
+                    instance_set.size,
+                    instance_set.randomness.model_dump_json(),
                 )
-                for population in task.populations
+                for instance_set in task.instance_sets
             ),
         )
         for task in snapshots

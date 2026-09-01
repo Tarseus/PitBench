@@ -205,24 +205,24 @@ _GENERATORS = {
 }
 
 
-def materialize_generated_population(
+def materialize_generated_instance_set(
     payload: dict[str, Any],
     output_dir: Path,
     *,
     expected_visibility: str,
     stem_prefix: str = "dev",
 ) -> list[Path]:
-    """Materialize a frozen generator manifest in its authorized environment."""
+    """Materialize a frozen instance-set config in its authorized environment."""
 
     if payload.get("visibility") != expected_visibility:
         raise ValueError(
-            f"population visibility must be {expected_visibility!r}, "
+            f"instance-set visibility must be {expected_visibility!r}, "
             f"got {payload.get('visibility')!r}"
         )
     config = payload["generator"]
     kind = config["kind"]
     if kind not in _GENERATORS:
-        raise ValueError(f"unknown population generator: {kind}")
+        raise ValueError(f"unknown instance-set generator: {kind}")
     suffix, generator = _GENERATORS[kind]
     output_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
@@ -230,7 +230,7 @@ def materialize_generated_population(
         path = output_dir / f"{stem_prefix}_{index:04d}.{suffix}"
         generator(config, index, path)
         paths.append(path)
-    index_path = output_dir / "population.yaml"
+    index_path = output_dir / "instance_set_config.yaml"
     index_path.write_text(
         yaml.safe_dump(
             {
@@ -244,9 +244,12 @@ def materialize_generated_population(
     return paths
 
 
-def materialize_population(manifest: Path, output_dir: Path) -> list[Path]:
-    payload = yaml.safe_load(manifest.read_text())
-    return materialize_generated_population(
+def materialize_instance_set(
+    instance_set_config: Path,
+    output_dir: Path,
+) -> list[Path]:
+    payload = yaml.safe_load(instance_set_config.read_text())
+    return materialize_generated_instance_set(
         payload,
         output_dir,
         expected_visibility="agent",

@@ -16,7 +16,7 @@ from pitbench.schema.observation import CodeState, RunObservation, RunStatus
 
 def _observation(
     state: CodeState,
-    population_kind: str,
+    instance_set_kind: str,
     instance_id: str,
     solver_seed: int,
     gap: float | None,
@@ -27,8 +27,8 @@ def _observation(
     return RunObservation(
         task_id="performance",
         code_state=state,
-        population=population_kind,
-        population_kind=population_kind,
+        instance_set=instance_set_kind,
+        instance_set_kind=instance_set_kind,
         instance_id=instance_id,
         instance_seed=17,
         solver_seed=solver_seed,
@@ -41,7 +41,7 @@ def _observation(
 
 def _paired_panel() -> list[RunObservation]:
     observations: list[RunObservation] = []
-    for population, rows in {
+    for instance_set, rows in {
         "judge_id": (("i1", 0.11, 0.07), ("i2", 0.21, 0.16)),
         "judge_shift": (("s1", 0.13, 0.11), ("s2", 0.18, 0.17)),
     }.items():
@@ -51,14 +51,14 @@ def _paired_panel() -> list[RunObservation]:
                     [
                         _observation(
                             CodeState.BASE,
-                            population,
+                            instance_set,
                             instance,
                             seed,
                             base_gap,
                         ),
                         _observation(
                             CodeState.AGENT,
-                            population,
+                            instance_set,
                             instance,
                             seed,
                             agent_gap,
@@ -71,7 +71,7 @@ def _paired_panel() -> list[RunObservation]:
 def test_performance_report_pairs_seeds_and_bootstraps_instances() -> None:
     report = compute_performance_report(_paired_panel())
 
-    assert report.primary_population_kind == "judge_id"
+    assert report.primary_instance_set_kind == "judge_id"
     assert report.primary_budget_sec == 5.0
     assert report.solver_seeds == [0, 1]
     assert report.primary.base.mean_normalized_gap == pytest.approx(0.16)
@@ -121,7 +121,7 @@ def test_format_performance_report_is_performance_only() -> None:
     rendered = format_performance_report(compute_performance_report(_paired_panel()))
 
     assert "quality-time performance" in rendered
-    assert "Held-out population retention" in rendered
+    assert "Held-out instance-set retention" in rendered
     assert "Repeatability evidence" in rendered
     assert "95% CI" in rendered
     assert "Stability" not in rendered

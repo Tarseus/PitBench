@@ -52,8 +52,8 @@ class BudgetPerformance(BaseModel):
     paired: PairedGapEvidence
 
 
-class PopulationPerformance(BaseModel):
-    population_kind: str
+class InstanceSetPerformance(BaseModel):
+    instance_set_kind: str
     by_budget: dict[str, BudgetPerformance]
 
 
@@ -66,12 +66,12 @@ class HeldOutRetention(BaseModel):
 
 
 class PerformanceReport(BaseModel):
-    primary_population_kind: str
+    primary_instance_set_kind: str
     primary_budget_sec: float = Field(gt=0)
     solver_seeds: list[int]
     budgets_sec: list[float]
     primary: BudgetPerformance
-    populations: dict[str, PopulationPerformance]
+    instance_sets: dict[str, InstanceSetPerformance]
     held_out_retention: list[HeldOutRetention] = Field(default_factory=list)
 
 
@@ -121,7 +121,7 @@ def _gap_estimate(
     values_by_instance: dict[tuple[str, str], list[float]] = defaultdict(list)
     for item in valid:
         assert item.normalized_gap is not None
-        values_by_instance[(item.population, item.instance_id)].append(
+        values_by_instance[(item.instance_set, item.instance_id)].append(
             item.normalized_gap
         )
     failure_counts = Counter(
@@ -151,7 +151,7 @@ def _paired_gap_evidence(
         observations: Sequence[RunObservation],
     ) -> dict[tuple[str, str, int], RunObservation]:
         return {
-            (item.population, item.instance_id, item.solver_seed): item
+            (item.instance_set, item.instance_id, item.solver_seed): item
             for item in observations
         }
 
@@ -177,7 +177,7 @@ def _paired_gap_evidence(
             continue
         delta = base_item.normalized_gap - agent_item.normalized_gap
         deltas.append(delta)
-        instance_key = (base_item.population, base_item.instance_id)
+        instance_key = (base_item.instance_set, base_item.instance_id)
         deltas_by_instance[instance_key].append(delta)
         deltas_by_seed[base_item.solver_seed].append(delta)
         solver_seeds.add(base_item.solver_seed)
@@ -242,12 +242,12 @@ def compute_performance_report(
     solver_seeds = sorted({item.solver_seed for item in originals})
     by_kind: dict[str, list[RunObservation]] = defaultdict(list)
     for item in originals:
-        by_kind[item.population_kind or item.population].append(item)
+        by_kind[item.instance_set_kind or item.instance_set].append(item)
 
-    population_kinds = sorted(by_kind)
-    primary_kind = "judge_id" if "judge_id" in by_kind else population_kinds[0]
-    populations: dict[str, PopulationPerformance] = {}
-    for kind_index, kind in enumerate(population_kinds):
+    instance_set_kinds = sorted(by_kind)
+    primary_kind = "judge_id" if "judge_id" in by_kind else instance_set_kinds[0]
+    instance_sets: dict[str, InstanceSetPerformance] = {}
+    for kind_index, kind in enumerate(instance_set_kinds):
         by_budget = {}
         kind_budgets = sorted({item.budget_sec for item in by_kind[kind]})
         for budget_index, budget in enumerate(kind_budgets):
@@ -256,20 +256,20 @@ def compute_performance_report(
                 budget,
                 seed=BOOTSTRAP_SEED + kind_index * 100 + budget_index * 3,
             )
-        populations[kind] = PopulationPerformance(
-            population_kind=kind,
+        instance_sets[kind] = InstanceSetPerformance(
+            instance_set_kind=kind,
             by_budget=by_budget,
         )
 
     primary_budget = max(
         item.budget_sec for item in by_kind[primary_kind]
     )
-    primary = populations[primary_kind].by_budget[f"{primary_budget:g}"]
+    primary = instance_sets[primary_kind].by_budget[f"{primary_budget:g}"]
 
     held_out_retention: list[HeldOutRetention] = []
-    if "judge_id" in populations and "judge_shift" in populations:
-        id_by_budget = populations["judge_id"].by_budget
-        shift_by_budget = populations["judge_shift"].by_budget
+    if "judge_id" in instance_sets and "judge_shift" in instance_sets:
+        id_by_budget = instance_sets["judge_id"].by_budget
+        shift_by_budget = instance_sets["judge_shift"].by_budget
         for budget_key in sorted(
             set(id_by_budget) & set(shift_by_budget),
             key=float,
@@ -289,12 +289,12 @@ def compute_performance_report(
             )
 
     return PerformanceReport(
-        primary_population_kind=primary_kind,
+        primary_instance_set_kind=primary_kind,
         primary_budget_sec=primary_budget,
         solver_seeds=solver_seeds,
         budgets_sec=budgets,
         primary=primary,
-        populations=populations,
+        instance_sets=instance_sets,
         held_out_retention=held_out_retention,
     )
 
@@ -307,13 +307,13 @@ def format_performance_report(report: PerformanceReport) -> str:
     lines = [
         "Independent validity and quality-time performance",
         "",
-        "Population | Budget | Base valid | Agent valid | Base mean gap | "
+        "Instance set | Budget | Base valid | Agent valid | Base mean gap | "
         "Agent mean gap | Base-Agent gap reduction (95% CI) | "
         "Agent better/equal/worse",
         "--- | ---: | ---: | ---: | ---: | ---: | ---: | ---:",
     ]
-    for kind, population in report.populations.items():
-        for cell in population.by_budget.values():
+    for kind, instance_set in report.instance_sets.items():
+        for cell in instance_set.by_budget.values():
             paired = cell.paired
             delta = _format_gap(paired.mean_gap_reduction)
             if paired.mean_gap_reduction_ci95 is not None:
@@ -335,7 +335,7 @@ def format_performance_report(report: PerformanceReport) -> str:
         lines.extend(
             [
                 "",
-                "Held-out population retention",
+                "Held-out instance-set retention",
                 "",
                 "Budget | Judge-ID reduction | Hidden-shift reduction | Shift - ID",
                 "---: | ---: | ---: | ---:",
@@ -369,7 +369,7 @@ __all__ = [
     "HeldOutRetention",
     "PairedGapEvidence",
     "PerformanceReport",
-    "PopulationPerformance",
+    "InstanceSetPerformance",
     "compute_performance_report",
     "format_performance_report",
 ]

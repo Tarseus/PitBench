@@ -12,7 +12,7 @@ def _solver(task_plugin: str) -> str:
     return task_plugin.split(".")[2].split(":")[0]
 
 
-def test_publication_matrix_covers_every_release_manifest() -> None:
+def test_publication_matrix_covers_every_release_task_config() -> None:
     workflow = YAML(typ="safe").load(
         (ROOT / ".github/workflows/publish-solver-images.yml").read_text()
     )

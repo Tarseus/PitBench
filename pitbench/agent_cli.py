@@ -31,7 +31,9 @@ def _config() -> dict[str, Any]:
 def _instances(selected: str | None) -> list[Path]:
     root = _path("PITBENCH_DEV_INSTANCES", "/pitbench/dev_instances")
     paths = sorted(
-        path for path in root.glob("dev_*.*") if path.name != "population.yaml"
+        path
+        for path in root.glob("dev_*.*")
+        if path.name != "instance_set_config.yaml"
     )
     if selected is None:
         return paths

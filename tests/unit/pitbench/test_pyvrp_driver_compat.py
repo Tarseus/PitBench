@@ -29,7 +29,7 @@ def test_route_extraction_supports_pre_and_post_v0_14_apis() -> None:
     assert _route_visits(_ModernRoute()) == [1, 4]
 
 
-def test_statistics_supports_v0_12_population_layout() -> None:
+def test_statistics_supports_v0_12_instance_set_layout() -> None:
     stats = SimpleNamespace(
         runtimes=[0.1, 0.2],
         feas_stats=[
