@@ -106,10 +106,13 @@ def test_pyvrp_plan_materializes_performance_first_panel(
         primary_budget_sec=task.evaluation.primary_budget_sec,
     )
     assert performance.budgets_sec == [1.0, 5.0, 10.0]
-    assert performance.solver_seeds == [0, 1, 2, 3, 4]
+    assert set(performance.by_budget) == {"1", "5", "10"}
     assert performance.primary.paired.paired_instances == 38
-    assert len(performance.held_out_retention) == 3
     assert performance.classification is PerformanceClassification.IMPROVED
+    serialized = str(performance.model_dump())
+    assert "judge_shift" not in serialized
+    assert "held_out" not in serialized
+    assert "solver_seeds" not in serialized
 
 
 def test_driver_result_includes_terminated_child_resource_usage(tmp_path: Path) -> None:

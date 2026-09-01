@@ -75,33 +75,42 @@ def test_performance_report_pairs_seeds_and_bootstraps_instances() -> None:
     report = compute_performance_report(_paired_panel(), primary_budget_sec=5.0)
 
     assert report.classification is PerformanceClassification.IMPROVED
-    assert report.primary_instance_set_kind == "judge_id"
     assert report.primary_budget_sec == 5.0
-    assert report.solver_seeds == [0, 1]
+    assert report.budgets_sec == [5.0]
+    assert set(report.by_budget) == {"5"}
     assert report.primary.base.mean_normalized_gap == pytest.approx(0.16)
     assert report.primary.agent.mean_normalized_gap == pytest.approx(0.115)
     paired = report.primary.paired
-    assert paired.paired_runs == 4
     assert paired.paired_instances == 2
-    assert paired.agent_better == 4
-    assert paired.equal == 0
-    assert paired.agent_worse == 0
     assert paired.mean_gap_reduction == pytest.approx(0.045)
-    assert paired.mean_gap_reduction_by_seed == pytest.approx({0: 0.045, 1: 0.045})
     assert paired.mean_gap_reduction_ci95 is not None
     assert paired.mean_gap_reduction_ci95.lower == pytest.approx(0.04)
     assert paired.mean_gap_reduction_ci95.upper == pytest.approx(0.05)
 
-    assert len(report.held_out_retention) == 1
-    retention = report.held_out_retention[0]
-    assert retention.judge_id_gap_reduction == pytest.approx(0.045)
-    assert retention.judge_shift_gap_reduction == pytest.approx(0.015)
-    assert retention.shift_minus_id_gap_reduction == pytest.approx(-0.03)
-    assert retention.retained_on_shift
+    payload = report.model_dump()
+    assert set(payload) == {
+        "classification",
+        "primary_budget_sec",
+        "budgets_sec",
+        "primary",
+        "by_budget",
+    }
+    assert set(payload["primary"]["base"]) == {
+        "mean_normalized_gap",
+        "median_normalized_gap",
+        "p95_normalized_gap",
+        "mean_ci95",
+    }
+    assert set(payload["primary"]["paired"]) == {
+        "paired_instances",
+        "mean_gap_reduction",
+        "mean_gap_reduction_ci95",
+    }
 
 
-def test_performance_report_tracks_invalid_runs() -> None:
+def test_invalid_runs_do_not_change_performance_estimates() -> None:
     observations = _paired_panel()
+    original = compute_performance_report(observations, primary_budget_sec=5.0)
     observations.append(
         _observation(
             CodeState.AGENT,
@@ -116,9 +125,20 @@ def test_performance_report_tracks_invalid_runs() -> None:
 
     report = compute_performance_report(observations, primary_budget_sec=5.0)
 
-    assert report.primary.agent.total_runs == 5
-    assert report.primary.agent.valid_runs == 4
-    assert report.primary.agent.failure_counts == {"timed_out": 1}
+    assert report == original
+
+
+def test_performance_report_ignores_non_judge_id_observations() -> None:
+    observations = _paired_panel()
+    judge_id_only = [
+        observation
+        for observation in observations
+        if observation.instance_set_kind == "judge_id"
+    ]
+
+    assert compute_performance_report(
+        observations, primary_budget_sec=5.0
+    ) == compute_performance_report(judge_id_only, primary_budget_sec=5.0)
 
 
 @pytest.mark.parametrize(
@@ -231,8 +251,6 @@ def test_gap_summaries_exclude_zero_valid_seed_instances() -> None:
         original.primary.agent.mean_normalized_gap
     )
     assert report.primary.paired == original.primary.paired
-    assert report.primary.base.failure_counts == {"timed_out": 1}
-    assert report.primary.agent.failure_counts == {"crashed": 1}
 
 
 def test_declared_primary_budget_is_not_replaced_by_larger_budget() -> None:
@@ -278,12 +296,14 @@ def test_format_performance_report_is_performance_only() -> None:
         compute_performance_report(_paired_panel(), primary_budget_sec=5.0)
     )
 
-    assert "quality-time performance" in rendered
+    assert "Fixed-budget performance" in rendered
     assert "Classification: improved" in rendered
-    assert "Held-out instance-set retention" in rendered
-    assert "Repeatability evidence" in rendered
+    assert "Paired instances" in rendered
+    assert "instance bootstrap over per-instance seed means" in rendered
     assert "95% CI" in rendered
-    assert "Stability" not in rendered
+    assert "valid" not in rendered.lower()
+    assert "hidden" not in rendered.lower()
+    assert "repeatability" not in rendered.lower()
 
 
 def test_report_command_supports_structured_output(tmp_path: Path) -> None:
@@ -302,7 +322,7 @@ def test_report_command_supports_structured_output(tmp_path: Path) -> None:
         ["report", str(path), "--task-config", str(task_config)],
     )
     assert text_result.exit_code == 0
-    assert "quality-time performance" in text_result.output
+    assert "Fixed-budget performance" in text_result.output
 
     json_result = runner.invoke(
         app,
