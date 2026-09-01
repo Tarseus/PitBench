@@ -65,8 +65,3 @@ class EvaluationResult(BaseModel):
     observations: list[RunObservation]
     artifacts: ArtifactManifest
     summary: EvaluationSummary
-
-    @computed_field
-    @property
-    def is_resolved(self) -> bool:
-        return bool(self.summary.decision and self.summary.decision.is_resolved)

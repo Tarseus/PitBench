@@ -106,7 +106,7 @@ def test_trial_pipeline_records_stage_inputs_and_outputs(tmp_path: Path) -> None
     )
     terminal = _Terminal()
 
-    completed = harness._run_single_agent_trial_terminal(
+    harness._run_single_agent_trial_terminal(
         trial_handler=trial_handler,
         terminal=terminal,
         results=results,
@@ -134,5 +134,4 @@ def test_trial_pipeline_records_stage_inputs_and_outputs(tmp_path: Path) -> None
     assert events[5]["outputs"]["captured_pane"] == "captured output from tests"
     assert events[-1]["outputs"]["parser_results"] == {"pytest": "passed"}
     assert "must-not-leak" not in harness._pipeline_trace.path.read_text()
-    assert completed.is_resolved is True
     assert terminal.closed_sessions == ["tests", "agent", "setup"]

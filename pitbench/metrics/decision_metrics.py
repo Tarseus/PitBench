@@ -8,7 +8,6 @@ from pitbench.schema.task import DecisionProtocol
 
 class PerformanceDecision(BaseModel):
     policy_name: str = "pitbench-performance-first"
-    is_resolved: bool
     classification: str
     validity_complete: bool
     performance_complete: bool
@@ -78,9 +77,7 @@ def compute_performance_decision(
         if cell is None:
             continue
         base_success = (
-            cell.base.valid_runs / cell.base.total_runs
-            if cell.base.total_runs
-            else 0.0
+            cell.base.valid_runs / cell.base.total_runs if cell.base.total_runs else 0.0
         )
         agent_success = (
             cell.agent.valid_runs / cell.agent.total_runs
@@ -107,7 +104,6 @@ def compute_performance_decision(
     ):
         improvements.append("fixed-budget normalized gap with 95% confidence")
 
-    is_resolved = not missing and not regressions and bool(improvements)
     if missing:
         classification = "incomplete"
     elif regressions and improvements:
@@ -121,7 +117,6 @@ def compute_performance_decision(
     else:
         classification = "no_change"
     return PerformanceDecision(
-        is_resolved=is_resolved,
         classification=classification,
         validity_complete=validity_accepted
         and not any("validity regressed" in item for item in regressions),

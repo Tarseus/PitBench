@@ -114,7 +114,6 @@ def test_pyvrp_plan_materializes_performance_first_panel(
     assert len(performance.held_out_retention) == 3
     assert decision.repeatability_complete
     assert decision.held_out_complete
-    assert decision.is_resolved
     assert decision.classification == "improved"
 
 

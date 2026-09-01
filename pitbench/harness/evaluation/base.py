@@ -30,7 +30,6 @@ class EvaluationEnvelope(BaseModel):
     completed: bool
     payload: dict[str, Any]
     error: str | None = None
-    is_resolved: bool | None = None
 
 
 class Evaluator(ABC):
@@ -53,14 +52,12 @@ class Evaluator(ABC):
                 completed=False,
                 payload={},
                 error=f"{type(exc).__name__}: {exc}",
-                is_resolved=False,
             )
         return EvaluationEnvelope(
             evaluator=self.name,
             evaluator_version=self.version,
             completed=True,
             payload=result.model_dump(mode="json"),
-            is_resolved=getattr(result, "is_resolved", None),
         )
 
 

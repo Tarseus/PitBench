@@ -592,8 +592,8 @@ class Harness:
             return
         context = task_id or trial_name or "run"
         description = (
-            f"Running tasks ({display['completed']}/{display['total']}, "
-            f"Accuracy: {display['accuracy']:.2%}) — {context}: {detail}"
+            f"Running tasks ({display['completed']}/{display['total']}) — "
+            f"{context}: {detail}"
         )
         update: dict[str, Any] = {"description": description}
         solver_runs = re.search(r"solver runs (\d+)/(\d+)", detail)
@@ -786,7 +786,6 @@ class Harness:
                 error=exc,
             )
             raise
-        results.is_resolved = results.evaluation.is_resolved
         self._trace_pipeline(
             stage="evaluator.execute",
             status="completed" if results.evaluation.completed else "failed",
@@ -1315,14 +1314,6 @@ class Harness:
                 run_id=self._run_id,
                 upload_results=self._upload_results,
             ),
-        )
-
-    def _is_resolved(self, parser_results: dict[str, UnitTestStatus] | None) -> bool:
-        if parser_results is None:
-            return False
-
-        return all(
-            result == UnitTestStatus.PASSED for result in parser_results.values()
         )
 
     def _setup_setup_env(self, terminal: Terminal, trial_handler: TrialHandler) -> None:
@@ -2569,7 +2560,6 @@ class Harness:
                         trial_handler.parser, "extra_metrics", None
                     ),
                     "failure_mode": parse_failure_mode,
-                    "is_resolved": self._is_resolved(parser_results),
                 },
                 execution={
                     "component": (
@@ -2604,12 +2594,7 @@ class Harness:
                 results.parser_extra_metrics = getattr(
                     trial_handler.parser, "extra_metrics"
                 )
-            results.is_resolved = self._is_resolved(parser_results)
-
-            if results.is_resolved:
-                self._logger.info(f"Resolved task {trial_handler.task_id}")
-            else:
-                self._logger.info(f"Unresolved task {trial_handler.task_id}")
+            self._logger.info(f"Completed task {trial_handler.task_id}")
 
             self._maybe_save_evaluation_snapshot(
                 terminal=terminal,
@@ -3248,7 +3233,7 @@ class Harness:
         # Write metadata using simple JSON write
         self._run_metadata_output_path.write_text(metadata.model_dump_json(indent=4))
 
-    def _update_metadata_on_end(self, results: BenchmarkResults) -> None:
+    def _update_metadata_on_end(self) -> None:
         """Update metadata with final results."""
         if self._run_metadata_output_path.exists():
             try:
@@ -3256,10 +3241,7 @@ class Harness:
                     self._run_metadata_output_path.read_text()
                 )
 
-                # Update with final results
                 metadata.end_time = datetime.now(timezone.utc).isoformat()
-                metadata.accuracy = results.accuracy
-                metadata.pass_at_k = results.pass_at_k
 
                 # Write updated metadata back to file
                 self._run_metadata_output_path.write_text(
@@ -3451,8 +3433,7 @@ class Harness:
         combined_results = BenchmarkResults(results=all_results)
 
         self._logger.info(
-            f"Loaded {len(all_results)} results from individual task directories "
-            f"(Accuracy: {combined_results.accuracy:.2%})"
+            f"Loaded {len(all_results)} results from individual task directories"
         )
 
         return combined_results
@@ -3514,7 +3495,7 @@ class Harness:
             )
             progress.start()
             progress_task = progress.add_task(
-                f"Running tasks (0/{total_tasks}, Accuracy: {results.accuracy:.2%})",
+                f"Running tasks (0/{total_tasks})",
                 total=total_tasks,
             )
             self._progress_display = {
@@ -3522,7 +3503,6 @@ class Harness:
                 "task": progress_task,
                 "completed": len(results.results),
                 "total": total_tasks,
-                "accuracy": results.accuracy,
             }
 
         try:
@@ -3569,13 +3549,10 @@ class Harness:
 
                         self._write_results(results)
 
-                        task_name = trial_results.task_id
-                        status = "✓" if trial_results.is_resolved else "✗"
                         completed_tasks = len(results.results)
                         self._progress_display.update(
                             {
                                 "completed": completed_tasks,
-                                "accuracy": results.accuracy,
                             }
                         )
                         progress.update(
@@ -3583,9 +3560,8 @@ class Harness:
                             completed=completed_tasks,
                             total=total_tasks,
                             description=(
-                                f"Running tasks ({completed_tasks}/{total_tasks}, "
-                                f"Accuracy: {results.accuracy:.2%}) — "
-                                f"Last: {task_name} {status}"
+                                f"Running tasks ({completed_tasks}/{total_tasks}) — "
+                                f"Last: {trial_results.task_id}"
                             ),
                         )
         finally:
@@ -3681,7 +3657,7 @@ class Harness:
 
             # Only update metadata on end if not resuming
             if not self._is_resuming:
-                self._update_metadata_on_end(results=results)
+                self._update_metadata_on_end()
 
             self._handle_results_upload(results)
         except Exception as exc:

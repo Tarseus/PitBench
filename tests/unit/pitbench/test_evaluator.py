@@ -278,8 +278,8 @@ def test_model_equivalence_fixture_uses_performance_decision_path(
     assert decision["policy_name"] == "pitbench-performance-first"
     assert decision["performance_complete"] is False
     assert decision["classification"] == "incomplete"
-    assert decision["is_resolved"] is False
-    assert envelope.is_resolved is False
+    assert "is_resolved" not in decision
+    assert "is_resolved" not in envelope.model_dump()
     assert "outcome_complete" not in decision
     assert "resource_telemetry_complete" not in decision
     assert "sensitivity_complete" not in decision
@@ -360,4 +360,3 @@ def test_semantically_invalid_agent_run_disqualifies_candidate(
     assert envelope.payload["validity"]["checks"][-1]["code"] == "solution"
     assert envelope.payload["observations"][0]["status"] == "invalid"
     assert envelope.payload["summary"]["performance"] is not None
-    assert envelope.payload["summary"]["decision"]["is_resolved"] is False

@@ -3,7 +3,6 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    DOUBLE_PRECISION,
     TIMESTAMP,
     Boolean,
     Column,
@@ -41,7 +40,6 @@ class DBRunMetadata(Base):
     task_ids = Column(JSONB, nullable=True)  # List of task IDs
     dataset_size = Column(Integer, default=0)
     model_name = Column(String, nullable=True)
-    accuracy = Column(DOUBLE_PRECISION, nullable=True)
     start_time = Column(TIMESTAMP, nullable=False)
     end_time = Column(TIMESTAMP, nullable=True)
     commit_hash = Column(String, default="unknown")
@@ -95,7 +93,6 @@ class DBTaskResult(Base):
     )
     task_id = Column(String, nullable=False, index=True)
     task_description = Column(Text, nullable=False)
-    is_resolved = Column(Boolean, nullable=True)
     failure_mode = Column(String, nullable=False, default="unset")
     parser_results = Column(JSONB, nullable=True)  # JSON dict of test results
     total_input_tokens = Column(Integer, nullable=True)
@@ -146,7 +143,6 @@ class DBTrialResult(Base):
     trial_name = Column(String, nullable=False)
     task_id = Column(String, nullable=False, index=True)
     task_description = Column(Text, nullable=False)
-    is_resolved = Column(Boolean, nullable=True)
     failure_mode = Column(String, nullable=False, default="unset")
     parser_results = Column(JSONB, nullable=True)
     total_input_tokens = Column(Integer, nullable=True)

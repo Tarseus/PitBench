@@ -10,12 +10,10 @@ from typing import Annotated, Any
 import dotenv
 import typer
 from rich import print as rich_print
-from tabulate import tabulate
 from typer import Option
 
 from pitbench.harness import Harness
 from pitbench.harness.agents import AgentName
-from pitbench.harness.harness.models import BenchmarkResults
 
 dotenv.load_dotenv()
 logging.getLogger().setLevel(logging.INFO)
@@ -77,21 +75,8 @@ def _process_agent_kwargs(
     return processed_kwargs
 
 
-def _print_rich_results(results: BenchmarkResults, output_path: Path) -> None:
-    """Print aggregated run metrics."""
-    headers = ["Metric", "Value"]
-    data = [
-        ["Resolved Trials", str(results.n_resolved)],
-        ["Unresolved Trials", str(results.n_unresolved)],
-        ["Accuracy", f"{results.accuracy:.2%}"],
-    ]
-
-    # Add pass@k metrics
-    for k in results.pass_at_k:
-        data.append([f"Pass@{k}", f"{results.pass_at_k[k]:.2%}"])
-
-    print("\nResults Summary:")
-    print(tabulate(data, headers=headers, tablefmt="grid"))
+def _print_rich_results(output_path: Path) -> None:
+    """Print the location of the structured run results."""
     rich_print(f"\nResults written to [bold green]{output_path.absolute()}[/]")
 
 
@@ -545,8 +530,8 @@ def create(
             history_limit=history_limit,
         )
 
-        results = harness.run()
-        _print_rich_results(results, harness._results_output_path)
+        harness.run()
+        _print_rich_results(harness._results_output_path)
         # Note: Individual results are stored separately in sub-directories
     else:
         # Handle single agent (existing logic)
@@ -584,5 +569,5 @@ def create(
             history_limit=history_limit,
         )
 
-        results = harness.run()
-        _print_rich_results(results, harness._results_output_path)
+        harness.run()
+        _print_rich_results(harness._results_output_path)

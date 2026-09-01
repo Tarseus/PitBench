@@ -67,6 +67,8 @@ def test_run_metadata_agent_framework_roundtrip() -> None:
 
     dumped = metadata.model_dump()
     assert dumped["agent_framework"] == "oracle"
+    assert "accuracy" not in dumped
+    assert "pass_at_k" not in dumped
 
     restored = RunMetadata.model_validate(dumped)
     assert restored.agent_framework == "oracle"

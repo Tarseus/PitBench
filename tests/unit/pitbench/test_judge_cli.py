@@ -52,7 +52,6 @@ tasks:
                 "valid_observation_count": 1440,
             }
         },
-        is_resolved=True,
     )
 
     with (
