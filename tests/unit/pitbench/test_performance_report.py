@@ -119,6 +119,81 @@ def test_performance_report_tracks_invalid_runs() -> None:
     assert report.primary.agent.failure_counts == {"timed_out": 1}
 
 
+def test_gap_summaries_weight_per_instance_seed_means_equally() -> None:
+    observations: list[RunObservation] = []
+    for seed in (0, 1, 2):
+        observations.extend(
+            [
+                _observation(CodeState.BASE, "judge_id", "many", seed, 0.0),
+                _observation(CodeState.AGENT, "judge_id", "many", seed, 0.0),
+            ]
+        )
+    observations.extend(
+        [
+            _observation(CodeState.BASE, "judge_id", "one", 0, 1.0),
+            _observation(CodeState.AGENT, "judge_id", "one", 0, 0.0),
+        ]
+    )
+
+    report = compute_performance_report(observations, primary_budget_sec=5.0)
+
+    assert report.primary.base.mean_normalized_gap == pytest.approx(0.5)
+    assert report.primary.base.median_normalized_gap == pytest.approx(0.5)
+    assert report.primary.base.p95_normalized_gap == pytest.approx(0.95)
+    assert report.primary.agent.mean_normalized_gap == pytest.approx(0.0)
+    assert report.primary.paired.mean_gap_reduction == pytest.approx(0.5)
+    for interval in (
+        report.primary.base.mean_ci95,
+        report.primary.agent.mean_ci95,
+        report.primary.paired.mean_gap_reduction_ci95,
+    ):
+        assert interval is not None
+        assert interval.level == 0.95
+        assert interval.resamples == 5000
+        assert interval.method == (
+            "instance bootstrap over per-instance seed means"
+        )
+
+
+def test_gap_summaries_exclude_zero_valid_seed_instances() -> None:
+    observations = _paired_panel()
+    original = compute_performance_report(observations, primary_budget_sec=5.0)
+    observations.extend(
+        [
+            _observation(
+                CodeState.BASE,
+                "judge_id",
+                "no-valid-seeds",
+                0,
+                None,
+                valid=False,
+                status=RunStatus.TIMED_OUT,
+            ),
+            _observation(
+                CodeState.AGENT,
+                "judge_id",
+                "no-valid-seeds",
+                0,
+                None,
+                valid=False,
+                status=RunStatus.CRASHED,
+            ),
+        ]
+    )
+
+    report = compute_performance_report(observations, primary_budget_sec=5.0)
+
+    assert report.primary.base.mean_normalized_gap == (
+        original.primary.base.mean_normalized_gap
+    )
+    assert report.primary.agent.mean_normalized_gap == (
+        original.primary.agent.mean_normalized_gap
+    )
+    assert report.primary.paired == original.primary.paired
+    assert report.primary.base.failure_counts == {"timed_out": 1}
+    assert report.primary.agent.failure_counts == {"crashed": 1}
+
+
 def test_declared_primary_budget_is_not_replaced_by_larger_budget() -> None:
     observations = _paired_panel()
     observations.extend(

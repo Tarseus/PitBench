@@ -12,13 +12,14 @@ from pitbench.schema.observation import CodeState, RunObservation, RunStatus
 
 BOOTSTRAP_RESAMPLES = 5000
 BOOTSTRAP_SEED = 20260824
+INSTANCE_BOOTSTRAP_METHOD = "instance bootstrap over per-instance seed means"
 
 
 class ConfidenceInterval(BaseModel):
     lower: float
     upper: float
     level: float = 0.95
-    method: str = "instance-cluster bootstrap"
+    method: str = INSTANCE_BOOTSTRAP_METHOD
     resamples: int = BOOTSTRAP_RESAMPLES
 
 
@@ -117,13 +118,15 @@ def _gap_estimate(
         for item in observations
         if item.valid and item.normalized_gap is not None
     ]
-    gaps = [item.normalized_gap for item in valid if item.normalized_gap is not None]
     values_by_instance: dict[tuple[str, str], list[float]] = defaultdict(list)
     for item in valid:
         assert item.normalized_gap is not None
         values_by_instance[(item.instance_set, item.instance_id)].append(
             item.normalized_gap
         )
+    instance_means = [
+        statistics.fmean(values) for values in values_by_instance.values()
+    ]
     failure_counts = Counter(
         item.status.value
         for item in observations
@@ -134,9 +137,15 @@ def _gap_estimate(
         valid_runs=sum(item.valid for item in observations),
         failure_counts=dict(sorted(failure_counts.items())),
         solver_seeds=sorted({item.solver_seed for item in observations}),
-        mean_normalized_gap=statistics.fmean(gaps) if gaps else None,
-        median_normalized_gap=statistics.median(gaps) if gaps else None,
-        p95_normalized_gap=_percentile(gaps, 0.95) if gaps else None,
+        mean_normalized_gap=(
+            statistics.fmean(instance_means) if instance_means else None
+        ),
+        median_normalized_gap=(
+            statistics.median(instance_means) if instance_means else None
+        ),
+        p95_normalized_gap=(
+            _percentile(instance_means, 0.95) if instance_means else None
+        ),
         mean_ci95=_cluster_mean_ci(values_by_instance, seed=seed),
     )
 
