@@ -94,19 +94,19 @@ class InstanceSetSpec(BaseModel):
     shift: str | None = None
 
 
-class DecisionProtocol(BaseModel):
-    """Acceptance rule for performance-first solver-improvement tasks."""
-
-    minimum_success_rate_delta: float = 0.0
-
-
 class EvaluationProtocol(BaseModel):
     budgets_sec: list[float]
     primary_budget_sec: float = Field(gt=0)
     solver_seeds: list[int]
     threads: int = Field(default=1, gt=0)
     verifier: str
-    decision: DecisionProtocol = Field(default_factory=DecisionProtocol)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_decision(cls, data: object) -> object:
+        if isinstance(data, dict) and "decision" in data:
+            raise ValueError("evaluation.decision has been removed")
+        return data
 
     @model_validator(mode="after")
     def validate_grid(self) -> Self:

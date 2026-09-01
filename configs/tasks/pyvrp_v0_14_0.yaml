@@ -32,8 +32,6 @@ evaluation:
   solver_seeds: [0, 1, 2, 3, 4]
   threads: 1
   verifier: cvrp_independent
-  decision:
-    minimum_success_rate_delta: 0.0
 instance_sets:
   - name: agent_dev
     kind: agent_dev

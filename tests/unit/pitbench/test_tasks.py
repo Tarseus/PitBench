@@ -67,6 +67,15 @@ def test_primary_budget_must_belong_to_evaluation_budgets() -> None:
         PitBenchTask.model_validate(payload)
 
 
+def test_removed_evaluation_decision_is_rejected() -> None:
+    task = TaskCatalog(ROOT).validate_one("pyvrp_v0_14_0").task
+    payload = task.model_dump()
+    payload["evaluation"]["decision"] = {"minimum_success_rate_delta": 0.0}
+
+    with pytest.raises(ValueError, match="evaluation.decision has been removed"):
+        PitBenchTask.model_validate(payload)
+
+
 def test_problem_families_select_their_canonical_verifier() -> None:
     assert ProblemFamilyRegistry.load(ProblemFamily.CVRP).name == "cvrp"
     assert ProblemFamilyRegistry.load(ProblemFamily.MIP).name == "mip"
@@ -114,7 +123,10 @@ def test_release_identity_and_private_judge_assets() -> None:
         for instance_set in record.task.instance_sets:
             if instance_set.kind == InstanceSetKind.AGENT_DEV:
                 assert not instance_set.instance_set_config.startswith("private://")
-                assert "private://" not in (ROOT / instance_set.instance_set_config).read_text()
+                assert (
+                    "private://"
+                    not in (ROOT / instance_set.instance_set_config).read_text()
+                )
             else:
                 assert instance_set.instance_set_config.startswith("private://")
 
