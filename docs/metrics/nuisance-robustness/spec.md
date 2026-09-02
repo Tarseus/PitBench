@@ -108,6 +108,16 @@ and fixed before the agent starts:
 - a visible development panel for `agent_dev`; and
 - a hidden evaluation panel shared by `judge_id` and `judge_shift`.
 
+The public field `seed_count` gives the number of seed identifiers in each panel.
+For v1,
+
+```yaml
+seed_count: 10
+```
+
+Thus, each task has 10 development seeds and 10 evaluation seeds. Because the
+panels are disjoint, they contain 20 distinct seed identifiers in total.
+
 The hidden evaluation panel is not included in agent-visible configuration. The
 panel assigned to an instance-set role is reused across all corresponding instances
 and budgets. Base and Agent use identical `(instance, budget, seed)` conditions.
@@ -147,9 +157,9 @@ is encoded as decimal ASCII without leading zeroes. The admissible seed domain i
 normalized in ascending integer order. Digest ties are broken by ascending seed
 identifier.
 
-The development panel consists of the first \(R_{\mathrm{dev}}\) seeds ranked with
-the `development` label. The evaluation panel consists of the first
-\(R_{\mathrm{eval}}\) remaining seeds ranked with the `evaluation` label.
+The development panel consists of the first `seed_count` seeds ranked with the
+`development` label. The evaluation panel consists of the first `seed_count`
+remaining seeds ranked with the `evaluation` label.
 
 The public key commitment is
 
@@ -168,8 +178,8 @@ C_\tau
 
 The public field `panel_key_commitment_sha256` stores \(C_\tau\) as 64 lowercase
 hexadecimal characters. Public metadata separately stores the sampler identifier,
-task identifier, domain declaration, and panel sizes. Changing the domain, either
-panel size, or the key requires a new panel protocol version.
+task identifier, domain declaration, and `seed_count`. Changing the domain,
+`seed_count`, or the key requires a new panel protocol version.
 
 ## Retained evidence object
 
@@ -181,7 +191,6 @@ a diagnostic remains undecided.
 
 ## Open formal-specification items
 
-- seed count;
 - missing-seed rules;
 - cross-instance aggregation;
 - confidence interval;
