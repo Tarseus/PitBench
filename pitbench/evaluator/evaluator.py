@@ -8,10 +8,19 @@ from adapters.pitbench.adapter import PitBenchAdapter
 from pitbench.evaluator.artifacts import artifact_ref
 from pitbench.evaluator.docker_judge import DockerJudge
 from pitbench.evaluator.judge import FixtureJudge, JudgePlan
+from pitbench.evaluator.private_assets import (
+    PrivateAssetResolver,
+    load_private_seed_robustness_config,
+)
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest, Evaluator
 from pitbench.metrics.performance_report import compute_performance_report
+from pitbench.metrics.seed_robustness_report import (
+    SeedSelectionMetadata,
+    compute_seed_robustness_details,
+    compute_seed_robustness_report,
+)
 from pitbench.schema.evaluation import (
     ArtifactManifest,
     EvaluationResult,
@@ -23,7 +32,7 @@ from pitbench.schema.task import PitBenchTask
 
 class PitBenchEvaluator(Evaluator):
     name = "pitbench"
-    version = "5"
+    version = "6"
 
     def evaluate(self, request: EvaluationRequest) -> EvaluationResult:
         config = request.evaluator_config
@@ -106,6 +115,48 @@ class PitBenchEvaluator(Evaluator):
         parquet_path = request.output_dir / "trials.parquet"
         ObservationStore.write(parquet_path, observations)
         counts = Counter(item.code_state for item in observations)
+        nuisance_robustness = None
+        seed_robustness_details_ref = None
+        seed_robustness = task.evaluation.seed_robustness
+        if observations and seed_robustness is not None and not fixture_mode:
+            private_seed_config = load_private_seed_robustness_config(
+                PrivateAssetResolver(Path(config["private_root"])),
+                task_id=task.task_id,
+                public_config=seed_robustness,
+            )
+            seed_selection = SeedSelectionMetadata(
+                seed_min=seed_robustness.seed_selection.seed_min,
+                seed_max=seed_robustness.seed_selection.seed_max,
+                seed_count=seed_robustness.seed_selection.seed_count,
+            )
+            seed_report_inputs = {
+                "task_id": task.task_id,
+                "budgets_sec": task.evaluation.budgets_sec,
+                "primary_budget_sec": task.evaluation.primary_budget_sec,
+                "seed_selection": seed_selection,
+                "development_seeds": seed_robustness.development_seeds,
+                "evaluation_seeds": private_seed_config.evaluation_seeds,
+            }
+            nuisance_robustness = compute_seed_robustness_report(
+                observations,
+                **seed_report_inputs,
+            )
+            seed_robustness_details = compute_seed_robustness_details(
+                observations,
+                **seed_report_inputs,
+            )
+            seed_robustness_details_path = (
+                request.output_dir / "seed_robustness_details.json"
+            )
+            seed_robustness_details_path.write_text(
+                seed_robustness_details.model_dump_json(indent=2) + "\n"
+            )
+            seed_robustness_details_ref = artifact_ref(
+                seed_robustness_details_path,
+                root=request.output_dir,
+                media_type="application/json",
+                private=True,
+            )
         artifacts = ArtifactManifest(
             candidate_patch=(
                 artifact_ref(
@@ -120,7 +171,9 @@ class PitBenchEvaluator(Evaluator):
                 parquet_path,
                 root=request.output_dir,
                 media_type="application/vnd.apache.parquet",
+                private=True,
             ),
+            seed_robustness_details=seed_robustness_details_ref,
         )
         performance = (
             compute_performance_report(
@@ -133,12 +186,12 @@ class PitBenchEvaluator(Evaluator):
         return EvaluationResult(
             task_id=task.task_id,
             validity=validity,
-            observations=observations,
             artifacts=artifacts,
             summary=EvaluationSummary(
                 observation_count=len(observations),
                 valid_observation_count=sum(item.valid for item in observations),
                 counts_by_state=dict(counts),
                 performance=performance,
+                nuisance_robustness=nuisance_robustness,
             ),
         )

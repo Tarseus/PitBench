@@ -90,14 +90,59 @@ class InstanceSetSpec(BaseModel):
         pattern=r"^[0-9a-f]{64}$",
     )
     size: int = Field(gt=0)
-    randomness: RandomnessSpec
+    randomness: RandomnessSpec | None = None
     shift: str | None = None
+
+
+class SeedSelectionConfig(BaseModel):
+    seed_min: int
+    seed_max: int
+    seed_count: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_seed_range(self) -> Self:
+        if self.seed_min > self.seed_max:
+            raise ValueError("seed_min must not exceed seed_max")
+        available_seed_count = self.seed_max - self.seed_min + 1
+        if available_seed_count < 2 * self.seed_count:
+            raise ValueError(
+                "seed range must fit disjoint development and evaluation seeds"
+            )
+        return self
+
+
+class SeedRobustnessConfig(BaseModel):
+    development_seeds: list[int]
+    evaluation_seeds_file: str
+    evaluation_seeds_file_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    seed_selection: SeedSelectionConfig
+
+    @field_validator("evaluation_seeds_file")
+    @classmethod
+    def validate_evaluation_seeds_file(cls, value: str) -> str:
+        if not value.startswith("private://"):
+            raise ValueError("evaluation_seeds_file must use private:// storage")
+        return value
+
+    @model_validator(mode="after")
+    def validate_development_seeds(self) -> Self:
+        if len(self.development_seeds) != self.seed_selection.seed_count:
+            raise ValueError("development_seeds must contain seed_count values")
+        if len(set(self.development_seeds)) != len(self.development_seeds):
+            raise ValueError("development_seeds must be unique")
+        if any(
+            seed < self.seed_selection.seed_min or seed > self.seed_selection.seed_max
+            for seed in self.development_seeds
+        ):
+            raise ValueError("development_seeds must belong to the seed range")
+        return self
 
 
 class EvaluationProtocol(BaseModel):
     budgets_sec: list[float]
     primary_budget_sec: float = Field(gt=0)
-    solver_seeds: list[int]
+    solver_seeds: list[int] | None = None
+    seed_robustness: SeedRobustnessConfig | None = None
     threads: int = Field(default=1, gt=0)
     verifier: str
 
@@ -114,10 +159,15 @@ class EvaluationProtocol(BaseModel):
             raise ValueError("evaluation budgets must be positive")
         if self.primary_budget_sec not in self.budgets_sec:
             raise ValueError("primary budget must belong to evaluation budgets")
-        if not self.solver_seeds:
-            raise ValueError("at least one solver seed is required")
-        if len(set(self.solver_seeds)) != len(self.solver_seeds):
-            raise ValueError("solver seeds must be unique")
+        if (self.solver_seeds is None) == (self.seed_robustness is None):
+            raise ValueError(
+                "evaluation requires either solver_seeds or seed_robustness, not both"
+            )
+        if self.solver_seeds is not None:
+            if not self.solver_seeds:
+                raise ValueError("at least one solver seed is required")
+            if len(set(self.solver_seeds)) != len(self.solver_seeds):
+                raise ValueError("solver seeds must be unique")
         return self
 
 

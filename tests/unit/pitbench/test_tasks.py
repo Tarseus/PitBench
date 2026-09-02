@@ -76,6 +76,82 @@ def test_removed_evaluation_decision_is_rejected() -> None:
         PitBenchTask.model_validate(payload)
 
 
+def _seed_robustness_payload() -> dict:
+    task = TaskCatalog(ROOT).validate_one("pyvrp_v0_14_0").task
+    payload = task.model_dump()
+    payload["evaluation"].pop("solver_seeds")
+    payload["evaluation"]["seed_robustness"] = {
+        "development_seeds": list(range(30)),
+        "evaluation_seeds_file": ("private://seed_robustness/pyvrp_v0_14_0.yaml"),
+        "evaluation_seeds_file_sha256": "a" * 64,
+        "seed_selection": {
+            "seed_min": 0,
+            "seed_max": 2**32 - 1,
+            "seed_count": 30,
+        },
+    }
+    return payload
+
+
+def test_task_config_accepts_seed_robustness_parameters() -> None:
+    task = PitBenchTask.model_validate(_seed_robustness_payload())
+
+    assert task.schema_version == "3.0"
+    assert task.evaluation.solver_seeds is None
+    seed_robustness = task.evaluation.seed_robustness
+    assert seed_robustness is not None
+    assert seed_robustness.development_seeds == list(range(30))
+    assert seed_robustness.evaluation_seeds_file == (
+        "private://seed_robustness/pyvrp_v0_14_0.yaml"
+    )
+    assert seed_robustness.seed_selection.seed_count == 30
+
+
+@pytest.mark.parametrize("seed_sources", ["both", "neither"])
+def test_task_config_requires_exactly_one_seed_source(seed_sources: str) -> None:
+    payload = _seed_robustness_payload()
+    if seed_sources == "both":
+        payload["evaluation"]["solver_seeds"] = [0]
+    else:
+        payload["evaluation"].pop("seed_robustness")
+
+    with pytest.raises(
+        ValueError,
+        match="either solver_seeds or seed_robustness, not both",
+    ):
+        PitBenchTask.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    (
+        ("wrong_count", "must contain seed_count"),
+        ("duplicate", "must be unique"),
+        ("outside_range", "must belong to the seed range"),
+        ("public_file", "must use private:// storage"),
+        ("small_range", "must fit disjoint"),
+    ),
+)
+def test_task_config_rejects_invalid_seed_robustness_parameters(
+    change: str, message: str
+) -> None:
+    payload = _seed_robustness_payload()
+    seed_robustness = payload["evaluation"]["seed_robustness"]
+    if change == "wrong_count":
+        seed_robustness["development_seeds"] = list(range(29))
+    elif change == "duplicate":
+        seed_robustness["development_seeds"][-1] = 0
+    elif change == "outside_range":
+        seed_robustness["development_seeds"][-1] = 2**32
+    elif change == "public_file":
+        seed_robustness["evaluation_seeds_file"] = "configs/evaluation-seeds.yaml"
+    elif change == "small_range":
+        seed_robustness["seed_selection"]["seed_max"] = 58
+
+    with pytest.raises(ValueError, match=message):
+        PitBenchTask.model_validate(payload)
+
+
 def test_problem_families_select_their_canonical_verifier() -> None:
     assert ProblemFamilyRegistry.load(ProblemFamily.CVRP).name == "cvrp"
     assert ProblemFamilyRegistry.load(ProblemFamily.MIP).name == "mip"
@@ -95,6 +171,12 @@ def test_validate_one_ignores_unrelated_invalid_task_config(tmp_path: Path) -> N
         target_instance_set = tmp_path / instance_set.instance_set_config
         target_instance_set.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_instance_set, target_instance_set)
+        source_instance_files = source_instance_set.with_suffix("")
+        if source_instance_files.is_dir():
+            shutil.copytree(
+                source_instance_files,
+                target_instance_set.with_suffix(""),
+            )
 
     (task_config.parent / "unrelated.yaml").write_text("not: a valid task\n")
     catalog = TaskCatalog(tmp_path)
@@ -154,21 +236,52 @@ def test_pyvrp_snapshots_use_verified_release_commits_and_common_protocol() -> N
         expected_commits
     )
     assert {task.task_id: task.release.tree_sha for task in snapshots} == expected_trees
-    protocols = {
+    common_protocols = {
         (
             tuple(task.evaluation.budgets_sec),
-            tuple(task.evaluation.solver_seeds),
             task.evaluation.threads,
+            (
+                task.evaluation.seed_robustness.seed_selection.model_dump_json()
+                if task.evaluation.seed_robustness is not None
+                else None
+            ),
             tuple(
                 (
                     instance_set.name,
                     instance_set.instance_set_config,
                     instance_set.size,
-                    instance_set.randomness.model_dump_json(),
+                    (
+                        instance_set.randomness.model_dump_json()
+                        if instance_set.randomness is not None
+                        else None
+                    ),
                 )
                 for instance_set in task.instance_sets
             ),
         )
         for task in snapshots
     }
-    assert len(protocols) == 1
+    assert len(common_protocols) == 1
+    assert all(task.evaluation.solver_seeds is None for task in snapshots)
+    seed_configs = [task.evaluation.seed_robustness for task in snapshots]
+    assert all(seed_config is not None for seed_config in seed_configs)
+    assert (
+        len(
+            {
+                tuple(seed_config.development_seeds)
+                for seed_config in seed_configs
+                if seed_config is not None
+            }
+        )
+        == 4
+    )
+    assert (
+        len(
+            {
+                seed_config.evaluation_seeds_file_sha256
+                for seed_config in seed_configs
+                if seed_config is not None
+            }
+        )
+        == 4
+    )

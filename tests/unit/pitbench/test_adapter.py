@@ -132,6 +132,9 @@ def test_materialized_release_task_has_no_hidden_assets(
     assert (assisted / "agent_bin/pitbench").stat().st_mode & 0o111
     tooling_config = yaml.safe_load((assisted / "agent_config.json").read_text())
     assert tooling_config["agent_tools"] == ["bench"]
+    assert tooling_config["development_seeds"] == (
+        task.evaluation.seed_robustness.development_seeds
+    )
     assert f'{IMAGE_TOOLS_LABEL}="bench"' in (assisted / "Dockerfile").read_text()
     assert (
         "COPY agent_bin/pitbench /usr/local/bin/pitbench"

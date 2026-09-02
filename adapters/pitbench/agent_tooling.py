@@ -90,13 +90,21 @@ def write_agent_tooling(
         "agent_tools": sorted(tool.value for tool in tools),
     }
     if tools & {AgentTool.INSPECT, AgentTool.BENCH}:
+        seed_robustness = task.evaluation.seed_robustness
+        development_seeds = (
+            seed_robustness.development_seeds
+            if seed_robustness is not None
+            else task.evaluation.solver_seeds
+        )
+        if development_seeds is None:
+            raise ValueError("task does not provide development seeds")
         config.update(
             {
                 "task_id": task.task_id,
                 "task_type": task.task_type.value,
                 "problem_family": task.problem_family.value,
                 "budgets_sec": task.evaluation.budgets_sec,
-                "solver_seeds": task.evaluation.solver_seeds,
+                "development_seeds": development_seeds,
                 "threads": task.evaluation.threads,
                 "runner": _RUNNERS[task.repository.plugin],
                 "runner_requirement": _REQUIREMENTS[task.repository.plugin],

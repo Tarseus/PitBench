@@ -86,6 +86,8 @@ class DockerJudge:
             "/input/task.yaml",
             "--base-repository",
             "/input/base",
+            "--public-root",
+            "/opt/pitbench",
             "--private-root",
             "/private",
             "--candidate-patch",
@@ -96,7 +98,7 @@ class DockerJudge:
             "/output/judge-observations.jsonl",
         ]
         if self.cpuset_cpus is not None:
-            command[command.index("--memory"):command.index("--memory")] = [
+            command[command.index("--memory") : command.index("--memory")] = [
                 "--cpuset-cpus",
                 self.cpuset_cpus,
             ]

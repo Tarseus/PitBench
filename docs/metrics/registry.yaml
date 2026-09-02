@@ -30,10 +30,12 @@ performance:
   frozen_commit: null
 
 nuisance_robustness:
-  status: evidence_complete
+  status: falsification_complete
   branch: metric/nuisance-robustness-v1
   scope: docs/metrics/nuisance-robustness/scope.md
   evidence: docs/metrics/nuisance-robustness/evidence.md
+  spec: docs/metrics/nuisance-robustness/spec.md
+  validation_plan: docs/metrics/nuisance-robustness/validation-plan.md
   completed:
     - item: seed_robustness_scope
       commit: a634015b

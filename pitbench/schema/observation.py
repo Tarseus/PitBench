@@ -24,7 +24,7 @@ class RunObservation(BaseModel):
     instance_set: str
     instance_set_kind: str | None = None
     instance_id: str
-    instance_seed: int
+    instance_seed: int | None = None
     coordinate_seed: int | None = None
     demand_seed: int | None = None
     solver_seed: int

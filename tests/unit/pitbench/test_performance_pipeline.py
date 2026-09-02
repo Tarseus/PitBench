@@ -32,23 +32,45 @@ ROOT = Path(__file__).resolve().parents[3]
         "pyvrp_v0_14_0",
     ),
 )
-def test_pyvrp_plan_materializes_performance_first_panel(
+def test_pyvrp_plan_materializes_all_instance_sets(
     tmp_path: Path, task_id: str
 ) -> None:
     task = PitBenchTask.from_yaml(ROOT / f"configs/tasks/{task_id}.yaml")
     resolver = PrivateAssetResolver(ROOT / "private")
-    plan = JudgePlan.from_private_instance_set_configs(
+    plan = JudgePlan.from_instance_set_configs(
         task,
         resolver,
+        public_root=ROOT,
         generated_root=tmp_path / "generated",
+        evaluation_seeds=tuple(
+            yaml.safe_load(
+                (ROOT / f"private/seed_robustness/{task_id}.yaml").read_text()
+            )["evaluation_seeds"]
+        ),
     )
 
-    assert len(plan.cases) == 48
+    assert len(plan.cases) == 58
+    assert sum(case.instance_set.name == "agent_dev" for case in plan.cases) == 10
     assert sum(case.instance_set.name == "judge_shift" for case in plan.cases) == 10
     assert all(case.problem_scale is not None for case in plan.cases)
     shift_instances = [
         case for case in plan.cases if case.instance_set.name == "judge_shift"
     ]
+    development_instances = [
+        case for case in plan.cases if case.instance_set.name == "agent_dev"
+    ]
+    assert {case.instance_id: case.anchor for case in development_instances} == {
+        "X-n242-k48": 82751.0,
+        "X-n275-k28": 21245.0,
+        "X-n308-k13": 25859.0,
+        "X-n336-k84": 139111.0,
+        "X-n393-k38": 38260.0,
+        "X-n459-k26": 24139.0,
+        "X-n548-k50": 86700.0,
+        "X-n627-k43": 62164.0,
+        "X-n766-k71": 114417.0,
+        "X-n979-k58": 118973.0,
+    }
     assert all(
         json.loads(case.path.read_text())["distance_metric"] == "EUC_2D"
         for case in shift_instances
@@ -61,8 +83,30 @@ def test_pyvrp_plan_materializes_performance_first_panel(
         for observation in observations
         if observation.instance_set_kind == "judge_shift"
     ]
-    assert len(observations) == 1440
+    development_observations = [
+        observation
+        for observation in observations
+        if observation.instance_set_kind == "agent_dev"
+    ]
+    assert len(observations) == 10440
+    seed_robustness = task.evaluation.seed_robustness
+    assert seed_robustness is not None
+    evaluation_seeds = set(
+        yaml.safe_load(
+            (ROOT / f"private/seed_robustness/{task_id}.yaml").read_text()
+        )["evaluation_seeds"]
+    )
+    assert {item.solver_seed for item in development_observations} == set(
+        seed_robustness.development_seeds
+    )
+    assert {item.solver_seed for item in shift_observations} == evaluation_seeds
     assert all(observation.objective is not None for observation in shift_observations)
+    assert all(
+        observation.instance_seed is None
+        and observation.optimal_or_bks is not None
+        and observation.normalized_gap is not None
+        for observation in development_observations
+    )
     assert all(
         observation.optimal_or_bks is not None
         and observation.normalized_gap is not None

@@ -70,7 +70,7 @@ def inspect_command(_: argparse.Namespace) -> int:
         "task_type": config["task_type"],
         "problem_family": config["problem_family"],
         "budgets_sec": config["budgets_sec"],
-        "solver_seeds": config["solver_seeds"],
+        "development_seeds": config["development_seeds"],
         "threads": config["threads"],
         "development_instances": [path.name for path in _instances(None)],
         "runner_available": available,
@@ -144,7 +144,7 @@ def bench_command(args: argparse.Namespace) -> int:
     if args.split != "dev":
         raise SystemExit("only the agent-visible dev split is available")
     config = _config()
-    seed = args.seed if args.seed is not None else config["solver_seeds"][0]
+    seed = args.seed if args.seed is not None else config["development_seeds"][0]
     budget = args.budget if args.budget is not None else config["budgets_sec"][0]
     succeeded = [
         _run_one(config, instance, seed, budget, args.dry_run)

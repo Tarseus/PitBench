@@ -1,11 +1,105 @@
 schema_version: "1.0"
 visibility: agent
 format: normalized_cvrp_json
-generator:
-  kind: euclidean_cvrp
-  count: 10
-  customers: [100, 250, 500]
-  coordinate_distribution: uniform
-  demand_distribution: uniform_integer
-  capacity_ratio: 0.15
-  randomness: {instance_seed: 13400, coordinate_seed: 13401, demand_seed: 13402}
+source:
+  instance_repository: https://github.com/vidalt/HGS-CVRP
+  instance_repository_commit: 1a927955cd2861a29d978f0d359d6e647db9319c
+  bks_source: https://galgos.inf.puc-rio.br/cvrplib/en/instances/1
+  bks_retrieved_at: "2026-09-02"
+selection:
+  total_instance_count: 100
+  excluded_judge_instance_count: 38
+  available_instance_count: 62
+  rule: sort unused instances by customer count and take 10 equally spaced positions
+  selected_positions: [0, 7, 14, 20, 27, 34, 41, 47, 54, 61]
+instances:
+  - id: X-n242-k48
+    instance_file: pyvrp_cvrp_v1_dev/instances/X-n242-k48.json
+    instance_file_sha256: 4768e758625096d40fc577ab2b40693816bf1df55ac4b48b5f685d4ac74c26ca
+    bks: 82751
+    bks_solution_file: pyvrp_cvrp_v1_dev/bks_solutions/X-n242-k48.solution.json
+    bks_solution_file_sha256: 7d665ce63a4c70008bc5f53b4f5d9ba88b70eccae5e729a5d634f6d9da21fd81
+    proven_optimal: true
+    source_instance_sha256: 43068acd974d11785e6cba2ff5cc44c321f907944d947fca3e95dcf52c51409f
+    source_bks_solution_sha256: ed101c7cc6bbf2ed316020acc44b6fe7f5f75beef78ac5771eff6a8325a78433
+  - id: X-n275-k28
+    instance_file: pyvrp_cvrp_v1_dev/instances/X-n275-k28.json
+    instance_file_sha256: 384fd9c81fa20edc2c5fafc35dd734b823b714ae26386240130ff3bdf92be73d
+    bks: 21245
+    bks_solution_file: pyvrp_cvrp_v1_dev/bks_solutions/X-n275-k28.solution.json
+    bks_solution_file_sha256: 1e3d23440817c36fa946398b4f40e0a21823a865355d2009ddb6ca79a100d247
+    proven_optimal: true
+    source_instance_sha256: 7e8f5381be7db595f935b766cbf6f2f93db0219fd441b48b3daa566d141e008d
+    source_bks_solution_sha256: 9c6493deb849985ed643dff44eac0272c3555d8159c164fcb5b1dedd666bedd7
+  - id: X-n308-k13
+    instance_file: pyvrp_cvrp_v1_dev/instances/X-n308-k13.json
+    instance_file_sha256: ef5daef3874991f9c37e33c1e9f24f94d99d8a29996cf6ffc6079a478a5c53e3
+    bks: 25859
+    bks_solution_file: pyvrp_cvrp_v1_dev/bks_solutions/X-n308-k13.solution.json
+    bks_solution_file_sha256: 291f17e7574236b29e52606e2247ef0b09abaf1d607a0c41c9339832dcb92d93
+    proven_optimal: false
+    source_instance_sha256: 8b27f5e667930fb6d65359cb4f79364aab672a95b85c22befcf4058e15d5b733
+    source_bks_solution_sha256: 39ed44ed521489979680b8302a6561cca4ea85e06bc630601250de0d361a226b
+  - id: X-n336-k84
+    instance_file: pyvrp_cvrp_v1_dev/instances/X-n336-k84.json
+    instance_file_sha256: deb7b541facaeee2b64c4e4d3d5d3f39464d59a73f52f63ded770470e126c1d7
+    bks: 139111
+    bks_solution_file: pyvrp_cvrp_v1_dev/bks_solutions/X-n336-k84.solution.json
+    bks_solution_file_sha256: 876a51bf8e20cf41efe79420d041ea50e0e7f4dab27ea3c61fd72dafe9c967af
+    proven_optimal: false
+    source_instance_sha256: 52840d1fc89683cd7f1cfd9fb95d840bccddb6f22e58d1e7184c542d173f93f3
+    source_bks_solution_sha256: c1ab72cbd4d2e9cfb732d7af1de032fc8c226f93c274534d5c3a9f2f9131677e
+  - id: X-n393-k38
+    instance_file: pyvrp_cvrp_v1_dev/instances/X-n393-k38.json
+    instance_file_sha256: 3b33d660651af1d1aa3ebf04b028099a8e55105f2c87c2ab2e53394f3f7f0463
+    bks: 38260
+    bks_solution_file: pyvrp_cvrp_v1_dev/bks_solutions/X-n393-k38.solution.json
+    bks_solution_file_sha256: 41df365aa32e2df5972591f57fba05a71dbf144fc9dcdc60d0e4802fac0c2308
+    proven_optimal: true
+    source_instance_sha256: 986a3db69e148cf370befbd320458d117434ade37a5aedc5ad5f8a64e3354c71
+    source_bks_solution_sha256: fc125bdf67a02713e30a866670b72769c9b2fda61a7cfef7c92a834a915ac705
+  - id: X-n459-k26
+    instance_file: pyvrp_cvrp_v1_dev/instances/X-n459-k26.json
+    instance_file_sha256: f03d6f5cdd969894fe339596c8d5faa3ee3730a9e5f1ba0e6d17f6d521f927dd
+    bks: 24139
+    bks_solution_file: pyvrp_cvrp_v1_dev/bks_solutions/X-n459-k26.solution.json
+    bks_solution_file_sha256: 1c256154694786a765f1d9baff33432467cae75286696a3e00b6a0237d1e007b
+    proven_optimal: false
+    source_instance_sha256: aabadfa0889370d9d8723be5a3b8b421f4baca58e2c2ec36bbf3d51d182c1d79
+    source_bks_solution_sha256: 16f4e9312ff1b0be0548a6688f1bbf0337717b251fa24d46cc84f146a818c709
+  - id: X-n548-k50
+    instance_file: pyvrp_cvrp_v1_dev/instances/X-n548-k50.json
+    instance_file_sha256: 2312ce1d54eaadb6ba175cd52303d03b8b268e4ebe539b58c834eb256ae1bf76
+    bks: 86700
+    bks_solution_file: pyvrp_cvrp_v1_dev/bks_solutions/X-n548-k50.solution.json
+    bks_solution_file_sha256: aed43362021c52581c47d229734ebbe56cf8ef37df751479d652448c1081df45
+    proven_optimal: true
+    source_instance_sha256: 61e9876186a56a06837af04ecc52d869ad789d0b91e8fcedf3ed887bd7c22b0f
+    source_bks_solution_sha256: 3e74daa02f513a6fc726f6c16e4b9946d3e1c8a4bbfc502d0e0a9b26f244f349
+  - id: X-n627-k43
+    instance_file: pyvrp_cvrp_v1_dev/instances/X-n627-k43.json
+    instance_file_sha256: 20c46f4f37e9d1b34736028920a1f84fdb8059154f98152e58c35f5fadc75273
+    bks: 62164
+    bks_solution_file: pyvrp_cvrp_v1_dev/bks_solutions/X-n627-k43.solution.json
+    bks_solution_file_sha256: df655b98d18e04a41ceac1717d1d8b9cb1c798e15b8dd43eb14ea43e16838618
+    proven_optimal: false
+    source_instance_sha256: 8bbafe3721aaa65e2b5ced6b281743cd7290842df23c3816c2aba61af4f2bc2c
+    source_bks_solution_sha256: 44e0d7a07d52c5195dc455b002e9f5d8d99d6b09e35f45ce350a95772a9450b2
+  - id: X-n766-k71
+    instance_file: pyvrp_cvrp_v1_dev/instances/X-n766-k71.json
+    instance_file_sha256: 33818519b9400c9cb10e726036028706ba3a7c2703482b41a9db714ce7339876
+    bks: 114417
+    bks_solution_file: pyvrp_cvrp_v1_dev/bks_solutions/X-n766-k71.solution.json
+    bks_solution_file_sha256: 4e389ece3c7d7ce3fcea30c1ae8aa617d0390ca7e7be09dab87e1728dfec18eb
+    proven_optimal: false
+    source_instance_sha256: 0f5428dc345f1a04ff3276aef1329bdc08a71cf97e7de31df49a8565e091456b
+    source_bks_solution_sha256: 62d4dd1ef8a085c7c91c2141c72c9f404b27266bb305ea263def26b5e54ff1c7
+  - id: X-n979-k58
+    instance_file: pyvrp_cvrp_v1_dev/instances/X-n979-k58.json
+    instance_file_sha256: 9eded724fa708b00b511d99c0e23d96be96dd627198dbecb7f2ab309f8e95579
+    bks: 118973
+    bks_solution_file: pyvrp_cvrp_v1_dev/bks_solutions/X-n979-k58.solution.json
+    bks_solution_file_sha256: 5378c581f3c03be6ad9251bf05f018fd499e9f45c08617c0e12745eda99aba9d
+    proven_optimal: false
+    source_instance_sha256: 4d5b771de708f7e3de7bda9d24976aa6592b385572b28b507e4509d6073dd950
+    source_bks_solution_sha256: edf328626688d4432e7221bc334bc0beacf4d4db0afefab0b4ec6587ec492d23

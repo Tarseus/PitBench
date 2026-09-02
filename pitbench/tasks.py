@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from pitbench.families.base import ProblemFamilyRegistry
+from pitbench.instances import verify_public_file
 from pitbench.repositories.base import RepositoryPluginRegistry
 from pitbench.schema.task import InstanceSetKind, PitBenchTask
 
@@ -89,6 +90,22 @@ class TaskCatalog:
                     raise TaskValidationError(
                         f"{task.task_id}: visible instance set leaks a private URI"
                     )
+                if "instances" in payload:
+                    if len(payload["instances"]) != instance_set.size:
+                        raise TaskValidationError(
+                            f"{task.task_id}: visible instance-set size mismatch"
+                        )
+                    for item in payload["instances"]:
+                        verify_public_file(
+                            path.parent,
+                            item["instance_file"],
+                            item["instance_file_sha256"],
+                        )
+                        verify_public_file(
+                            path.parent,
+                            item["bks_solution_file"],
+                            item["bks_solution_file_sha256"],
+                        )
             elif not instance_set.instance_set_config.startswith("private://"):
                 raise TaskValidationError(
                     f"{task.task_id}: judge instance set must use private:// storage"

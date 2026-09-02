@@ -24,5 +24,6 @@ def test_missing_candidate_is_a_typed_invalid_result(tmp_path: Path) -> None:
     )
     assert envelope.completed is True
     assert envelope.payload["validity"]["accepted"] is False
-    assert envelope.payload["observations"] == []
+    assert "observations" not in envelope.payload
+    assert envelope.payload["artifacts"]["observations"]["private"] is True
     assert envelope.payload["artifacts"]["candidate_patch"] is None

@@ -1,8 +1,10 @@
 import hashlib
+import json
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from pitbench.evaluator.evaluator import PitBenchEvaluator
 from pitbench.evaluator.storage import ObservationStore
@@ -44,6 +46,8 @@ def test_every_task_runs_explicit_fixture_grid(record, tmp_path: Path) -> None:
     assert "outcomes" not in summary
     assert "sensitivity" not in summary
     assert "behavior" not in summary
+    assert "observations" not in envelope.payload
+    assert envelope.payload["artifacts"]["observations"]["private"] is True
 
 
 def test_real_evaluation_without_private_assets_fails_closed(tmp_path: Path) -> None:
@@ -194,6 +198,96 @@ def test_real_evaluation_ignores_legacy_local_judge_flag(tmp_path: Path) -> None
 
     assert envelope.completed, envelope.error
     docker_judge.assert_called_once()
+
+
+def test_real_seed_robustness_result_keeps_run_details_private(
+    tmp_path: Path,
+) -> None:
+    record = next(
+        item
+        for item in TaskCatalog(ROOT).validate_all()
+        if item.task.task_id == "pyvrp_v0_14_0"
+    )
+    seed_robustness = record.task.evaluation.seed_robustness
+    assert seed_robustness is not None
+    evaluation_seeds = yaml.safe_load(
+        (ROOT / "private/seed_robustness/pyvrp_v0_14_0.yaml").read_text()
+    )["evaluation_seeds"]
+    observations = []
+    for instance_set, instance_set_kind, instance_id, seeds in (
+        (
+            "agent_dev",
+            "agent_dev",
+            "dev-1",
+            seed_robustness.development_seeds,
+        ),
+        ("judge_id", "judge_id", "judge-1", evaluation_seeds),
+    ):
+        for budget_sec in record.task.evaluation.budgets_sec:
+            for seed_index, solver_seed in enumerate(seeds):
+                for code_state, gap_scale in (
+                    (CodeState.BASE, 1.0),
+                    (CodeState.AGENT, 0.5),
+                ):
+                    observations.append(
+                        RunObservation(
+                            task_id=record.task.task_id,
+                            code_state=code_state,
+                            instance_set=instance_set,
+                            instance_set_kind=instance_set_kind,
+                            instance_id=instance_id,
+                            solver_seed=solver_seed,
+                            budget_sec=budget_sec,
+                            status=RunStatus.COMPLETED,
+                            valid=True,
+                            objective=1000 + seed_index,
+                            optimal_or_bks=1000,
+                            normalized_gap=gap_scale * seed_index / 100,
+                        )
+                    )
+
+    output = tmp_path / "output"
+    output.mkdir()
+    candidate = output / "candidate.patch"
+    candidate.write_text("")
+    base_repository = tmp_path / "base"
+    base_repository.mkdir()
+    request = EvaluationRequest(
+        task_id=record.task.task_id,
+        task_path=ROOT,
+        candidate_patch_path=candidate,
+        candidate_patch_sha256=hashlib.sha256(candidate.read_bytes()).hexdigest(),
+        output_dir=output,
+        agent_name="test",
+        evaluator_config={
+            "task_config_path": str(record.task_config_path),
+            "base_repository": str(base_repository),
+            "private_root": str(ROOT / "private"),
+            "judge_image": "sha256:" + "a" * 64,
+        },
+    )
+
+    with (
+        patch("pitbench.evaluator.evaluator.PitBenchAdapter.validate_repository"),
+        patch("pitbench.evaluator.evaluator.DockerJudge") as docker_judge,
+    ):
+        docker_judge.return_value.run.return_value = observations
+        envelope = PitBenchEvaluator().envelope(request)
+
+    assert envelope.completed, envelope.error
+    assert "observations" not in envelope.payload
+    artifacts = envelope.payload["artifacts"]
+    assert artifacts["observations"]["private"] is True
+    assert artifacts["seed_robustness_details"]["private"] is True
+    public_robustness = envelope.payload["summary"]["nuisance_robustness"]
+    assert public_robustness is not None
+    assert "development_seeds" not in str(public_robustness)
+    assert "evaluation_seeds" not in str(public_robustness)
+    private_details = json.loads(
+        (output / "seed_robustness_details.json").read_text()
+    )
+    assert private_details["development_seeds"] == seed_robustness.development_seeds
+    assert private_details["evaluation_seeds"] == evaluation_seeds
 
 
 def test_cached_base_observations_merge_with_agent_fixture(tmp_path: Path) -> None:
@@ -353,6 +447,8 @@ def test_semantically_invalid_agent_run_disqualifies_candidate(
     assert envelope.completed is True
     assert envelope.payload["validity"]["accepted"] is False
     assert envelope.payload["validity"]["checks"][-1]["code"] == "solution"
-    assert envelope.payload["observations"][0]["status"] == "invalid"
+    private_observations = ObservationStore.read(output / "trials.parquet")
+    assert private_observations[0].status is RunStatus.INVALID
+    assert envelope.payload["artifacts"]["observations"]["private"] is True
     assert envelope.payload["summary"]["performance"] is not None
     assert envelope.payload["summary"]["performance"]["classification"] == "incomplete"

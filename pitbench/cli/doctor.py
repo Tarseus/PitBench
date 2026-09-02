@@ -232,9 +232,10 @@ def _private_assets_check(context: _DoctorContext) -> DoctorCheck:
     )
     try:
         with tempfile.TemporaryDirectory(prefix="pitbench-doctor-") as generated:
-            plan = JudgePlan.from_private_instance_set_configs(
+            plan = JudgePlan.from_instance_set_configs(
                 context.task.task,
                 PrivateAssetResolver(private_root),
+                public_root=context.repository_root,
                 generated_root=Path(generated),
             )
     except Exception as error:

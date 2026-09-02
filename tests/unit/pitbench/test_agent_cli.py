@@ -143,6 +143,7 @@ def test_agent_cli_contract_for_every_task(record, tmp_path: Path) -> None:
     )
     payload = json.loads(inspected.stdout)
     assert payload["task_id"] == record.task.task_id
+    assert payload["development_seeds"]
     assert len(payload["development_instances"]) == development.size
     assert payload["editable_paths"] == record.task.repository.editable_paths
     assert payload["validation_available"] is True

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import random
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -249,9 +251,83 @@ def materialize_instance_set(
     output_dir: Path,
 ) -> list[Path]:
     payload = yaml.safe_load(instance_set_config.read_text())
-    return materialize_generated_instance_set(
-        payload,
-        output_dir,
-        expected_visibility="agent",
-        stem_prefix="dev",
+    if "generator" in payload:
+        return materialize_generated_instance_set(
+            payload,
+            output_dir,
+            expected_visibility="agent",
+            stem_prefix="dev",
+        )
+    if payload.get("visibility") != "agent":
+        raise ValueError("fixed development instance set must be agent-visible")
+
+    config_directory = instance_set_config.parent.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    bks_output_dir = output_dir / "bks_solutions"
+    bks_output_dir.mkdir(exist_ok=True)
+    paths: list[Path] = []
+    output_instances: list[dict[str, Any]] = []
+    instance_ids: set[str] = set()
+    for index, item in enumerate(payload["instances"]):
+        instance_id = item["id"]
+        if instance_id in instance_ids:
+            raise ValueError(f"duplicate development instance ID: {instance_id}")
+        instance_ids.add(instance_id)
+
+        source_instance = verify_public_file(
+            config_directory,
+            item["instance_file"],
+            item["instance_file_sha256"],
+        )
+        instance_path = output_dir / f"dev_{index:04d}{source_instance.suffix}"
+        shutil.copyfile(source_instance, instance_path)
+        paths.append(instance_path)
+
+        source_bks_solution = verify_public_file(
+            config_directory,
+            item["bks_solution_file"],
+            item["bks_solution_file_sha256"],
+        )
+        bks_solution_path = bks_output_dir / source_bks_solution.name
+        shutil.copyfile(source_bks_solution, bks_solution_path)
+        output_instances.append(
+            {
+                "id": instance_id,
+                "path": instance_path.name,
+                "bks": item["bks"],
+                "bks_solution_file": str(bks_solution_path.relative_to(output_dir)),
+                "proven_optimal": item["proven_optimal"],
+            }
+        )
+
+    index_path = output_dir / "instance_set_config.yaml"
+    index_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "1.0",
+                "visibility": "agent",
+                "instances": output_instances,
+            },
+            sort_keys=False,
+        )
     )
+    return paths
+
+
+def verify_public_file(
+    config_directory: Path,
+    relative_path: str,
+    expected_sha256: str | None,
+) -> Path:
+    path = (config_directory / relative_path).resolve()
+    if config_directory not in path.parents:
+        raise ValueError(f"development file escapes config directory: {relative_path}")
+    if not path.is_file():
+        raise ValueError(f"missing development file: {relative_path}")
+    actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+    if expected_sha256 is not None and actual_sha256 != expected_sha256:
+        raise ValueError(
+            f"development file hash mismatch for {relative_path}: "
+            f"{actual_sha256} != {expected_sha256}"
+        )
+    return path

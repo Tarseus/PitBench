@@ -13,6 +13,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--task-config", type=Path, required=True)
     parser.add_argument("--base-repository", type=Path, required=True)
+    parser.add_argument("--public-root", type=Path, required=True)
     parser.add_argument("--private-root", type=Path, required=True)
     parser.add_argument("--candidate-patch", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -28,6 +29,7 @@ def main() -> None:
     observations = LocalProcessJudge(
         task=task,
         base_repository=args.base_repository,
+        public_root=args.public_root,
         private_root=args.private_root,
         candidate_patch=args.candidate_patch,
         output_dir=args.output_dir,

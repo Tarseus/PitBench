@@ -29,16 +29,52 @@ oracle:
 evaluation:
   budgets_sec: [1.0, 5.0, 10.0]
   primary_budget_sec: 10.0
-  solver_seeds: [0, 1, 2, 3, 4]
+  seed_robustness:
+    development_seeds:
+      - 2704904746
+      - 1378037486
+      - 2596629371
+      - 1698478577
+      - 2253082173
+      - 1449524808
+      - 4238932330
+      - 3679027132
+      - 4043970777
+      - 2034922322
+      - 2853100562
+      - 4060426273
+      - 2698235279
+      - 850335389
+      - 457397379
+      - 753672037
+      - 3817275366
+      - 3086816035
+      - 3115736677
+      - 3276707442
+      - 4234286680
+      - 1364069056
+      - 3628215579
+      - 2607445242
+      - 2642616502
+      - 3255649188
+      - 3330974339
+      - 1028506066
+      - 2188068542
+      - 117460145
+    evaluation_seeds_file: private://seed_robustness/pyvrp_v0_13_0.yaml
+    evaluation_seeds_file_sha256: 58d72dc310c6538b5e4185fc1eef79fae7e2d39399a75a5463257d5f64851e14
+    seed_selection:
+      seed_min: 0
+      seed_max: 4294967295
+      seed_count: 30
   threads: 1
   verifier: cvrp_independent
 instance_sets:
   - name: agent_dev
     kind: agent_dev
     instance_set_config: configs/instance_sets/pyvrp_cvrp_v1_dev.yaml
-    instance_set_config_sha256: d851fcc1ea58a86e0a38d2b36b6f997bc8f3797cae62c77f9ed48b7d1c341cbd
+    instance_set_config_sha256: 39d756151d1813b65f586618224e46fc208413d0e7d8bcf0e86e9f574df81901
     size: 10
-    randomness: {instance_seed: 13400, coordinate_seed: 13401, demand_seed: 13402}
   - name: judge_id
     kind: judge_id
     instance_set_config: private://calibration/cvrplib_x/oracle.yaml

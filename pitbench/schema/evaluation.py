@@ -5,7 +5,8 @@ from enum import Enum
 from pydantic import BaseModel, Field, computed_field
 
 from pitbench.metrics.performance_report import PerformanceReport
-from pitbench.schema.observation import CodeState, RunObservation
+from pitbench.metrics.seed_robustness_report import SeedRobustnessReport
+from pitbench.schema.observation import CodeState
 
 
 class ValidityCode(str, Enum):
@@ -45,6 +46,7 @@ class ArtifactRef(BaseModel):
 class ArtifactManifest(BaseModel):
     candidate_patch: ArtifactRef | None = None
     observations: ArtifactRef | None = None
+    seed_robustness_details: ArtifactRef | None = None
     trajectories: list[ArtifactRef] = Field(default_factory=list)
     solutions: list[ArtifactRef] = Field(default_factory=list)
     logs: list[ArtifactRef] = Field(default_factory=list)
@@ -55,11 +57,11 @@ class EvaluationSummary(BaseModel):
     valid_observation_count: int = Field(ge=0)
     counts_by_state: dict[CodeState, int] = Field(default_factory=dict)
     performance: PerformanceReport | None = None
+    nuisance_robustness: SeedRobustnessReport | None = None
 
 
 class EvaluationResult(BaseModel):
     task_id: str
     validity: ValidityResult
-    observations: list[RunObservation]
     artifacts: ArtifactManifest
     summary: EvaluationSummary

@@ -15,10 +15,13 @@ from typing import Callable
 
 import yaml
 
-from pitbench.evaluator.private_assets import PrivateAssetResolver
+from pitbench.evaluator.private_assets import (
+    PrivateAssetResolver,
+    load_private_seed_robustness_config,
+)
 from pitbench.families.base import ProblemFamilyRegistry
 from pitbench.families.external import ExternalVerifierFamily
-from pitbench.instances import materialize_generated_instance_set
+from pitbench.instances import materialize_generated_instance_set, verify_public_file
 from pitbench.repositories.base import (
     BuildKind,
     CommandSpec,
@@ -59,6 +62,45 @@ def _uses_model_equivalence(task: PitBenchTask) -> bool:
     return task.evaluation.verifier.rsplit("/", 1)[-1].endswith("model_equivalence")
 
 
+def _development_seeds(task: PitBenchTask) -> tuple[int, ...]:
+    seed_robustness = task.evaluation.seed_robustness
+    if seed_robustness is not None:
+        return tuple(seed_robustness.development_seeds)
+    if task.evaluation.solver_seeds is None:
+        raise ValueError("task does not provide development seeds")
+    return tuple(task.evaluation.solver_seeds)
+
+
+def _instance_generation_seeds(
+    instance_set: InstanceSetSpec,
+) -> dict[str, int | None]:
+    randomness = instance_set.randomness
+    return {
+        "instance_seed": randomness.instance_seed if randomness is not None else None,
+        "coordinate_seed": (
+            randomness.coordinate_seed if randomness is not None else None
+        ),
+        "demand_seed": randomness.demand_seed if randomness is not None else None,
+    }
+
+
+def _evaluation_seeds(
+    task: PitBenchTask,
+    resolver: PrivateAssetResolver,
+) -> tuple[int, ...]:
+    seed_robustness = task.evaluation.seed_robustness
+    if seed_robustness is not None:
+        private_config = load_private_seed_robustness_config(
+            resolver,
+            task_id=task.task_id,
+            public_config=seed_robustness,
+        )
+        return tuple(private_config.evaluation_seeds)
+    if task.evaluation.solver_seeds is None:
+        raise ValueError("task does not provide evaluation seeds")
+    return tuple(task.evaluation.solver_seeds)
+
+
 def _limit_solver_cpus(
     command: CommandSpec,
     threads: int,
@@ -91,13 +133,13 @@ class JudgePlan:
     ) -> "JudgePlan":
         cases = []
         for instance_set in task.instance_sets:
-            if instance_set.kind == InstanceSetKind.AGENT_DEV:
+            if (
+                instance_set.kind == InstanceSetKind.AGENT_DEV
+                and task.evaluation.seed_robustness is None
+            ):
                 continue
             for index in range(min(instances_per_instance_set, instance_set.size)):
-                objective_scored = (
-                    instance_set.kind == InstanceSetKind.JUDGE_ID
-                    and not _uses_model_equivalence(task)
-                )
+                objective_scored = not _uses_model_equivalence(task)
                 cases.append(
                     InstanceCase(
                         instance_set=instance_set,
@@ -110,21 +152,35 @@ class JudgePlan:
         return cls(task, cases)
 
     @classmethod
-    def from_private_instance_set_configs(
+    def from_instance_set_configs(
         cls,
         task: PitBenchTask,
         resolver: PrivateAssetResolver,
         *,
+        public_root: Path,
         generated_root: Path | None = None,
+        evaluation_seeds: tuple[int, ...] | None = None,
     ) -> "JudgePlan":
         cases: list[InstanceCase] = []
+        development_seeds = _development_seeds(task)
         for instance_set in task.instance_sets:
-            if instance_set.kind == InstanceSetKind.AGENT_DEV:
-                continue
-            instance_set_config_path = resolver.resolve(
-                instance_set.instance_set_config,
-                instance_set.instance_set_config_sha256,
+            public_instance_set = instance_set.kind == InstanceSetKind.AGENT_DEV
+            solver_seeds = (
+                development_seeds if public_instance_set else evaluation_seeds
             )
+            if public_instance_set and task.evaluation.seed_robustness is None:
+                continue
+            if public_instance_set:
+                instance_set_config_path = verify_public_file(
+                    public_root.resolve(),
+                    instance_set.instance_set_config,
+                    instance_set.instance_set_config_sha256,
+                )
+            else:
+                instance_set_config_path = resolver.resolve(
+                    instance_set.instance_set_config,
+                    instance_set.instance_set_config_sha256,
+                )
             payload = yaml.safe_load(instance_set_config_path.read_text())
             if "generator" in payload:
                 if generated_root is None:
@@ -134,7 +190,7 @@ class JudgePlan:
                 paths = materialize_generated_instance_set(
                     payload,
                     generated_root / instance_set.name,
-                    expected_visibility="judge",
+                    expected_visibility=("agent" if public_instance_set else "judge"),
                     stem_prefix=instance_set.name,
                 )
                 if len(paths) != instance_set.size:
@@ -184,6 +240,7 @@ class JudgePlan:
                                 float(anchor["bks"]) if anchor is not None else None
                             ),
                             problem_scale=_customer_count(path),
+                            solver_seeds=solver_seeds,
                         )
                     )
                 continue
@@ -192,17 +249,36 @@ class JudgePlan:
                     f"instance set {instance_set.name} size does not match config"
                 )
             for item in payload["instances"]:
-                uri = item.get("uri", item.get("instance_uri"))
-                anchor = item.get("optimal_or_bks", item.get("bks"))
-                objective_scored = (
-                    instance_set.kind == InstanceSetKind.JUDGE_ID
-                    and not _uses_model_equivalence(task)
-                )
-                if uri is None or (objective_scored and anchor is None):
-                    raise ValueError(
-                        f"instance set {instance_set.name} has an incomplete instance"
+                if public_instance_set:
+                    path = verify_public_file(
+                        instance_set_config_path.parent,
+                        item["instance_file"],
+                        item["instance_file_sha256"],
                     )
-                path = resolver.resolve(uri)
+                    verify_public_file(
+                        instance_set_config_path.parent,
+                        item["bks_solution_file"],
+                        item["bks_solution_file_sha256"],
+                    )
+                    anchor = item.get("bks")
+                    if anchor is None:
+                        raise ValueError(
+                            f"instance set {instance_set.name} has no BKS for "
+                            f"{item['id']}"
+                        )
+                else:
+                    uri = item.get("uri", item.get("instance_uri"))
+                    anchor = item.get("optimal_or_bks", item.get("bks"))
+                    objective_scored = (
+                        instance_set.kind == InstanceSetKind.JUDGE_ID
+                        and not _uses_model_equivalence(task)
+                    )
+                    if uri is None or (objective_scored and anchor is None):
+                        raise ValueError(
+                            f"instance set {instance_set.name} has an incomplete "
+                            "instance"
+                        )
+                    path = resolver.resolve(uri)
                 cases.append(
                     InstanceCase(
                         instance_set=instance_set,
@@ -210,6 +286,7 @@ class JudgePlan:
                         path=path,
                         anchor=float(anchor) if anchor is not None else None,
                         problem_scale=_customer_count(path),
+                        solver_seeds=solver_seeds,
                     )
                 )
         return cls(task, cases)
@@ -231,7 +308,7 @@ class FixtureJudge:
         observations: list[RunObservation] = []
         task = plan.task
         for case in plan.cases:
-            seeds = case.solver_seeds or tuple(task.evaluation.solver_seeds)
+            seeds = case.solver_seeds or _development_seeds(task)
             budgets = case.budgets_sec or tuple(task.evaluation.budgets_sec)
             for seed in seeds:
                 for budget in budgets:
@@ -260,9 +337,7 @@ class FixtureJudge:
             instance_set=case.instance_set.name,
             instance_set_kind=case.instance_set.kind.value,
             instance_id=case.instance_id,
-            instance_seed=case.instance_set.randomness.instance_seed,
-            coordinate_seed=case.instance_set.randomness.coordinate_seed,
-            demand_seed=case.instance_set.randomness.demand_seed,
+            **_instance_generation_seeds(case.instance_set),
             solver_seed=seed,
             budget_sec=budget,
             threads=task.evaluation.threads,
@@ -308,20 +383,25 @@ class LocalProcessJudge:
         self,
         task: PitBenchTask,
         base_repository: Path,
+        public_root: Path,
         private_root: Path,
         candidate_patch: Path | None,
         output_dir: Path,
         code_states: tuple[CodeState, ...] = tuple(CodeState),
         parallel_runs: int = 1,
+        run_validation_builds: bool = True,
         progress_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.task = task
         self.base_repository = base_repository
+        self.public_root = public_root
         self.resolver = PrivateAssetResolver(private_root)
+        self.evaluation_seeds = _evaluation_seeds(task, self.resolver)
         self.candidate_patch = candidate_patch
         self.output_dir = output_dir
         self.code_states = code_states
         self.parallel_runs = parallel_runs
+        self.run_validation_builds = run_validation_builds
         self.progress_callback = progress_callback
         self.repository = RepositoryPluginRegistry.load(task.repository.plugin)
         self.family = ProblemFamilyRegistry.load(task.problem_family)
@@ -380,33 +460,55 @@ class LocalProcessJudge:
         else:
             print(f"PITBENCH_PROGRESS {message}", flush=True)
 
-    def run(self) -> list[RunObservation]:
+    def run(
+        self,
+        cases: list[InstanceCase] | None = None,
+        *,
+        completed_runs: set[tuple[str, str, CodeState, int, float]] | None = None,
+        save_observation: Callable[[RunObservation], None] | None = None,
+    ) -> list[RunObservation]:
         observations: list[RunObservation] = []
         with tempfile.TemporaryDirectory(prefix="pitbench-judge-") as temporary:
             root = Path(temporary)
-            plan = JudgePlan.from_private_instance_set_configs(
-                self.task,
-                self.resolver,
-                generated_root=root / "generated-instance-sets",
-            )
+            completed_runs = completed_runs or set()
+            if cases is None:
+                plan = JudgePlan.from_instance_set_configs(
+                    self.task,
+                    self.resolver,
+                    public_root=self.public_root,
+                    generated_root=root / "generated-instance-sets",
+                    evaluation_seeds=self.evaluation_seeds,
+                )
+                cases = plan.cases
             total_solver_runs = sum(
-                len(case.solver_seeds or tuple(self.task.evaluation.solver_seeds))
-                * len(case.budgets_sec or tuple(self.task.evaluation.budgets_sec))
-                * len(self.code_states)
-                for case in plan.cases
+                (
+                    case.instance_set.name,
+                    case.instance_id,
+                    state,
+                    seed,
+                    budget,
+                )
+                not in completed_runs
+                for case in cases
+                for seed in (case.solver_seeds or self.evaluation_seeds)
+                for budget in (
+                    case.budgets_sec or tuple(self.task.evaluation.budgets_sec)
+                )
+                for state in self.code_states
             )
             self._progress(
-                f"Judge plan: {len(plan.cases)} instances, "
+                f"Judge plan: {len(cases)} instances, "
                 f"{total_solver_runs} solver runs"
             )
-            for state in self.code_states:
-                started = time.monotonic()
-                self._progress(f"Judge validation build: {state.value}")
-                self._workspace(state, root / "validation", BuildKind.VALIDATION)
-                self._progress(
-                    f"Judge validation build complete: {state.value} in "
-                    f"{time.monotonic() - started:.1f}s"
-                )
+            if self.run_validation_builds:
+                for state in self.code_states:
+                    started = time.monotonic()
+                    self._progress(f"Judge validation build: {state.value}")
+                    self._workspace(state, root / "validation", BuildKind.VALIDATION)
+                    self._progress(
+                        f"Judge validation build complete: {state.value} in "
+                        f"{time.monotonic() - started:.1f}s"
+                    )
             workspaces = {}
             for state in self.code_states:
                 started = time.monotonic()
@@ -419,14 +521,23 @@ class LocalProcessJudge:
                     f"{time.monotonic() - started:.1f}s"
                 )
             jobs = []
-            for case in plan.cases:
+            for case in cases:
                 if case.path is None:
                     raise RuntimeError("real judge case has no instance path")
-                seeds = case.solver_seeds or tuple(self.task.evaluation.solver_seeds)
+                seeds = case.solver_seeds or self.evaluation_seeds
                 budgets = case.budgets_sec or tuple(self.task.evaluation.budgets_sec)
                 for seed in seeds:
                     for budget in budgets:
                         for state, workspace in workspaces.items():
+                            run_identity = (
+                                case.instance_set.name,
+                                case.instance_id,
+                                state,
+                                seed,
+                                budget,
+                            )
+                            if run_identity in completed_runs:
+                                continue
                             jobs.append((case, state, workspace, seed, budget))
 
             available = sorted(os.sched_getaffinity(0))
@@ -473,6 +584,8 @@ class LocalProcessJudge:
                 for future in as_completed(future_to_job):
                     observation = future.result()
                     observations.append(observation)
+                    if save_observation is not None:
+                        save_observation(observation)
                     case, state, _, seed, _ = future_to_job[future]
                     instance_key = (case.instance_set.name, case.instance_id)
                     seed_key = (*instance_key, state, seed)
@@ -563,9 +676,7 @@ class LocalProcessJudge:
             instance_set=case.instance_set.name,
             instance_set_kind=case.instance_set.kind.value,
             instance_id=case.instance_id,
-            instance_seed=case.instance_set.randomness.instance_seed,
-            coordinate_seed=case.instance_set.randomness.coordinate_seed,
-            demand_seed=case.instance_set.randomness.demand_seed,
+            **_instance_generation_seeds(case.instance_set),
             solver_seed=seed,
             budget_sec=budget,
             threads=self.task.evaluation.threads,
@@ -607,9 +718,7 @@ class LocalProcessJudge:
             instance_set=case.instance_set.name,
             instance_set_kind=case.instance_set.kind.value,
             instance_id=case.instance_id,
-            instance_seed=case.instance_set.randomness.instance_seed,
-            coordinate_seed=case.instance_set.randomness.coordinate_seed,
-            demand_seed=case.instance_set.randomness.demand_seed,
+            **_instance_generation_seeds(case.instance_set),
             solver_seed=seed,
             budget_sec=budget,
             threads=self.task.evaluation.threads,
