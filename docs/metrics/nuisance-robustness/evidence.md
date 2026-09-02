@@ -45,9 +45,10 @@ supports avoiding reliance on mean or variance alone, but does not specifically
 select IQR or MAD. Their MIP setting is methodological supporting evidence only and
 is outside the v1 solver scope.
 
-Campelo and Wanner formulate algorithm comparison over a population of problem
-instances. Repeated runs improve estimation on an instance, while cross-instance
-inference and sample-size design remain centred on the number of instances.
+Campelo and Wanner formulate algorithm comparison over a target problem class
+represented by sampled instances. Repeated runs improve estimation on an instance,
+while cross-instance inference and sample-size design remain centred on the number
+of instances.
 
 ## Candidate evidence assessment
 

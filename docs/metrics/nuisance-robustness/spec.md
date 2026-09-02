@@ -3,7 +3,7 @@
 ## Per-instance Seed Robustness headline
 
 For code state \(c\), fixed instance \(x\), and fixed budget \(T\), define the
-population Seed Robustness estimand as
+target Seed Robustness estimand as
 
 \[
 S(c,x,T)
@@ -17,8 +17,8 @@ where:
 
 - \(c \in \{\mathrm{Base},\mathrm{Agent}\}\);
 - \(g\) is normalized gap from a valid run; and
-- \(\xi\) is solver seed under a seed population and sampling protocol that remain
-  to be specified.
+- \(\xi\) is solver seed under a target seed distribution and sampling protocol that
+  remain to be specified.
 
 Smaller \(S\) means that the central seed outcomes are more stable.
 
@@ -48,7 +48,7 @@ a diagnostic remains undecided.
 
 ## Open formal-specification items
 
-- seed population and sampling protocol;
+- target seed distribution and sampling protocol;
 - sample-quantile convention;
 - seed count;
 - missing-seed rules;
