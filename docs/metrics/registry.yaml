@@ -28,3 +28,11 @@ performance:
       commit: 95b964aa
       tests: 352_passed
   frozen_commit: null
+
+nuisance_robustness:
+  status: question_complete
+  branch: metric/nuisance-robustness-v1
+  scope: docs/metrics/nuisance-robustness/scope.md
+  completed:
+    - item: seed_robustness_scope
+      commit: a634015b
