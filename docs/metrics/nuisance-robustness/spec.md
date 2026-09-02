@@ -143,6 +143,58 @@ An execution protocol may retry the same `(code_state, instance, seed, budget)`
 tuple after an infrastructure failure. Such a retry does not change the assigned
 seed panel. The Seed Robustness protocol never substitutes a different seed.
 
+### Cross-instance aggregation
+
+Aggregation is performed separately for each task \(\tau\), `instance_set` \(k\),
+and budget \(T\). Define the paired-complete instances as
+
+\[
+E_{\tau,k,T}
+=
+\left\{
+x \in k
+\;\middle|\;
+S(\mathrm{Base},x,T)
+\text{ and }
+S(\mathrm{Agent},x,T)
+\text{ are available}
+\right\}.
+\]
+
+For code state \(c\), the paired `instance_set` mean Seed Robustness is
+
+\[
+\overline{S}_{c,\tau,k,T}
+=
+\frac{1}{|E_{\tau,k,T}|}
+\sum_{x \in E_{\tau,k,T}} S(c,x,T).
+\]
+
+The paired `instance_set` mean robustness change is
+
+\[
+\overline{\Delta S}_{\tau,k,T}
+=
+\frac{1}{|E_{\tau,k,T}|}
+\sum_{x \in E_{\tau,k,T}} \Delta S(x,T)
+=
+\overline{S}_{\mathrm{Agent},\tau,k,T}
+-
+\overline{S}_{\mathrm{Base},\tau,k,T}.
+\]
+
+Each instance receives equal weight. Instances are not weighted by customer count,
+gap, seed count, or runtime. A per-instance \(S(c,x,T)\) that is available for only
+one code state remains retained but does not enter a paired aggregate. If
+\(|E_{\tau,k,T}|=0\), all three paired aggregates are unavailable. The size
+\(|E_{\tau,k,T}|\) is retained to audit aggregate coverage and is not a Seed
+Robustness score.
+
+The `agent_dev`, `judge_id`, and `judge_shift` `instance_set` values are aggregated
+separately. Different tasks, `instance_set` values, and budgets are not pooled.
+Aggregates are computed and retained at every configured budget; current primary
+reporting selects `primary_budget_sec`.
+
 ### Deterministic panel sampler
 
 The panel sampler identifier is `hmac_sha256_rank_v1`. Each task \(\tau\) has a
@@ -208,7 +260,6 @@ a diagnostic remains undecided.
 
 ## Open formal-specification items
 
-- cross-instance aggregation;
 - confidence interval;
 - report schema; and
 - retired-task key disclosure policy.
