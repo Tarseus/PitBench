@@ -38,6 +38,32 @@ The direction semantics are:
 - \(\Delta S(x,T) > 0\): Agent is less stable; and
 - \(\Delta S(x,T) = 0\): central spread is unchanged.
 
+## Target seed distribution and panel sampling
+
+Each stochastic VRP task \(\tau\) declares a finite admissible seed domain
+\(D_\tau\) supported by its native solver. The target seed distribution is
+
+\[
+\xi_\tau \sim \operatorname{Uniform}(D_\tau).
+\]
+
+This distribution is uniform over seed identifiers. It does not assert that the
+solver's internal RNG states are uniformly distributed.
+
+Each task uses two disjoint seed panels sampled without replacement from \(D_\tau\)
+and fixed before the agent starts:
+
+- a visible development panel for `agent_dev`; and
+- a hidden evaluation panel shared by `judge_id` and `judge_shift`.
+
+The hidden evaluation panel is not included in agent-visible configuration. The
+panel assigned to an instance-set role is reused across all corresponding instances
+and budgets. Base and Agent use identical `(instance, budget, seed)` conditions.
+
+Every `(code_state, instance, seed, budget)` combination starts a fresh process and
+reinitializes the solver RNG. Runs at different budgets do not share a trajectory or
+solver state.
+
 ## Retained evidence object
 
 The complete per-instance empirical seed distribution and its ECDF are retained as
@@ -48,7 +74,8 @@ a diagnostic remains undecided.
 
 ## Open formal-specification items
 
-- target seed distribution and sampling protocol;
+- deterministic panel sampler and master seed;
+- exact task-specific admissible seed domains;
 - sample-quantile convention;
 - seed count;
 - missing-seed rules;
