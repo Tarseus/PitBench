@@ -30,9 +30,12 @@ performance:
   frozen_commit: null
 
 nuisance_robustness:
-  status: question_complete
+  status: evidence_complete
   branch: metric/nuisance-robustness-v1
   scope: docs/metrics/nuisance-robustness/scope.md
+  evidence: docs/metrics/nuisance-robustness/evidence.md
   completed:
     - item: seed_robustness_scope
       commit: a634015b
+    - item: seed_robustness_evidence
+      commit: dfbd1e08
