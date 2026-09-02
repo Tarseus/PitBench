@@ -195,6 +195,38 @@ separately. Different tasks, `instance_set` values, and budgets are not pooled.
 Aggregates are computed and retained at every configured budget; current primary
 reporting selects `primary_budget_sec`.
 
+### Confidence intervals
+
+PitBench computes two-sided 95% paired percentile bootstrap confidence intervals
+for \(\overline{S}_{\mathrm{Base},\tau,k,T}\),
+\(\overline{S}_{\mathrm{Agent},\tau,k,T}\), and
+\(\overline{\Delta S}_{\tau,k,T}\). The resampling unit is one paired-complete
+instance from \(E_{\tau,k,T}\).
+
+Let \(N=|E_{\tau,k,T}|\). The instances are ordered by ascending `instance_id`.
+For each of 5000 bootstrap replicates, PitBench samples \(N\) indices independently
+with replacement and computes all three aggregate statistics from the same sampled
+indices. This preserves Base–Agent pairing within every replicate.
+
+Each `(task_id, instance_set, budget_sec)` group initializes a separate
+`random.Random(20260824)` generator. For every sampled index, the protocol obtains
+\(u\) from `Random.random()` and selects the zero-based index
+\(\lfloor Nu\rfloor\). Resetting the generator for each group makes the resampling
+independent of group traversal order.
+
+For each aggregate statistic, the confidence interval endpoints are the
+Hyndman–Fan Type 7 \(Q_{0.025}\) and \(Q_{0.975}\) of its 5000 bootstrap values.
+If \(N=0\), the aggregate and confidence interval are unavailable. If \(N=1\), the
+point aggregate remains available but its confidence interval is unavailable. If
+\(N\ge2\), the interval is computed; an identical lower and upper endpoint is a
+valid zero-width interval.
+
+Confidence intervals are computed and retained at every configured budget; current
+primary reporting selects `primary_budget_sec`. These intervals express instance
+resampling uncertainty only. They do not include seed-panel sampling uncertainty.
+BCa intervals are not part of the v1 headline protocol; M3 may evaluate them as a
+sensitivity analysis.
+
 ### Deterministic panel sampler
 
 The panel sampler identifier is `hmac_sha256_rank_v1`. Each task \(\tau\) has a
@@ -260,6 +292,5 @@ a diagnostic remains undecided.
 
 ## Open formal-specification items
 
-- confidence interval;
 - report schema; and
 - retired-task key disclosure policy.
