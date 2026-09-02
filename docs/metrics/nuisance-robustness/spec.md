@@ -17,8 +17,8 @@ where:
 
 - \(c \in \{\mathrm{Base},\mathrm{Agent}\}\);
 - \(g\) is normalized gap from a valid run; and
-- \(\xi\) is solver seed under a target seed distribution and sampling protocol that
-  remain to be specified.
+- \(\xi\) is solver seed under the target seed distribution and sampling protocol
+  defined below.
 
 Smaller \(S\) means that the central seed outcomes are more stable.
 
@@ -49,6 +49,25 @@ Each stochastic VRP task \(\tau\) declares a finite admissible seed domain
 
 This distribution is uniform over seed identifiers. It does not assert that the
 solver's internal RNG states are uniformly distributed.
+
+### Current task domains
+
+The current in-scope PyVRP tasks use the complete unsigned 32-bit seed range
+accepted by both the native `RandomNumberGenerator` constructor and its Python
+binding:
+
+\[
+D_\tau
+=
+\{d \in \mathbb{Z} \mid 0 \le d \le 2^{32} - 1\}.
+\]
+
+This domain applies to:
+
+- `pyvrp_v0_12_2`;
+- `pyvrp_v0_13_0`;
+- `pyvrp_v0_13_4`; and
+- `pyvrp_v0_14_0`.
 
 Each task uses two disjoint seed panels sampled without replacement from \(D_\tau\)
 and fixed before the agent starts:
@@ -129,7 +148,6 @@ a diagnostic remains undecided.
 
 ## Open formal-specification items
 
-- exact task-specific admissible seed domains;
 - sample-quantile convention;
 - seed count;
 - missing-seed rules;
