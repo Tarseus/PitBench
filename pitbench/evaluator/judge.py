@@ -19,9 +19,9 @@ from pitbench.evaluator.private_assets import (
     PrivateAssetResolver,
     load_private_seed_robustness_config,
 )
-from pitbench.families.base import ProblemFamilyRegistry
-from pitbench.families.external import ExternalVerifierFamily
 from pitbench.instances import materialize_generated_instance_set, verify_public_file
+from pitbench.problem_families.base import ProblemFamilyRegistry
+from pitbench.problem_families.external import ExternalVerifierFamily
 from pitbench.repositories.base import (
     BuildKind,
     CommandSpec,

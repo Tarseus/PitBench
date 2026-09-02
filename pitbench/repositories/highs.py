@@ -32,7 +32,7 @@ class HighsRepositoryPlugin(RepositoryPlugin):
             argv=[
                 "python",
                 "-m",
-                "pitbench.drivers.highs",
+                "pitbench.solver_drivers.highs",
                 "--solver",
                 "./build/bin/highs",
                 "--instance",

@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 import yaml
 
-from pitbench.families.cvrp import CVRPFamily
 from pitbench.instances import make_euclidean_cvrp_instance, materialize_instance_set
+from pitbench.problem_families.cvrp import CVRPFamily
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]

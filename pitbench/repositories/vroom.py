@@ -21,7 +21,7 @@ class VroomRepositoryPlugin(RepositoryPlugin):
             argv=[
                 "python",
                 "-m",
-                "pitbench.drivers.vroom",
+                "pitbench.solver_drivers.vroom",
                 "--solver",
                 "./bin/vroom",
                 "--instance",

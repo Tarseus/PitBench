@@ -7,7 +7,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from pitbench.drivers.common import (
+from pitbench.solver_drivers.common import (
     append_trajectory,
     parser,
     write_result,

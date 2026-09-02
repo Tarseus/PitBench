@@ -96,7 +96,7 @@ class PyVRPRepositoryPlugin(RepositoryPlugin):
             argv=[
                 self._PYTHON,
                 "-m",
-                "pitbench.drivers.pyvrp",
+                "pitbench.solver_drivers.pyvrp",
                 "--instance",
                 str(run.instance_path),
                 "--output",

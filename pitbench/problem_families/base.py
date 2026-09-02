@@ -35,9 +35,9 @@ class ProblemFamilyPlugin(ABC):
 
 class ProblemFamilyRegistry:
     _PLUGIN_PATHS = {
-        "cvrp": "pitbench.families.cvrp:CVRPFamily",
-        "mip": "pitbench.families.external:MIPFamily",
-        "cp": "pitbench.families.external:CPFamily",
+        "cvrp": "pitbench.problem_families.cvrp:CVRPFamily",
+        "mip": "pitbench.problem_families.external:MIPFamily",
+        "cp": "pitbench.problem_families.external:CPFamily",
     }
 
     @staticmethod

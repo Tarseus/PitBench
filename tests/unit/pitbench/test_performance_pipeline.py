@@ -10,15 +10,15 @@ from pathlib import Path
 import pytest
 import yaml
 
-from pitbench.drivers.common import write_result
 from pitbench.evaluator.judge import FixtureJudge, JudgePlan
 from pitbench.evaluator.private_assets import PrivateAssetResolver
-from pitbench.families.cvrp import CVRPFamily
 from pitbench.metrics.performance_report import (
     PerformanceClassification,
     compute_performance_report,
 )
+from pitbench.problem_families.cvrp import CVRPFamily
 from pitbench.schema.task import PitBenchTask
+from pitbench.solver_drivers.common import write_result
 
 ROOT = Path(__file__).resolve().parents[3]
 

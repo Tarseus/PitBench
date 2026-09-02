@@ -6,8 +6,8 @@ from pathlib import Path
 
 import yaml
 
-from pitbench.families.base import ProblemFamilyRegistry
 from pitbench.instances import verify_public_file
+from pitbench.problem_families.base import ProblemFamilyRegistry
 from pitbench.repositories.base import RepositoryPluginRegistry
 from pitbench.schema.task import InstanceSetKind, PitBenchTask
 

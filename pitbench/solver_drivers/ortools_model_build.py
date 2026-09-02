@@ -1,5 +1,5 @@
-from pitbench.drivers.common import parser
-from pitbench.drivers.external_runner import execute
+from pitbench.solver_drivers.common import parser
+from pitbench.solver_drivers.external_runner import execute
 
 
 def main() -> None:

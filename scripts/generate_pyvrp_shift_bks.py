@@ -12,8 +12,8 @@ from typing import Any
 
 import yaml
 
-from pitbench.families.cvrp import CVRPFamily
 from pitbench.instances.generate import materialize_generated_instance_set
+from pitbench.problem_families.cvrp import CVRPFamily
 
 
 def _sha256(path: Path) -> str:
@@ -53,7 +53,7 @@ def _solve(
         [
             str(solver_python),
             "-m",
-            "pitbench.drivers.pyvrp",
+            "pitbench.solver_drivers.pyvrp",
             "--instance",
             str(instance),
             "--output",
@@ -185,7 +185,7 @@ def main() -> None:
             "budget_sec": args.budget_sec,
             "seeds": args.seeds,
             "workers": args.workers,
-            "independent_verifier": "pitbench.families.cvrp:CVRPFamily",
+            "independent_verifier": "pitbench.problem_families.cvrp:CVRPFamily",
         },
         "anchors": anchors,
     }

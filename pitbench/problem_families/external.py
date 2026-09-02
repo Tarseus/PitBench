@@ -4,7 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from pitbench.families.base import ProblemFamilyPlugin, VerificationResult
+from pitbench.problem_families.base import ProblemFamilyPlugin, VerificationResult
 
 
 class ExternalVerifierFamily(ProblemFamilyPlugin):

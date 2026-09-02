@@ -5,7 +5,7 @@ import pytest
 from typer.testing import CliRunner
 
 from pitbench.cli.main import app
-from pitbench.families.base import ProblemFamilyRegistry
+from pitbench.problem_families.base import ProblemFamilyRegistry
 from pitbench.schema.task import InstanceSetKind, PitBenchTask, ProblemFamily, TaskType
 from pitbench.tasks import TaskCatalog
 

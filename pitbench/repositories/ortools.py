@@ -32,7 +32,7 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
             argv=[
                 "python",
                 "-m",
-                "pitbench.drivers.ortools_model_build",
+                "pitbench.solver_drivers.ortools_model_build",
                 "--instance",
                 str(run.instance_path),
                 "--output",

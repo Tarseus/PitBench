@@ -8,7 +8,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from pitbench.drivers.common import append_trajectory, write_result, write_solution
+from pitbench.solver_drivers.common import (
+    append_trajectory,
+    write_result,
+    write_solution,
+)
 
 
 def execute(

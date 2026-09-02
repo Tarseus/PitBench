@@ -2,9 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from pitbench.drivers.pyvrp import _route_visits, _statistics_rows, _vrplib
 from pitbench.repositories.base import BuildKind, SolverRunSpec
 from pitbench.repositories.pyvrp import PyVRPRepositoryPlugin
+from pitbench.solver_drivers.pyvrp import _route_visits, _statistics_rows, _vrplib
 
 
 class _LegacyRoute:

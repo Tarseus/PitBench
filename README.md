@@ -231,7 +231,8 @@ PitBench/
 │   ├── metrics/         # PerformanceReport, Cluster Bootstrap 95% CI & decision policies
 │   ├── schema/          # Pydantic data schemas (RunObservation, EvaluationResult, PitBenchTask)
 │   ├── repositories/    # Solver build and execution plugins
-│   ├── families/        # Independent CVRP verification
+│   ├── solver_drivers/  # Solver CLI adapters and normalized output handling
+│   ├── problem_families/ # Problem semantics and independent verification
 │   ├── instances/       # CO instance generation and materialization tooling
 │   └── cli/             # Unified CLI (`run/evaluate/judge/report/tasks`)
 ├── scripts/             # Optional external scheduling and maintenance scripts

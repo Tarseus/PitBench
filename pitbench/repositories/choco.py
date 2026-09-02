@@ -18,7 +18,7 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
             argv=[
                 "python",
                 "-m",
-                "pitbench.drivers.choco",
+                "pitbench.solver_drivers.choco",
                 "--instance",
                 str(run.instance_path),
                 "--output",

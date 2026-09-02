@@ -34,19 +34,19 @@ def _runner(
 
 _RUNNERS = {
     "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin": _runner(
-        "pitbench.drivers.pyvrp"
+        "pitbench.solver_drivers.pyvrp"
     ),
     "pitbench.repositories.vroom:VroomRepositoryPlugin": _runner(
-        "pitbench.drivers.vroom", solver="./bin/vroom"
+        "pitbench.solver_drivers.vroom", solver="./bin/vroom"
     ),
     "pitbench.repositories.highs:HighsRepositoryPlugin": _runner(
-        "pitbench.drivers.highs", solver="./build/bin/highs"
+        "pitbench.solver_drivers.highs", solver="./build/bin/highs"
     ),
     "pitbench.repositories.choco:ChocoRepositoryPlugin": _runner(
-        "pitbench.drivers.choco"
+        "pitbench.solver_drivers.choco"
     ),
     "pitbench.repositories.ortools:OrToolsRepositoryPlugin": _runner(
-        "pitbench.drivers.ortools_model_build", trajectory=False
+        "pitbench.solver_drivers.ortools_model_build", trajectory=False
     ),
 }
 

@@ -4,7 +4,7 @@ import json
 import math
 from pathlib import Path
 
-from pitbench.families.base import ProblemFamilyPlugin, VerificationResult
+from pitbench.problem_families.base import ProblemFamilyPlugin, VerificationResult
 
 
 def _edge_cost(
