@@ -1,0 +1,30 @@
+performance:
+  status: freeze_candidate
+  protocol: heuristic_fixed_budget
+  version: 1.0.0-rc1
+  branch: metric/performance-v1
+  spec: null
+  implementation:
+    - pitbench/metrics/performance_report.py
+    - pitbench/metrics/decision_metrics.py
+  validation:
+    - budget_direction_reversal
+    - pairing_antisymmetry
+    - seed_convergence
+    - bootstrap_target
+    - semantic_invalid
+    - bks_beating
+    - primary_budget_versioning
+  blockers:
+    - generalization_boundary
+  completed:
+    - item: correctness_hard_gate
+      commit: c9705ed8
+      tests: 346_passed
+    - item: explicit_primary_budget
+      commit: 4cba8b65
+      tests: 350_passed
+    - item: bootstrap_estimand
+      commit: 95b964aa
+      tests: 352_passed
+  frozen_commit: null
