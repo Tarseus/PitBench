@@ -38,6 +38,39 @@ The direction semantics are:
 - \(\Delta S(x,T) > 0\): Agent is less stable; and
 - \(\Delta S(x,T) = 0\): central spread is unchanged.
 
+### Sample-quantile convention
+
+PitBench uses the Hyndman–Fan Type 7 sample quantile. For \(n \ge 1\) sorted
+valid gap outcomes
+
+\[
+g_{(1)} \le \cdots \le g_{(n)},
+\]
+
+define
+
+\[
+h = 1 + (n - 1)p,
+\qquad
+j = \lfloor h \rfloor,
+\qquad
+\lambda = h - j,
+\]
+
+and
+
+\[
+Q_p
+=
+(1 - \lambda)g_{(j)}
++
+\lambda g_{(\lceil h \rceil)}.
+\]
+
+The headline IQR uses \(p=0.25\) and \(p=0.75\). This is the convention
+implemented by NumPy's `quantile(..., method="linear")` and R's default
+`quantile(..., type=7)`.
+
 ## Target seed distribution and panel sampling
 
 Each stochastic VRP task \(\tau\) declares a finite admissible seed domain
@@ -148,7 +181,6 @@ a diagnostic remains undecided.
 
 ## Open formal-specification items
 
-- sample-quantile convention;
 - seed count;
 - missing-seed rules;
 - cross-instance aggregation;
