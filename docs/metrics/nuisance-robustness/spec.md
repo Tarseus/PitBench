@@ -126,6 +126,23 @@ Every `(code_state, instance, seed, budget)` combination starts a fresh process 
 reinitializes the solver RNG. Runs at different budgets do not share a trajectory or
 solver state.
 
+### Incomplete seed panels
+
+For a fixed `(code_state, instance, budget)`, \(S(c,x,T)\) is available only when
+all 10 seeds in the assigned panel produce a valid normalized gap. If the panel is
+incomplete, \(S(c,x,T)\) is unavailable. Missing outcomes are not imputed, assigned
+a penalty gap, or replaced with different seeds.
+
+Base and Agent completeness are evaluated separately. If only one code state has a
+complete panel, its own \(S(c,x,T)\) remains available, while the other code state's
+\(S(c,x,T)\) and \(\Delta S(x,T)\) are unavailable. The valid outcomes and failure
+records from an incomplete panel remain in the evaluation record. Failure records
+are not Seed Robustness outcomes, and the panel does not produce a headline IQR.
+
+An execution protocol may retry the same `(code_state, instance, seed, budget)`
+tuple after an infrastructure failure. Such a retry does not change the assigned
+seed panel. The Seed Robustness protocol never substitutes a different seed.
+
 ### Deterministic panel sampler
 
 The panel sampler identifier is `hmac_sha256_rank_v1`. Each task \(\tau\) has a
@@ -191,7 +208,6 @@ a diagnostic remains undecided.
 
 ## Open formal-specification items
 
-- missing-seed rules;
 - cross-instance aggregation;
 - confidence interval;
 - report schema; and
