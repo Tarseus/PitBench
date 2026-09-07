@@ -195,8 +195,13 @@ def main() -> None:
     )
 
     task = PitBenchTask.from_yaml(args.task_config)
-    if task.task_id != "pyvrp_v0_14_0":
-        raise ValueError("real validation is fixed to pyvrp_v0_14_0")
+    if task.task_id not in {
+        "pyvrp_v0_12_2",
+        "pyvrp_v0_13_0",
+        "pyvrp_v0_13_4",
+        "pyvrp_v0_14_0",
+    }:
+        raise ValueError("real validation requires a configured PyVRP release task")
     seed_robustness = task.evaluation.seed_robustness
     if seed_robustness is None:
         raise ValueError("task does not define Seed Robustness")

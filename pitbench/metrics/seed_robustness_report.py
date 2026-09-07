@@ -13,7 +13,7 @@ from pitbench.schema.task import InstanceSetKind
 
 BOOTSTRAP_RESAMPLES = 5000
 BOOTSTRAP_SEED = 20260824
-CROSSED_BOOTSTRAP_METHOD = "crossed instance-set and seed-list bootstrap"
+SEED_BOOTSTRAP_METHOD = "paired seed-list bootstrap with fixed instances"
 
 
 class SeedSelectionMetadata(BaseModel):
@@ -26,7 +26,7 @@ class SeedRobustnessConfidenceInterval(BaseModel):
     lower: float
     upper: float
     level: float = 0.99
-    method: str = CROSSED_BOOTSTRAP_METHOD
+    method: str = SEED_BOOTSTRAP_METHOD
     resamples: int = BOOTSTRAP_RESAMPLES
     bootstrap_seed: int = BOOTSTRAP_SEED
 
@@ -266,14 +266,13 @@ def _complete_seed_gaps(
     return seed_gaps
 
 
-def _crossed_bootstrap_intervals(
+def _seed_bootstrap_intervals(
     paired_seed_gaps: Sequence[tuple[list[float], list[float]]],
 ) -> tuple[
     SeedRobustnessConfidenceInterval,
     SeedRobustnessConfidenceInterval,
     SeedRobustnessConfidenceInterval,
 ]:
-    instance_count = len(paired_seed_gaps)
     seed_count = len(paired_seed_gaps[0][0])
     random_generator = random.Random(BOOTSTRAP_SEED)
     base_bootstrap_means: list[float] = []
@@ -285,15 +284,9 @@ def _crossed_bootstrap_intervals(
             math.floor(seed_count * random_generator.random())
             for _ in range(seed_count)
         ]
-        sampled_instance_indices = [
-            math.floor(instance_count * random_generator.random())
-            for _ in range(instance_count)
-        ]
-
         sampled_base_iqrs: list[float] = []
         sampled_agent_iqrs: list[float] = []
-        for instance_index in sampled_instance_indices:
-            base_seed_gaps, agent_seed_gaps = paired_seed_gaps[instance_index]
+        for base_seed_gaps, agent_seed_gaps in paired_seed_gaps:
             sampled_base_iqrs.append(
                 seed_iqr(
                     [base_seed_gaps[seed_index] for seed_index in sampled_seed_indices]
@@ -397,7 +390,7 @@ def _budget_seed_robustness(
         mean_seed_iqr_change = agent_mean_seed_iqr - base_mean_seed_iqr
         if len(paired_seed_gaps) >= 2:
             base_interval, agent_interval, change_interval = (
-                _crossed_bootstrap_intervals(paired_seed_gaps)
+                _seed_bootstrap_intervals(paired_seed_gaps)
             )
 
     return SeedRobustnessBudget(
@@ -661,7 +654,7 @@ def format_seed_robustness_report(report: SeedRobustnessReport) -> str:
 
 
 __all__ = [
-    "CROSSED_BOOTSTRAP_METHOD",
+    "SEED_BOOTSTRAP_METHOD",
     "BOOTSTRAP_RESAMPLES",
     "BOOTSTRAP_SEED",
     "CodeStateSeedDetails",

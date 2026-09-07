@@ -1,5 +1,8 @@
 # Nuisance Robustness formal specification
 
+Seed Robustness protocol version: **0.0.1**.
+Version selected by the user for M7 freezing on 2026-09-07.
+
 ## Per-instance Seed Robustness headline
 
 For code state \(c\), fixed instance \(x\), and fixed budget \(T\), define the
@@ -147,7 +150,7 @@ and fixed before the agent starts:
 - a hidden evaluation seed list shared by `judge_id` and `judge_shift`.
 
 The public field `seed_count` gives the number of seed identifiers in each list.
-For v1,
+For version 0.0.1,
 
 ```yaml
 seed_count: 30
@@ -262,9 +265,10 @@ reporting selects `primary_budget_sec`.
 PitBench computes two-sided 99% paired percentile bootstrap confidence intervals
 for \(\overline{S}_{\mathrm{Base},\tau,k,T}\),
 \(\overline{S}_{\mathrm{Agent},\tau,k,T}\), and
-\(\overline{\Delta S}_{\tau,k,T}\) by resampling their `seed_list` estimates with
-crossed `instance_set` and `seed_list` resampling. Individual `(instance, seed)`
-runs are not treated as iid observations.
+\(\overline{\Delta S}_{\tau,k,T}\) by resampling shared `seed_list` columns while
+keeping the observed paired-complete instances fixed. The target is the equal-weight
+mean over this fixed instance set. Individual `(instance, seed)` runs are not treated
+as iid observations.
 
 Let \(N=|E_{\tau,k,T}|\) and \(R=\texttt{seed_count}\). The instances are ordered by
 ascending `instance_id`, and the seeds retain their stored order in the assigned list.
@@ -272,25 +276,23 @@ For each of 5000 bootstrap replicates, PitBench:
 
 - samples \(R\) seed indices independently with replacement from
   \(\{0,\ldots,R-1\}\) once for the whole replicate;
-- samples \(N\) instance indices independently with replacement from
-  \(\{0,\ldots,N-1\}\);
-- applies the same sampled seed indices to every sampled instance and to both Base
+- retains all \(N\) paired-complete instances with equal weights;
+- applies the same sampled seed indices to every fixed instance and to both Base
   and Agent;
-- recomputes each sampled instance's Type 7 IQR from its resampled seed outcomes;
+- recomputes each fixed instance's Type 7 IQR from its resampled seed outcomes;
   and
-- computes all three aggregate statistics from the same crossed instance and seed
-  indices.
+- computes all three aggregate statistics from the same sampled seed indices and
+  fixed instance rows.
 
 Sampling the seed indices once per replicate preserves the assigned seeds as a
-shared blocking factor across instances. Using the same crossed indices for Base and
-Agent preserves their pairing.
+shared blocking factor across instances. Using the same sampled seed indices for
+Base and Agent preserves their pairing. Instance rows are not resampled.
 
 Each `(task_id, instance_set, budget_sec)` group initializes a separate
-`random.Random(20260824)` generator. Within each replicate, the protocol draws all
-seed indices first and then all instance indices. For a seed index, it obtains \(u\)
-from `Random.random()` and selects \(\lfloor Ru\rfloor\); for an instance index, it
-selects \(\lfloor Nu\rfloor\). Resetting the generator for each group makes the
-resampling independent of group traversal order.
+`random.Random(20260824)` generator. Within each replicate, the protocol draws only
+the \(R\) seed indices. For each index, it obtains \(u\) from `Random.random()` and
+selects \(\lfloor Ru\rfloor\). There are no instance-index draws. Resetting the
+generator for each group makes the resampling independent of group traversal order.
 
 For each aggregate statistic, the confidence interval endpoints are the
 Hyndman–Fan Type 7 \(Q_{0.005}\) and \(Q_{0.995}\) of its 5000 bootstrap values.
@@ -300,11 +302,16 @@ point aggregate remains available but its confidence interval is unavailable. If
 valid zero-width interval.
 
 Confidence intervals are computed and retained at every configured budget; current
-primary reporting selects `primary_budget_sec`. These intervals include
-`instance_set` resampling uncertainty and uncertainty from estimating the
-`seed_domain` IQR with the sampled `seed_list`. BCa intervals are not part of the v1
-headline protocol; M3 may evaluate them as a sensitivity analysis. M3 must also
-evaluate the coverage of the crossed percentile interval with `seed_count: 30`.
+primary reporting selects `primary_budget_sec`. These intervals describe uncertainty
+from estimating the `seed_domain` IQR with the sampled `seed_list`, conditional on
+the observed paired-complete instance set. They do not describe uncertainty from
+sampling a new instance set. BCa intervals are not part of the 0.0.1 headline protocol.
+
+The M5 decision on 2026-09-07 retains 30 seeds and IQR. Bias, empirical coverage, and
+interval width are reported descriptively, without a hard acceptance threshold.
+The nominal 99% level is not a claim of demonstrated 99% empirical coverage.
+Validation of the ability to detect nonzero robustness changes is deferred and is
+not a completion requirement for this cycle.
 
 ### Seed selection
 
@@ -316,7 +323,7 @@ uniformly without replacement from the declared inclusive range from `seed_min` 
 The first `seed_count` identifiers become `development_seeds`. The remaining
 `seed_count` identifiers become `evaluation_seeds`. The two stored lists therefore
 have equal size and are disjoint by construction. Seed order is retained because the
-crossed bootstrap treats each shared seed as the same column across all instances and
+seed-list bootstrap treats each shared seed as the same column across all instances and
 both code states.
 
 The public task configuration stores `seed_min`, `seed_max`, `seed_count`,
@@ -376,8 +383,8 @@ must set `private: true`. Active-task public or agent-facing outputs must not ex
 hidden seed identifiers, seed-to-gap mappings, detailed hidden ECDFs, or raw hidden
 observations.
 
-Seed median, MAD, and tail probability are not fields in the v1 public report. MAD
-and tail probability are not v1 diagnostics. They may be studied later from the
+Seed median, MAD, and tail probability are not fields in the 0.0.1 public report. MAD
+and tail probability are not 0.0.1 diagnostics. They may be studied later from the
 retained detailed results under a new protocol decision.
 
 ## Retired-task seed publication

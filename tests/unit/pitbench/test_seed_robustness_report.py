@@ -7,7 +7,7 @@ import pytest
 from pitbench.metrics.seed_robustness_report import (
     BOOTSTRAP_RESAMPLES,
     BOOTSTRAP_SEED,
-    CROSSED_BOOTSTRAP_METHOD,
+    SEED_BOOTSTRAP_METHOD,
     SeedSelectionMetadata,
     compute_seed_robustness_details,
     compute_seed_robustness_report,
@@ -187,7 +187,7 @@ def test_report_computes_type_7_iqr_at_every_budget_and_instance_set() -> None:
     ):
         assert interval is not None
         assert interval.level == 0.99
-        assert interval.method == CROSSED_BOOTSTRAP_METHOD
+        assert interval.method == SEED_BOOTSTRAP_METHOD
         assert interval.resamples == BOOTSTRAP_RESAMPLES
         assert interval.bootstrap_seed == BOOTSTRAP_SEED
 
@@ -271,7 +271,7 @@ def test_no_paired_complete_instance_makes_all_aggregates_unavailable() -> None:
     assert primary.change.mean_seed_iqr_change is None
 
 
-def test_crossed_bootstrap_is_independent_of_observation_order() -> None:
+def test_seed_bootstrap_is_independent_of_observation_order() -> None:
     observations: list[RunObservation] = []
     for instance_number, gap_scale in ((2, 2.0), (1, 1.0)):
         observations.extend(
@@ -289,6 +289,45 @@ def test_crossed_bootstrap_is_independent_of_observation_order() -> None:
     reverse_report = _report(list(reversed(observations)), budgets_sec=(10.0,))
 
     assert forward_report == reverse_report
+
+
+def test_seed_bootstrap_keeps_instance_weights_and_shared_seed_columns_fixed() -> None:
+    observations: list[RunObservation] = []
+    for instance_number, gap_scale in ((1, 1.0), (2, 2.0)):
+        observations.extend(
+            _complete_instance(
+                "in-distribution",
+                "judge_id",
+                f"id-{instance_number}",
+                EVALUATION_SEEDS,
+                budget_sec=10,
+                gap_scale=gap_scale,
+            )
+        )
+    original = _report(observations, budgets_sec=(10.0,)).by_instance_set[
+        "in-distribution"
+    ].primary
+    # Repeating every fixed row equally changes neither the statistic nor its
+    # seed uncertainty. Resampling instance rows would change the intervals.
+    repeated = [
+        observation.model_copy(
+            update={"instance_id": f"{observation.instance_id}-copy-{copy_number}"}
+        )
+        for copy_number in range(5)
+        for observation in observations
+    ]
+    expanded = _report(repeated, budgets_sec=(10.0,)).by_instance_set[
+        "in-distribution"
+    ].primary
+
+    for first, second in (
+        (original.base.mean_seed_iqr_ci99, expanded.base.mean_seed_iqr_ci99),
+        (original.agent.mean_seed_iqr_ci99, expanded.agent.mean_seed_iqr_ci99),
+        (original.change.mean_seed_iqr_change_ci99, expanded.change.mean_seed_iqr_change_ci99),
+    ):
+        assert first is not None and second is not None
+        assert first.lower == pytest.approx(second.lower, abs=1e-14)
+        assert first.upper == pytest.approx(second.upper, abs=1e-14)
 
 
 @pytest.mark.parametrize(

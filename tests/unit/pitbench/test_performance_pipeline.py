@@ -88,7 +88,7 @@ def test_pyvrp_plan_materializes_all_instance_sets(
         for observation in observations
         if observation.instance_set_kind == "agent_dev"
     ]
-    assert len(observations) == 10440
+    assert len(observations) == 6960
     seed_robustness = task.evaluation.seed_robustness
     assert seed_robustness is not None
     evaluation_seeds = set(
@@ -149,8 +149,8 @@ def test_pyvrp_plan_materializes_all_instance_sets(
         observations,
         primary_budget_sec=task.evaluation.primary_budget_sec,
     )
-    assert performance.budgets_sec == [1.0, 5.0, 10.0]
-    assert set(performance.by_budget) == {"1", "5", "10"}
+    assert performance.budgets_sec == [5.0, 10.0]
+    assert set(performance.by_budget) == {"5", "10"}
     assert performance.primary.paired.paired_instances == 38
     assert performance.classification is PerformanceClassification.IMPROVED
     serialized = str(performance.model_dump())

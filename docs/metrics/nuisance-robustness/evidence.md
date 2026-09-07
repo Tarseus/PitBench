@@ -94,9 +94,12 @@ code state.
    not a spread estimand.
 6. M1 does not select a headline estimator, threshold, confidence interval, seed
    count, or cross-instance aggregation.
-7. PitBench currently configures five seeds for PyVRP, fewer than the ten seeds used
-   by PyVRP's public benchmark. A formal seed count must be chosen later based on the
-   required estimation precision.
+7. The subsequent M5 decision retains 30 seeds per list for PyVRP: 30 development
+   seeds and 30 disjoint hidden evaluation seeds. The current protocol uses Type 7
+   IQR and fixed-instance, paired seed-list bootstrap intervals, as specified in
+   `spec.md`. The choice is supported by the recorded descriptive experiments in
+   `validation-results.md`; the literature does not establish 30 seeds as a
+   universally sufficient sample size.
 
 ## Sources
 
