@@ -30,8 +30,11 @@ performance:
   frozen_commit: null
 
 nuisance_robustness:
-  status: freeze_candidate
-  stage: M6
+  status: frozen
+  stage: M7
+  version: 0.0.1
+  frozen_commit: cede287d6d7f5151f870efb53654b47f228dcbe6
+  frozen_on: "2026-09-07"
   branch: metric/nuisance-robustness-v1
   scope: docs/metrics/nuisance-robustness/scope.md
   evidence: docs/metrics/nuisance-robustness/evidence.md
@@ -39,6 +42,7 @@ nuisance_robustness:
   validation_plan: docs/metrics/nuisance-robustness/validation-plan.md
   validation_results: docs/metrics/nuisance-robustness/validation-results.md
   audit: docs/metrics/nuisance-robustness/audit.md
+  changelog: docs/metrics/nuisance-robustness/changelog.md
   implementation:
     - pitbench/metrics/seed_robustness_report.py
     - pitbench/metrics/seed_robustness_validation.py
@@ -60,3 +64,8 @@ nuisance_robustness:
     - item: seed_robustness_freeze_candidate_review
       approved_on: "2026-09-07"
       evidence: docs/metrics/nuisance-robustness/audit.md
+    - item: seed_robustness_protocol_freeze
+      approved_on: "2026-09-07"
+      version: 0.0.1
+      commit: cede287d6d7f5151f870efb53654b47f228dcbe6
+      evidence: docs/metrics/nuisance-robustness/changelog.md

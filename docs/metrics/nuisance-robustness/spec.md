@@ -1,7 +1,9 @@
 # Nuisance Robustness formal specification
 
 Seed Robustness protocol version: **0.0.1**.
-Version selected by the user for M7 freezing on 2026-09-07.
+Frozen with user approval on 2026-09-07 (M7).
+Implementation commit: `cede287d6d7f5151f870efb53654b47f228dcbe6`.
+The freeze record is in [changelog.md](changelog.md).
 
 ## Per-instance Seed Robustness headline
 
