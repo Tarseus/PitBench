@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from pitbench.evaluator.judge import LocalProcessJudge
+from pitbench.evaluator.representation import RecordingJudge, run_with_representation
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.schema.observation import CodeState
 from pitbench.schema.task import PitBenchTask
@@ -26,7 +27,12 @@ def main() -> None:
     )
     args = parser.parse_args()
     task = PitBenchTask.from_yaml(args.task_config)
-    observations = LocalProcessJudge(
+    judge_class = (
+        RecordingJudge
+        if task.evaluation.representation_robustness is not None
+        else LocalProcessJudge
+    )
+    judge = judge_class(
         task=task,
         base_repository=args.base_repository,
         public_root=args.public_root,
@@ -36,7 +42,12 @@ def main() -> None:
         code_states=tuple(CodeState(value) for value in (args.code_state or []))
         or tuple(CodeState),
         parallel_runs=args.parallel_runs,
-    ).run()
+    )
+    observations = (
+        run_with_representation(judge, args.private_root)
+        if task.evaluation.representation_robustness is not None
+        else judge.run()
+    )
     ObservationStore.write_jsonl(args.observations, observations)
 
 

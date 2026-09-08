@@ -168,7 +168,11 @@ class JudgePlan:
             solver_seeds = (
                 development_seeds if public_instance_set else evaluation_seeds
             )
-            if public_instance_set and task.evaluation.seed_robustness is None:
+            if (
+                public_instance_set
+                and task.evaluation.seed_robustness is None
+                and task.evaluation.representation_robustness is None
+            ):
                 continue
             if public_instance_set:
                 instance_set_config_path = verify_public_file(
@@ -497,8 +501,7 @@ class LocalProcessJudge:
                 for state in self.code_states
             )
             self._progress(
-                f"Judge plan: {len(cases)} instances, "
-                f"{total_solver_runs} solver runs"
+                f"Judge plan: {len(cases)} instances, {total_solver_runs} solver runs"
             )
             if self.run_validation_builds:
                 for state in self.code_states:

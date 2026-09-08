@@ -117,8 +117,11 @@ class PitBenchEvaluator(Evaluator):
         counts = Counter(item.code_state for item in observations)
         nuisance_robustness = None
         seed_robustness_details_ref = None
+        original_observations = [
+            item for item in observations if item.equivalence_parent_id is None
+        ]
         seed_robustness = task.evaluation.seed_robustness
-        if observations and seed_robustness is not None and not fixture_mode:
+        if original_observations and seed_robustness is not None and not fixture_mode:
             private_seed_config = load_private_seed_robustness_config(
                 PrivateAssetResolver(Path(config["private_root"])),
                 task_id=task.task_id,
@@ -138,11 +141,11 @@ class PitBenchEvaluator(Evaluator):
                 "evaluation_seeds": private_seed_config.evaluation_seeds,
             }
             nuisance_robustness = compute_seed_robustness_report(
-                observations,
+                original_observations,
                 **seed_report_inputs,
             )
             seed_robustness_details = compute_seed_robustness_details(
-                observations,
+                original_observations,
                 **seed_report_inputs,
             )
             seed_robustness_details_path = (
@@ -153,6 +156,18 @@ class PitBenchEvaluator(Evaluator):
             )
             seed_robustness_details_ref = artifact_ref(
                 seed_robustness_details_path,
+                root=request.output_dir,
+                media_type="application/json",
+                private=True,
+            )
+        representation_details_ref = None
+        if (
+            task.evaluation.representation_robustness is not None
+            and not fixture_mode
+            and preflight_validity.accepted
+        ):
+            representation_details_ref = artifact_ref(
+                request.output_dir / "representation" / "details.json",
                 root=request.output_dir,
                 media_type="application/json",
                 private=True,
@@ -174,13 +189,14 @@ class PitBenchEvaluator(Evaluator):
                 private=True,
             ),
             seed_robustness_details=seed_robustness_details_ref,
+            representation_robustness_details=representation_details_ref,
         )
         performance = (
             compute_performance_report(
-                observations,
+                original_observations,
                 primary_budget_sec=task.evaluation.primary_budget_sec,
             )
-            if observations
+            if original_observations
             else None
         )
         return EvaluationResult(

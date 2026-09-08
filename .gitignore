@@ -16,9 +16,11 @@ __pycache__/
 
 # Editor and OS files
 .DS_Store
+/.vscode/
 
 # Local review notes
 /docs/
+/papers/
 
 # LaTeX build products
 *.aux

@@ -246,8 +246,30 @@ def test_real_seed_robustness_result_keeps_run_details_private(
                         )
                     )
 
+    for state in CodeState:
+        observations.append(
+            RunObservation(
+                task_id=record.task.task_id,
+                code_state=state,
+                instance_set="agent_dev",
+                instance_set_kind="agent_dev",
+                instance_id="dev-1__customer_relabeling_00",
+                equivalence_parent_id="dev-1",
+                equivalence_transform="customer_relabeling_00",
+                solver_seed=0,
+                budget_sec=10,
+                status=RunStatus.COMPLETED,
+                valid=True,
+                objective=1010,
+                optimal_or_bks=1000,
+                normalized_gap=0.01,
+            )
+        )
     output = tmp_path / "output"
     output.mkdir()
+    representation_dir = output / "representation"
+    representation_dir.mkdir()
+    (representation_dir / "details.json").write_text('{"statistics": "deferred"}')
     candidate = output / "candidate.patch"
     candidate.write_text("")
     base_repository = tmp_path / "base"
@@ -279,15 +301,20 @@ def test_real_seed_robustness_result_keeps_run_details_private(
     artifacts = envelope.payload["artifacts"]
     assert artifacts["observations"]["private"] is True
     assert artifacts["seed_robustness_details"]["private"] is True
+    assert artifacts["representation_robustness_details"]["private"] is True
+    assert (
+        artifacts["representation_robustness_details"]["path"]
+        == "representation/details.json"
+    )
+    assert "representation_robustness" not in envelope.payload["summary"]
     public_robustness = envelope.payload["summary"]["nuisance_robustness"]
     assert public_robustness is not None
     assert "development_seeds" not in str(public_robustness)
     assert "evaluation_seeds" not in str(public_robustness)
-    private_details = json.loads(
-        (output / "seed_robustness_details.json").read_text()
-    )
+    private_details = json.loads((output / "seed_robustness_details.json").read_text())
     assert private_details["development_seeds"] == seed_robustness.development_seeds
     assert private_details["evaluation_seeds"] == evaluation_seeds
+    assert "customer_relabeling_00" not in json.dumps(private_details)
 
 
 def test_cached_base_observations_merge_with_agent_fixture(tmp_path: Path) -> None:

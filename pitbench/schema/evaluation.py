@@ -47,6 +47,7 @@ class ArtifactManifest(BaseModel):
     candidate_patch: ArtifactRef | None = None
     observations: ArtifactRef | None = None
     seed_robustness_details: ArtifactRef | None = None
+    representation_robustness_details: ArtifactRef | None = None
     trajectories: list[ArtifactRef] = Field(default_factory=list)
     solutions: list[ArtifactRef] = Field(default_factory=list)
     logs: list[ArtifactRef] = Field(default_factory=list)

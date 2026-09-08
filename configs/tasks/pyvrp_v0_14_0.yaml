@@ -29,6 +29,11 @@ oracle:
 evaluation:
   budgets_sec: [5.0, 10.0]
   primary_budget_sec: 10.0
+  representation_robustness:
+    instance_set: agent_dev
+    solver_seed: 0
+    relabeling_generation_seed: 20260907
+    relabelings_per_instance: 30
   seed_robustness:
     development_seeds:
       - 3687993774

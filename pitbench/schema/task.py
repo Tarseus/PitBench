@@ -138,11 +138,19 @@ class SeedRobustnessConfig(BaseModel):
         return self
 
 
+class RepresentationRobustnessConfig(BaseModel):
+    instance_set: str = "agent_dev"
+    solver_seed: int = Field(default=0, ge=0, le=4294967295)
+    relabeling_generation_seed: int = 20260907
+    relabelings_per_instance: int = Field(default=30, gt=0)
+
+
 class EvaluationProtocol(BaseModel):
     budgets_sec: list[float]
     primary_budget_sec: float = Field(gt=0)
     solver_seeds: list[int] | None = None
     seed_robustness: SeedRobustnessConfig | None = None
+    representation_robustness: RepresentationRobustnessConfig | None = None
     threads: int = Field(default=1, gt=0)
     verifier: str
 
@@ -196,6 +204,24 @@ class PitBenchTask(BaseModel):
         names = [instance_set.name for instance_set in self.instance_sets]
         if len(names) != len(set(names)):
             raise ValueError("instance-set names must be unique")
+        representation = self.evaluation.representation_robustness
+        if representation is not None:
+            if (
+                self.problem_family != ProblemFamily.CVRP
+                or self.repository.plugin
+                != "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin"
+            ):
+                raise ValueError(
+                    "customer relabeling currently requires a PyVRP CVRP task"
+                )
+            if not any(
+                item.name == representation.instance_set
+                and item.kind == InstanceSetKind.AGENT_DEV
+                for item in self.instance_sets
+            ):
+                raise ValueError(
+                    "representation robustness requires a declared agent_dev instance set"
+                )
         return self
 
     @classmethod
