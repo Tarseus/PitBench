@@ -1,5 +1,3 @@
-from pitbench.metrics.aggregation import group_by_instance_seed
-from pitbench.metrics.gain import patch_gain
 from pitbench.metrics.performance_report import (
     BudgetPerformance,
     ConfidenceInterval,
@@ -10,7 +8,13 @@ from pitbench.metrics.performance_report import (
     compute_performance_report,
     format_performance_report,
 )
-from pitbench.metrics.quality import normalized_gap
+from pitbench.metrics.resource_report import (
+    ResourceDetails,
+    ResourceReport,
+    compute_resource_report,
+    compute_resource_reports,
+    format_resource_report,
+)
 from pitbench.metrics.seed_robustness_report import (
     InstanceSetSeedRobustness,
     MeanSeedIqrChangeEstimate,
@@ -32,6 +36,8 @@ __all__ = [
     "PairedGapEvidence",
     "PerformanceClassification",
     "PerformanceReport",
+    "ResourceDetails",
+    "ResourceReport",
     "InstanceSetSeedRobustness",
     "MeanSeedIqrChangeEstimate",
     "MeanSeedIqrEstimate",
@@ -41,11 +47,11 @@ __all__ = [
     "SeedRobustnessReport",
     "SeedSelectionMetadata",
     "compute_performance_report",
+    "compute_resource_report",
+    "compute_resource_reports",
     "compute_seed_robustness_details",
     "compute_seed_robustness_report",
     "format_performance_report",
+    "format_resource_report",
     "format_seed_robustness_report",
-    "group_by_instance_seed",
-    "normalized_gap",
-    "patch_gain",
 ]

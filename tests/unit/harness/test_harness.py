@@ -54,7 +54,6 @@ def mock_lock_data():
             "cleanup": False,
             "global_timeout_multiplier": 1.0,
             "global_agent_timeout_sec": None,
-            "global_test_timeout_sec": None,
         },
         "dataset": {
             "name": "test-dataset",
@@ -84,7 +83,6 @@ class TestHarnessInitialization:
 
         harness._agent_kwargs = {"runner_backend": "container"}
         assert harness._needs_nested_command_sandbox() is False
-
 
     def test_agent_can_extend_wall_timeout_without_changing_active_budget(
         self, tmp_path

@@ -377,14 +377,6 @@ def create(
             rich_help_panel=HelpPanel.TIMEOUT,
         ),
     ] = None,
-    global_test_timeout_sec: Annotated[
-        float | None,
-        Option(
-            help="Global timeout for test runs in seconds"
-            "(overrides timeout multiplier)",
-            rich_help_panel=HelpPanel.TIMEOUT,
-        ),
-    ] = None,
     global_setup_timeout_sec: Annotated[
         float | None,
         Option(
@@ -520,7 +512,6 @@ def create(
             n_attempts=n_attempts,
             global_timeout_multiplier=global_timeout_multiplier,
             global_agent_timeout_sec=global_agent_timeout_sec,
-            global_test_timeout_sec=global_test_timeout_sec,
             global_setup_timeout_sec=global_setup_timeout_sec,
             remote_build=remote_build,
             ec2_instance_type=ec2_instance_type,
@@ -559,7 +550,6 @@ def create(
             n_attempts=n_attempts,
             global_timeout_multiplier=global_timeout_multiplier,
             global_agent_timeout_sec=global_agent_timeout_sec,
-            global_test_timeout_sec=global_test_timeout_sec,
             global_setup_timeout_sec=global_setup_timeout_sec,
             remote_build=remote_build,
             ec2_instance_type=ec2_instance_type,

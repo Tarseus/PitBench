@@ -14,7 +14,7 @@ from pitbench.solver_drivers.run import PyVRPDriver
 
 
 @pytest.mark.parametrize(
-    ("module", "class_name"),
+    ("solver", "class_name"),
     [
         ("pyvrp", "PyVRPRepositoryPlugin"),
         ("vroom", "VroomRepositoryPlugin"),
@@ -23,16 +23,11 @@ from pitbench.solver_drivers.run import PyVRPDriver
         ("ortools", "OrToolsRepositoryPlugin"),
     ],
 )
-def test_published_plugin_ids_still_resolve_to_runnable_drivers(
-    module, class_name, tmp_path
-):
-    legacy = RepositoryPluginRegistry.load(
-        f"pitbench.repositories.{module}:{class_name}"
-    )
-    canonical = RepositoryPluginRegistry.load(
+def test_repository_plugins_resolve_to_runnable_drivers(solver, class_name, tmp_path):
+    plugin = RepositoryPluginRegistry.load(
         f"pitbench.repositories.plugins:{class_name}"
     )
-    assert type(legacy) is type(canonical)
+    assert plugin.name == solver
     run = SolverRunSpec(
         instance_path=tmp_path / "instance.json",
         output_path=tmp_path / "result.json",
@@ -41,8 +36,7 @@ def test_published_plugin_ids_still_resolve_to_runnable_drivers(
         budget_sec=10,
         threads=1,
     )
-    command = legacy.run_command(run)
-    assert command == canonical.run_command(run)
+    command = plugin.run_command(run)
     completed = subprocess.run(
         [sys.executable, *command.argv[1:], "--help"],
         capture_output=True,

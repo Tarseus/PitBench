@@ -36,11 +36,10 @@ def test_catalog_contains_release_snapshots() -> None:
     }
 
 
-@pytest.mark.parametrize("module", ["pyvrp", "plugins"])
-def test_representation_task_accepts_legacy_and_consolidated_plugin_paths(module):
+def test_representation_task_uses_consolidated_plugin_path():
     task = TaskCatalog(ROOT).validate_one("pyvrp_v0_14_0").task
     payload = task.model_dump()
-    plugin = f"pitbench.repositories.{module}:PyVRPRepositoryPlugin"
+    plugin = "pitbench.repositories.plugins:PyVRPRepositoryPlugin"
     payload["repository"]["plugin"] = plugin
 
     restored = PitBenchTask.model_validate(payload)

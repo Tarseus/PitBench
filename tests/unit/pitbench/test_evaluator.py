@@ -43,6 +43,10 @@ def test_every_task_runs_explicit_fixture_grid(record, tmp_path: Path) -> None:
     assert all(item.task_id == record.task.task_id for item in observations)
     summary = envelope.payload["summary"]
     assert summary["performance"] is not None
+    assert summary["resource_usage"] is not None
+    resource_details = envelope.payload["artifacts"]["resource_details"]
+    assert resource_details["private"] is True
+    assert (output / resource_details["path"]).is_file()
     assert "outcomes" not in summary
     assert "sensitivity" not in summary
     assert "behavior" not in summary

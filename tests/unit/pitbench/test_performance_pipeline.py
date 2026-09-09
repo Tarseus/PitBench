@@ -1,10 +1,6 @@
 from __future__ import annotations
 
 import json
-import resource
-import subprocess
-import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -18,7 +14,6 @@ from pitbench.metrics.performance_report import (
 )
 from pitbench.problem_families.verification import CVRPFamily
 from pitbench.schema.task import PitBenchTask
-from pitbench.solver_drivers.common import write_result
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -157,42 +152,3 @@ def test_pyvrp_plan_materializes_all_instance_sets(
     assert "judge_shift" not in serialized
     assert "held_out" not in serialized
     assert "solver_seeds" not in serialized
-
-
-def test_driver_result_includes_terminated_child_resource_usage(tmp_path: Path) -> None:
-    children_before = resource.getrusage(resource.RUSAGE_CHILDREN)
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "data = bytearray(32 * 1024 * 1024); "
-            "print(sum(i * i for i in range(1000000)) + data[0])",
-        ],
-        check=True,
-        stdout=subprocess.DEVNULL,
-    )
-    children_after = resource.getrusage(resource.RUSAGE_CHILDREN)
-    child_cpu_delta = (
-        children_after.ru_utime
-        + children_after.ru_stime
-        - children_before.ru_utime
-        - children_before.ru_stime
-    )
-    assert child_cpu_delta > 0
-
-    self_before_write = resource.getrusage(resource.RUSAGE_SELF)
-    expected_cpu_floor = (
-        self_before_write.ru_utime
-        + self_before_write.ru_stime
-        + children_after.ru_utime
-        + children_after.ru_stime
-    )
-    expected_rss_floor = (
-        max(self_before_write.ru_maxrss, children_after.ru_maxrss) * 1024
-    )
-    output = tmp_path / "result.json"
-    write_result(output, started=time.perf_counter(), valid=True, objective=1.0)
-
-    payload = json.loads(output.read_text())
-    assert payload["cpu_time_sec"] >= expected_cpu_floor
-    assert payload["peak_rss_bytes"] >= expected_rss_floor

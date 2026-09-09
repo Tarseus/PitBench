@@ -2,9 +2,9 @@ import subprocess
 from importlib.resources import files
 from pathlib import Path
 
-import docker
 from docker.errors import ContainerError
 
+import docker
 from pitbench.harness.agents.agent_name import AgentName
 from pitbench.harness.agents.base_agent import AgentResult, BaseAgent
 from pitbench.harness.agents.mcp_agents.mcp_server import MCPServer

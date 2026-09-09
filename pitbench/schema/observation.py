@@ -44,6 +44,8 @@ class RunObservation(BaseModel):
     model_variables: int | None = None
     model_constraints: int | None = None
     peak_rss_bytes: int | None = None
+    resource_scope: str | None = None
+    solver_status: str | None = None
     problem_scale: float | None = Field(default=None, gt=0)
     equivalence_parent_id: str | None = None
     equivalence_transform: str | None = None

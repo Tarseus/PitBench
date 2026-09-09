@@ -13,7 +13,6 @@ from pydantic import UUID4, BaseModel, Field, computed_field
 
 from pitbench.harness.agents.failure_mode import FailureMode
 from pitbench.harness.evaluation import EvaluationEnvelope
-from pitbench.harness.parsers.base_parser import UnitTestStatus
 
 
 class RunMetadata(BaseModel):
@@ -50,8 +49,7 @@ class TrialResults(BaseModel):
     task_id: str
     instruction: str
     failure_mode: FailureMode = FailureMode.UNSET
-    parser_results: dict[str, UnitTestStatus] | None = None
-    parser_extra_metrics: dict[str, Any] | None = None
+    agent_metrics: dict[str, Any] | None = None
     evaluation: EvaluationEnvelope | None = None
     recording_path: str | None = None
     evaluation_snapshot_bucket_name: str | None = None
@@ -64,8 +62,6 @@ class TrialResults(BaseModel):
     trial_ended_at: str | None = None
     agent_started_at: str | None = None
     agent_ended_at: str | None = None
-    test_started_at: str | None = None
-    test_ended_at: str | None = None
     setup_started_at: str | None = None
     setup_ended_at: str | None = None
 

@@ -17,9 +17,9 @@ def test_pipeline_trace_records_pipeline_contract(tmp_path: Path) -> None:
     trace.record(
         stage="tests.execute",
         status="completed",
-        inputs={"script": tmp_path / "run-tests.sh"},
+        inputs={"script": tmp_path / "run-setup.sh"},
         outputs={"failure_mode": FailureMode.NONE, "captured_pane": "ok"},
-        execution={"component": "Harness._run_tests", "command": "bash /tests"},
+        execution={"component": "Harness._run_setup", "command": "bash /tests"},
         task_id="task-1",
         trial_name="task-1.1",
     )
@@ -34,10 +34,10 @@ def test_pipeline_trace_records_pipeline_contract(tmp_path: Path) -> None:
             "trial_name": "task-1.1",
             "stage": "tests.execute",
             "status": "completed",
-            "inputs": {"script": str(tmp_path / "run-tests.sh")},
+            "inputs": {"script": str(tmp_path / "run-setup.sh")},
             "outputs": {"failure_mode": "none", "captured_pane": "ok"},
             "execution": {
-                "component": "Harness._run_tests",
+                "component": "Harness._run_setup",
                 "command": "bash /tests",
             },
             "error": None,

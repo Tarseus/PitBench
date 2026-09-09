@@ -15,6 +15,7 @@ from pathlib import Path
 from pitbench.solver_drivers.common import (
     append_trajectory,
     parser,
+    process_resources,
     write_result,
     write_solution,
 )
@@ -100,6 +101,7 @@ class PyVRPDriver:
                 result = Model.from_data(data).solve(
                     stop=MaxRuntime(args.budget), seed=args.seed, display=False
                 )
+                resources = process_resources()
             routes = [
                 PyVRPDriver._route_visits(route) for route in result.best.routes()
             ]
@@ -129,6 +131,7 @@ class PyVRPDriver:
                 objective=objective,
                 iterations=result.num_iterations,
                 solver_runtime_sec=result.runtime,
+                **resources,
             )
         except Exception as exc:
             write_result(args.output, started=started, valid=False, error=str(exc))
@@ -237,6 +240,7 @@ class HighsDriver:
                     text=True,
                     timeout=args.budget + 60,
                 )
+                resources = process_resources(child_process=True)
                 raw = (
                     raw_solution.read_text(errors="replace")
                     if raw_solution.exists()
@@ -248,6 +252,7 @@ class HighsDriver:
             objective = HighsDriver._match(rf"Primal bound\s+({_FLOAT})", log)
             dual = HighsDriver._match(rf"Dual bound\s+({_FLOAT})", log)
             nodes = HighsDriver._match(r"Nodes\s+(\d+)", log)
+            model_status = re.search(r"Model status\s*:\s*([^\n]+)", log, re.IGNORECASE)
             write_solution(args.output, {"raw_solution": raw, "objective": objective})
             append_trajectory(
                 args.trajectory,
@@ -261,6 +266,8 @@ class HighsDriver:
                 primal_bound=objective,
                 dual_bound=dual,
                 nodes=int(nodes) if nodes is not None else None,
+                solver_status=model_status.group(1).strip() if model_status else None,
+                **resources,
             )
         except Exception as exc:
             write_result(args.output, started=started, valid=False, error=str(exc))

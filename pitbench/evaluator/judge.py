@@ -697,6 +697,8 @@ class LocalProcessJudge:
             model_variables=parsed.model_variables,
             model_constraints=parsed.model_constraints,
             peak_rss_bytes=parsed.peak_rss_bytes,
+            resource_scope=parsed.resource_scope,
+            solver_status=parsed.solver_status,
             problem_scale=case.problem_scale,
             equivalence_parent_id=case.equivalence_parent_id,
             equivalence_transform=case.equivalence_transform,

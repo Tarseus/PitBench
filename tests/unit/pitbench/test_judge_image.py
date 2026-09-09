@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ruamel.yaml import YAML
+import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -11,7 +11,9 @@ def test_judge_image_recipe_contains_only_public_environment_inputs() -> None:
 
     assert "FROM ${UBUNTU_BASE_IMAGE}" in contents
     assert "SPDLOG_VERSION=1.17.0" in contents
-    assert "d8862955c6d74e5846b3f580b1605d2428b11d97a410d86e2fb13e857cd3a744" in contents
+    assert (
+        "d8862955c6d74e5846b3f580b1605d2428b11d97a410d86e2fb13e857cd3a744" in contents
+    )
     assert "SPDLOG_USE_STD_FORMAT=ON" in contents
     assert "libspdlog-dev" not in contents
     assert "gcc" in contents or "build-essential" in contents
@@ -23,7 +25,7 @@ def test_judge_image_recipe_contains_only_public_environment_inputs() -> None:
 
 def test_judge_image_workflow_verifies_before_publishing() -> None:
     workflow_path = ROOT / ".github/workflows/publish-judge-image.yml"
-    workflow = YAML(typ="safe").load(workflow_path.read_text())
+    workflow = yaml.safe_load(workflow_path.read_text())
     steps = workflow["jobs"]["publish"]["steps"]
     step_names = [step.get("name") for step in steps]
 

@@ -8,7 +8,6 @@ import time
 from typing import Optional
 
 import docker
-
 from pitbench.harness.utils.logger import logger
 
 

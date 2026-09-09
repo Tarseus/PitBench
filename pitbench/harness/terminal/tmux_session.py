@@ -3,9 +3,9 @@ import time
 from pathlib import Path
 from typing import Optional
 
-import docker
 from docker.models.containers import Container, ExecResult
 
+import docker
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
 from pitbench.harness.terminal.models import TerminalCommand
 from pitbench.harness.utils.logger import logger

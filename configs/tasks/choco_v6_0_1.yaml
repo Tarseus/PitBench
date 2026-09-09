@@ -17,7 +17,7 @@ information_regime: snapshot_only
 repository:
   clone_url: https://github.com/chocoteam/choco-solver.git
   language: java
-  plugin: pitbench.repositories.choco:ChocoRepositoryPlugin
+  plugin: pitbench.repositories.plugins:ChocoRepositoryPlugin
   editable_paths: [solver]
 oracle:
   kind: solver_certificate

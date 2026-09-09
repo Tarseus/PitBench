@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 import re
 import shlex
 import shutil
@@ -33,7 +32,6 @@ from pitbench.harness.agents.installed_agents.abstract_installed_agent import (
 )
 from pitbench.harness.config import config as harness_config
 from pitbench.harness.dataset.dataset import Dataset
-from pitbench.harness.db import upload_results_to_db
 from pitbench.harness.evaluation import EvaluationRequest, EvaluatorFactory
 from pitbench.harness.handlers.asciinema_handler import AsciinemaHandler
 from pitbench.harness.handlers.trial_handler import TrialHandler
@@ -48,7 +46,6 @@ from pitbench.harness.llms.base_llm import (
     OutputLengthExceededError,
     ParseError,
 )
-from pitbench.harness.parsers.base_parser import UnitTestStatus
 from pitbench.harness.remote.terminal import (
     AWSConfig,
     RemoteTerminal,
@@ -129,7 +126,6 @@ class Harness:
         n_attempts: int = 1,
         global_timeout_multiplier: float = 1.0,
         global_agent_timeout_sec: float | None = None,
-        global_test_timeout_sec: float | None = None,
         global_setup_timeout_sec: float | None = None,
         remote_build: bool = False,
         ec2_instance_type: str = "c6id.xlarge",
@@ -179,7 +175,6 @@ class Harness:
             n_attempts: Number of attempts to make for each task.
             global_timeout_multiplier: Multiplier for the global timeout for agent runs.
             global_agent_timeout_sec: Global timeout for agent runs in seconds.
-            global_test_timeout_sec: Global timeout for test runs in seconds.
             global_setup_timeout_sec: Global timeout for setup runs in seconds.
             remote_build: Whether to run containers on AWS EC2 instances instead
                 of locally.
@@ -234,7 +229,6 @@ class Harness:
         self._n_attempts = n_attempts
         self._global_timeout_multiplier = global_timeout_multiplier
         self._global_agent_timeout_sec = global_agent_timeout_sec
-        self._global_test_timeout_sec = global_test_timeout_sec
         self._global_setup_timeout_sec = global_setup_timeout_sec
 
         # EC2 configuration
@@ -1157,7 +1151,6 @@ class Harness:
         cleanup = lock.run_config.cleanup
         global_timeout_multiplier = lock.run_config.global_timeout_multiplier
         global_agent_timeout_sec = lock.run_config.global_agent_timeout_sec
-        global_test_timeout_sec = lock.run_config.global_test_timeout_sec
         global_setup_timeout_sec = lock.run_config.global_setup_timeout_sec
 
         # Output configuration from lock
@@ -1210,7 +1203,6 @@ class Harness:
             n_attempts=n_attempts,
             global_timeout_multiplier=global_timeout_multiplier,
             global_agent_timeout_sec=global_agent_timeout_sec,
-            global_test_timeout_sec=global_test_timeout_sec,
             global_setup_timeout_sec=global_setup_timeout_sec,
         )
 
@@ -1306,7 +1298,6 @@ class Harness:
                 cleanup=self._cleanup,
                 global_timeout_multiplier=self._global_timeout_multiplier,
                 global_agent_timeout_sec=self._global_agent_timeout_sec,
-                global_test_timeout_sec=self._global_test_timeout_sec,
                 global_setup_timeout_sec=self._global_setup_timeout_sec,
             ),
             local_config=LocalConfig(
@@ -1374,82 +1365,6 @@ class Harness:
             return FailureMode.SETUP_TIMEOUT
 
         return FailureMode.NONE
-
-    def _setup_test_env(self, terminal: Terminal, trial_handler: TrialHandler) -> None:
-        paths = [
-            trial_handler.task_paths.run_tests_path,
-        ]
-
-        if trial_handler.task_paths.test_dir.exists():
-            paths.append(trial_handler.task_paths.test_dir)
-
-        terminal.copy_to_container(
-            paths=paths,
-            container_dir=str(DockerComposeManager.CONTAINER_TEST_DIR),
-        )
-
-    def _run_tests(
-        self,
-        terminal: Terminal,
-        session: TmuxSession,
-        trial_handler: TrialHandler,
-        env_overrides: dict[str, str] | None = None,
-    ) -> FailureMode:
-        self._setup_test_env(terminal, trial_handler)
-
-        if self._global_test_timeout_sec:
-            test_timeout_sec = self._global_test_timeout_sec
-        else:
-            test_timeout_sec = (
-                trial_handler.task.max_test_timeout_sec
-                * self._global_timeout_multiplier
-            )
-
-        try:
-            command_path = (
-                DockerComposeManager.CONTAINER_TEST_DIR
-                / trial_handler.task_paths.run_tests_path.name
-            )
-            command = f"bash {shlex.quote(str(command_path))}"
-
-            if env_overrides:
-                assignments = " ".join(
-                    f"{key}={shlex.quote(str(env_overrides[key]))}"
-                    for key in sorted(env_overrides)
-                )
-                command = f"{assignments} {command}"
-
-            session.send_keys(
-                [command, "Enter"],
-                block=True,
-                max_timeout_sec=test_timeout_sec,
-            )
-        except TimeoutError:
-            self._logger.warning(
-                "Test command timed out after "
-                f"{test_timeout_sec}s for task "
-                f"{trial_handler.task_id}."
-            )
-
-            return FailureMode.TEST_TIMEOUT
-
-        return FailureMode.NONE
-
-    def _parse_results(
-        self,
-        trial_handler: TrialHandler,
-        post_test_pane: str,
-    ) -> tuple[dict[str, UnitTestStatus] | None, FailureMode]:
-        try:
-            return trial_handler.parser.parse(post_test_pane), FailureMode.NONE
-        except Exception as e:
-            self._logger.error(
-                f"Error parsing results for task {trial_handler.task_id}: {e}. It's "
-                "possible that the tests failed to run. Inspect "
-                f"{trial_handler.trial_paths.post_test_pane_path.absolute()} for more "
-                "information."
-            )
-            return None, FailureMode.PARSE_ERROR
 
     async def _run_agent_with_timeout(
         self,
@@ -1666,74 +1581,6 @@ class Harness:
             self._evaluation_snapshots_bucket,
             snapshot_s3_key,
         )
-
-    def _build_canonical_recording_key(
-        self,
-        *,
-        task_id: str,
-        agent_model_name_override: str | None,
-        agent_label: str,
-        model_label: str,
-    ) -> str:
-        """Build the canonical website-resolvable recording path.
-
-        Format: ``recordings/<task_id>/agent-<N>-<framework>:<model>.cast``.
-        For single-agent runs (no override) defaults to ``agent-1-...``.
-        """
-        if agent_model_name_override:
-            stem = agent_model_name_override
-        else:
-            normalized_agent = re.sub(r"[^a-zA-Z0-9 \n\.]", "-", agent_label)
-            normalized_model = re.sub(r"[^a-zA-Z0-9 \n\.]", "-", model_label)
-            stem = f"agent-1-{normalized_agent}:{normalized_model}"
-        return f"recordings/{task_id}/{stem}.cast"
-
-    def _maybe_upload_recording(
-        self,
-        *,
-        local_recording_path: Path,
-        s3_key: str,
-        task_id: str,
-    ) -> None:
-        """Upload an agent .cast recording to S3 when enabled.
-
-        Controlled by ``S3_RECORDINGS_BUCKET_NAME``. No-op otherwise so
-        local development continues to work without AWS credentials.
-        """
-        bucket = harness_config.s3_recordings_bucket_name or os.environ.get(
-            "S3_RECORDINGS_BUCKET_NAME"
-        )
-        if not bucket:
-            self._logger.debug(
-                "Skipping recording upload for task %s. "
-                "Set S3_RECORDINGS_BUCKET_NAME to enable.",
-                task_id,
-            )
-            return
-        if not local_recording_path.exists():
-            self._logger.warning(
-                "Recording file missing for task %s at %s; skipping upload.",
-                task_id,
-                local_recording_path,
-            )
-            return
-        try:
-            from pitbench.harness.remote.aws.storage import S3Transfer
-
-            transfer = S3Transfer(purpose="recordings")
-            transfer.upload_file(
-                local_path=local_recording_path,
-                s3_key=s3_key,
-                content_type="application/x-asciicast",
-            )
-            self._logger.info("Recording uploaded to s3://%s/%s", bucket, s3_key)
-        except Exception as exc:
-            self._logger.warning(
-                "Failed to upload recording for task %s: %s",
-                task_id,
-                exc,
-                exc_info=True,
-            )
 
     def _maybe_save_evaluation_snapshot(
         self,
@@ -2103,9 +1950,6 @@ class Harness:
             if trial_handler.task_paths.run_setup_path.exists():
                 # Hack: Use the same behavior for setup as for tests
                 # instead of making a new run_setup_in_same_shell variable.
-                # assert trial_handler.task.run_tests_in_same_shell, (
-                #     "run_tests_in_same_shell must be True for setup"
-                # )
                 session = _create_tracked_session(
                     "setup",
                     is_active_stream=self._livestream,
@@ -2200,9 +2044,7 @@ class Harness:
                     results.trial_ended_at = datetime.now(timezone.utc).isoformat()
                     return results
 
-            expected_repository_head = None
-            if trial_handler.task.evaluator_import_path is not None:
-                expected_repository_head = self._repository_head(terminal)
+            expected_repository_head = self._repository_head(terminal)
 
             agent_class = AgentFactory.get_agent_class(
                 agent_name=agent_name,
@@ -2338,7 +2180,7 @@ class Harness:
                 results.failure_mode = agent_failure_mode
                 self._logger.info(
                     f"Agent failed with mode {agent_failure_mode}, continuing"
-                    " with test execution"
+                    " with independent evaluation"
                 )
 
             elif agent_failure_mode != FailureMode.NONE:
@@ -2358,255 +2200,27 @@ class Harness:
                     agent_model_key: agent_result.total_cost
                 }
 
-            if trial_handler.task.evaluator_import_path is not None:
-                assert expected_repository_head is not None
-                self._evaluate_candidate(
-                    terminal=terminal,
-                    trial_handler=trial_handler,
-                    results=results,
-                    expected_repository_head=expected_repository_head,
-                    agent_label=resolved_agent_label,
-                    model_name=model_name or self._model_name,
-                )
-                if not trial_handler.task.disable_asciinema:
-                    agent_recording_path = (
-                        trial_handler.trial_paths.sessions_path / recording_filename
-                    )
-                    results.recording_path = str(agent_recording_path)
-                    if agent_result is not None:
-                        AsciinemaHandler(
-                            markers=agent_result.timestamped_markers,
-                            recording_path=agent_recording_path,
-                        ).merge_markers()
-                results.trial_ended_at = datetime.now(timezone.utc).isoformat()
-                return results
-
-            if not trial_handler.task.run_tests_in_same_shell:
-                session = _create_tracked_session(
-                    "tests",
-                    is_active_stream=self._livestream,
-                    as_configured_user=False,
-                )
-                if env_overrides:
-                    export_command = "export " + " ".join(
-                        f"{key}={shlex.quote(str(env_overrides[key]))}"
-                        for key in sorted(env_overrides)
-                    )
-                    session.send_keys([export_command, "Enter"], block=True)
-
-            results.test_started_at = datetime.now(timezone.utc).isoformat()
-
-            test_timeout_sec = (
-                self._global_test_timeout_sec
-                or trial_handler.task.max_test_timeout_sec
-                * self._global_timeout_multiplier
-            )
-            test_command_path = (
-                DockerComposeManager.CONTAINER_TEST_DIR
-                / trial_handler.task_paths.run_tests_path.name
-            )
-            test_files = []
-            if trial_handler.task_paths.test_dir.exists():
-                test_files = sorted(
-                    path
-                    for path in trial_handler.task_paths.test_dir.rglob("*")
-                    if path.is_file()
-                )
-            self._trace_pipeline(
-                stage="tests.execute",
-                status="started",
-                inputs={
-                    "script": self._trace_file_input(
-                        trial_handler.task_paths.run_tests_path
-                    ),
-                    "test_files": test_files,
-                    "environment_overrides": env_overrides,
-                    "run_tests_in_same_shell": (
-                        trial_handler.task.run_tests_in_same_shell
-                    ),
-                },
-                execution={
-                    "component": "Harness._run_tests",
-                    "operation": (
-                        "Copy the test harness into the container and run it in tmux."
-                    ),
-                    "command": f"bash {test_command_path}",
-                    "timeout_seconds": test_timeout_sec,
-                    "session": (
-                        "agent"
-                        if trial_handler.task.run_tests_in_same_shell
-                        else "tests"
-                    ),
-                },
-                task_id=trial_handler.task_id,
-                trial_name=trial_handler.trial_name,
-            )
-
-            test_failure_mode = self._run_tests(
+            self._evaluate_candidate(
                 terminal=terminal,
-                session=session,
                 trial_handler=trial_handler,
-                env_overrides=env_overrides,
+                results=results,
+                expected_repository_head=expected_repository_head,
+                agent_label=resolved_agent_label,
+                model_name=model_name or self._model_name,
             )
-
-            results.test_ended_at = datetime.now(timezone.utc).isoformat()
-
-            post_test_pane = session.capture_pane(capture_entire=True)
-            trial_handler.trial_paths.post_test_pane_path.write_text(post_test_pane)
-
-            self._trace_pipeline(
-                stage="tests.execute",
-                status=(
-                    "completed" if test_failure_mode == FailureMode.NONE else "failed"
-                ),
-                outputs={
-                    "failure_mode": test_failure_mode,
-                    "captured_pane": post_test_pane,
-                    "captured_pane_path": (
-                        trial_handler.trial_paths.post_test_pane_path
-                    ),
-                    "sessions_path": trial_handler.trial_paths.sessions_path,
-                    "started_at": results.test_started_at,
-                    "ended_at": results.test_ended_at,
-                },
-                execution={
-                    "component": "Harness._run_tests",
-                    "operation": "Wait for the test command and capture its pane.",
-                },
-                task_id=trial_handler.task_id,
-                trial_name=trial_handler.trial_name,
-            )
-
             if not trial_handler.task.disable_asciinema:
                 agent_recording_path = (
                     trial_handler.trial_paths.sessions_path / recording_filename
                 )
-
-                canonical_recording_key = self._build_canonical_recording_key(
-                    task_id=trial_handler.task_id,
-                    agent_model_name_override=agent_model_name_override,
-                    agent_label=agent_label,
-                    model_label=model_label,
-                )
-                results.recording_path = canonical_recording_key
-
+                results.recording_path = str(agent_recording_path)
                 if agent_result is not None:
-                    asciinema_handler = AsciinemaHandler(
+                    AsciinemaHandler(
                         markers=agent_result.timestamped_markers,
                         recording_path=agent_recording_path,
-                    )
-                    asciinema_handler.merge_markers()
-
-                self._maybe_upload_recording(
-                    local_recording_path=agent_recording_path,
-                    s3_key=canonical_recording_key,
-                    task_id=trial_handler.task_id,
-                )
-
-            if (
-                test_failure_mode != FailureMode.NONE
-                and results.failure_mode == FailureMode.UNSET
-            ):
-                results.failure_mode = test_failure_mode
-
-                self._maybe_save_evaluation_snapshot(
-                    terminal=terminal,
-                    trial_handler=trial_handler,
-                    results=results,
-                    snapshot_name=evaluation_snapshot_name,
-                    snapshot_s3_key=snapshot_s3_key,
-                    reason="test failure",
-                )
-
-                results.trial_ended_at = datetime.now(timezone.utc).isoformat()
-                return results
-
-            self._trace_pipeline(
-                stage="results.parse",
-                status="started",
-                inputs={
-                    "parser_class": (
-                        f"{type(trial_handler.parser).__module__}."
-                        f"{type(trial_handler.parser).__name__}"
-                    ),
-                    "post_test_pane": post_test_pane,
-                    "post_test_pane_path": (
-                        trial_handler.trial_paths.post_test_pane_path
-                    ),
-                },
-                execution={
-                    "component": "Harness._parse_results",
-                    "operation": (
-                        "Parse the captured test pane into unit-test statuses and "
-                        "benchmark metrics."
-                    ),
-                },
-                task_id=trial_handler.task_id,
-                trial_name=trial_handler.trial_name,
-            )
-            parser_results, parse_failure_mode = self._parse_results(
-                trial_handler=trial_handler,
-                post_test_pane=post_test_pane,
-            )
-
-            self._trace_pipeline(
-                stage="results.parse",
-                status=(
-                    "completed" if parse_failure_mode == FailureMode.NONE else "failed"
-                ),
-                outputs={
-                    "parser_results": parser_results,
-                    "parser_extra_metrics": getattr(
-                        trial_handler.parser, "extra_metrics", None
-                    ),
-                    "failure_mode": parse_failure_mode,
-                },
-                execution={
-                    "component": (
-                        f"{type(trial_handler.parser).__module__}."
-                        f"{type(trial_handler.parser).__name__}.parse"
-                    ),
-                    "operation": "Return structured correctness and performance data.",
-                },
-                task_id=trial_handler.task_id,
-                trial_name=trial_handler.trial_name,
-            )
-
-            if parse_failure_mode != FailureMode.NONE:
-                results.failure_mode = parse_failure_mode
-
-                self._maybe_save_evaluation_snapshot(
-                    terminal=terminal,
-                    trial_handler=trial_handler,
-                    results=results,
-                    snapshot_name=evaluation_snapshot_name,
-                    snapshot_s3_key=snapshot_s3_key,
-                    reason="parse failure",
-                )
-
-                results.trial_ended_at = datetime.now(timezone.utc).isoformat()
-                return results
-
-            results.parser_results = parser_results
-            if hasattr(trial_handler.parser, "extra_metrics") and getattr(
-                trial_handler.parser, "extra_metrics"
-            ):
-                results.parser_extra_metrics = getattr(
-                    trial_handler.parser, "extra_metrics"
-                )
-            self._logger.info(f"Completed task {trial_handler.task_id}")
-
-            self._maybe_save_evaluation_snapshot(
-                terminal=terminal,
-                trial_handler=trial_handler,
-                results=results,
-                snapshot_name=evaluation_snapshot_name,
-                snapshot_s3_key=snapshot_s3_key,
-                reason="trial completion",
-            )
-
+                    ).merge_markers()
             results.trial_ended_at = datetime.now(timezone.utc).isoformat()
             return results
+
         finally:
             # Clean up sessions
             for session_name in reversed(created_sessions):
@@ -3007,13 +2621,13 @@ class Harness:
             agent_results.total_cost or 0.0
         )
 
-        if agent_results.parser_extra_metrics is None:
-            agent_results.parser_extra_metrics = {}
-        agent_results.parser_extra_metrics["trajectory_length"] = trajectory_length
-        agent_results.parser_extra_metrics["task_cost_usd"] = float(
+        if agent_results.agent_metrics is None:
+            agent_results.agent_metrics = {}
+        agent_results.agent_metrics["trajectory_length"] = trajectory_length
+        agent_results.agent_metrics["task_cost_usd"] = float(
             agent_results.total_cost or 0.0
         )
-        agent_results.parser_extra_metrics["agent_model_key"] = agent_model_key
+        agent_results.agent_metrics["agent_model_key"] = agent_model_key
 
         self._logger.info(
             "Updated agent metrics: %s input tokens, %s output tokens, $%.6f cost, "
@@ -3274,7 +2888,7 @@ class Harness:
             },
             execution={
                 "component": "pitbench.harness.handlers.trial_handler.TrialHandler",
-                "operation": "Load task metadata, paths, instruction, and parser.",
+                "operation": "Load task metadata, paths, instruction, and evaluator.",
             },
             task_id=task_path.name,
             trial_name=trial_name,
@@ -3301,10 +2915,7 @@ class Harness:
             outputs={
                 "task": trial_handler.task,
                 "instruction": trial_handler.instruction,
-                "parser_class": (
-                    f"{type(trial_handler.parser).__module__}."
-                    f"{type(trial_handler.parser).__name__}"
-                ),
+                "evaluator_import_path": trial_handler.task.evaluator_import_path,
                 "trial_output_path": trial_handler.trial_paths.task_output_path,
             },
             execution={
@@ -3580,8 +3191,8 @@ class Harness:
         )
         return results
 
-    def _handle_results_upload(self, results: BenchmarkResults) -> None:
-        """Handle uploading results to S3 and database if configured."""
+    def _handle_results_upload(self) -> None:
+        """Upload run artifacts to S3 if configured."""
         if not self._upload_results:
             return
 
@@ -3592,20 +3203,6 @@ class Harness:
                 "Upload results requested but no S3 bucket configured. "
                 "Set the S3_BUCKET_NAME environment variable in .env"
             )
-
-        try:
-            if self._run_metadata_output_path.exists():
-                metadata = RunMetadata.model_validate_json(
-                    self._run_metadata_output_path.read_text()
-                )
-                upload_results_to_db(metadata, results.results)
-                logger.info(
-                    "Successfully uploaded metadata and task results to database"
-                )
-            else:
-                logger.error("Metadata file not found for database upload")
-        except (json.JSONDecodeError, Exception) as e:
-            logger.error(f"Failed to upload to database: {e}")
 
     def run(self) -> BenchmarkResults:
         """Run the harness.
@@ -3659,7 +3256,7 @@ class Harness:
             if not self._is_resuming:
                 self._update_metadata_on_end()
 
-            self._handle_results_upload(results)
+            self._handle_results_upload()
         except Exception as exc:
             self._trace_pipeline(
                 stage="run.execute",

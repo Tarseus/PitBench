@@ -43,6 +43,8 @@ class NormalizedSolverOutput(BaseModel):
     wall_time_sec: float | None = None
     cpu_time_sec: float | None = None
     peak_rss_bytes: int | None = None
+    resource_scope: str | None = None
+    solver_status: str | None = None
     error: str | None = None
 
 
@@ -63,30 +65,11 @@ class RepositoryPlugin(ABC):
 
 
 class RepositoryPluginRegistry:
-    # Published task configurations retain these IDs after the implementation
-    # classes move into one role-based module.
-    _LEGACY_PATHS = {
-        f"pitbench.repositories.{module}:{class_name}": f"pitbench.repositories.plugins:{class_name}"
-        for module, class_name in (
-            ("pyvrp", "PyVRPRepositoryPlugin"),
-            ("vroom", "VroomRepositoryPlugin"),
-            ("highs", "HighsRepositoryPlugin"),
-            ("choco", "ChocoRepositoryPlugin"),
-            ("ortools", "OrToolsRepositoryPlugin"),
-        )
-    }
-
-    @classmethod
-    def canonical_path(cls, import_path: str) -> str:
-        return cls._LEGACY_PATHS.get(import_path, import_path)
-
     @staticmethod
     def load(import_path: str) -> RepositoryPlugin:
         if ":" not in import_path:
             raise ValueError("repository plugin must be 'module:Class'")
-        module_name, class_name = RepositoryPluginRegistry.canonical_path(
-            import_path
-        ).split(":", 1)
+        module_name, class_name = import_path.split(":", 1)
         plugin_class: Any = getattr(importlib.import_module(module_name), class_name)
         plugin = plugin_class()
         if not isinstance(plugin, RepositoryPlugin):

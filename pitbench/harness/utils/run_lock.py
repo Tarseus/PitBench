@@ -234,7 +234,6 @@ class RunConfigLock(BaseModel):
     cleanup: bool
     global_timeout_multiplier: float
     global_agent_timeout_sec: float | None = None
-    global_test_timeout_sec: float | None = None
     global_setup_timeout_sec: float | None = None
 
 

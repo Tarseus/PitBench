@@ -72,7 +72,7 @@ def test_materialized_release_task_has_no_hidden_assets(
         "agent_tools": []
     }
     task_yaml = yaml.safe_load((destination / "task.yaml").read_text())
-    assert task_yaml["parser_name"] is None
+    assert "parser_name" not in task_yaml
     assert task_yaml["evaluator_import_path"].endswith(":PitBenchEvaluator")
     assert task_yaml["evaluator_config"]["judge_image"] == "sha256:" + "a" * 64
     assert "read-only outside these editable paths: pyvrp" in task_yaml["instruction"]

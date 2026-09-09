@@ -1,9 +1,9 @@
 import time
 
-import docker
 import pytest
-from docker import errors as docker_errors
 
+import docker
+from docker import errors as docker_errors
 from pitbench.harness.terminal.models import TerminalCommand
 from pitbench.harness.terminal.tmux_session import TmuxSession
 from pitbench.harness.utils.logger import setup_logger

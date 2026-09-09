@@ -16,6 +16,7 @@ from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest, Evaluator
 from pitbench.metrics.performance_report import compute_performance_report
+from pitbench.metrics.resource_report import compute_resource_reports
 from pitbench.metrics.seed_robustness_report import (
     SeedSelectionMetadata,
     compute_seed_robustness_details,
@@ -172,6 +173,32 @@ class PitBenchEvaluator(Evaluator):
                 media_type="application/json",
                 private=True,
             )
+        resource_usage = None
+        resource_details_ref = None
+        if original_observations:
+            resource_usage, resource_details = compute_resource_reports(
+                original_observations,
+                primary_budget_sec=task.evaluation.primary_budget_sec,
+                budgets_sec=task.evaluation.budgets_sec,
+                expected_instance_counts={
+                    item.name: item.size for item in task.instance_sets
+                },
+                expected_seed_count=(
+                    seed_robustness.seed_selection.seed_count
+                    if seed_robustness is not None
+                    else len(task.evaluation.solver_seeds or [])
+                ),
+            )
+            resource_details_path = request.output_dir / "resource_details.json"
+            resource_details_path.write_text(
+                resource_details.model_dump_json(indent=2) + "\n"
+            )
+            resource_details_ref = artifact_ref(
+                resource_details_path,
+                root=request.output_dir,
+                media_type="application/json",
+                private=True,
+            )
         artifacts = ArtifactManifest(
             candidate_patch=(
                 artifact_ref(
@@ -190,6 +217,7 @@ class PitBenchEvaluator(Evaluator):
             ),
             seed_robustness_details=seed_robustness_details_ref,
             representation_robustness_details=representation_details_ref,
+            resource_details=resource_details_ref,
         )
         performance = (
             compute_performance_report(
@@ -209,5 +237,6 @@ class PitBenchEvaluator(Evaluator):
                 counts_by_state=dict(counts),
                 performance=performance,
                 nuisance_robustness=nuisance_robustness,
+                resource_usage=resource_usage,
             ),
         )

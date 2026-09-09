@@ -29,7 +29,7 @@ def test_representation_configuration_rejects_unsupported_scope(change, message)
         payload["evaluation"]["representation_robustness"]["instance_set"] = "judge_id"
     else:
         payload["repository"]["plugin"] = (
-            "pitbench.repositories.vroom:VroomRepositoryPlugin"
+            "pitbench.repositories.plugins:VroomRepositoryPlugin"
         )
     with pytest.raises(ValueError, match=message):
         PitBenchTask.model_validate(payload)

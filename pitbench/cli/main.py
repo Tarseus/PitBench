@@ -32,6 +32,10 @@ from pitbench.metrics.performance_report import (
     compute_performance_report,
     format_performance_report,
 )
+from pitbench.metrics.resource_report import (
+    compute_resource_report,
+    format_resource_report,
+)
 from pitbench.schema.task import InstanceSetKind, PitBenchTask
 from pitbench.tasks import TaskCatalog, TaskNotFoundError
 
@@ -292,7 +296,6 @@ def evaluate_task(
         agent_kwargs=harness_agent_kwargs,
         global_timeout_multiplier=1.0,
         global_agent_timeout_sec=None,
-        global_test_timeout_sec=None,
         global_setup_timeout_sec=None,
         remote_build=False,
         history_limit=None,
@@ -637,8 +640,7 @@ def report_command(
     if observation_task_ids != {task.task_id}:
         observed = ", ".join(sorted(observation_task_ids)) or "none"
         raise typer.BadParameter(
-            f"task ID mismatch: observations={observed}; "
-            f"task-config={task.task_id}",
+            f"task ID mismatch: observations={observed}; task-config={task.task_id}",
             param_hint="--task-config",
         )
 
@@ -646,9 +648,23 @@ def report_command(
         observations,
         primary_budget_sec=task.evaluation.primary_budget_sec,
     )
+    resource_report = compute_resource_report(
+        observations,
+        primary_budget_sec=task.evaluation.primary_budget_sec,
+        budgets_sec=task.evaluation.budgets_sec,
+        expected_instance_counts={item.name: item.size for item in task.instance_sets},
+        expected_seed_count=(
+            task.evaluation.seed_robustness.seed_selection.seed_count
+            if task.evaluation.seed_robustness is not None
+            else len(task.evaluation.solver_seeds or [])
+        ),
+    )
 
     if json_output:
-        combined = {"performance": performance_report.model_dump()}
+        combined = {
+            "performance": performance_report.model_dump(),
+            "resource_usage": resource_report.model_dump(),
+        }
         typer.echo(json.dumps(combined, indent=2))
         return
 
@@ -658,6 +674,7 @@ def report_command(
     typer.echo("========================================================\n")
 
     typer.echo(format_performance_report(performance_report))
+    typer.echo("\n" + format_resource_report(resource_report))
 
 
 if __name__ == "__main__":

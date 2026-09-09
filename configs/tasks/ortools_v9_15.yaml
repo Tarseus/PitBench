@@ -17,7 +17,7 @@ information_regime: snapshot_only
 repository:
   clone_url: https://github.com/google/or-tools.git
   language: cpp_java
-  plugin: pitbench.repositories.ortools:OrToolsRepositoryPlugin
+  plugin: pitbench.repositories.plugins:OrToolsRepositoryPlugin
   editable_paths: [ortools, build]
 oracle:
     kind: independent_measurement

@@ -323,6 +323,7 @@ def test_report_command_supports_structured_output(tmp_path: Path) -> None:
     )
     assert text_result.exit_code == 0
     assert "Fixed-budget performance" in text_result.output
+    assert "Resource usage" in text_result.output
 
     json_result = runner.invoke(
         app,
@@ -330,6 +331,8 @@ def test_report_command_supports_structured_output(tmp_path: Path) -> None:
     )
     assert json_result.exit_code == 0
     assert '"performance"' in json_result.output
+    assert '"resource_usage"' in json_result.output
+    assert '"expected_seed_count": 30' in json_result.output
     assert '"mean_gap_reduction"' in json_result.output
     assert '"sensitivity"' not in json_result.output
 

@@ -2,11 +2,11 @@ import subprocess
 from importlib.resources import files
 from pathlib import Path
 
-import docker
 import requests
 from requests.exceptions import RequestException
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+import docker
 from pitbench.harness.utils.env_model import EnvModel
 from pitbench.harness.utils.logger import logger
 

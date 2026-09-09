@@ -20,7 +20,6 @@ from pitbench.agent_tools import (
     normalize_agent_tools,
 )
 from pitbench.instances import materialize_instance_set
-from pitbench.repositories.base import RepositoryPluginRegistry
 from pitbench.schema.task import InstanceSetKind, PitBenchTask
 from pitbench.tasks import TaskCatalog
 
@@ -222,7 +221,6 @@ class PitBenchAdapter:
             "difficulty": "hard",
             "category": "solver_optimization",
             "tags": [task.task_type.value, task.problem_family.value],
-            "parser_name": None,
             "evaluator_import_path": ("pitbench.evaluator.evaluator:PitBenchEvaluator"),
             "evaluator_config": {
                 "task_config_path": str(task_config.resolve()),
@@ -230,9 +228,7 @@ class PitBenchAdapter:
                 "private_root": str(self.private_root),
             },
             "max_agent_timeout_sec": 3600,
-            "max_test_timeout_sec": 1,
             "max_setup_timeout_sec": 1800,
-            "run_tests_in_same_shell": False,
         }
         if judge_image is not None:
             payload["evaluator_config"]["judge_image"] = judge_image
@@ -245,7 +241,7 @@ class PitBenchAdapter:
         image_override: str | None = None,
         agent_tools: Iterable[AgentTool | str] = (),
     ) -> str:
-        plugin = RepositoryPluginRegistry.canonical_path(task.repository.plugin)
+        plugin = task.repository.plugin
         tools = normalize_agent_tools(agent_tools)
         prepared_image = image_override or task.repository.agent_image
         if prepared_image is not None:

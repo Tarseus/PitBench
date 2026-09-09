@@ -17,7 +17,7 @@ information_regime: snapshot_only
 repository:
   clone_url: https://github.com/VROOM-Project/vroom.git
   language: cpp
-  plugin: pitbench.repositories.vroom:VroomRepositoryPlugin
+  plugin: pitbench.repositories.plugins:VroomRepositoryPlugin
   editable_paths: [src, include, bin, obj]
 oracle:
     kind: best_known_solution

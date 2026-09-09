@@ -19,6 +19,8 @@ from pathlib import Path
 from queue import Queue
 from typing import TYPE_CHECKING
 
+from pitbench.solver_drivers.common import process_resources
+
 if TYPE_CHECKING:
     from pitbench.schema.observation import RunObservation
 
@@ -189,7 +191,11 @@ class HighsCollection:
             "instances": instances,
             "jobs": jobs,
         }
-        for path in (Path(__file__), ROOT / "pitbench/evaluator/representations.py"):
+        for path in (
+            Path(__file__),
+            ROOT / "pitbench/evaluator/representations.py",
+            ROOT / "pitbench/solver_drivers/common.py",
+        ):
             target = output / "collector_source" / path.name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(path.read_bytes())
@@ -275,6 +281,7 @@ class HighsCollection:
             solve_started = time.perf_counter()
             cpu_started = time.process_time()
             status = solver.run()
+            result.update(process_resources())
             result["solve_wall_sec"] = time.perf_counter() - solve_started
             result["solve_cpu_sec"] = time.process_time() - cpu_started
             info = solver.getInfo()

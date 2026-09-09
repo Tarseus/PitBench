@@ -11,7 +11,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 BOOTSTRAP_SEED = 20260824
 BOOTSTRAP_RESAMPLES = 5000
 

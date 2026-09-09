@@ -102,12 +102,8 @@ def write_agent_tooling(
                 "budgets_sec": task.evaluation.budgets_sec,
                 "development_seeds": development_seeds,
                 "threads": task.evaluation.threads,
-                "runner": _RUNNERS[
-                    RepositoryPluginRegistry.canonical_path(task.repository.plugin)
-                ],
-                "runner_requirement": _REQUIREMENTS[
-                    RepositoryPluginRegistry.canonical_path(task.repository.plugin)
-                ],
+                "runner": _RUNNERS[task.repository.plugin],
+                "runner_requirement": _REQUIREMENTS[task.repository.plugin],
             }
         )
     if tools & {

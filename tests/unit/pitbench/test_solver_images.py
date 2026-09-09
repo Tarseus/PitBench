@@ -1,19 +1,20 @@
 from pathlib import Path
 
-from ruamel.yaml import YAML
+import yaml
 
 from adapters.pitbench.adapter import PitBenchAdapter
+from pitbench.repositories.base import RepositoryPluginRegistry
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
 def _solver(task_plugin: str) -> str:
-    return task_plugin.split(".")[2].split(":")[0]
+    return RepositoryPluginRegistry.load(task_plugin).name
 
 
 def test_publication_matrix_covers_every_release_task_config() -> None:
-    workflow = YAML(typ="safe").load(
+    workflow = yaml.safe_load(
         (ROOT / ".github/workflows/publish-solver-images.yml").read_text()
     )
     entries = workflow["jobs"]["publish"]["strategy"]["matrix"]["include"]

@@ -8,6 +8,28 @@ from pathlib import Path
 from typing import Any
 
 
+def process_resources(*, child_process: bool = False) -> dict[str, Any]:
+    """Snapshot one solver process, before result parsing or verification.
+
+    The default measures the fresh Python worker through solver return. The
+    child mode is for a fresh driver that has run exactly one native solver
+    subprocess: its RSS is that subprocess's lifetime peak, not the maximum
+    of unrelated driver/child peaks or a process-tree memory measurement.
+    """
+    usage = resource.getrusage(
+        resource.RUSAGE_CHILDREN if child_process else resource.RUSAGE_SELF
+    )
+    return {
+        "cpu_time_sec": usage.ru_utime + usage.ru_stime,
+        "peak_rss_bytes": int(usage.ru_maxrss * 1024),
+        "resource_scope": (
+            "single_native_child_lifetime"
+            if child_process
+            else "worker_process_start_through_solver_return"
+        ),
+    }
+
+
 def parser(*, solver: bool = False, trajectory: bool = True) -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     if solver:
@@ -31,22 +53,6 @@ def write_result(
     error: str | None = None,
     **metrics: Any,
 ) -> None:
-    self_usage = resource.getrusage(resource.RUSAGE_SELF)
-    child_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-    metrics.setdefault(
-        "cpu_time_sec",
-        self_usage.ru_utime
-        + self_usage.ru_stime
-        + child_usage.ru_utime
-        + child_usage.ru_stime,
-    )
-    # Linux reports ru_maxrss in KiB. Judge images are Linux-only and pinned.
-    # These are separate high-water marks that may occur at different times,
-    # so adding them would not represent a process-tree peak.
-    metrics.setdefault(
-        "peak_rss_bytes",
-        int(max(self_usage.ru_maxrss, child_usage.ru_maxrss) * 1024),
-    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
