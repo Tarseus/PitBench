@@ -21,7 +21,7 @@ from pitbench.evaluator.private_assets import (
 )
 from pitbench.instances import materialize_generated_instance_set, verify_public_file
 from pitbench.problem_families.base import ProblemFamilyRegistry
-from pitbench.problem_families.external import ExternalVerifierFamily
+from pitbench.problem_families.verification import ExternalVerifierFamily
 from pitbench.repositories.base import (
     BuildKind,
     CommandSpec,

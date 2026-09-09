@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Run four fresh M5 panels sequentially using the original local experiment settings.
-# Usage: bash scripts/run-pyvrp-seed-validation-matrix.sh /absolute/prepared/batch [private-root]
+# Usage: bash scripts/run-seed-validation-matrix.sh /absolute/prepared/batch [private-root]
 # The batch must contain a frozen harness/ and sources/<task_id>/ for each release.
 BATCH_DIR="${1:?Provide the absolute prepared batch directory}"
 if [[ "$BATCH_DIR" != /* || ! -d "$BATCH_DIR/harness" ]]; then

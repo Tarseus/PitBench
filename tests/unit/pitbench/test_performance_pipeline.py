@@ -16,7 +16,7 @@ from pitbench.metrics.performance_report import (
     PerformanceClassification,
     compute_performance_report,
 )
-from pitbench.problem_families.cvrp import CVRPFamily
+from pitbench.problem_families.verification import CVRPFamily
 from pitbench.schema.task import PitBenchTask
 from pitbench.solver_drivers.common import write_result
 
@@ -92,9 +92,9 @@ def test_pyvrp_plan_materializes_all_instance_sets(
     seed_robustness = task.evaluation.seed_robustness
     assert seed_robustness is not None
     evaluation_seeds = set(
-        yaml.safe_load(
-            (ROOT / f"private/seed_robustness/{task_id}.yaml").read_text()
-        )["evaluation_seeds"]
+        yaml.safe_load((ROOT / f"private/seed_robustness/{task_id}.yaml").read_text())[
+            "evaluation_seeds"
+        ]
     )
     assert {item.solver_seed for item in development_observations} == set(
         seed_robustness.development_seeds

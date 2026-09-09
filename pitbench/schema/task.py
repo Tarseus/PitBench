@@ -8,6 +8,8 @@ from typing import Literal, Self
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from pitbench.repositories.base import RepositoryPluginRegistry
+
 
 class TaskType(str, Enum):
     HEURISTIC_SOLVER = "heuristic_solver"
@@ -208,8 +210,8 @@ class PitBenchTask(BaseModel):
         if representation is not None:
             if (
                 self.problem_family != ProblemFamily.CVRP
-                or self.repository.plugin
-                != "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin"
+                or RepositoryPluginRegistry.canonical_path(self.repository.plugin)
+                != "pitbench.repositories.plugins:PyVRPRepositoryPlugin"
             ):
                 raise ValueError(
                     "customer relabeling currently requires a PyVRP CVRP task"

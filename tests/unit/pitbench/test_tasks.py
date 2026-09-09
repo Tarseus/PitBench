@@ -36,6 +36,19 @@ def test_catalog_contains_release_snapshots() -> None:
     }
 
 
+@pytest.mark.parametrize("module", ["pyvrp", "plugins"])
+def test_representation_task_accepts_legacy_and_consolidated_plugin_paths(module):
+    task = TaskCatalog(ROOT).validate_one("pyvrp_v0_14_0").task
+    payload = task.model_dump()
+    plugin = f"pitbench.repositories.{module}:PyVRPRepositoryPlugin"
+    payload["repository"]["plugin"] = plugin
+
+    restored = PitBenchTask.model_validate(payload)
+
+    assert restored.evaluation.representation_robustness is not None
+    assert restored.model_dump()["repository"]["plugin"] == plugin
+
+
 def test_task_types_classify_heuristic_and_exact_solvers() -> None:
     records = TaskCatalog(ROOT).validate_all()
 

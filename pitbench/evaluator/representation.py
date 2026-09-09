@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import random
 import subprocess
@@ -15,7 +14,8 @@ from pathlib import Path
 
 from pitbench.evaluator.judge import InstanceCase, JudgePlan, LocalProcessJudge
 from pitbench.evaluator.private_assets import PrivateAssetResolver
-from pitbench.problem_families.cvrp import CVRPFamily
+from pitbench.evaluator.representations import CustomerRepresentation
+from pitbench.problem_families.verification import CVRPFamily
 from pitbench.schema.observation import RunObservation, RunStatus
 from pitbench.schema.task import (
     InstanceSetKind,
@@ -39,56 +39,6 @@ def preserve_json(path: Path, payload: object) -> None:
             raise ValueError(f"existing experiment input differs: {path}")
     else:
         write_json(path, payload)
-
-
-def customer_permutations(
-    customer_count: int, count: int, generator: random.Random
-) -> list[list[int]]:
-    if count < 1 or math.factorial(customer_count) - 1 < count:
-        raise ValueError("not enough distinct nonidentity customer permutations")
-    original = tuple(range(1, customer_count + 1))
-    seen = {original}
-    mappings = []
-    while len(mappings) < count:
-        customers = list(original)
-        generator.shuffle(customers)
-        permutation = tuple(customers)
-        if permutation not in seen:
-            seen.add(permutation)
-            mappings.append([0, *customers])
-    return mappings
-
-
-def relabel_instance(original: dict, new_to_original: list[int]) -> dict:
-    node_count = len(original["coordinates"])
-    if (
-        original.get("depot", 0) != 0
-        or original.get("distance_metric") != "EUC_2D"
-        or len(original["demands"]) != node_count
-    ):
-        raise ValueError("expected a normalized single-depot EUC_2D CVRP instance")
-    if new_to_original[0] != 0 or sorted(new_to_original) != list(range(node_count)):
-        raise ValueError("mapping must be a bijection fixing depot zero")
-    transformed = dict(original)
-    # node_ids remain the labels in the new representation; the saved mapping
-    # records their relationship to the original customers.
-    transformed["coordinates"] = [original["coordinates"][i] for i in new_to_original]
-    transformed["demands"] = [original["demands"][i] for i in new_to_original]
-    if "node_ids" in original:
-        transformed["node_ids"] = list(range(1, node_count + 1))
-    return transformed
-
-
-def map_solution(solution: dict, new_to_original: list[int]) -> dict:
-    routes = []
-    for route in solution["routes"]:
-        if any(
-            type(node) is not int or not 0 < node < len(new_to_original)
-            for node in route
-        ):
-            raise ValueError("solution contains an invalid customer index")
-        routes.append([new_to_original[node] for node in route])
-    return {"routes": routes}
 
 
 def prepare_cases(
@@ -132,7 +82,7 @@ def prepare_cases(
             output_dir / "inputs" / "original" / f"{original_case.instance_id}.json"
         )
         preserve_json(original_path, original)
-        mappings = customer_permutations(
+        mappings = CustomerRepresentation.permutations(
             len(original["coordinates"]) - 1, config.relabelings_per_instance, generator
         )
         for index, mapping in enumerate(mappings):
@@ -141,7 +91,9 @@ def prepare_cases(
             transformed_path = (
                 output_dir / "inputs" / "relabeled" / f"{instance_id}.json"
             )
-            preserve_json(transformed_path, relabel_instance(original, mapping))
+            preserve_json(
+                transformed_path, CustomerRepresentation.permute(original, mapping)
+            )
             transformations[instance_id] = {
                 "original_instance_id": original_case.instance_id,
                 "original_instance_path": str(original_path.relative_to(output_dir)),
@@ -173,7 +125,11 @@ class RecordingJudge(LocalProcessJudge):
 
     @staticmethod
     def _run(command, workspace):
-        if "pitbench.solver_drivers.pyvrp" not in command.argv:
+        if (
+            "pitbench.solver_drivers.run" not in command.argv
+            or command.argv[command.argv.index("pitbench.solver_drivers.run") + 1]
+            != "pyvrp"
+        ):
             return LocalProcessJudge._run(command, workspace)
         output = Path(command.argv[command.argv.index("--output") + 1])
         started = time.monotonic()
@@ -259,7 +215,7 @@ def result_record(
             mapped_path = output.with_suffix(".mapped.solution.json")
             write_json(
                 mapped_path,
-                map_solution(
+                CustomerRepresentation.map_solution(
                     json.loads(solution.read_text()), transformation["new_to_original"]
                 ),
             )

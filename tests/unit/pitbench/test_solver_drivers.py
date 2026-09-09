@@ -1,10 +1,57 @@
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
 
-from pitbench.repositories.base import BuildKind, SolverRunSpec
-from pitbench.repositories.pyvrp import PyVRPRepositoryPlugin
-from pitbench.solver_drivers.pyvrp import _route_visits, _statistics_rows, _vrplib
+from pitbench.repositories.base import (
+    BuildKind,
+    RepositoryPluginRegistry,
+    SolverRunSpec,
+)
+from pitbench.repositories.plugins import PyVRPRepositoryPlugin
+from pitbench.solver_drivers.run import PyVRPDriver
+
+
+@pytest.mark.parametrize(
+    ("module", "class_name"),
+    [
+        ("pyvrp", "PyVRPRepositoryPlugin"),
+        ("vroom", "VroomRepositoryPlugin"),
+        ("highs", "HighsRepositoryPlugin"),
+        ("choco", "ChocoRepositoryPlugin"),
+        ("ortools", "OrToolsRepositoryPlugin"),
+    ],
+)
+def test_published_plugin_ids_still_resolve_to_runnable_drivers(
+    module, class_name, tmp_path
+):
+    legacy = RepositoryPluginRegistry.load(
+        f"pitbench.repositories.{module}:{class_name}"
+    )
+    canonical = RepositoryPluginRegistry.load(
+        f"pitbench.repositories.plugins:{class_name}"
+    )
+    assert type(legacy) is type(canonical)
+    run = SolverRunSpec(
+        instance_path=tmp_path / "instance.json",
+        output_path=tmp_path / "result.json",
+        trajectory_path=tmp_path / "trajectory.jsonl",
+        solver_seed=17,
+        budget_sec=10,
+        threads=1,
+    )
+    command = legacy.run_command(run)
+    assert command == canonical.run_command(run)
+    completed = subprocess.run(
+        [sys.executable, *command.argv[1:], "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "--instance" in completed.stdout
+    assert "--budget" in completed.stdout
 
 
 class _LegacyRoute:
@@ -25,8 +72,8 @@ class _ModernRoute:
 
 
 def test_route_extraction_supports_pre_and_post_v0_14_apis() -> None:
-    assert _route_visits(_LegacyRoute()) == [1, 4]
-    assert _route_visits(_ModernRoute()) == [1, 4]
+    assert PyVRPDriver._route_visits(_LegacyRoute()) == [1, 4]
+    assert PyVRPDriver._route_visits(_ModernRoute()) == [1, 4]
 
 
 def test_statistics_supports_v0_12_instance_set_layout() -> None:
@@ -38,7 +85,7 @@ def test_statistics_supports_v0_12_instance_set_layout() -> None:
         ],
     )
 
-    rows = list(_statistics_rows(stats))
+    rows = list(PyVRPDriver._statistics_rows(stats))
 
     assert rows[0][0:2] == (0.1, False)
     assert rows[1] == (0.2, True, 123)
@@ -56,7 +103,7 @@ def test_statistics_supports_v0_13_and_v0_14_iterable_layout() -> None:
                 ]
             )
 
-    assert list(_statistics_rows(Stats())) == [
+    assert list(PyVRPDriver._statistics_rows(Stats())) == [
         (0.1, False, 999),
         (0.2, True, 123),
     ]
@@ -72,7 +119,7 @@ def test_vrplib_uses_declared_euc_2d_semantics(tmp_path) -> None:
     }
     path = tmp_path / "instance.vrp"
 
-    _vrplib(instance, path)
+    PyVRPDriver._vrplib(instance, path)
 
     assert "EDGE_WEIGHT_TYPE : EUC_2D" in path.read_text()
 
@@ -86,7 +133,7 @@ def test_vrplib_rejects_incompatible_declared_distance_semantics(tmp_path) -> No
     }
 
     with pytest.raises(ValueError, match="only supports.*EUC_2D"):
-        _vrplib(instance, tmp_path / "instance.vrp")
+        PyVRPDriver._vrplib(instance, tmp_path / "instance.vrp")
 
 
 def test_pyvrp_builds_and_runs_in_per_workspace_virtual_environments(

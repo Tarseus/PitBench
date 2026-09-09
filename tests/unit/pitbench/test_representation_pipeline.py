@@ -7,7 +7,7 @@ import pytest
 from pitbench.evaluator import runner
 from pitbench.evaluator.judge import InstanceCase, JudgePlan, LocalProcessJudge
 from pitbench.evaluator.storage import ObservationStore
-from pitbench.problem_families.cvrp import CVRPFamily
+from pitbench.problem_families.verification import CVRPFamily
 from pitbench.schema.observation import CodeState, RunObservation, RunStatus
 from pitbench.schema.task import PitBenchTask
 

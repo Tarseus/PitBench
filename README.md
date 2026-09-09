@@ -176,7 +176,7 @@ the benchmark task definition. The bundled shell script is an example serial
 scheduler whose list of agents can be edited by the caller:
 
 ```bash
-scripts/run-pyvrp-model-matrix.sh pyvrp_v0_14_0
+scripts/run-model-matrix.sh pyvrp_v0_14_0
 ```
 
 The script makes independent `pitbench evaluate` calls in sequence and records

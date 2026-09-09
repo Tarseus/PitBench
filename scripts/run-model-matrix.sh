@@ -2,7 +2,7 @@
 set -uo pipefail
 
 # Run the requested PyVRP model matrix sequentially. Usage:
-#   scripts/run-pyvrp-model-matrix.sh [TASK_ID]
+#   scripts/run-model-matrix.sh [TASK_ID]
 #
 # Optional environment variables:
 #   PITBENCH_CONFIG     Evaluation config (default: config/evaluate.local.yaml)

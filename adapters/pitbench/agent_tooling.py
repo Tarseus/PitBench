@@ -11,9 +11,9 @@ from pitbench.schema.task import PitBenchTask
 
 
 def _runner(
-    module: str, *, solver: str | None = None, trajectory: bool = True
+    driver: str, *, solver: str | None = None, trajectory: bool = True
 ) -> list[str]:
-    command = ["python3", "-m", module]
+    command = ["python3", "-m", "pitbench.solver_drivers.run", driver]
     if solver is not None:
         command.extend(["--solver", solver])
     command.extend(["--instance", "{instance}", "--output", "{output}"])
@@ -33,29 +33,25 @@ def _runner(
 
 
 _RUNNERS = {
-    "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin": _runner(
-        "pitbench.solver_drivers.pyvrp"
+    "pitbench.repositories.plugins:PyVRPRepositoryPlugin": _runner("pyvrp"),
+    "pitbench.repositories.plugins:VroomRepositoryPlugin": _runner(
+        "vroom", solver="./bin/vroom"
     ),
-    "pitbench.repositories.vroom:VroomRepositoryPlugin": _runner(
-        "pitbench.solver_drivers.vroom", solver="./bin/vroom"
+    "pitbench.repositories.plugins:HighsRepositoryPlugin": _runner(
+        "highs", solver="./build/bin/highs"
     ),
-    "pitbench.repositories.highs:HighsRepositoryPlugin": _runner(
-        "pitbench.solver_drivers.highs", solver="./build/bin/highs"
-    ),
-    "pitbench.repositories.choco:ChocoRepositoryPlugin": _runner(
-        "pitbench.solver_drivers.choco"
-    ),
-    "pitbench.repositories.ortools:OrToolsRepositoryPlugin": _runner(
-        "pitbench.solver_drivers.ortools_model_build", trajectory=False
+    "pitbench.repositories.plugins:ChocoRepositoryPlugin": _runner("choco"),
+    "pitbench.repositories.plugins:OrToolsRepositoryPlugin": _runner(
+        "ortools_model_build", trajectory=False
     ),
 }
 
 _REQUIREMENTS = {
-    "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin": "pyvrp_import",
-    "pitbench.repositories.vroom:VroomRepositoryPlugin": "file:bin/vroom",
-    "pitbench.repositories.highs:HighsRepositoryPlugin": "file:build/bin/highs",
-    "pitbench.repositories.choco:ChocoRepositoryPlugin": "env:PITBENCH_CHOCO_RUNNER",
-    "pitbench.repositories.ortools:OrToolsRepositoryPlugin": (
+    "pitbench.repositories.plugins:PyVRPRepositoryPlugin": "pyvrp_import",
+    "pitbench.repositories.plugins:VroomRepositoryPlugin": "file:bin/vroom",
+    "pitbench.repositories.plugins:HighsRepositoryPlugin": "file:build/bin/highs",
+    "pitbench.repositories.plugins:ChocoRepositoryPlugin": "env:PITBENCH_CHOCO_RUNNER",
+    "pitbench.repositories.plugins:OrToolsRepositoryPlugin": (
         "env:PITBENCH_ORTOOLS_JAVA_RUNNER"
     ),
 }
@@ -106,8 +102,12 @@ def write_agent_tooling(
                 "budgets_sec": task.evaluation.budgets_sec,
                 "development_seeds": development_seeds,
                 "threads": task.evaluation.threads,
-                "runner": _RUNNERS[task.repository.plugin],
-                "runner_requirement": _REQUIREMENTS[task.repository.plugin],
+                "runner": _RUNNERS[
+                    RepositoryPluginRegistry.canonical_path(task.repository.plugin)
+                ],
+                "runner_requirement": _REQUIREMENTS[
+                    RepositoryPluginRegistry.canonical_path(task.repository.plugin)
+                ],
             }
         )
     if tools & {

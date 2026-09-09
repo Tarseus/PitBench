@@ -13,7 +13,7 @@ from typing import Any
 import yaml
 
 from pitbench.instances.generate import materialize_generated_instance_set
-from pitbench.problem_families.cvrp import CVRPFamily
+from pitbench.problem_families.verification import CVRPFamily
 
 
 def _sha256(path: Path) -> str:
@@ -53,7 +53,8 @@ def _solve(
         [
             str(solver_python),
             "-m",
-            "pitbench.solver_drivers.pyvrp",
+            "pitbench.solver_drivers.run",
+            "pyvrp",
             "--instance",
             str(instance),
             "--output",
@@ -160,8 +161,7 @@ def main() -> None:
                     "id": instance.stem,
                     "bks": best["objective"],
                     "bks_solution_uri": (
-                        "private://oracles/pyvrp_cvrp_shift_v1/"
-                        f"{destination.name}"
+                        f"private://oracles/pyvrp_cvrp_shift_v1/{destination.name}"
                     ),
                     "instance_sha256": _sha256(instance),
                     "bks_solution_sha256": _sha256(destination),
@@ -185,7 +185,7 @@ def main() -> None:
             "budget_sec": args.budget_sec,
             "seeds": args.seeds,
             "workers": args.workers,
-            "independent_verifier": "pitbench.problem_families.cvrp:CVRPFamily",
+            "independent_verifier": "pitbench.problem_families.verification:CVRPFamily",
         },
         "anchors": anchors,
     }

@@ -20,37 +20,38 @@ from pitbench.agent_tools import (
     normalize_agent_tools,
 )
 from pitbench.instances import materialize_instance_set
+from pitbench.repositories.base import RepositoryPluginRegistry
 from pitbench.schema.task import InstanceSetKind, PitBenchTask
 from pitbench.tasks import TaskCatalog
 
 _AGENT_IMAGES = {
-    "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin": "python:3.13-trixie",
-    "pitbench.repositories.vroom:VroomRepositoryPlugin": "ubuntu:22.04",
-    "pitbench.repositories.highs:HighsRepositoryPlugin": "ubuntu:24.04",
-    "pitbench.repositories.choco:ChocoRepositoryPlugin": (
+    "pitbench.repositories.plugins:PyVRPRepositoryPlugin": "python:3.13-trixie",
+    "pitbench.repositories.plugins:VroomRepositoryPlugin": "ubuntu:22.04",
+    "pitbench.repositories.plugins:HighsRepositoryPlugin": "ubuntu:24.04",
+    "pitbench.repositories.plugins:ChocoRepositoryPlugin": (
         "maven:3.9-eclipse-temurin-11"
     ),
-    "pitbench.repositories.ortools:OrToolsRepositoryPlugin": (
+    "pitbench.repositories.plugins:OrToolsRepositoryPlugin": (
         "maven:3.9-eclipse-temurin-11"
     ),
 }
 
 _BUILD_PACKAGES = {
-    "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin": (
+    "pitbench.repositories.plugins:PyVRPRepositoryPlugin": (
         "build-essential cmake ninja-build python3-dev"
     ),
-    "pitbench.repositories.vroom:VroomRepositoryPlugin": (
+    "pitbench.repositories.plugins:VroomRepositoryPlugin": (
         "build-essential libssl-dev libasio-dev libglpk-dev pkg-config"
     ),
-    "pitbench.repositories.highs:HighsRepositoryPlugin": "build-essential cmake",
-    "pitbench.repositories.choco:ChocoRepositoryPlugin": "",
-    "pitbench.repositories.ortools:OrToolsRepositoryPlugin": (
+    "pitbench.repositories.plugins:HighsRepositoryPlugin": "build-essential cmake",
+    "pitbench.repositories.plugins:ChocoRepositoryPlugin": "",
+    "pitbench.repositories.plugins:OrToolsRepositoryPlugin": (
         "build-essential cmake openjdk-11-jdk maven swig"
     ),
 }
 
 _PYTHON_PACKAGES = {
-    "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin": (
+    "pitbench.repositories.plugins:PyVRPRepositoryPlugin": (
         "docblock matplotlib meson ninja numpy pandas poetry-core pyarrow "
         "pybind11 pydantic "
         "pytest pytest-cov pytest-timeout pytest-xdist pyyaml setuptools tqdm "
@@ -59,14 +60,14 @@ _PYTHON_PACKAGES = {
 }
 
 _PREBUILD_COMMANDS = {
-    "pitbench.repositories.pyvrp:PyVRPRepositoryPlugin": (
+    "pitbench.repositories.plugins:PyVRPRepositoryPlugin": (
         "RUN python3 -m pip install --break-system-packages "
         "--no-build-isolation --no-deps -e /workspace/repo\n"
     ),
-    "pitbench.repositories.vroom:VroomRepositoryPlugin": (
+    "pitbench.repositories.plugins:VroomRepositoryPlugin": (
         "RUN cd /workspace/repo && make -j1 CXXFLAGS='-O3 -DNDEBUG'\n"
     ),
-    "pitbench.repositories.highs:HighsRepositoryPlugin": (
+    "pitbench.repositories.plugins:HighsRepositoryPlugin": (
         "RUN cd /workspace/repo && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && "
         "cmake --build build -j1\n"
     ),
@@ -74,7 +75,7 @@ _PREBUILD_COMMANDS = {
 
 # Increment when the generated task image or bundled public tooling becomes
 # incompatible with an image produced by an earlier PitBench checkout.
-IMAGE_REVISION = "4"
+IMAGE_REVISION = "5"
 IMAGE_REVISION_LABEL = "org.pitbench.image-revision"
 IMAGE_SOURCE_LABEL = "org.pitbench.image-source"
 IMAGE_TOOLS_LABEL = "org.pitbench.agent-tools"
@@ -244,7 +245,7 @@ class PitBenchAdapter:
         image_override: str | None = None,
         agent_tools: Iterable[AgentTool | str] = (),
     ) -> str:
-        plugin = task.repository.plugin
+        plugin = RepositoryPluginRegistry.canonical_path(task.repository.plugin)
         tools = normalize_agent_tools(agent_tools)
         prepared_image = image_override or task.repository.agent_image
         if prepared_image is not None:
