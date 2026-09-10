@@ -1,0 +1,36 @@
+# Approved M2 panel. Paths are relative to the PitBench repository root.
+searcher_version: "2.4.0"
+max_configurations: 16
+instance_count: 10
+solver_seed_count: 30
+watchdog_grace_sec: 60
+panels:
+  - task_config: configs/tasks/pyvrp_v0_14_0.yaml
+    collector: pyvrp
+    feedback: normalized_gap
+    instance_source: configs/instance_sets/pyvrp_cvrp_v1_dev.yaml
+    seed_source: configs/tasks/pyvrp_v0_14_0.yaml
+    seed_key: evaluation.seed_robustness.development_seeds
+    seed_max: 4294967295
+    parameters:
+      neighbourhood.num_neighbours: {type: integer, bounds: [50, 60], default: 50}
+      ils.history_length: {type: integer, bounds: [300, 500], default: 300}
+      penalty.penalty_increase: {type: real, bounds: [1.25, 1.50], default: 1.50}
+      penalty.penalty_decrease: {type: real, bounds: [0.85, 0.95], default: 0.90}
+  - task_config: configs/tasks/highs_v1_15_1.yaml
+    collector: highs
+    feedback: capped_optimal_time
+    instance_source: private/highs_nuisance/20260909/experiment.json
+    seed_source: private/highs_nuisance/20260909/experiment.json
+    seed_key: solver_seeds
+    seed_max: 2147483647
+    fixed_options:
+      parallel: "off"
+      mip_feasibility_tolerance: 0.000001
+      mip_rel_gap: 0.0001
+      mip_abs_gap: 0.000001
+    parameters:
+      presolve: {type: categorical, choices: [choose, "off"], default: choose}
+      mip_detect_symmetry: {type: categorical, choices: [true, false], default: true}
+      mip_heuristic_run_feasibility_jump: {type: categorical, choices: [true, false], default: true}
+      mip_heuristic_effort: {type: real, bounds: [0, 1], default: 0.05}

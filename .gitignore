@@ -9,6 +9,9 @@ __pycache__/
 .ruff_cache/
 .coverage
 
+# Local test suite
+/tests/
+
 # Local environments and secrets
 .env
 .venv/
@@ -35,9 +38,7 @@ __pycache__/
 # Private judge inputs and generated evaluation data
 private/*
 !private/README.md
-results/*
-!results/cvrp-qoi-axioms-v1.json
-!results/cvrp-qoi-research-summary-v1.json
+/results/
 /dataset/
 *.parquet
 *.egg-info/

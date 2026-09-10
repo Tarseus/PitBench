@@ -27,6 +27,39 @@ class PyVRPDriver:
     """Invoke the pyvrp backend with its existing configuration contract."""
 
     @staticmethod
+    def parameters(values: dict):
+        """Construct nested solver parameters without mutating default objects."""
+        from pyvrp import SolveParams
+
+        defaults = SolveParams()
+        groups = {}
+        for name, value in values.items():
+            group, field = name.split(".", 1)
+            groups.setdefault(group, {})[field] = value
+        return SolveParams(
+            **{
+                group: type(getattr(defaults, group))(**fields)
+                for group, fields in groups.items()
+            }
+        )
+
+    @staticmethod
+    def parameter_values(params) -> dict:
+        """Record the effective public scalar settings, including defaults."""
+        return {
+            group: {
+                name: value
+                for name in dir(getattr(params, group))
+                if not name.startswith("_")
+                and isinstance(
+                    value := getattr(getattr(params, group), name),
+                    (bool, int, float, str),
+                )
+            }
+            for group in ("ils", "penalty", "neighbourhood", "perturbation")
+        }
+
+    @staticmethod
     def _route_visits(route: object) -> list[int]:
         """Return zero-based CVRP node ids across PyVRP route API generations."""
 
@@ -86,7 +119,9 @@ class PyVRPDriver:
 
     @staticmethod
     def main(argv: list[str] | None = None) -> None:
-        args = parser().parse_args(argv)
+        arguments = parser()
+        arguments.add_argument("--parameters", type=Path)
+        args = arguments.parse_args(argv)
         started = time.perf_counter()
         instance = json.loads(args.instance.read_text())
         args.trajectory.parent.mkdir(parents=True, exist_ok=True)
@@ -95,12 +130,23 @@ class PyVRPDriver:
             from pyvrp import Model, read
             from pyvrp.stop import MaxRuntime
 
+            options = {}
+            if args.parameters is not None:
+                params = PyVRPDriver.parameters(json.loads(args.parameters.read_text()))
+                options["params"] = params
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.with_suffix(".parameters.json").write_text(
+                    json.dumps(PyVRPDriver.parameter_values(params), indent=2) + "\n"
+                )
             with tempfile.TemporaryDirectory(prefix="pitbench-pyvrp-") as temporary:
                 vrp = Path(temporary) / "instance.vrp"
                 PyVRPDriver._vrplib(instance, vrp)
                 data = read(vrp, round_func="round")
                 result = Model.from_data(data).solve(
-                    stop=MaxRuntime(args.budget), seed=args.seed, display=False
+                    stop=MaxRuntime(args.budget),
+                    seed=args.seed,
+                    display=False,
+                    **options,
                 )
                 resources = process_resources()
             if not result.best.is_feasible():
@@ -110,6 +156,8 @@ class PyVRPDriver:
                     valid=False,
                     has_solution=False,
                     solver_status="Budget stop",
+                    solver_runtime_sec=result.runtime,
+                    iterations=result.num_iterations,
                     **resources,
                 )
                 return

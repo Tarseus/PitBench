@@ -36,9 +36,60 @@ def write_json(path: Path, value) -> None:
     temporary.replace(path)
 
 
+def run_collection_process(
+    command: list[str],
+    directory: Path,
+    identity: dict,
+    *,
+    timeout: float,
+    environment: dict | None = None,
+) -> dict:
+    """Collect one isolated worker, including process failures and watchdog exits."""
+    directory.mkdir(parents=True, exist_ok=True)
+    result = dict(identity)
+    started = time.perf_counter()
+    try:
+        with (directory / "process.log").open("w") as log:
+            completed = subprocess.run(
+                command,
+                cwd=ROOT,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                env=environment
+                or {
+                    **os.environ,
+                    "OMP_NUM_THREADS": "1",
+                    "OPENBLAS_NUM_THREADS": "1",
+                    "MKL_NUM_THREADS": "1",
+                },
+                timeout=timeout,
+                check=False,
+            )
+        result.update(execution_status="process_error", returncode=completed.returncode)
+        if (directory / "result.json").exists():
+            result.update(json.loads((directory / "result.json").read_text()))
+            result["returncode"] = completed.returncode
+            if completed.returncode:
+                result["execution_status"] = "process_error"
+    except subprocess.TimeoutExpired:
+        result.update(execution_status="watchdog_timeout", verified_feasible=False)
+    except OSError as error:
+        result.update(execution_status="collector_error", error=str(error))
+    result.update(
+        process_wall_sec=time.perf_counter() - started,
+        result_path=str(directory / "result.json"),
+    )
+    write_json(directory / "result.json", result)
+    return result
+
+
 def finite(value):
     value = float(value)
     return value if math.isfinite(value) else None
+
+
+class ParameterRejected(ValueError):
+    """A solver rejected parameters that the declared domain allowed."""
 
 
 class HighsCollection:
@@ -206,10 +257,131 @@ class HighsCollection:
         )
 
     @staticmethod
+    def solve(
+        model,
+        original,
+        columns,
+        directory: Path,
+        options: dict,
+        result: dict,
+        started: float,
+    ) -> None:
+        """Run and independently verify one preserved or transformed numeric model."""
+        import highspy
+        import numpy as np
+
+        from pitbench.evaluator.representations import LinearModelRepresentation
+
+        result["error_stage"] = "setup"
+        solver = highspy.Highs()
+        for key, value in options.items():
+            if solver.setOptionValue(key, value) != highspy.HighsStatus.kOk:
+                raise ParameterRejected(f"HiGHS rejected {key}={value}")
+        if (
+            solver.passModel(LinearModelRepresentation.to_highs_lp(model))
+            != highspy.HighsStatus.kOk
+        ):
+            raise ValueError("HiGHS rejected prepared model")
+        solver.writeOptions(str(directory / "options.txt"))
+        trajectory_path = directory / "trajectory.jsonl"
+        trajectory_path.write_text("")
+
+        def observe(event):
+            data = event.data_out
+            record = {
+                "event": int(event.callback_type),
+                "time_sec": finite(data.running_time),
+                "primal_bound": finite(data.mip_primal_bound),
+                "dual_bound": finite(data.mip_dual_bound),
+                "solver_gap": finite(data.mip_gap),
+                "nodes": int(data.mip_node_count),
+                "simplex_iterations": int(data.simplex_iteration_count),
+            }
+            with trajectory_path.open("a") as handle:
+                handle.write(json.dumps(record, allow_nan=False) + "\n")
+
+        solver.cbMipLogging.subscribe(observe)
+        solver.cbMipImprovingSolution.subscribe(observe)
+        result["effective_parameters"] = {
+            key: solver.getOptionValue(key)[1] for key in options
+        }
+        result["setup_wall_sec"] = time.perf_counter() - started
+        solve_started = time.perf_counter()
+        cpu_started = time.process_time()
+        result["error_stage"] = "solve"
+        status = solver.run()
+        result.update(process_resources())
+        result["solve_wall_sec"] = time.perf_counter() - solve_started
+        result["solve_cpu_sec"] = time.process_time() - cpu_started
+        info = solver.getInfo()
+        model_status = solver.getModelStatus()
+        solution = solver.getSolution()
+        result.update(
+            {
+                "execution_status": "returned",
+                "call_status": str(status),
+                "model_status": solver.modelStatusToString(model_status),
+                "solver_runtime_sec": solver.getRunTime(),
+                "primal_solution_status": int(info.primal_solution_status),
+                "solver_objective": finite(info.objective_function_value)
+                if solution.value_valid
+                else None,
+                "dual_bound": finite(info.mip_dual_bound),
+                "solver_gap": finite(info.mip_gap),
+                "nodes": int(info.mip_node_count),
+                "simplex_iterations": int(info.simplex_iteration_count),
+                "optimal_with_configured_tolerances": model_status
+                == highspy.HighsModelStatus.kOptimal,
+                "time_to_solver_optimal_sec": solver.getRunTime()
+                if model_status == highspy.HighsModelStatus.kOptimal
+                else None,
+                "solution_value_valid": solution.value_valid,
+            }
+        )
+        result["error_stage"] = "verification"
+        verification_started = time.perf_counter()
+        tolerance = options["mip_feasibility_tolerance"]
+        result["verification"] = None
+        result["transformed_verification"] = None
+        if solution.value_valid:
+            values = np.asarray(solution.col_value)
+            mapped = LinearModelRepresentation.map_solution(values, columns)
+            np.savez_compressed(
+                directory / "solution.npz", values=values, original_values=mapped
+            )
+            result["verification"] = LinearModelRepresentation.verify_primal(
+                original, mapped, tolerance
+            )
+            result["transformed_verification"] = (
+                LinearModelRepresentation.verify_primal(model, values, tolerance)
+            )
+            result["objective_mapping_difference"] = result["verification"].get(
+                "objective", 0
+            ) - result["transformed_verification"].get("objective", 0)
+            if "objective" in result["verification"]:
+                result["objective_reporting_difference"] = (
+                    result["verification"]["objective"] - info.objective_function_value
+                )
+        result["verified_feasible"] = bool(
+            (result["verification"] or {}).get("feasible")
+        )
+        result["verification_wall_sec"] = time.perf_counter() - verification_started
+        final_event = {
+            "event": "final",
+            "time_sec": solver.getRunTime(),
+            "primal_bound": result["solver_objective"],
+            "dual_bound": result["dual_bound"],
+            "solver_gap": result["solver_gap"],
+            "nodes": result["nodes"],
+        }
+        with trajectory_path.open("a") as handle:
+            handle.write(json.dumps(final_event, allow_nan=False) + "\n")
+        result.pop("error_stage", None)
+
+    @staticmethod
     def worker(output: Path, run_id: str, cpu: int) -> None:
         os.sched_setaffinity(0, {cpu})
         started = time.perf_counter()
-        import highspy
         import numpy as np
 
         from pitbench.evaluator.representations import LinearModelRepresentation
@@ -241,112 +413,21 @@ class HighsCollection:
                     model_root / f"mapping-{job['permutation']:02d}.npz"
                 ) as mapping:
                     columns = mapping["columns"]
-            solver = highspy.Highs()
-            options = {
-                **manifest["solver_options"],
-                "random_seed": job["solver_seed"],
-                "time_limit": job["budget_sec"],
-                "log_to_console": False,
-                "log_file": str(directory / "solver.log"),
-            }
-            for key, value in options.items():
-                if solver.setOptionValue(key, value) != highspy.HighsStatus.kOk:
-                    raise ValueError(f"HiGHS rejected {key}={value}")
-            if (
-                solver.passModel(LinearModelRepresentation.to_highs_lp(model))
-                != highspy.HighsStatus.kOk
-            ):
-                raise ValueError("HiGHS rejected prepared model")
-            solver.writeOptions(str(directory / "options.txt"))
-            trajectory_path = directory / "trajectory.jsonl"
-            trajectory_path.write_text("")
-
-            def observe(event):
-                data = event.data_out
-                record = {
-                    "event": int(event.callback_type),
-                    "time_sec": finite(data.running_time),
-                    "primal_bound": finite(data.mip_primal_bound),
-                    "dual_bound": finite(data.mip_dual_bound),
-                    "solver_gap": finite(data.mip_gap),
-                    "nodes": int(data.mip_node_count),
-                    "simplex_iterations": int(data.simplex_iteration_count),
-                }
-                with trajectory_path.open("a") as handle:
-                    handle.write(json.dumps(record, allow_nan=False) + "\n")
-
-            solver.cbMipLogging.subscribe(observe)
-            solver.cbMipImprovingSolution.subscribe(observe)
-            result["setup_wall_sec"] = time.perf_counter() - started
-            solve_started = time.perf_counter()
-            cpu_started = time.process_time()
-            status = solver.run()
-            result.update(process_resources())
-            result["solve_wall_sec"] = time.perf_counter() - solve_started
-            result["solve_cpu_sec"] = time.process_time() - cpu_started
-            info = solver.getInfo()
-            model_status = solver.getModelStatus()
-            solution = solver.getSolution()
-            result.update(
+            HighsCollection.solve(
+                model,
+                original,
+                columns,
+                directory,
                 {
-                    "execution_status": "returned",
-                    "call_status": str(status),
-                    "model_status": solver.modelStatusToString(model_status),
-                    "solver_runtime_sec": solver.getRunTime(),
-                    "primal_solution_status": int(info.primal_solution_status),
-                    "solver_objective": finite(info.objective_function_value)
-                    if solution.value_valid
-                    else None,
-                    "dual_bound": finite(info.mip_dual_bound),
-                    "solver_gap": finite(info.mip_gap),
-                    "nodes": int(info.mip_node_count),
-                    "simplex_iterations": int(info.simplex_iteration_count),
-                    "optimal_with_configured_tolerances": model_status
-                    == highspy.HighsModelStatus.kOptimal,
-                    "time_to_solver_optimal_sec": solver.getRunTime()
-                    if model_status == highspy.HighsModelStatus.kOptimal
-                    else None,
-                    "solution_value_valid": solution.value_valid,
-                }
+                    **manifest["solver_options"],
+                    "random_seed": job["solver_seed"],
+                    "time_limit": job["budget_sec"],
+                    "log_to_console": False,
+                    "log_file": str(directory / "solver.log"),
+                },
+                result,
+                started,
             )
-            verification_started = time.perf_counter()
-            tolerance = manifest["solver_options"]["mip_feasibility_tolerance"]
-            result["verification"] = None
-            result["transformed_verification"] = None
-            if solution.value_valid:
-                values = np.asarray(solution.col_value)
-                mapped = LinearModelRepresentation.map_solution(values, columns)
-                np.savez_compressed(
-                    directory / "solution.npz", values=values, original_values=mapped
-                )
-                result["verification"] = LinearModelRepresentation.verify_primal(
-                    original, mapped, tolerance
-                )
-                result["transformed_verification"] = (
-                    LinearModelRepresentation.verify_primal(model, values, tolerance)
-                )
-                result["objective_mapping_difference"] = result["verification"].get(
-                    "objective", 0
-                ) - result["transformed_verification"].get("objective", 0)
-                if "objective" in result["verification"]:
-                    result["objective_reporting_difference"] = (
-                        result["verification"]["objective"]
-                        - info.objective_function_value
-                    )
-            result["verified_feasible"] = bool(
-                (result["verification"] or {}).get("feasible")
-            )
-            result["verification_wall_sec"] = time.perf_counter() - verification_started
-            final_event = {
-                "event": "final",
-                "time_sec": solver.getRunTime(),
-                "primal_bound": result["solver_objective"],
-                "dual_bound": result["dual_bound"],
-                "solver_gap": result["solver_gap"],
-                "nodes": result["nodes"],
-            }
-            with trajectory_path.open("a") as handle:
-                handle.write(json.dumps(final_event, allow_nan=False) + "\n")
         except Exception:
             result.update(
                 execution_status="collector_error",
@@ -425,56 +506,28 @@ class HighsCollection:
             cpu = queue.get()
             directory = output / "runs" / job["run_id"]
             directory.mkdir(parents=True, exist_ok=True)
-            started = time.perf_counter()
             try:
-                with (directory / "process.log").open("w") as log:
-                    completed = subprocess.run(
-                        [
-                            sys.executable,
-                            "-m",
-                            "scripts.collect_nuisance_results",
-                            "highs",
-                            "worker",
-                            "--output",
-                            str(output),
-                            "--run-id",
-                            job["run_id"],
-                            "--cpu",
-                            str(cpu),
-                        ],
-                        cwd=ROOT,
-                        env=environment,
-                        stdout=log,
-                        stderr=subprocess.STDOUT,
-                        timeout=job["budget_sec"] + 60,
-                        check=False,
-                    )
-                if not (directory / "result.json").exists():
-                    write_json(
-                        directory / "result.json",
-                        {
-                            **job,
-                            "cpu": cpu,
-                            "execution_status": "process_error",
-                            "returncode": completed.returncode,
-                            "verified_feasible": False,
-                            "process_wall_sec": time.perf_counter() - started,
-                        },
-                    )
-            except subprocess.TimeoutExpired:
-                write_json(
-                    directory / "result.json",
-                    {
-                        **job,
-                        "cpu": cpu,
-                        "execution_status": "watchdog_timeout",
-                        "verified_feasible": False,
-                        "process_wall_sec": time.perf_counter() - started,
-                    },
+                return run_collection_process(
+                    [
+                        sys.executable,
+                        "-m",
+                        "scripts.collect_nuisance_results",
+                        "highs",
+                        "worker",
+                        "--output",
+                        str(output),
+                        "--run-id",
+                        job["run_id"],
+                        "--cpu",
+                        str(cpu),
+                    ],
+                    directory,
+                    {**job, "cpu": cpu},
+                    timeout=job["budget_sec"] + 60,
+                    environment=environment,
                 )
             finally:
                 queue.put(cpu)
-            return json.loads((directory / "result.json").read_text())
 
         print(
             f"Running {len(jobs)} outstanding observations on CPUs {cpus}.", flush=True
@@ -884,3 +937,174 @@ class AnchorCollection:
         oracle_path = output / "oracle.yaml"
         oracle_path.write_text(yaml.safe_dump(oracle, sort_keys=False))
         print(oracle_path)
+
+
+class PyVRPConfigurationCollection:
+    """Parameter panels reuse the normal routing driver and verifier."""
+
+    @staticmethod
+    def identity() -> dict:
+        import importlib.metadata
+
+        import pyvrp
+
+        return {
+            "version": importlib.metadata.version("pyvrp"),
+            "module": pyvrp.__file__,
+        }
+
+    @staticmethod
+    def prepare_instances(source: Path, destination: Path) -> list[dict]:
+        import shutil
+
+        import yaml
+
+        instances = []
+        for item in yaml.safe_load(source.read_text())["instances"]:
+            target = destination / f"{item['id']}.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source.parent / item["instance_file"], target)
+            instances.append(
+                {"id": item["id"], "path": str(target), "bks": item["bks"]}
+            )
+        return instances
+
+    @staticmethod
+    def run(job: dict, directory: Path, result: dict) -> None:
+        from pitbench.problem_families.verification import CVRPFamily
+        from pitbench.solver_drivers.run import PyVRPDriver
+
+        result["error_stage"] = "parameters"
+        try:
+            params = PyVRPDriver.parameters(job["parameters"])
+        except (ValueError, TypeError, AttributeError) as error:
+            raise ParameterRejected(str(error)) from error
+        result["effective_parameters"] = PyVRPDriver.parameter_values(params)
+        parameters = directory / "parameters.json"
+        write_json(parameters, job["parameters"])
+        output = directory / "driver.json"
+        result["error_stage"] = "solve"
+        try:
+            PyVRPDriver.main(
+                [
+                    "--instance",
+                    job["instance"]["path"],
+                    "--output",
+                    str(output),
+                    "--trajectory",
+                    str(directory / "trajectory.jsonl"),
+                    "--parameters",
+                    str(parameters),
+                    "--seed",
+                    str(job["solver_seed"]),
+                    "--budget",
+                    str(job["budget_sec"]),
+                    "--threads",
+                    str(job["threads"]),
+                ]
+            )
+        finally:
+            if output.exists():
+                result.update(json.loads(output.read_text()))
+        result.update(
+            execution_status="returned",
+            model_status=result.get("solver_status"),
+            solution_value_valid=result.get("has_solution", False),
+        )
+        result["error_stage"] = "verification"
+        solution = output.with_suffix(".solution.json")
+        result["verification"] = None
+        if solution.exists():
+            result["verification"] = (
+                CVRPFamily()
+                .verify(Path(job["instance"]["path"]), solution)
+                .model_dump()
+            )
+        result["verified_feasible"] = bool(
+            (result["verification"] or {}).get("feasible")
+        )
+        result.pop("error_stage", None)
+
+
+class HighsConfigurationCollection:
+    """Parameter panels reuse the numeric-model collector and its verifier."""
+
+    @staticmethod
+    def identity() -> dict:
+        import highspy
+
+        solver = highspy.Highs()
+        return {"version": solver.version(), "binding_git_hash": solver.githash()}
+
+    @staticmethod
+    def prepare_instances(source: Path, destination: Path) -> list[dict]:
+        import shutil
+
+        instances = []
+        for item in json.loads(source.read_text())["instances"]:
+            target = destination / f"{item['name']}.npz"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(
+                source.parent / "models" / item["name"] / "original.npz", target
+            )
+            instances.append({"id": item["name"], "path": str(target), "bks": None})
+        return instances
+
+    @staticmethod
+    def run(job: dict, directory: Path, result: dict) -> None:
+        import numpy as np
+
+        from pitbench.evaluator.representations import LinearModelRepresentation
+
+        started = time.perf_counter()
+        original = LinearModelRepresentation.load(Path(job["instance"]["path"]))
+        options = {
+            **job["fixed_options"],
+            **job["parameters"],
+            "threads": job["threads"],
+            "random_seed": job["solver_seed"],
+            "time_limit": job["budget_sec"],
+            "log_to_console": False,
+            "log_file": str(directory / "solver.log"),
+        }
+        HighsCollection.solve(
+            original,
+            original,
+            np.arange(len(original["cost"])),
+            directory,
+            options,
+            result,
+            started,
+        )
+
+
+CONFIGURATION_COLLECTORS = {
+    "pyvrp": PyVRPConfigurationCollection,
+    "highs": HighsConfigurationCollection,
+}
+
+
+def configuration_worker(job_path: Path, cpu: int) -> None:
+    """One fresh process per solver run; keep failures distinct from missing data."""
+    os.sched_setaffinity(0, {cpu})
+    job = json.loads(job_path.read_text())
+    result = {**job, "cpu": cpu, "pid": os.getpid(), "started_unix": time.time()}
+    started = time.perf_counter()
+    try:
+        collector = CONFIGURATION_COLLECTORS[job["collector"]]
+        result["error_stage"] = "setup"
+        result["solver"] = collector.identity()
+        if result["solver"] != job["solver"]:
+            raise ValueError("solver identity changed since preparation")
+        collector.run(job, job_path.parent, result)
+    except ParameterRejected as error:
+        result.update(execution_status="parameter_rejected", error=str(error))
+    except Exception:
+        result.update(
+            execution_status="solver_error"
+            if result.get("error_stage") == "solve"
+            else "collector_error",
+            error=traceback.format_exc(),
+        )
+    result["total_worker_wall_sec"] = time.perf_counter() - started
+    write_json(job_path.parent / "result.json", result)

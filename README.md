@@ -277,6 +277,41 @@ their transformation manifest. It derives group sizes and budgets from those
 records, separates code states, and retains missing groups. CSV, JSON summaries,
 and HTML share the same observations; no robustness statistic is selected here.
 
+Parameter robustness uses a fixed number of SMAC3 configuration evaluations. Install
+the controller's optional search dependencies with `uv sync --extra configuration`.
+Each worker Python environment must contain its configured solver and the PitBench
+dependencies needed by its collector and independent verifier. The experiment YAML
+selects the collection backends, parameter domains, instance sources and seed lists;
+task files supply solver releases and per-run budgets.
+
+```bash
+uv run --extra configuration python -m scripts.collect_configuration_results prepare \
+  --config configs/experiments/configuration_robustness.yaml \
+  --output results/configuration-robustness \
+  --solver-python pyvrp=/path/to/routing-environment/bin/python \
+  --solver-python highs=/path/to/exact-environment/bin/python \
+  --cpus <available-cpu-ids> --search-seed <searcher-seed>
+
+uv run --extra configuration python -m scripts.collect_configuration_results run \
+  --output results/configuration-robustness
+
+uv run python -m scripts.collect_configuration_results report \
+  --output results/configuration-robustness
+```
+
+Preparation copies the fixed inputs and records disjoint retest seeds, runtime
+identities and CPU assignments without solving. Each search trial evaluates the
+whole instance/seed panel before feedback; the supplied protocol allows 16 new
+configurations per solver/budget. Search and retest results, effective parameters,
+solutions, trajectories and every run attempt are retained. The JSON report keeps
+paired degradation and unavailable feedback separate. Normal native time limits
+use the approved capped-time feedback; unavailable feedback stops that search and
+selects the offending configuration for retest. Collection faults pause instead;
+after fixing the cause, `run --retry-collection-errors` retains failed attempts and
+retries only collection errors. Re-running a completed search reuses its results.
+The supplied full panel can consume about 87 solver-budget core-hours; smoke checks
+with reduced temporary fixtures do not constitute the full robustness experiment.
+
 ```bash
 # Validate task configs and contracts
 uv run pitbench tasks validate

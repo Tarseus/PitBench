@@ -25,6 +25,10 @@ dependencies = [
 [project.scripts]
 pitbench = "pitbench.cli.main:app"
 
+[project.optional-dependencies]
+# SMAC 2.4.0 imports sklearn's private tree API, changed in newer releases.
+configuration = ["smac==2.4.0", "scikit-learn==1.7.2"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3.4",
