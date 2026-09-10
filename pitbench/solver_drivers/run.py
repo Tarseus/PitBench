@@ -13,8 +13,10 @@ import time
 from pathlib import Path
 
 from pitbench.solver_drivers.common import (
+    ParameterRejected,
     append_trajectory,
     failure_reason,
+    finite,
     parser,
     process_resources,
     write_result,
@@ -279,6 +281,134 @@ _FLOAT = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 
 class HighsDriver:
     """Invoke the highs backend with its existing configuration contract."""
+
+    @staticmethod
+    def solve_numeric(
+        model,
+        original,
+        columns,
+        directory: Path,
+        options: dict,
+        result: dict,
+        started: float,
+    ) -> None:
+        """Run and independently verify one preserved or transformed numeric model."""
+        import highspy
+        import numpy as np
+
+        from pitbench.evaluator.representations import LinearModelRepresentation
+        from pitbench.problem_families.verification import NumericModelFamily
+
+        result["error_stage"] = "setup"
+        solver = highspy.Highs()
+        for key, value in options.items():
+            if solver.setOptionValue(key, value) != highspy.HighsStatus.kOk:
+                raise ParameterRejected(f"HiGHS rejected {key}={value}")
+        if (
+            solver.passModel(LinearModelRepresentation.to_highs_lp(model))
+            != highspy.HighsStatus.kOk
+        ):
+            raise ValueError("HiGHS rejected prepared model")
+        solver.writeOptions(str(directory / "options.txt"))
+        trajectory_path = directory / "trajectory.jsonl"
+        trajectory_path.write_text("")
+
+        def observe(event):
+            data = event.data_out
+            record = {
+                "event": int(event.callback_type),
+                "time_sec": finite(data.running_time),
+                "primal_bound": finite(data.mip_primal_bound),
+                "dual_bound": finite(data.mip_dual_bound),
+                "solver_gap": finite(data.mip_gap),
+                "nodes": int(data.mip_node_count),
+                "simplex_iterations": int(data.simplex_iteration_count),
+            }
+            with trajectory_path.open("a") as handle:
+                handle.write(json.dumps(record, allow_nan=False) + "\n")
+
+        solver.cbMipLogging.subscribe(observe)
+        solver.cbMipImprovingSolution.subscribe(observe)
+        result["effective_parameters"] = {
+            key: solver.getOptionValue(key)[1] for key in options
+        }
+        result["setup_wall_sec"] = time.perf_counter() - started
+        solve_started = time.perf_counter()
+        cpu_started = time.process_time()
+        result["error_stage"] = "solve"
+        status = solver.run()
+        result.update(process_resources())
+        result["solve_wall_sec"] = time.perf_counter() - solve_started
+        result["solve_cpu_sec"] = time.process_time() - cpu_started
+        info = solver.getInfo()
+        model_status = solver.getModelStatus()
+        solution = solver.getSolution()
+        result.update(
+            {
+                "execution_status": "returned",
+                "call_status": str(status),
+                "model_status": solver.modelStatusToString(model_status),
+                "solver_runtime_sec": solver.getRunTime(),
+                "primal_solution_status": int(info.primal_solution_status),
+                "solver_objective": finite(info.objective_function_value)
+                if solution.value_valid
+                else None,
+                "dual_bound": finite(info.mip_dual_bound),
+                "solver_gap": finite(info.mip_gap),
+                "nodes": int(info.mip_node_count),
+                "simplex_iterations": int(info.simplex_iteration_count),
+                "optimal_with_configured_tolerances": model_status
+                == highspy.HighsModelStatus.kOptimal,
+                "time_to_solver_optimal_sec": solver.getRunTime()
+                if model_status == highspy.HighsModelStatus.kOptimal
+                else None,
+                "solution_value_valid": solution.value_valid,
+            }
+        )
+        result["error_stage"] = "verification"
+        verification_started = time.perf_counter()
+        tolerance = options["mip_feasibility_tolerance"]
+        result["verification"] = None
+        result["transformed_verification"] = None
+        if solution.value_valid:
+            values = np.asarray(solution.col_value)
+            mapped = LinearModelRepresentation.map_solution(values, columns)
+            np.savez_compressed(
+                directory / "solution.npz", values=values, original_values=mapped
+            )
+            solution_path = directory / "solution.json"
+            solution_path.write_text(
+                json.dumps({"values": values.tolist()}, allow_nan=False) + "\n"
+            )
+            result["solution_path"] = str(solution_path)
+            result["verification"] = NumericModelFamily.check_model(
+                original, mapped, tolerance
+            )
+            result["transformed_verification"] = NumericModelFamily.check_model(
+                model, values, tolerance
+            )
+            result["objective_mapping_difference"] = result["verification"].get(
+                "objective", 0
+            ) - result["transformed_verification"].get("objective", 0)
+            if "objective" in result["verification"]:
+                result["objective_reporting_difference"] = (
+                    result["verification"]["objective"] - info.objective_function_value
+                )
+        result["verified_feasible"] = bool(
+            (result["verification"] or {}).get("feasible")
+        )
+        result["verification_wall_sec"] = time.perf_counter() - verification_started
+        final_event = {
+            "event": "final",
+            "time_sec": solver.getRunTime(),
+            "primal_bound": result["solver_objective"],
+            "dual_bound": result["dual_bound"],
+            "solver_gap": result["solver_gap"],
+            "nodes": result["nodes"],
+        }
+        with trajectory_path.open("a") as handle:
+            handle.write(json.dumps(final_event, allow_nan=False) + "\n")
+        result.pop("error_stage", None)
 
     @staticmethod
     def _match(pattern: str, text: str) -> float | None:

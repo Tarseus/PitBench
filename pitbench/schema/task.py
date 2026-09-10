@@ -139,6 +139,8 @@ class SeedRobustnessConfig(BaseModel):
 
 
 class RepresentationRobustnessConfig(BaseModel):
+    kind: str = "customer_relabeling"
+    verification_tolerance: float | None = Field(default=None, gt=0)
     instance_set: str = "agent_dev"
     solver_seed: int = Field(default=0, ge=0, le=4294967295)
     relabeling_generation_seed: int = 20260907
@@ -212,13 +214,25 @@ class PitBenchTask(BaseModel):
             raise ValueError("instance-set names must be unique")
         representation = self.evaluation.representation_robustness
         if representation is not None:
+            from pitbench.evaluator.representations import representation_type
+            from pitbench.repositories.base import RepositoryPluginRegistry
+
+            transform = representation_type(representation.kind)
+            repository = RepositoryPluginRegistry.load(self.repository.plugin)
             if (
-                self.problem_family != ProblemFamily.CVRP
-                or self.repository.plugin
-                != "pitbench.repositories.plugins:PyVRPRepositoryPlugin"
+                transform.family != self.problem_family
+                or "judge"
+                not in repository.representations.get(representation.kind, ())
             ):
                 raise ValueError(
-                    "customer relabeling currently requires a PyVRP CVRP task"
+                    "representation is not supported by the configured family and repository"
+                )
+            if (
+                transform.requires_tolerance
+                and representation.verification_tolerance is None
+            ):
+                raise ValueError(
+                    "numeric representation requires a verification tolerance"
                 )
             if not any(
                 item.name == representation.instance_set

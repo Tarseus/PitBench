@@ -38,11 +38,15 @@ class DirectoryRunResults:
                     if verification.get("feasible")
                     else None,
                     "result_path": os.path.relpath(path, output),
-                    "trajectory_path": os.path.relpath(
-                        path.with_name("trajectory.jsonl"), output
+                    "trajectory_path": _relative(
+                        source, output, record.get("trajectory_path")
                     )
-                    if path.with_name("trajectory.jsonl").exists()
-                    else None,
+                    if record.get("trajectory_path")
+                    else (
+                        os.path.relpath(path.with_name("trajectory.jsonl"), output)
+                        if path.with_name("trajectory.jsonl").exists()
+                        else None
+                    ),
                 }
             )
         return {**manifest, "jobs": jobs}, records

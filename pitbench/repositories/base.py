@@ -50,9 +50,21 @@ class NormalizedSolverOutput(BaseModel):
     error: str | None = None
 
 
+class AgentEnvironment(BaseModel):
+    image: str
+    system_packages: str = ""
+    python_packages: str = ""
+    prebuild: str = ""
+
+
 class RepositoryPlugin(ABC):
     name: str
     deterministic = False
+    agent_environment: AgentEnvironment | None = None
+    agent_requirement: str | None = None
+    agent_python: str | None = None
+    collection_backend: str | None = None
+    representations: dict[str, tuple[str, ...]] = {}
 
     @abstractmethod
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
@@ -64,6 +76,36 @@ class RepositoryPlugin(ABC):
 
     def parse_output(self, path: Path) -> NormalizedSolverOutput:
         return NormalizedSolverOutput.model_validate(json.loads(path.read_text()))
+
+    def agent_run_template(self) -> list[str]:
+        """Use the same invocation contract for public development runs."""
+        command = self.run_command(
+            SolverRunSpec(
+                instance_path=Path("{instance}"),
+                output_path=Path("{output}"),
+                trajectory_path=Path("{trajectory}"),
+                solver_seed=0,
+                budget_sec=1,
+                threads=1,
+            )
+        )
+        argv = list(command.argv)
+        if self.agent_python is not None:
+            argv[0] = self.agent_python
+        for option, field in (
+            ("--seed", "seed"),
+            ("--budget", "budget"),
+            ("--threads", "threads"),
+        ):
+            if option in argv:
+                argv[argv.index(option) + 1] = "{" + field + "}"
+        return argv
+
+    def load_collection_backend(self):
+        if self.collection_backend is None:
+            raise ValueError(f"{self.name} does not provide isolated collection")
+        module, name = self.collection_backend.split(":", 1)
+        return getattr(importlib.import_module(module), name)
 
 
 class RepositoryPluginRegistry:

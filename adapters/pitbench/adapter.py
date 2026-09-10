@@ -20,61 +20,13 @@ from pitbench.agent_tools import (
     normalize_agent_tools,
 )
 from pitbench.instances import materialize_instance_set
+from pitbench.repositories.base import RepositoryPluginRegistry
 from pitbench.schema.task import InstanceSetKind, PitBenchTask
 from pitbench.tasks import TaskCatalog
 
-_AGENT_IMAGES = {
-    "pitbench.repositories.plugins:PyVRPRepositoryPlugin": "python:3.13-trixie",
-    "pitbench.repositories.plugins:VroomRepositoryPlugin": "ubuntu:22.04",
-    "pitbench.repositories.plugins:HighsRepositoryPlugin": "ubuntu:24.04",
-    "pitbench.repositories.plugins:ChocoRepositoryPlugin": (
-        "maven:3.9-eclipse-temurin-11"
-    ),
-    "pitbench.repositories.plugins:OrToolsRepositoryPlugin": (
-        "maven:3.9-eclipse-temurin-11"
-    ),
-}
-
-_BUILD_PACKAGES = {
-    "pitbench.repositories.plugins:PyVRPRepositoryPlugin": (
-        "build-essential cmake ninja-build python3-dev"
-    ),
-    "pitbench.repositories.plugins:VroomRepositoryPlugin": (
-        "build-essential libssl-dev libasio-dev libglpk-dev pkg-config"
-    ),
-    "pitbench.repositories.plugins:HighsRepositoryPlugin": "build-essential cmake",
-    "pitbench.repositories.plugins:ChocoRepositoryPlugin": "",
-    "pitbench.repositories.plugins:OrToolsRepositoryPlugin": (
-        "build-essential cmake openjdk-11-jdk maven swig"
-    ),
-}
-
-_PYTHON_PACKAGES = {
-    "pitbench.repositories.plugins:PyVRPRepositoryPlugin": (
-        "docblock matplotlib meson ninja numpy pandas poetry-core pyarrow "
-        "pybind11 pydantic "
-        "pytest pytest-cov pytest-timeout pytest-xdist pyyaml setuptools tqdm "
-        "vrplib wheel"
-    ),
-}
-
-_PREBUILD_COMMANDS = {
-    "pitbench.repositories.plugins:PyVRPRepositoryPlugin": (
-        "RUN python3 -m pip install --break-system-packages "
-        "--no-build-isolation --no-deps -e /workspace/repo\n"
-    ),
-    "pitbench.repositories.plugins:VroomRepositoryPlugin": (
-        "RUN cd /workspace/repo && make -j1 CXXFLAGS='-O3 -DNDEBUG'\n"
-    ),
-    "pitbench.repositories.plugins:HighsRepositoryPlugin": (
-        "RUN cd /workspace/repo && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && "
-        "cmake --build build -j1\n"
-    ),
-}
-
 # Increment when the generated task image or bundled public tooling becomes
 # incompatible with an image produced by an earlier PitBench checkout.
-IMAGE_REVISION = "5"
+IMAGE_REVISION = "6"
 IMAGE_REVISION_LABEL = "org.pitbench.image-revision"
 IMAGE_SOURCE_LABEL = "org.pitbench.image-source"
 IMAGE_TOOLS_LABEL = "org.pitbench.agent-tools"
@@ -241,7 +193,7 @@ class PitBenchAdapter:
         image_override: str | None = None,
         agent_tools: Iterable[AgentTool | str] = (),
     ) -> str:
-        plugin = task.repository.plugin
+        repository = RepositoryPluginRegistry.load(task.repository.plugin)
         tools = normalize_agent_tools(agent_tools)
         prepared_image = image_override or task.repository.agent_image
         if prepared_image is not None:
@@ -249,18 +201,23 @@ class PitBenchAdapter:
                 prepared_image, task, agent_tools=tools
             )
 
-        image = _AGENT_IMAGES[plugin]
+        environment = repository.agent_environment
+        if environment is None:
+            raise ValueError(
+                "repository plugin requires an agent environment or configured image"
+            )
+        image = environment.image
         packages = (
-            "git tmux asciinema python3 python3-pip time " + _BUILD_PACKAGES[plugin]
+            "git tmux asciinema python3 python3-pip time " + environment.system_packages
         )
-        python_packages = _PYTHON_PACKAGES.get(plugin)
+        python_packages = environment.python_packages
         install_python = (
             "RUN python3 -m pip install --break-system-packages "
             f"--no-cache-dir {python_packages}\n"
             if python_packages
             else ""
         )
-        prebuild = _PREBUILD_COMMANDS.get(plugin, "")
+        prebuild = environment.prebuild
         tooling_layers = PitBenchAdapter._tooling_layers(tools)
         development_copy = PitBenchAdapter._development_copy(tools)
         workspace_permissions = PitBenchAdapter._workspace_permissions(

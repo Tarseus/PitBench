@@ -45,12 +45,13 @@ def _instances(selected: str | None) -> list[Path]:
 
 def _runner_available(config: dict[str, Any]) -> tuple[bool, str]:
     requirement = config.get("runner_requirement")
-    if requirement == "pyvrp_import":
+    if requirement and requirement.startswith("import:"):
+        module = requirement.split(":", 1)[1]
         try:
-            importlib.import_module("pyvrp")
+            importlib.import_module(module)
         except Exception as exc:
-            return False, f"pyvrp import failed: {exc}"
-        return True, "pyvrp import"
+            return False, f"{module} import failed: {exc}"
+        return True, f"{module} import"
     if requirement and requirement.startswith("env:"):
         variable = requirement.split(":", 1)[1]
         available = bool(os.environ.get(variable))

@@ -1,6 +1,7 @@
 """Build and execution plugins for supported solver repositories."""
 
 from pitbench.repositories.base import (
+    AgentEnvironment,
     BuildKind,
     CommandSpec,
     RepositoryPlugin,
@@ -9,7 +10,17 @@ from pitbench.repositories.base import (
 
 
 class PyVRPRepositoryPlugin(RepositoryPlugin):
+    agent_environment = AgentEnvironment(
+        image="python:3.13-trixie",
+        system_packages="build-essential cmake ninja-build python3-dev",
+        python_packages="docblock matplotlib meson ninja numpy pandas poetry-core pyarrow pybind11 pydantic pytest pytest-cov pytest-timeout pytest-xdist pyyaml setuptools tqdm vrplib wheel",
+        prebuild="RUN python3 -m pip install --break-system-packages --no-build-isolation --no-deps -e /workspace/repo\n",
+    )
     name = "pyvrp"
+    agent_requirement = "import:pyvrp"
+    agent_python = "python3"
+    collection_backend = "pitbench.evaluator.collection:PyVRPCollectionBackend"
+    representations = {"customer_relabeling": ("judge", "isolated")}
     _PYTHON = ".pitbench-venv/bin/python"
     # This test pins the exact local-search trace and move count. Those are
     # performance-policy outputs, not correctness contracts for this benchmark.
@@ -118,7 +129,16 @@ class PyVRPRepositoryPlugin(RepositoryPlugin):
 
 
 class VroomRepositoryPlugin(RepositoryPlugin):
+    agent_environment = AgentEnvironment(
+        image="ubuntu:22.04",
+        system_packages="build-essential libssl-dev libasio-dev libglpk-dev pkg-config",
+        python_packages="",
+        prebuild="RUN cd /workspace/repo && make -j1 CXXFLAGS='-O3 -DNDEBUG'\n",
+    )
+    agent_python = "python3"
     name = "vroom"
+    agent_requirement = "file:bin/vroom"
+    representations = {"customer_relabeling": ("judge",)}
     deterministic = True
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
@@ -154,7 +174,17 @@ class VroomRepositoryPlugin(RepositoryPlugin):
 
 
 class HighsRepositoryPlugin(RepositoryPlugin):
+    agent_environment = AgentEnvironment(
+        image="ubuntu:24.04",
+        system_packages="build-essential cmake",
+        python_packages="",
+        prebuild="RUN cd /workspace/repo && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j1\n",
+    )
+    agent_python = "python3"
     name = "highs"
+    agent_requirement = "file:build/bin/highs"
+    collection_backend = "pitbench.evaluator.collection:HighsCollectionBackend"
+    representations = {"row_column_permutation": ("isolated",)}
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         build_type = "Debug" if kind == BuildKind.VALIDATION else "Release"
@@ -201,7 +231,15 @@ class HighsRepositoryPlugin(RepositoryPlugin):
 
 
 class ChocoRepositoryPlugin(RepositoryPlugin):
+    agent_environment = AgentEnvironment(
+        image="maven:3.9-eclipse-temurin-11",
+        system_packages="",
+        python_packages="",
+        prebuild="",
+    )
+    agent_python = "python3"
     name = "choco"
+    agent_requirement = "env:PITBENCH_CHOCO_RUNNER"
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         goals = ["test"] if kind == BuildKind.VALIDATION else ["package", "-DskipTests"]
@@ -232,7 +270,15 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
 
 
 class OrToolsRepositoryPlugin(RepositoryPlugin):
+    agent_environment = AgentEnvironment(
+        image="maven:3.9-eclipse-temurin-11",
+        system_packages="build-essential cmake openjdk-11-jdk maven swig",
+        python_packages="",
+        prebuild="",
+    )
+    agent_python = "python3"
     name = "ortools"
+    agent_requirement = "env:PITBENCH_ORTOOLS_JAVA_RUNNER"
     deterministic = True
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:

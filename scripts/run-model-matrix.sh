@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Run the requested PyVRP model matrix sequentially. Usage:
-#   scripts/run-model-matrix.sh [TASK_ID]
+# Run a configured model matrix sequentially. Usage:
+#   scripts/run-model-matrix.sh TASK_ID [MATRIX_CONFIG]
 #
 # Optional environment variables:
 #   PITBENCH_CONFIG     Evaluation config (default: config/evaluate.local.yaml)
 #   PITBENCH_BATCH_ID   Stable prefix for run IDs (default: current UTC time)
 #   PITBENCH_LOG_DIR    Per-model command logs and status summary
+#   PITBENCH_PYTHON     Optional YAML reader Python (default: uv run python)
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname -- "${SCRIPT_DIR}")"
 cd "${REPO_ROOT}"
 
-TASK_ID="${1:-pyvrp_v0_14_0}"
+TASK_ID="${1:?Provide a task ID}"
+MATRIX_CONFIG="${2:-configs/experiments/model_matrix.yaml}"
 CONFIG_PATH="${PITBENCH_CONFIG:-config/evaluate.local.yaml}"
 BATCH_ID="${PITBENCH_BATCH_ID:-$(date -u +%Y-%m-%d__%H-%M-%S)}"
 LOG_DIR="${PITBENCH_LOG_DIR:-runs/model-matrix-${BATCH_ID}}"
@@ -30,12 +32,6 @@ if ! docker version >/dev/null 2>&1; then
   echo "Creating a new tmux socket inside an old tmux session does not refresh groups." >&2
   id >&2
   stat -c 'Docker socket: %A owner=%U group=%G' /var/run/docker.sock >&2 || true
-  exit 2
-fi
-
-if ! sudo -n -u pitbench-agy -- \
-  /usr/local/libexec/pitbench-antigravity-runner --self-test >/dev/null; then
-  echo "The installed Antigravity runner is unavailable or not isolated." >&2
   exit 2
 fi
 
@@ -65,7 +61,7 @@ run_one() {
   fi
 
   echo
-  echo "[${order}/5] ${agent} ${model} ${setting:-default}"
+  echo "[${order}/${matrix_count}] ${agent} ${model} ${setting:-default}"
   echo "run_id=${run_id}"
   echo "log=${log_path}"
 
@@ -83,11 +79,25 @@ run_one() {
   echo "status=${status} exit_code=${exit_code}"
 }
 
-run_one 1 codex gpt-5.6-sol reasoning_effort=xhigh codex-gpt-5-6-sol-xhigh
-run_one 2 codex gpt-5.4-mini reasoning_effort=medium codex-gpt-5-4-mini-medium
-run_one 3 antigravity gemini-3.7-flash-high "" antigravity-gemini-3-7-flash-high
-run_one 4 antigravity gemini-3.1-pro-high "" antigravity-gemini-3-1-pro-high
-run_one 5 antigravity gemini-3.5-flash-low "" antigravity-gemini-3-5-flash-low
+matrix_reader=(uv run python)
+if [[ -n "${PITBENCH_PYTHON:-}" ]]; then
+  matrix_reader=("$PITBENCH_PYTHON")
+fi
+matrix_rows="$("${matrix_reader[@]}" - "$MATRIX_CONFIG" <<'PYTHON'
+import sys, yaml
+for row in yaml.safe_load(open(sys.argv[1]))["runs"]:
+    print("\t".join(str(row.get(key) or "-") for key in ("agent", "model", "setting", "label")))
+PYTHON
+)" || exit 2
+mapfile -t matrix <<< "$matrix_rows"
+matrix_count="${#matrix[@]}"
+order=0
+for row in "${matrix[@]}"; do
+  IFS=$'\t' read -r agent model setting label <<< "$row"
+  [[ "$setting" == "-" ]] && setting=""
+  order=$((order + 1))
+  run_one "$order" "$agent" "$model" "$setting" "$label"
+done
 
 echo
 echo "Model matrix complete: ${STATUS_PATH}"

@@ -1,19 +1,17 @@
-"""Customer relabeling and raw result collection for representation experiments."""
+"""Configured equivalent transformations and shared raw-result collection."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import os
-import random
 import tempfile
 from dataclasses import replace
 from pathlib import Path
 
 from pitbench.evaluator.judge import InstanceCase, JudgePlan, LocalProcessJudge
 from pitbench.evaluator.private_assets import PrivateAssetResolver
-from pitbench.evaluator.representations import CustomerRepresentation
-from pitbench.problem_families.verification import CVRPFamily
+from pitbench.evaluator.representations import representation_type
 from pitbench.schema.observation import RunObservation
 from pitbench.schema.task import (
     InstanceSetKind,
@@ -37,6 +35,57 @@ def preserve_json(path: Path, payload: object) -> None:
             raise ValueError(f"existing experiment input differs: {path}")
     else:
         write_json(path, payload)
+
+
+def preserve_input(path: Path, model: dict, representation) -> None:
+    if path.exists():
+        representation.assert_same(model, representation.read_input(path))
+    else:
+        representation.write_input(path, model)
+
+
+def prepare_transformations(
+    source: Path,
+    instance_id: str,
+    anchor: float | None,
+    output_dir: Path,
+    kind: str,
+    count: int,
+    generator,
+    *,
+    tolerance: float | None = None,
+) -> dict[str, dict]:
+    representation = representation_type(kind)
+    original = representation.read_input(source)
+    original_path = (
+        output_dir / "inputs" / "original" / f"{instance_id}{representation.suffix}"
+    )
+    original_path.parent.mkdir(parents=True, exist_ok=True)
+    preserve_input(original_path, original, representation)
+    transformations = {}
+    for index, mapping in enumerate(
+        representation.mappings(original, count, generator)
+    ):
+        transform_id = f"{kind}_{index:02d}"
+        identity = f"{instance_id}__{transform_id}"
+        path = (
+            output_dir / "inputs" / "relabeled" / f"{identity}{representation.suffix}"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        preserve_input(
+            path, representation.transform(original, mapping), representation
+        )
+        transformations[identity] = {
+            "representation": kind,
+            "original_instance_id": instance_id,
+            "original_instance_path": str(original_path.relative_to(output_dir)),
+            "transformed_instance_path": str(path.relative_to(output_dir)),
+            "transform_id": transform_id,
+            **mapping,
+            "bks": anchor,
+            "verification_tolerance": tolerance,
+        }
+    return transformations
 
 
 def prepare_cases(
@@ -70,42 +119,30 @@ def prepare_cases(
         raise ValueError(
             "representation instance count differs from the task configuration"
         )
-    generator = random.Random(config.relabeling_generation_seed)
+    representation = representation_type(config.kind)
+    generator = representation.generator(config.relabeling_generation_seed)
     cases = []
     transformations = {}
     for original_case in originals:
         assert original_case.path is not None
-        original = json.loads(original_case.path.read_text())
-        original_path = (
-            output_dir / "inputs" / "original" / f"{original_case.instance_id}.json"
+        prepared = prepare_transformations(
+            original_case.path,
+            original_case.instance_id,
+            original_case.anchor,
+            output_dir,
+            config.kind,
+            config.relabelings_per_instance,
+            generator,
+            tolerance=config.verification_tolerance,
         )
-        preserve_json(original_path, original)
-        mappings = CustomerRepresentation.permutations(
-            len(original["coordinates"]) - 1, config.relabelings_per_instance, generator
-        )
-        for index, mapping in enumerate(mappings):
-            transform_id = f"customer_relabeling_{index:02d}"
-            instance_id = f"{original_case.instance_id}__{transform_id}"
-            transformed_path = (
-                output_dir / "inputs" / "relabeled" / f"{instance_id}.json"
-            )
-            preserve_json(
-                transformed_path, CustomerRepresentation.permute(original, mapping)
-            )
-            transformations[instance_id] = {
-                "original_instance_id": original_case.instance_id,
-                "original_instance_path": str(original_path.relative_to(output_dir)),
-                "transformed_instance_path": str(
-                    transformed_path.relative_to(output_dir)
-                ),
-                "transform_id": transform_id,
-                "new_to_original": mapping,
-                "mapping_index_base": 0,
-                "bks": original_case.anchor,
-            }
+        for instance_id, transformation in prepared.items():
+            transformations[instance_id] = transformation
+            transformed_path = output_dir / transformation["transformed_instance_path"]
+            transform_id = transformation["transform_id"]
             cases.append(
                 replace(
                     original_case,
+                    verifier=representation.verifier(config.verification_tolerance),
                     instance_id=instance_id,
                     path=transformed_path,
                     equivalence_parent_id=original_case.instance_id,
@@ -142,31 +179,18 @@ def result_record(
     }
     if solution.exists():
         try:
-            family = CVRPFamily()
-            transformed = family.verify(
-                output_dir / transformation["transformed_instance_path"], solution
-            )
-            mapped_path = output.with_suffix(".mapped.solution.json")
-            write_json(
-                mapped_path,
-                CustomerRepresentation.map_solution(
-                    json.loads(solution.read_text()), transformation["new_to_original"]
-                ),
-            )
-            mapped = family.verify(
-                output_dir / transformation["original_instance_path"], mapped_path
+            representation = representation_type(
+                transformation.get("representation", "customer_relabeling")
             )
             verification.update(
-                {
-                    "transformed": transformed.model_dump(mode="json"),
-                    "mapped_original": mapped.model_dump(mode="json"),
-                    "objective_preserved": (
-                        transformed.objective == mapped.objective
-                        if transformed.objective is not None
-                        and mapped.objective is not None
-                        else None
-                    ),
-                }
+                representation.verify_files(
+                    output_dir / transformation["original_instance_path"],
+                    output_dir / transformation["transformed_instance_path"],
+                    solution,
+                    output.with_suffix(".mapped.solution.json"),
+                    transformation,
+                    tolerance=transformation.get("verification_tolerance"),
+                )
             )
         except (ValueError, KeyError, IndexError, TypeError) as error:
             verification["error"] = f"{type(error).__name__}: {error}"

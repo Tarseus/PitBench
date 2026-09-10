@@ -10,53 +10,6 @@ from pitbench.repositories.base import BuildKind, RepositoryPluginRegistry
 from pitbench.schema.task import PitBenchTask
 
 
-def _runner(
-    driver: str, *, solver: str | None = None, trajectory: bool = True
-) -> list[str]:
-    command = ["python3", "-m", "pitbench.solver_drivers.run", driver]
-    if solver is not None:
-        command.extend(["--solver", solver])
-    command.extend(["--instance", "{instance}", "--output", "{output}"])
-    if trajectory:
-        command.extend(["--trajectory", "{trajectory}"])
-    command.extend(
-        [
-            "--seed",
-            "{seed}",
-            "--budget",
-            "{budget}",
-            "--threads",
-            "{threads}",
-        ]
-    )
-    return command
-
-
-_RUNNERS = {
-    "pitbench.repositories.plugins:PyVRPRepositoryPlugin": _runner("pyvrp"),
-    "pitbench.repositories.plugins:VroomRepositoryPlugin": _runner(
-        "vroom", solver="./bin/vroom"
-    ),
-    "pitbench.repositories.plugins:HighsRepositoryPlugin": _runner(
-        "highs", solver="./build/bin/highs"
-    ),
-    "pitbench.repositories.plugins:ChocoRepositoryPlugin": _runner("choco"),
-    "pitbench.repositories.plugins:OrToolsRepositoryPlugin": _runner(
-        "ortools_model_build", trajectory=False
-    ),
-}
-
-_REQUIREMENTS = {
-    "pitbench.repositories.plugins:PyVRPRepositoryPlugin": "pyvrp_import",
-    "pitbench.repositories.plugins:VroomRepositoryPlugin": "file:bin/vroom",
-    "pitbench.repositories.plugins:HighsRepositoryPlugin": "file:build/bin/highs",
-    "pitbench.repositories.plugins:ChocoRepositoryPlugin": "env:PITBENCH_CHOCO_RUNNER",
-    "pitbench.repositories.plugins:OrToolsRepositoryPlugin": (
-        "env:PITBENCH_ORTOOLS_JAVA_RUNNER"
-    ),
-}
-
-
 def write_agent_tooling(
     *,
     repository_root: Path,
@@ -74,7 +27,9 @@ def write_agent_tooling(
     for filename in ("__init__.py", "agent_cli.py"):
         shutil.copy2(repository_root / "pitbench" / filename, tooling)
     if AgentTool.BENCH in tools:
-        shutil.copytree(repository_root / "pitbench" / "drivers", tooling / "drivers")
+        shutil.copytree(
+            repository_root / "pitbench" / "solver_drivers", tooling / "solver_drivers"
+        )
 
     agent_bin = task_dir / "agent_bin"
     agent_bin.mkdir()
@@ -85,6 +40,7 @@ def write_agent_tooling(
     config: dict[str, object] = {
         "agent_tools": sorted(tool.value for tool in tools),
     }
+    repository = RepositoryPluginRegistry.load(task.repository.plugin)
     if tools & {AgentTool.INSPECT, AgentTool.BENCH}:
         seed_robustness = task.evaluation.seed_robustness
         development_seeds = (
@@ -102,8 +58,8 @@ def write_agent_tooling(
                 "budgets_sec": task.evaluation.budgets_sec,
                 "development_seeds": development_seeds,
                 "threads": task.evaluation.threads,
-                "runner": _RUNNERS[task.repository.plugin],
-                "runner_requirement": _REQUIREMENTS[task.repository.plugin],
+                "runner": repository.agent_run_template(),
+                "runner_requirement": repository.agent_requirement,
             }
         )
     if tools & {
@@ -113,7 +69,6 @@ def write_agent_tooling(
     }:
         config["editable_paths"] = task.repository.editable_paths
     if AgentTool.VALIDATE in tools:
-        repository = RepositoryPluginRegistry.load(task.repository.plugin)
         config["validation_commands"] = [
             command.model_dump(mode="json")
             for command in repository.build_commands(BuildKind.VALIDATION)

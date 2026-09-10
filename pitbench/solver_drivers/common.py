@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import resource
 import subprocess
 import time
@@ -89,3 +90,12 @@ def append_trajectory(path: Path, payload: dict[str, Any]) -> None:
     with path.open("a") as handle:
         handle.write(json.dumps(payload))
         handle.write("\n")
+
+
+class ParameterRejected(ValueError):
+    """A solver rejected parameters that the declared domain allowed."""
+
+
+def finite(value):
+    value = float(value)
+    return value if math.isfinite(value) else None

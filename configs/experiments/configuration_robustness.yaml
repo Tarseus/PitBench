@@ -21,6 +21,7 @@ panels:
     collector: highs
     feedback: capped_optimal_time
     instance_source: private/highs_nuisance/20260909/experiment.json
+    instance_path_template: "models/{name}/original.npz"
     seed_source: private/highs_nuisance/20260909/experiment.json
     seed_key: solver_seeds
     seed_max: 2147483647

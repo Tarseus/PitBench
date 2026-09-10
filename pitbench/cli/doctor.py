@@ -32,7 +32,6 @@ from pitbench.harness.agents.codex_container import CodexContainerRunner
 from pitbench.harness.agents.codex_profile import CodexProfile
 from pitbench.tasks import TaskCatalog, TaskRecord
 
-_PYVRP_TASK_ID = "pyvrp_v0_14_0"
 _GIB = 1024**3
 _PROXY_KEYS = (
     "HTTP_PROXY",
@@ -151,7 +150,7 @@ def _resource_checks(repository_root: Path) -> list[DoctorCheck]:
 
 
 def _load_context(
-    repository_root: Path, config_path: Path | None
+    repository_root: Path, config_path: Path | None, task_id: str
 ) -> tuple[_DoctorContext, list[DoctorCheck]]:
     checks: list[DoctorCheck] = []
     resolved_config = resolve_config_path(repository_root, config_path)
@@ -198,13 +197,13 @@ def _load_context(
 
     task: TaskRecord | None = None
     try:
-        task = TaskCatalog(repository_root).validate_one(_PYVRP_TASK_ID)
+        task = TaskCatalog(repository_root).validate_one(task_id)
     except Exception as error:
         checks.append(
             _check(
                 CheckStatus.FAIL,
                 "task config",
-                f"cannot validate {_PYVRP_TASK_ID}: {error}",
+                f"cannot validate {task_id}: {error}",
                 "Restore the tracked task and instance-set configs, then run "
                 "`uv run pitbench tasks validate`.",
             )
@@ -214,7 +213,7 @@ def _load_context(
             _check(
                 CheckStatus.PASS,
                 "task config",
-                f"{_PYVRP_TASK_ID} {task.task_config_sha256[:12]}",
+                f"{task_id} {task.task_config_sha256[:12]}",
             )
         )
     return _DoctorContext(repository_root, resolved_config, config, task), checks
@@ -291,13 +290,15 @@ def _docker_check(
     )
 
 
-def _image_reference_check(kind: str, reference: str | None) -> DoctorCheck | None:
+def _image_reference_check(
+    kind: str, reference: str | None, task_id: str = "<task_id>"
+) -> DoctorCheck | None:
     if reference is None:
         return _check(
             CheckStatus.FAIL,
             f"{kind} image reference",
             "no image is configured",
-            f"Set tasks.{_PYVRP_TASK_ID}.{kind}_image in config/evaluate.local.yaml.",
+            f"Set tasks.{task_id}.{kind}_image in config/evaluate.local.yaml.",
         )
     local_id = re.fullmatch(r"sha256:[0-9a-f]{64}", reference)
     digest = re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", reference)
@@ -306,7 +307,7 @@ def _image_reference_check(kind: str, reference: str | None) -> DoctorCheck | No
             CheckStatus.FAIL,
             "agent image reference",
             "a digest-only image ID cannot be used in the generated Dockerfile FROM",
-            "Tag the image (for example `docker tag IMAGE_ID pitbench/pyvrp-agent:local`) "
+            "Tag the image (for example `docker tag IMAGE_ID pitbench/agent:local`) "
             "and configure that tag.",
         )
     if kind == "judge" and not (local_id or digest):
@@ -314,8 +315,7 @@ def _image_reference_check(kind: str, reference: str | None) -> DoctorCheck | No
             CheckStatus.FAIL,
             "judge image reference",
             "the judge must use a local sha256 image ID or a digest-pinned reference",
-            f"Set tasks.{_PYVRP_TASK_ID}.judge_image to `sha256:...` or "
-            "`IMAGE@sha256:...`.",
+            f"Set tasks.{task_id}.judge_image to `sha256:...` or `IMAGE@sha256:...`.",
         )
     return None
 
@@ -335,7 +335,8 @@ def _image_checks(
             [],
             False,
         )
-    resources = context.config.resources_for(_PYVRP_TASK_ID)
+    task_id = context.task.task.task_id
+    resources = context.config.resources_for(task_id)
     references = {
         "agent": resources.agent_image or context.task.task.repository.agent_image,
         "judge": resources.judge_image or context.task.task.repository.judge_image,
@@ -343,7 +344,7 @@ def _image_checks(
     checks: list[DoctorCheck] = []
     references_valid = True
     for kind, reference in references.items():
-        invalid = _image_reference_check(kind, reference)
+        invalid = _image_reference_check(kind, reference, task_id)
         if invalid is not None:
             checks.append(invalid)
             references_valid = False
@@ -847,17 +848,15 @@ def _agent_checks(config: EvaluationConfig, repository_root: Path) -> list[Docto
 
 
 def run_doctor(
-    profile: str,
+    task_id: str,
     repository_root: Path,
     config_path: Path | None = None,
     *,
     client_factory: Callable[[], docker.DockerClient] = docker.from_env,
 ) -> list[DoctorCheck]:
-    if profile != "pyvrp":
-        raise ValueError(f"unsupported doctor profile: {profile}")
     root = repository_root.resolve()
     checks = [_platform_check(), *_resource_checks(root)]
-    context, context_checks = _load_context(root, config_path)
+    context, context_checks = _load_context(root, config_path, task_id)
     checks.extend(context_checks)
     checks.append(_private_assets_check(context))
     client, docker_info, docker_result = _docker_check(client_factory)

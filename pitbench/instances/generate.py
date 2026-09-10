@@ -331,3 +331,41 @@ def verify_public_file(
             f"{actual_sha256} != {expected_sha256}"
         )
     return path
+
+
+def prepare_collection_instances(
+    source: Path,
+    destination: Path,
+    *,
+    path_template: str | None = None,
+) -> list[dict]:
+    """Copy a fixed input panel using explicit paths, including archived indices.
+
+    A template belongs to the experiment config, not the solver implementation.
+    It permits reading old manifests without rewriting their retained artifacts.
+    """
+    import shutil
+
+    payload = yaml.safe_load(source.read_text())
+    destination.mkdir(parents=True, exist_ok=True)
+    instances = []
+    for item in payload["instances"]:
+        identity = item.get("id", item.get("name"))
+        relative = (
+            path_template.format(**item)
+            if path_template is not None
+            else item.get("instance_file", item.get("path"))
+        )
+        if identity is None or relative is None:
+            raise ValueError("each instance requires an ID and explicit input path")
+        original = source.parent / relative
+        target = destination / f"{identity}{''.join(original.suffixes)}"
+        if target.exists():
+            if target.read_bytes() != original.read_bytes():
+                raise ValueError(f"prepared input changed: {target}")
+        else:
+            shutil.copy2(original, target)
+        instances.append(
+            {"id": identity, "path": str(target.resolve()), "bks": item.get("bks")}
+        )
+    return instances

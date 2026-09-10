@@ -13,16 +13,12 @@ import subprocess
 import sys
 import time
 import traceback
-from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from queue import Queue
-from typing import TYPE_CHECKING
 
-from pitbench.solver_drivers.common import process_resources
-
-if TYPE_CHECKING:
-    from pitbench.schema.observation import RunObservation
+from pitbench.solver_drivers.common import ParameterRejected
+from pitbench.solver_drivers.run import HighsDriver
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -83,684 +79,477 @@ def run_collection_process(
     return result
 
 
-def finite(value):
-    value = float(value)
-    return value if math.isfinite(value) else None
+def run_collection_jobs(jobs: list[dict], cpus: list[int], execute) -> list[dict]:
+    """Shared bounded scheduling for isolated observation workers."""
+    if (
+        not cpus
+        or len(cpus) != len(set(cpus))
+        or not set(cpus) <= os.sched_getaffinity(0)
+    ):
+        raise ValueError("cpus must be distinct available CPUs")
+    slots = Queue()
+    for cpu in cpus:
+        slots.put(cpu)
+
+    def run(job):
+        cpu = slots.get()
+        try:
+            return execute(job, cpu)
+        finally:
+            slots.put(cpu)
+
+    with ThreadPoolExecutor(max_workers=len(cpus)) as pool:
+        return list(pool.map(run, jobs))
 
 
-class ParameterRejected(ValueError):
-    """A solver rejected parameters that the declared domain allowed."""
-
-
-class HighsCollection:
-    """Collect the fixed HiGHS seed, row/column permutation and control panel."""
-
-    SOURCE_COMMIT = "04024d701f79feb8e2f18bc3df0dffc04ef05088"
-    SOLVER_VERSION = "1.15.1"
+class NuisanceCollection:
+    """Configured axes and transformations, with one retained job/result contract."""
 
     @staticmethod
-    def solver_identity() -> dict:
-        import highspy
+    def prepare(
+        config_path: Path,
+        output: Path,
+        *,
+        repository: Path | None = None,
+        private_root: Path = ROOT / "private",
+        panel: str | None = None,
+    ) -> dict:
+        import yaml
 
-        solver = highspy.Highs()
-        if (
-            solver.version() != HighsCollection.SOLVER_VERSION
-            or not HighsCollection.SOURCE_COMMIT.startswith(solver.githash())
-        ):
+        from pitbench.evaluator.representation import prepare_transformations
+        from pitbench.evaluator.representations import representation_type
+        from pitbench.instances.generate import prepare_collection_instances
+        from pitbench.repositories.base import RepositoryPluginRegistry
+        from pitbench.schema.task import PitBenchTask
+
+        config = yaml.safe_load(config_path.read_text())
+        if "panels" in config:
+            if panel not in config["panels"]:
+                raise ValueError("select a configured panel with --panel")
+            config = config["panels"][panel]
+        task = PitBenchTask.from_yaml(ROOT / config["task_config"])
+        plugin = RepositoryPluginRegistry.load(task.repository.plugin)
+        transform = representation_type(config["representation"]["kind"])
+        if transform.family != task.problem_family or config[
+            "execution"
+        ] not in plugin.representations.get(transform.name, ()):
             raise ValueError(
-                "experiment requires the pinned HiGHS release and source revision"
+                "representation is not supported by the configured repository"
             )
-        return {
-            "version": solver.version(),
-            "binding_git_hash": solver.githash(),
-            "source_commit": HighsCollection.SOURCE_COMMIT,
-        }
-
-    @staticmethod
-    def prepare(output: Path, names: list[str]) -> None:
-        import highspy
-        import numpy as np
-        import scipy
-
-        from pitbench.evaluator.representations import LinearModelRepresentation
-
+        if (
+            transform.requires_tolerance
+            and config["representation"].get("verification_tolerance") is None
+        ):
+            raise ValueError("numeric representation requires a verification tolerance")
+        executor = COLLECTION_EXECUTORS[config["execution"]]
+        identity = executor.identity(task, repository)
+        if identity["version"] != task.release.version or (
+            identity.get("binding_git_hash")
+            and not task.release.base_commit.startswith(identity["binding_git_hash"])
+        ):
+            raise ValueError("runtime identity differs from configured task release")
         manifest_path = output / "experiment.json"
         if manifest_path.exists():
             manifest = json.loads(manifest_path.read_text())
-            if names != [item["name"] for item in manifest["instances"]]:
-                raise ValueError("existing experiment has a different instance panel")
-            if manifest["solver"] != HighsCollection.solver_identity():
-                raise ValueError("solver changed")
-            print("Existing fixed experiment retained.", flush=True)
-            return
-        if len(names) != 10 or len(set(names)) != 10:
-            raise ValueError("this experiment requires ten distinct instances")
-        generator = np.random.default_rng(20260909)
-        seeds = random.SystemRandom().sample(range(0, 2**31), 30)
-        defaults = highspy.Highs()
-        options = {
-            "threads": 1,
-            "parallel": "off",
-            "presolve": defaults.getOptionValue("presolve")[1],
-            "mip_feasibility_tolerance": defaults.getOptionValue(
-                "mip_feasibility_tolerance"
-            )[1],
-            "mip_rel_gap": defaults.getOptionValue("mip_rel_gap")[1],
-            "mip_abs_gap": defaults.getOptionValue("mip_abs_gap")[1],
-        }
-        instances = []
-        jobs = []
-        for name in names:
-            source = output / "sources" / f"{name}.mps.gz"
-            model = LinearModelRepresentation.read(source)
-            directory = output / "models" / name
-            directory.mkdir(parents=True, exist_ok=True)
-            LinearModelRepresentation.save(directory / "original.npz", model)
-            instances.append(
-                {
-                    "name": name,
-                    "source": str(source.relative_to(output)),
-                    "source_url": f"https://miplib.zib.de/WebData/instances/{name}.mps.gz",
-                    "details_url": f"https://miplib.zib.de/instance_details_{name}.html",
-                    "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-                    "rows": model["matrix"].shape[0],
-                    "columns": model["matrix"].shape[1],
-                    "nonzeros": model["matrix"].nnz,
-                    "integer_columns": int(np.count_nonzero(model["integrality"])),
-                    "objective_sense": model["sense"],
-                    "objective_offset": model["offset"],
-                }
-            )
-            seen = set()
-            for index in range(30):
-                while True:
-                    rows = generator.permutation(model["matrix"].shape[0])
-                    columns = generator.permutation(model["matrix"].shape[1])
-                    signature = (tuple(rows), tuple(columns))
-                    if signature not in seen and not (
-                        np.array_equal(rows, np.arange(len(rows)))
-                        and np.array_equal(columns, np.arange(len(columns)))
-                    ):
-                        seen.add(signature)
-                        break
-                transformed = LinearModelRepresentation.permute(model, rows, columns)
-                LinearModelRepresentation.assert_equivalent(
-                    model, transformed, rows, columns
-                )
-                LinearModelRepresentation.save(
-                    directory / f"permutation-{index:02d}.npz", transformed
-                )
-                np.savez_compressed(
-                    directory / f"mapping-{index:02d}.npz", rows=rows, columns=columns
-                )
-            for axis, values in (
-                ("seed", seeds),
-                ("representation", list(range(30))),
-                ("control", list(range(3))),
+            if (
+                manifest["config"] != config
+                or manifest["solver"] != identity
+                or manifest["task_configuration"] != task.model_dump(mode="json")
+                or manifest["repository"]
+                != (str(repository.resolve()) if repository else None)
             ):
-                for index, value in enumerate(values):
-                    for budget in (10, 30):
+                raise ValueError(
+                    "existing experiment differs from requested configuration"
+                )
+            return manifest
+        instances = prepare_collection_instances(
+            ROOT / config["instance_source"],
+            output / "sources",
+            path_template=config.get("instance_path_template"),
+        )
+        if len(instances) != config["instance_count"] or len(
+            {i["id"] for i in instances}
+        ) != len(instances):
+            raise ValueError(
+                "instance panel differs from configured count or contains duplicates"
+            )
+        seeds = config["solver_seeds"]
+        if not seeds or len(seeds) != len(set(seeds)):
+            raise ValueError("solver seeds must be nonempty and unique")
+        generator = transform.generator(config["representation"]["generation_seed"])
+        jobs, transformations = [], {}
+        for instance in instances:
+            prepared = prepare_transformations(
+                Path(instance["path"]),
+                instance["id"],
+                instance["bks"],
+                output,
+                transform.name,
+                config["representation"]["count"],
+                generator,
+                tolerance=config["representation"].get("verification_tolerance"),
+            )
+            transformations.update(prepared)
+            original_path = next(iter(prepared.values()))["original_instance_path"]
+            variants = [
+                ("seed", i, seed, original_path, None)
+                for i, seed in enumerate(seeds)
+                if "seed" in config["axes"]
+            ]
+            variants += [
+                (
+                    "representation",
+                    i,
+                    config["representation"]["solver_seed"],
+                    mapping["transformed_instance_path"],
+                    mapping,
+                )
+                for i, mapping in enumerate(prepared.values())
+                if "representation" in config["axes"]
+            ]
+            variants += [
+                (
+                    "control",
+                    i,
+                    config["representation"]["solver_seed"],
+                    original_path,
+                    None,
+                )
+                for i in range(config["control_repeats"])
+                if "control" in config["axes"]
+            ]
+            for axis, replicate, seed, path, mapping in variants:
+                case_id = f"{instance['id']}__{axis}_{replicate:02d}"
+                for budget in task.evaluation.budgets_sec:
+                    for state in config["code_states"]:
                         jobs.append(
                             {
-                                "run_id": f"{name}/{axis}/{index:02d}/budget-{budget}",
-                                "instance": name,
+                                "run_id": f"{instance['id']}/{axis}/{replicate:02d}/{state}/budget-{budget:g}",
+                                "instance": instance["id"],
+                                "instance_id": case_id,
                                 "axis": axis,
-                                "replicate": index,
-                                "solver_seed": value if axis == "seed" else 0,
-                                "permutation": value
-                                if axis == "representation"
+                                "replicate": replicate,
+                                "solver_seed": seed,
+                                "permutation": mapping["transform_id"]
+                                if mapping
                                 else None,
                                 "budget_sec": budget,
+                                "code_state": state,
+                                "path": path,
+                                "original_path": original_path,
+                                "transformation": mapping,
+                                "bks": instance["bks"],
                             }
                         )
-        random.Random(20260909).shuffle(jobs)
+        random.Random(config["schedule_seed"]).shuffle(jobs)
         manifest = {
-            "experiment": "original HiGHS nuisance exploration",
-            "solver": HighsCollection.solver_identity(),
-            "code_state": "original release, no patch",
-            "budgets_sec": [10, 30],
-            "solver_options": options,
+            "config": config,
+            "task_id": task.task_id,
+            "task_configuration": task.model_dump(mode="json"),
+            "solver": identity,
+            "repository": str(repository.resolve()) if repository else None,
+            "private_root": str(private_root.resolve()),
+            "budgets_sec": task.evaluation.budgets_sec,
             "solver_seeds": seeds,
-            "seed_sampling": "30 distinct IDs uniformly sampled from [0, 2^31-1] and retained",
-            "representation_solver_seed": 0,
-            "permutation_generator": "numpy.default_rng(20260909); stored mappings are authoritative",
-            "permutations_per_instance": 30,
-            "control_repeats_per_instance_budget": 3,
-            "model_input": "HiGHS parses original MPS; all runs pass preserved or permuted numeric models through the same API",
-            "equivalence_checks": "all 300 matrices, vectors, names, types, bounds, sense and offset restore exactly",
-            "verification": "independent sparse arithmetic on original model; shared HiGHS input parser; no independent dual/optimality certificate check",
-            "statistics": "deferred; retain all runs without imputation or replacement",
-            "timing": "fresh process per run; budget applies to Highs.run; input loading and independent verification timed separately",
-            "trajectory": "native MIP logging and improving-incumbent events plus final state; not a continuous trace",
-            "environment": {
-                "python": sys.version,
-                "numpy": np.__version__,
-                "scipy": scipy.__version__,
-                "platform": platform.platform(),
-                "cpu_model": platform.processor(),
-            },
+            "code_states": config["code_states"],
+            "statistics": "deferred",
+            "environment": {"python": sys.version, "platform": platform.platform()},
             "instances": instances,
             "jobs": jobs,
         }
-        for path in (
-            Path(__file__),
-            ROOT / "pitbench/evaluator/representations.py",
-            ROOT / "pitbench/solver_drivers/common.py",
-        ):
-            target = output / "collector_source" / path.name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(path.read_bytes())
+        write_json(output / "transformations.json", transformations)
         write_json(manifest_path, manifest)
-        print(
-            f"Prepared {len(instances)} instances, 300 equivalent models, {len(jobs)} runs.",
-            flush=True,
-        )
+        return manifest
 
     @staticmethod
-    def solve(
-        model,
-        original,
-        columns,
-        directory: Path,
-        options: dict,
-        result: dict,
-        started: float,
-    ) -> None:
-        """Run and independently verify one preserved or transformed numeric model."""
-        import highspy
-        import numpy as np
-
-        from pitbench.evaluator.representations import LinearModelRepresentation
-
-        result["error_stage"] = "setup"
-        solver = highspy.Highs()
-        for key, value in options.items():
-            if solver.setOptionValue(key, value) != highspy.HighsStatus.kOk:
-                raise ParameterRejected(f"HiGHS rejected {key}={value}")
-        if (
-            solver.passModel(LinearModelRepresentation.to_highs_lp(model))
-            != highspy.HighsStatus.kOk
-        ):
-            raise ValueError("HiGHS rejected prepared model")
-        solver.writeOptions(str(directory / "options.txt"))
-        trajectory_path = directory / "trajectory.jsonl"
-        trajectory_path.write_text("")
-
-        def observe(event):
-            data = event.data_out
-            record = {
-                "event": int(event.callback_type),
-                "time_sec": finite(data.running_time),
-                "primal_bound": finite(data.mip_primal_bound),
-                "dual_bound": finite(data.mip_dual_bound),
-                "solver_gap": finite(data.mip_gap),
-                "nodes": int(data.mip_node_count),
-                "simplex_iterations": int(data.simplex_iteration_count),
-            }
-            with trajectory_path.open("a") as handle:
-                handle.write(json.dumps(record, allow_nan=False) + "\n")
-
-        solver.cbMipLogging.subscribe(observe)
-        solver.cbMipImprovingSolution.subscribe(observe)
-        result["effective_parameters"] = {
-            key: solver.getOptionValue(key)[1] for key in options
-        }
-        result["setup_wall_sec"] = time.perf_counter() - started
-        solve_started = time.perf_counter()
-        cpu_started = time.process_time()
-        result["error_stage"] = "solve"
-        status = solver.run()
-        result.update(process_resources())
-        result["solve_wall_sec"] = time.perf_counter() - solve_started
-        result["solve_cpu_sec"] = time.process_time() - cpu_started
-        info = solver.getInfo()
-        model_status = solver.getModelStatus()
-        solution = solver.getSolution()
-        result.update(
-            {
-                "execution_status": "returned",
-                "call_status": str(status),
-                "model_status": solver.modelStatusToString(model_status),
-                "solver_runtime_sec": solver.getRunTime(),
-                "primal_solution_status": int(info.primal_solution_status),
-                "solver_objective": finite(info.objective_function_value)
-                if solution.value_valid
-                else None,
-                "dual_bound": finite(info.mip_dual_bound),
-                "solver_gap": finite(info.mip_gap),
-                "nodes": int(info.mip_node_count),
-                "simplex_iterations": int(info.simplex_iteration_count),
-                "optimal_with_configured_tolerances": model_status
-                == highspy.HighsModelStatus.kOptimal,
-                "time_to_solver_optimal_sec": solver.getRunTime()
-                if model_status == highspy.HighsModelStatus.kOptimal
-                else None,
-                "solution_value_valid": solution.value_valid,
-            }
-        )
-        result["error_stage"] = "verification"
-        verification_started = time.perf_counter()
-        tolerance = options["mip_feasibility_tolerance"]
-        result["verification"] = None
-        result["transformed_verification"] = None
-        if solution.value_valid:
-            values = np.asarray(solution.col_value)
-            mapped = LinearModelRepresentation.map_solution(values, columns)
-            np.savez_compressed(
-                directory / "solution.npz", values=values, original_values=mapped
-            )
-            result["verification"] = LinearModelRepresentation.verify_primal(
-                original, mapped, tolerance
-            )
-            result["transformed_verification"] = (
-                LinearModelRepresentation.verify_primal(model, values, tolerance)
-            )
-            result["objective_mapping_difference"] = result["verification"].get(
-                "objective", 0
-            ) - result["transformed_verification"].get("objective", 0)
-            if "objective" in result["verification"]:
-                result["objective_reporting_difference"] = (
-                    result["verification"]["objective"] - info.objective_function_value
-                )
-        result["verified_feasible"] = bool(
-            (result["verification"] or {}).get("feasible")
-        )
-        result["verification_wall_sec"] = time.perf_counter() - verification_started
-        final_event = {
-            "event": "final",
-            "time_sec": solver.getRunTime(),
-            "primal_bound": result["solver_objective"],
-            "dual_bound": result["dual_bound"],
-            "solver_gap": result["solver_gap"],
-            "nodes": result["nodes"],
-        }
-        with trajectory_path.open("a") as handle:
-            handle.write(json.dumps(final_event, allow_nan=False) + "\n")
-        result.pop("error_stage", None)
-
-    @staticmethod
-    def worker(output: Path, run_id: str, cpu: int) -> None:
-        os.sched_setaffinity(0, {cpu})
-        started = time.perf_counter()
-        import numpy as np
-
-        from pitbench.evaluator.representations import LinearModelRepresentation
-
+    def run(
+        output: Path,
+        cpus: list[int],
+        *,
+        axis: str | None = None,
+        limit: int | None = None,
+    ) -> dict:
         manifest = json.loads((output / "experiment.json").read_text())
-        job = next(item for item in manifest["jobs"] if item["run_id"] == run_id)
-        directory = output / "runs" / run_id
-        directory.mkdir(parents=True, exist_ok=True)
-        result = {
-            **job,
-            "cpu": cpu,
-            "pid": os.getpid(),
-            "started_unix": time.time(),
-            "solver": HighsCollection.solver_identity(),
-        }
-        try:
-            original = LinearModelRepresentation.load(
-                output / "models" / job["instance"] / "original.npz"
-            )
-            if job["permutation"] is None:
-                model = original
-                columns = np.arange(len(original["cost"]))
-            else:
-                model_root = output / "models" / job["instance"]
-                model = LinearModelRepresentation.load(
-                    model_root / f"permutation-{job['permutation']:02d}.npz"
-                )
-                with np.load(
-                    model_root / f"mapping-{job['permutation']:02d}.npz"
-                ) as mapping:
-                    columns = mapping["columns"]
-            HighsCollection.solve(
-                model,
-                original,
-                columns,
-                directory,
-                {
-                    **manifest["solver_options"],
-                    "random_seed": job["solver_seed"],
-                    "time_limit": job["budget_sec"],
-                    "log_to_console": False,
-                    "log_file": str(directory / "solver.log"),
-                },
-                result,
-                started,
-            )
-        except Exception:
-            result.update(
-                execution_status="collector_error",
-                error=traceback.format_exc(),
-                verified_feasible=False,
-            )
-        result["total_worker_wall_sec"] = time.perf_counter() - started
-        write_json(directory / "result.json", result)
-
-    @staticmethod
-    def summarize(output: Path) -> dict:
-        manifest = json.loads((output / "experiment.json").read_text())
-        records = []
+        executor = COLLECTION_EXECUTORS[manifest["config"]["execution"]]
+        if not cpus or not set(cpus) <= os.sched_getaffinity(0):
+            raise ValueError("requested CPUs are unavailable")
+        jobs = []
         for job in manifest["jobs"]:
             path = output / "runs" / job["run_id"] / "result.json"
             if path.exists():
-                record = json.loads(path.read_text())
-                if any(record.get(key) != value for key, value in job.items()):
-                    raise ValueError(f"result identity changed: {path}")
-                records.append(record)
-        summary = {
-            "expected_runs": len(manifest["jobs"]),
-            "completed_runs": len(records),
-            "complete": len(records) == len(manifest["jobs"]),
-            "verified_feasible_runs": sum(
-                bool(item.get("verified_feasible")) for item in records
-            ),
-            "execution_statuses": dict(
-                Counter(item["execution_status"] for item in records)
-            ),
-            "model_statuses": dict(
-                Counter(item.get("model_status", "unavailable") for item in records)
-            ),
-            "by_axis": dict(Counter(item["axis"] for item in records)),
-            "statistics": "deferred",
-            "updated_unix": time.time(),
-        }
+                result = json.loads(path.read_text())
+                if any(result.get(key) != value for key, value in job.items()):
+                    raise ValueError(f"saved run identity differs: {path}")
+            elif axis is None or job["axis"] == axis:
+                jobs.append(job)
+        if limit is not None:
+            if limit < 1:
+                raise ValueError("limit must be positive")
+            jobs = jobs[:limit]
+        if jobs:
+            executor.run(output, manifest, jobs, cpus)
+        return NuisanceCollection.summarize(output)
+
+    @staticmethod
+    def summarize(output: Path) -> dict:
+        from pitbench.metrics.nuisance_report import report_nuisance_results
+
+        summary = report_nuisance_results(output, output / "report")
         write_json(output / "collection_summary.json", summary)
-        with (output / "results.jsonl").open("w") as handle:
-            for record in records:
-                handle.write(json.dumps(record, allow_nan=False) + "\n")
         return summary
 
     @staticmethod
-    def run(output: Path, cpus: list[int], axis: str | None, limit: int | None) -> None:
-        if (
-            not cpus
-            or len(cpus) != len(set(cpus))
-            or not set(cpus) <= os.sched_getaffinity(0)
-        ):
-            raise ValueError("CPU IDs must be distinct and available")
-        manifest = json.loads((output / "experiment.json").read_text())
-        if manifest["solver"] != HighsCollection.solver_identity():
-            raise ValueError("solver changed")
-        jobs = [
-            item for item in manifest["jobs"] if axis is None or item["axis"] == axis
-        ]
-        jobs = [
-            item
-            for item in jobs
-            if not (output / "runs" / item["run_id"] / "result.json").exists()
-        ]
-        if limit is not None:
-            jobs = jobs[:limit]
-        queue = Queue()
-        for cpu in cpus:
-            queue.put(cpu)
-        environment = {
-            **os.environ,
-            "OPENBLAS_NUM_THREADS": "1",
-            "OMP_NUM_THREADS": "1",
-            "MKL_NUM_THREADS": "1",
-        }
-
-        def execute(job):
-            cpu = queue.get()
-            directory = output / "runs" / job["run_id"]
-            directory.mkdir(parents=True, exist_ok=True)
-            try:
-                return run_collection_process(
-                    [
-                        sys.executable,
-                        "-m",
-                        "scripts.collect_nuisance_results",
-                        "highs",
-                        "worker",
-                        "--output",
-                        str(output),
-                        "--run-id",
-                        job["run_id"],
-                        "--cpu",
-                        str(cpu),
-                    ],
-                    directory,
-                    {**job, "cpu": cpu},
-                    timeout=job["budget_sec"] + 60,
-                    environment=environment,
-                )
-            finally:
-                queue.put(cpu)
-
-        print(
-            f"Running {len(jobs)} outstanding observations on CPUs {cpus}.", flush=True
-        )
-        with ThreadPoolExecutor(max_workers=len(cpus)) as pool:
-            futures = [pool.submit(execute, job) for job in jobs]
-            for count, future in enumerate(as_completed(futures), 1):
-                result = future.result()
-                print(
-                    f"{count}/{len(jobs)} {result['run_id']} {result.get('model_status', result['execution_status'])} "
-                    f"verified={result.get('verified_feasible')} time={result.get('solver_runtime_sec')}",
-                    flush=True,
-                )
-                if count % 30 == 0:
-                    HighsCollection.summarize(output)
-        print(json.dumps(HighsCollection.summarize(output)), flush=True)
-
-    @staticmethod
     def main(argv: list[str] | None = None) -> None:
         parser = argparse.ArgumentParser(description=__doc__)
-        parser.add_argument("command", choices=("prepare", "worker", "run", "summary"))
-        parser.add_argument("--output", type=Path, required=True)
-        parser.add_argument("--instances", nargs="+")
-        parser.add_argument("--cpus", type=int, nargs="+", default=[0])
-        parser.add_argument("--axis", choices=("seed", "representation", "control"))
-        parser.add_argument("--limit", type=int)
-        parser.add_argument("--run-id")
-        parser.add_argument("--cpu", type=int)
+        commands = parser.add_subparsers(dest="command", required=True)
+        prepare = commands.add_parser("prepare")
+        prepare.add_argument("--config", type=Path, required=True)
+        prepare.add_argument("--panel")
+        prepare.add_argument("--repository", type=Path)
+        prepare.add_argument("--private-root", type=Path, default=ROOT / "private")
+        run = commands.add_parser("run")
+        run.add_argument("--cpus", type=int, nargs="+", required=True)
+        run.add_argument("--axis", choices=("seed", "representation", "control"))
+        run.add_argument("--limit", type=int)
+        summary = commands.add_parser("summary")
+        for command in (prepare, run, summary):
+            command.add_argument("--output", type=Path, required=True)
+        worker = commands.add_parser("worker")
+        worker.add_argument("--job", type=Path, required=True)
+        worker.add_argument("--cpu", type=int, required=True)
         args = parser.parse_args(argv)
+        if args.command == "worker":
+            configuration_worker(args.job, args.cpu)
+            return
         output = args.output.resolve()
         if args.command == "prepare":
-            if args.instances is None:
-                parser.error("prepare requires --instances")
-            HighsCollection.prepare(output, args.instances)
-        elif args.command == "worker":
-            if args.run_id is None or args.cpu is None:
-                parser.error("worker requires --run-id and --cpu")
-            HighsCollection.worker(output, args.run_id, args.cpu)
-        elif args.command == "run":
-            if args.limit is not None and args.limit < 1:
-                parser.error("limit must be positive")
-            HighsCollection.run(output, args.cpus, args.axis, args.limit)
-        else:
-            print(json.dumps(HighsCollection.summarize(output)), flush=True)
-
-
-class PyVRPCollection:
-    """Collect the approved PyVRP representation panel using the regular judge."""
-
-    SOLVER_SEED = 0
-    RELABELING_SEED = 20260907
-    RELABELING_COUNT = 30
-
-    @staticmethod
-    def run_identity(observation: RunObservation) -> tuple:
-        return (
-            observation.instance_set,
-            observation.instance_id,
-            observation.code_state,
-            observation.solver_seed,
-            observation.budget_sec,
-        )
-
-    @staticmethod
-    def load_results(path: Path) -> list[dict]:
-        from pitbench.schema.observation import RunObservation
-
-        if not path.exists():
-            return []
-        records = []
-        identities = set()
-        lines = path.read_text().splitlines(keepends=True)
-        for index, line in enumerate(lines):
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                if index == len(lines) - 1 and not line.endswith("\n"):
-                    path.write_text("".join(lines[:index]))
-                    break
-                raise
-            identity = PyVRPCollection.run_identity(
-                RunObservation.model_validate(record["observation"])
+            result = NuisanceCollection.prepare(
+                args.config,
+                output,
+                repository=args.repository,
+                private_root=args.private_root,
+                panel=args.panel,
             )
-            if identity in identities:
-                raise ValueError("duplicate run in results checkpoint")
-            identities.add(identity)
-            records.append(record)
-        if records and not path.read_bytes().endswith(b"\n"):
-            with path.open("a") as handle:
-                handle.write("\n")
-        return records
+            print(f"Prepared {len(result['jobs'])} runs; no solver runs executed.")
+        else:
+            result = (
+                NuisanceCollection.run(
+                    output, args.cpus, axis=args.axis, limit=args.limit
+                )
+                if args.command == "run"
+                else NuisanceCollection.summarize(output)
+            )
+            print(json.dumps({k: v for k, v in result.items() if k != "groups"}))
+
+
+class IsolatedCollection:
+    """Execute a saved panel through installed solver backends in fresh processes."""
 
     @staticmethod
-    def main(argv: list[str] | None = None) -> None:
-        from adapters.pitbench.adapter import PitBenchAdapter
-        from pitbench.evaluator.judge import LocalProcessJudge
-        from pitbench.evaluator.representation import (
-            prepare_cases,
-            preserve_json,
-            result_record,
-            write_json,
-        )
-        from pitbench.evaluator.storage import ObservationStore
-        from pitbench.schema.observation import CodeState, RunObservation
+    def identity(task, repository):
+        if repository is not None:
+            raise ValueError(
+                "isolated collection uses the current solver Python; use judge execution for a source repository"
+            )
+        return collection_backend(task.repository.plugin).identity()
+
+    @staticmethod
+    def run(output, manifest, jobs, cpus):
         from pitbench.schema.task import PitBenchTask
 
-        parser = argparse.ArgumentParser(description=__doc__)
-        parser.add_argument("--repository", type=Path, required=True)
-        parser.add_argument("--output-dir", type=Path, required=True)
-        parser.add_argument("--private-root", type=Path, default=ROOT / "private")
-        parser.add_argument("--parallel-runs", type=int, default=4)
-        parser.add_argument("--prepare-only", action="store_true")
-        parser.add_argument(
-            "--case-limit",
-            type=int,
-            help="Run only the first N relabelings for a smoke check.",
-        )
-        args = parser.parse_args(argv)
-        if args.parallel_runs < 1 or (
-            args.case_limit is not None and args.case_limit < 1
-        ):
-            parser.error("parallel-runs and case-limit must be positive")
-        output_dir = args.output_dir.resolve()
-        output_dir.mkdir(parents=True, exist_ok=True)
-        task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
-        if task.release.version != "0.14.0" or task.evaluation.budgets_sec != [
-            5.0,
-            10.0,
-        ]:
-            raise ValueError("task configuration differs from the approved experiment")
-        PitBenchAdapter.validate_repository(task, args.repository)
-        manifest = {
-            "task_id": task.task_id,
-            "source_commit": task.release.base_commit,
-            "solver_seed": PyVRPCollection.SOLVER_SEED,
-            "relabeling_generation_seed": PyVRPCollection.RELABELING_SEED,
-            "relabelings_per_instance": PyVRPCollection.RELABELING_COUNT,
-            "instance_count": 10,
-            "budgets_sec": [5.0, 10.0],
-            "code_states": ["base", "agent"],
-            "candidate_patch": "empty",
-            "task_configuration": task.model_dump(mode="json"),
-        }
-        preserve_json(output_dir / "experiment.json", manifest)
-        cases, transformations = prepare_cases(task, args.private_root, output_dir)
-        expected = {
-            (
-                case.instance_set.name,
-                case.instance_id,
-                state,
-                PyVRPCollection.SOLVER_SEED,
-                budget,
+        task = PitBenchTask.model_validate(manifest["task_configuration"])
+        if IsolatedCollection.identity(task, None) != manifest["solver"]:
+            raise ValueError("solver identity changed since preparation")
+        if set(manifest["code_states"]) != {"base"}:
+            raise ValueError("installed collection supports original release runs only")
+
+        def execute(job, cpu):
+            directory = output / "runs" / job["run_id"]
+            worker = {
+                **job,
+                "nuisance_identity": job,
+                "instance": {
+                    "id": job["instance"],
+                    "path": str(output / job["path"]),
+                    "bks": job["bks"],
+                },
+                "original_instance_path": str(output / job["original_path"]),
+                "parameters": {},
+                "fixed_options": manifest["config"].get("fixed_options", {}),
+                "threads": task.evaluation.threads,
+                "solver": manifest["solver"],
+                "repository_plugin": task.repository.plugin,
+            }
+            write_json(directory / "job.json", worker)
+            result = run_collection_process(
+                [
+                    sys.executable,
+                    "-m",
+                    "scripts.collect_nuisance_results",
+                    "worker",
+                    "--job",
+                    str(directory / "job.json"),
+                    "--cpu",
+                    str(cpu),
+                ],
+                directory,
+                job,
+                timeout=job["budget_sec"] + manifest["config"]["watchdog_grace_sec"],
             )
-            for case in cases
-            for state in CodeState
-            for budget in (5.0, 10.0)
+            # Manifest identities remain the same across all executor formats.
+            result.update(job)
+            write_json(directory / "result.json", result)
+            return result
+
+        run_collection_jobs(jobs, cpus, execute)
+
+
+class JudgeCollection:
+    """Execute a saved panel through the existing repository build and judge."""
+
+    @staticmethod
+    def identity(task, repository):
+        from adapters.pitbench.adapter import PitBenchAdapter
+
+        if repository is None:
+            raise ValueError("judge collection requires --repository")
+        PitBenchAdapter.validate_repository(task, repository)
+        return {
+            "version": task.release.version,
+            "source_commit": task.release.base_commit,
         }
-        print(
-            f"Prepared {len(cases)} equivalent inputs; {len(expected)} planned runs.",
-            flush=True,
+
+    @staticmethod
+    def run(output, manifest, jobs, cpus):
+        from pitbench.evaluator.judge import InstanceCase, LocalProcessJudge
+        from pitbench.evaluator.representation import result_record
+        from pitbench.evaluator.representations import representation_type
+        from pitbench.evaluator.storage import ObservationStore
+        from pitbench.schema.observation import CodeState
+        from pitbench.schema.task import InstanceSetSpec, PitBenchTask
+
+        task = PitBenchTask.model_validate(manifest["task_configuration"])
+        repository = Path(manifest["repository"])
+        JudgeCollection.identity(task, repository)
+        transform = representation_type(manifest["config"]["representation"]["kind"])
+        verifier = transform.verifier(
+            manifest["config"]["representation"].get("verification_tolerance")
         )
-        if args.prepare_only:
-            return
-        checkpoint = output_dir / "results.jsonl"
-        records = PyVRPCollection.load_results(checkpoint)
-        observations = [
-            RunObservation.model_validate(record["observation"]) for record in records
-        ]
-        completed = {
-            PyVRPCollection.run_identity(observation) for observation in observations
-        }
-        if completed - expected:
-            raise ValueError("results contain runs outside the approved experiment")
-        selected_cases = (
-            cases[: args.case_limit] if args.case_limit is not None else cases
+        instance_set = InstanceSetSpec(
+            name="nuisance",
+            kind="agent_dev",
+            instance_set_config="experiment.json",
+            size=len(manifest["instances"]),
         )
-        selected_expected = {
-            item
-            for item in expected
-            if item[1] in {case.instance_id for case in selected_cases}
-        }
-        patch = output_dir / "no_change.patch"
-        if patch.exists() and patch.read_bytes():
-            raise ValueError("experiment requires an empty patch")
-        patch.touch()
-        if selected_expected - completed:
+        cases = {}
+        for job in manifest["jobs"]:
+            cases[job["instance_id"]] = InstanceCase(
+                instance_set=instance_set,
+                instance_id=job["instance_id"],
+                path=output / job["path"],
+                anchor=job["bks"],
+                solver_seeds=(job["solver_seed"],),
+                budgets_sec=tuple(manifest["budgets_sec"]),
+                equivalence_parent_id=job["instance"]
+                if job["transformation"]
+                else None,
+                equivalence_transform=job["permutation"],
+                verifier=verifier,
+            )
+
+        def key(job):
+            return (
+                instance_set.name,
+                job["instance_id"],
+                CodeState(job["code_state"]),
+                job["solver_seed"],
+                job["budget_sec"],
+            )
+
+        selected = {key(job): job for job in jobs}
+        skipped = {key(job) for job in manifest["jobs"]} - selected.keys()
+
+        def save(observation):
+            job = selected[
+                (
+                    observation.instance_set,
+                    observation.instance_id,
+                    observation.code_state,
+                    observation.solver_seed,
+                    observation.budget_sec,
+                )
+            ]
+            checked = {
+                "feasible": observation.valid,
+                "objective": observation.objective,
+            }
+            record = {
+                **job,
+                "observation": observation.model_dump(mode="json"),
+                "execution_status": observation.status.value,
+                "model_status": observation.solver_status,
+                "solver_objective": observation.objective,
+                "solver_runtime_sec": observation.wall_time_sec,
+                "dual_bound": observation.dual_bound,
+                "nodes": observation.nodes,
+                "verification": checked,
+                "verified_feasible": observation.valid,
+                "peak_rss_bytes": observation.peak_rss_bytes,
+                "resource_scope": observation.resource_scope,
+                "cpu_time_sec": observation.cpu_time_sec,
+                "trajectory_path": observation.trajectory_path,
+            }
+            if job["transformation"]:
+                detailed = result_record(
+                    observation,
+                    job["transformation"],
+                    output,
+                    runs_dir=output / "judge",
+                )
+                record["representation_verification"] = detailed["verification"]
+                record["artifacts"] = detailed["artifacts"]
+                record["verification"] = detailed["verification"]["mapped_original"]
+                record["verified_feasible"] = bool(
+                    observation.valid
+                    and (record["verification"] or {}).get("feasible")
+                    and detailed["verification"]["objective_preserved"]
+                )
+            write_json(output / "runs" / job["run_id"] / "result.json", record)
+
+        affinity = os.sched_getaffinity(0)
+        try:
+            os.sched_setaffinity(0, set(cpus))
             judge = LocalProcessJudge(
                 task,
-                args.repository,
+                repository,
                 ROOT,
-                args.private_root,
-                patch,
-                output_dir / "runs",
-                code_states=(CodeState.BASE, CodeState.AGENT),
-                parallel_runs=args.parallel_runs,
+                Path(manifest["private_root"]),
+                None,
+                output / "judge",
+                code_states=tuple(CodeState(s) for s in manifest["code_states"]),
+                parallel_runs=len(cpus),
                 run_validation_builds=False,
+                evaluation_seeds=tuple(manifest["solver_seeds"]),
+                family=verifier,
             )
-            with checkpoint.open("a") as handle:
+            judge.run(
+                list(cases.values()), completed_runs=skipped, save_observation=save
+            )
+        finally:
+            os.sched_setaffinity(0, affinity)
+        records = [
+            json.loads(path.read_text())["observation"]
+            for path in (output / "runs").glob("**/result.json")
+        ]
+        from pitbench.schema.observation import RunObservation
 
-                def save(observation):
-                    record = result_record(
-                        observation,
-                        transformations[observation.instance_id],
-                        output_dir,
-                    )
-                    handle.write(json.dumps(record, allow_nan=False) + "\n")
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                    records.append(record)
-                    observations.append(observation)
+        ObservationStore.write(
+            output / "observations.parquet",
+            [RunObservation.model_validate(record) for record in records],
+        )
 
-                judge.run(
-                    selected_cases, completed_runs=completed, save_observation=save
-                )
-        ObservationStore.write(output_dir / "observations.parquet", observations)
-        summary = {
-            "task_id": task.task_id,
-            "expected_run_count": len(expected),
-            "completed_run_count": len(observations),
-            "complete": len(observations) == len(expected),
-            "valid_run_count": sum(item.valid for item in observations),
-            "mapped_feasible_run_count": sum(
-                bool((record["verification"]["mapped_original"] or {}).get("feasible"))
-                for record in records
-            ),
-            "objective_preserved_run_count": sum(
-                record["verification"]["objective_preserved"] is True
-                for record in records
-            ),
-            "statistics": "deferred",
-        }
-        write_json(output_dir / "collection_summary.json", summary)
-        print(json.dumps(summary), flush=True)
+
+COLLECTION_EXECUTORS = {"judge": JudgeCollection, "isolated": IsolatedCollection}
 
 
 class AnchorCollection:
@@ -939,7 +728,7 @@ class AnchorCollection:
         print(oracle_path)
 
 
-class PyVRPConfigurationCollection:
+class PyVRPCollectionBackend:
     """Parameter panels reuse the normal routing driver and verifier."""
 
     @staticmethod
@@ -952,22 +741,6 @@ class PyVRPConfigurationCollection:
             "version": importlib.metadata.version("pyvrp"),
             "module": pyvrp.__file__,
         }
-
-    @staticmethod
-    def prepare_instances(source: Path, destination: Path) -> list[dict]:
-        import shutil
-
-        import yaml
-
-        instances = []
-        for item in yaml.safe_load(source.read_text())["instances"]:
-            target = destination / f"{item['id']}.json"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source.parent / item["instance_file"], target)
-            instances.append(
-                {"id": item["id"], "path": str(target), "bks": item["bks"]}
-            )
-        return instances
 
     @staticmethod
     def run(job: dict, directory: Path, result: dict) -> None:
@@ -1013,6 +786,7 @@ class PyVRPConfigurationCollection:
         )
         result["error_stage"] = "verification"
         solution = output.with_suffix(".solution.json")
+        result["solution_path"] = str(solution) if solution.exists() else None
         result["verification"] = None
         if solution.exists():
             result["verification"] = (
@@ -1026,7 +800,7 @@ class PyVRPConfigurationCollection:
         result.pop("error_stage", None)
 
 
-class HighsConfigurationCollection:
+class HighsCollectionBackend:
     """Parameter panels reuse the numeric-model collector and its verifier."""
 
     @staticmethod
@@ -1037,27 +811,16 @@ class HighsConfigurationCollection:
         return {"version": solver.version(), "binding_git_hash": solver.githash()}
 
     @staticmethod
-    def prepare_instances(source: Path, destination: Path) -> list[dict]:
-        import shutil
-
-        instances = []
-        for item in json.loads(source.read_text())["instances"]:
-            target = destination / f"{item['name']}.npz"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(
-                source.parent / "models" / item["name"] / "original.npz", target
-            )
-            instances.append({"id": item["name"], "path": str(target), "bks": None})
-        return instances
-
-    @staticmethod
     def run(job: dict, directory: Path, result: dict) -> None:
         import numpy as np
 
         from pitbench.evaluator.representations import LinearModelRepresentation
 
         started = time.perf_counter()
-        original = LinearModelRepresentation.load(Path(job["instance"]["path"]))
+        model = LinearModelRepresentation.read_input(Path(job["instance"]["path"]))
+        original = LinearModelRepresentation.read_input(
+            Path(job.get("original_instance_path", job["instance"]["path"]))
+        )
         options = {
             **job["fixed_options"],
             **job["parameters"],
@@ -1067,10 +830,12 @@ class HighsConfigurationCollection:
             "log_to_console": False,
             "log_file": str(directory / "solver.log"),
         }
-        HighsCollection.solve(
+        HighsDriver.solve_numeric(
+            model,
             original,
-            original,
-            np.arange(len(original["cost"])),
+            (job.get("transformation") or {}).get(
+                "columns", np.arange(len(original["cost"]))
+            ),
             directory,
             options,
             result,
@@ -1078,10 +843,10 @@ class HighsConfigurationCollection:
         )
 
 
-CONFIGURATION_COLLECTORS = {
-    "pyvrp": PyVRPConfigurationCollection,
-    "highs": HighsConfigurationCollection,
-}
+def collection_backend(repository_plugin: str):
+    from pitbench.repositories.base import RepositoryPluginRegistry
+
+    return RepositoryPluginRegistry.load(repository_plugin).load_collection_backend()
 
 
 def configuration_worker(job_path: Path, cpu: int) -> None:
@@ -1091,12 +856,32 @@ def configuration_worker(job_path: Path, cpu: int) -> None:
     result = {**job, "cpu": cpu, "pid": os.getpid(), "started_unix": time.time()}
     started = time.perf_counter()
     try:
-        collector = CONFIGURATION_COLLECTORS[job["collector"]]
+        collector = collection_backend(job["repository_plugin"])
         result["error_stage"] = "setup"
         result["solver"] = collector.identity()
         if result["solver"] != job["solver"]:
             raise ValueError("solver identity changed since preparation")
         collector.run(job, job_path.parent, result)
+        if job.get("transformation") and result.get("solution_path"):
+            from pitbench.evaluator.representations import representation_type
+
+            mapping = job["transformation"]
+            result["error_stage"] = "verification"
+            checked = representation_type(mapping["representation"]).verify_files(
+                Path(job["original_instance_path"]),
+                Path(job["instance"]["path"]),
+                Path(result["solution_path"]),
+                job_path.parent / "mapped.solution.json",
+                mapping,
+                tolerance=mapping.get("verification_tolerance"),
+            )
+            result["representation_verification"] = checked
+            result["verification"] = checked["mapped_original"]
+            result["verified_feasible"] = bool(
+                checked["transformed"]["feasible"]
+                and checked["mapped_original"]["feasible"]
+            )
+            result.pop("error_stage", None)
     except ParameterRejected as error:
         result.update(execution_status="parameter_rejected", error=str(error))
     except Exception:
@@ -1107,4 +892,5 @@ def configuration_worker(job_path: Path, cpu: int) -> None:
             error=traceback.format_exc(),
         )
     result["total_worker_wall_sec"] = time.perf_counter() - started
+    result.update(job.get("nuisance_identity", {}))
     write_json(job_path.parent / "result.json", result)

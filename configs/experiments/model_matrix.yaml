@@ -1,0 +1,6 @@
+runs:
+  - {agent: codex, model: gpt-5.6-sol, setting: reasoning_effort=xhigh, label: codex-gpt-5-6-sol-xhigh}
+  - {agent: codex, model: gpt-5.4-mini, setting: reasoning_effort=medium, label: codex-gpt-5-4-mini-medium}
+  - {agent: antigravity, model: gemini-3.7-flash-high, label: antigravity-gemini-3-7-flash-high}
+  - {agent: antigravity, model: gemini-3.1-pro-high, label: antigravity-gemini-3-1-pro-high}
+  - {agent: antigravity, model: gemini-3.5-flash-low, label: antigravity-gemini-3-5-flash-low}

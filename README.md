@@ -163,7 +163,7 @@ workspace backend before allocating remote resources.
 Set `proxy_url` only on machines that require one for model access.
 
 If the run cannot start, diagnose the current shell and machine with
-`uv run pitbench doctor pyvrp`. Custom Codex and Antigravity profiles can be
+`uv run pitbench doctor pyvrp_v0_14_0`. Custom Codex and Antigravity profiles can be
 created with `pitbench profiles init` and selected through `profile_path` in the
 local configuration. PitBench records the runner image ID and profile hash with
 every trial.
@@ -171,18 +171,17 @@ every trial.
 ### Schedule multiple agents externally
 
 Each `pitbench evaluate` invocation evaluates one externally selected agent on
-one PyVRP snapshot task. Agent/model selection and batch scheduling stay outside
+one configured snapshot task. Agent/model selection and batch scheduling stay outside
 the benchmark task definition. The bundled shell script is an example serial
-scheduler whose list of agents can be edited by the caller:
+scheduler whose agent/model combinations are read from an experiment YAML:
 
 ```bash
-scripts/run-model-matrix.sh pyvrp_v0_14_0
+scripts/run-model-matrix.sh pyvrp_v0_14_0 configs/experiments/model_matrix.yaml
 ```
 
 The script makes independent `pitbench evaluate` calls in sequence and records
 their command logs plus `status.tsv`. Other schedulers can invoke the same
-single-agent command concurrently or serially without a PitBench-specific
-matrix schema.
+single-agent command concurrently or serially using the same evaluation interface.
 
 ### Generate a Performance-First Report
 
@@ -264,9 +263,30 @@ bash scripts/run-seed-validation-matrix.sh /absolute/batch /absolute/private <ta
 The batch must contain `harness/` and `sources/<task_id>/`. Each task supplies its
 `repository.judge_image`, or `PITBENCH_JUDGE_IMAGE` supplies an explicit override.
 Use `PITBENCH_PYTHON` to select the host Python environment. The batch reuses the
-single-task validation runner and its existing sampling settings.
+single-task validation runner and its existing sampling settings. Fixed-instance
+seed intervals are computed by the shared seed report; the old batch-specific
+interval-recomputation implementation has been removed.
 
-Both retained nuisance collection formats use the same report entry point:
+Nuisance collection uses one configured entry point. The supplied panels retain
+all original releases, budgets, seed IDs and transformation counts. Select a panel
+and run preparation in its solver environment (numeric input parsing needs the
+installed binding). Source-based execution reuses the normal repository judge;
+installed execution reuses the parameter-search worker and scheduler.
+
+```bash
+python -m scripts.collect_nuisance_results prepare \
+  --config configs/experiments/nuisance_robustness.yaml --panel routing \
+  --repository /path/to/source --output results/nuisance-routing
+python -m scripts.collect_nuisance_results run \
+  --output results/nuisance-routing --cpus <available-cpu-ids>
+```
+
+Use `--panel linear` without `--repository` in the numeric solver environment.
+The configured input index can reference the retained experiment via an explicit
+path template; it can also be any fixed instance index with `id` and `path` fields.
+New panels save a common per-run result format, including failures and unrun jobs.
+Previously retained experiment formats remain readable by the same report command:
+
 
 ```bash
 python -m scripts.report_nuisance_results --source /path/to/experiment --output /path/to/report

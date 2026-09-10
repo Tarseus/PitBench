@@ -1,0 +1,42 @@
+# Collection settings moved from the former solver-specific controllers.
+panels:
+  routing:
+    task_config: configs/tasks/pyvrp_v0_14_0.yaml
+    execution: judge
+    instance_source: configs/instance_sets/pyvrp_cvrp_v1_dev.yaml
+    instance_count: 10
+    axes: [representation]
+    code_states: [base, agent]
+    solver_seeds: [0]
+    representation:
+      kind: customer_relabeling
+      generation_seed: 20260907
+      solver_seed: 0
+      count: 30
+    control_repeats: 0
+    schedule_seed: 20260907
+    watchdog_grace_sec: 60
+  linear:
+    task_config: configs/tasks/highs_v1_15_1.yaml
+    execution: isolated
+    instance_source: private/highs_nuisance/20260909/experiment.json
+    instance_path_template: "{source}"
+    instance_count: 10
+    axes: [seed, representation, control]
+    code_states: [base]
+    solver_seeds: [407464839, 1842690338, 1576434930, 1338323122, 764973830, 1170185833, 863597210, 469672409, 1024521812, 792041942, 48996424, 1921883778, 1115470074, 557412223, 973820141, 2120119476, 1875618999, 1970833205, 1496932969, 1929624443, 763747743, 1322325596, 1217843034, 564798066, 115518608, 866620101, 574093095, 31711285, 1565718849, 93124540]
+    representation:
+      kind: row_column_permutation
+      generation_seed: 20260909
+      solver_seed: 0
+      count: 30
+      verification_tolerance: 0.000001
+    control_repeats: 3
+    schedule_seed: 20260909
+    watchdog_grace_sec: 60
+    fixed_options:
+      parallel: "off"
+      presolve: choose
+      mip_feasibility_tolerance: 0.000001
+      mip_rel_gap: 0.0001
+      mip_abs_gap: 0.000001

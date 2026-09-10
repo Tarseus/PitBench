@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import random
 from pathlib import Path
@@ -13,6 +14,73 @@ if TYPE_CHECKING:
 
 class CustomerRepresentation:
     """Customer permutations with the depot fixed."""
+
+    name = "customer_relabeling"
+    family = "cvrp"
+    requires_tolerance = False
+
+    @staticmethod
+    def verifier(tolerance=None):
+        from pitbench.problem_families.verification import CVRPFamily
+
+        return CVRPFamily()
+
+    @staticmethod
+    def assert_same(original, restored):
+        if original != restored:
+            raise ValueError("representation input changed")
+
+    suffix = ".json"
+    generator = staticmethod(random.Random)
+
+    @staticmethod
+    def read_input(path: Path) -> dict:
+        return json.loads(path.read_text())
+
+    @staticmethod
+    def write_input(path: Path, model: dict) -> None:
+        path.write_text(json.dumps(model, indent=2, allow_nan=False) + "\n")
+
+    @staticmethod
+    def mappings(model: dict, count: int, generator) -> list[dict]:
+        return [
+            {"new_to_original": mapping}
+            for mapping in CustomerRepresentation.permutations(
+                len(model["coordinates"]) - 1, count, generator
+            )
+        ]
+
+    @staticmethod
+    def transform(model: dict, mapping: dict) -> dict:
+        return CustomerRepresentation.permute(model, mapping["new_to_original"])
+
+    @staticmethod
+    def verify_files(
+        original: Path,
+        transformed: Path,
+        solution: Path,
+        mapped_path: Path,
+        mapping: dict,
+        tolerance: float | None = None,
+    ) -> dict:
+        from pitbench.problem_families.verification import CVRPFamily
+
+        family = CVRPFamily()
+        checked = family.verify(transformed, solution)
+        CustomerRepresentation.write_input(
+            mapped_path,
+            CustomerRepresentation.map_solution(
+                json.loads(solution.read_text()), mapping["new_to_original"]
+            ),
+        )
+        mapped = family.verify(original, mapped_path)
+        return {
+            "transformed": checked.model_dump(),
+            "mapped_original": mapped.model_dump(),
+            "objective_preserved": checked.objective == mapped.objective
+            if checked.objective is not None and mapped.objective is not None
+            else None,
+        }
 
     @staticmethod
     def permutations(
@@ -76,6 +144,114 @@ ROW_FIELDS = ("row_lower", "row_upper", "row_names")
 
 class LinearModelRepresentation:
     """MILP row/column permutations and independent primal arithmetic checks."""
+
+    name = "row_column_permutation"
+    family = "mip"
+    requires_tolerance = True
+
+    @staticmethod
+    def verifier(tolerance):
+        from pitbench.problem_families.verification import NumericModelFamily
+
+        return NumericModelFamily(tolerance)
+
+    @staticmethod
+    def assert_same(original, restored):
+        LinearModelRepresentation.assert_equivalent(
+            original,
+            restored,
+            list(range(original["matrix"].shape[0])),
+            list(range(len(original["cost"]))),
+        )
+
+    suffix = ".npz"
+
+    @staticmethod
+    def generator(seed: int):
+        import numpy as np
+
+        return np.random.default_rng(seed)
+
+    @staticmethod
+    def read_input(path: Path) -> dict:
+        return (
+            LinearModelRepresentation.load(path)
+            if path.suffix == ".npz"
+            else LinearModelRepresentation.read(path)
+        )
+
+    @staticmethod
+    def write_input(path: Path, model: dict) -> None:
+        LinearModelRepresentation.save(path, model)
+
+    @staticmethod
+    def mappings(model: dict, count: int, generator) -> list[dict]:
+        import numpy as np
+
+        row_count, column_count = model["matrix"].shape
+        if (
+            count < 1
+            or math.factorial(row_count) * math.factorial(column_count) - 1 < count
+        ):
+            raise ValueError("not enough distinct nonidentity row/column permutations")
+        seen = set()
+        mappings = []
+        while len(mappings) < count:
+            rows = generator.permutation(row_count)
+            columns = generator.permutation(column_count)
+            signature = (tuple(rows), tuple(columns))
+            if signature in seen or (
+                np.array_equal(rows, np.arange(row_count))
+                and np.array_equal(columns, np.arange(column_count))
+            ):
+                continue
+            seen.add(signature)
+            mappings.append({"rows": rows.tolist(), "columns": columns.tolist()})
+        return mappings
+
+    @staticmethod
+    def transform(model: dict, mapping: dict) -> dict:
+        transformed = LinearModelRepresentation.permute(
+            model, mapping["rows"], mapping["columns"]
+        )
+        LinearModelRepresentation.assert_equivalent(
+            model, transformed, mapping["rows"], mapping["columns"]
+        )
+        return transformed
+
+    @staticmethod
+    def verify_files(
+        original: Path,
+        transformed: Path,
+        solution: Path,
+        mapped_path: Path,
+        mapping: dict,
+        tolerance: float | None = None,
+    ) -> dict:
+        if tolerance is None:
+            raise ValueError(
+                "numeric representation verification requires an explicit tolerance"
+            )
+        from pitbench.problem_families.verification import NumericModelFamily
+
+        values = json.loads(solution.read_text())["values"]
+        mapped_values = LinearModelRepresentation.map_solution(
+            values, mapping["columns"]
+        )
+        mapped_path.write_text(json.dumps({"values": mapped_values.tolist()}) + "\n")
+        checked = NumericModelFamily.check_model(
+            LinearModelRepresentation.read_input(transformed), values, tolerance
+        )
+        mapped = NumericModelFamily.check_model(
+            LinearModelRepresentation.read_input(original), mapped_values, tolerance
+        )
+        return {
+            "transformed": checked,
+            "mapped_original": mapped,
+            "objective_preserved": checked.get("objective") == mapped.get("objective")
+            if "objective" in checked and "objective" in mapped
+            else None,
+        }
 
     @staticmethod
     def read(path: Path) -> dict:
@@ -229,44 +405,14 @@ class LinearModelRepresentation:
         mapped[columns] = values
         return mapped
 
-    @staticmethod
-    def verify_primal(model: dict, values, tolerance: float) -> dict:
-        import numpy as np
 
-        values = np.asarray(values, dtype=float)
-        if values.shape != model["cost"].shape or not np.isfinite(values).all():
-            return {
-                "feasible": False,
-                "reason": "missing, nonfinite or wrong-sized solution",
-            }
-        activity = model["matrix"] @ values
-        if not np.isfinite(activity).all():
-            return {"feasible": False, "reason": "nonfinite constraint activity"}
-        bound_error = float(
-            max(
-                np.max(model["col_lower"] - values, initial=0),
-                np.max(values - model["col_upper"], initial=0),
-            )
-        )
-        row_error = float(
-            max(
-                np.max(model["row_lower"] - activity, initial=0),
-                np.max(activity - model["row_upper"], initial=0),
-            )
-        )
-        integer_values = values[model["integrality"] == 1]
-        integer_error = float(
-            np.max(np.abs(integer_values - np.rint(integer_values)), initial=0)
-        )
-        objective = (
-            math.fsum(float(a) * float(b) for a, b in zip(model["cost"], values))
-            + model["offset"]
-        )
-        return {
-            "feasible": max(bound_error, row_error, integer_error) <= tolerance,
-            "tolerance": tolerance,
-            "max_bound_violation": bound_error,
-            "max_row_violation": row_error,
-            "max_integrality_violation": integer_error,
-            "objective": objective,
-        }
+REPRESENTATIONS = {
+    item.name: item for item in (CustomerRepresentation, LinearModelRepresentation)
+}
+
+
+def representation_type(name: str):
+    try:
+        return REPRESENTATIONS[name]
+    except KeyError:
+        raise ValueError(f"unsupported representation: {name}") from None

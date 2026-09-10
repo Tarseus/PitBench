@@ -75,8 +75,8 @@ def _prepare_task_image(task_path: Path, *, rebuild: bool) -> None:
 
 @app.command("doctor")
 def doctor_command(
-    profile: Annotated[
-        str, typer.Argument(help="Environment profile to diagnose (currently: pyvrp)")
+    task_id: Annotated[
+        str, typer.Argument(help="Task ID whose environment should be checked")
     ],
     config_path: Annotated[
         Path | None,
@@ -92,9 +92,9 @@ def doctor_command(
 ) -> None:
     """Check whether this machine is ready for a real evaluation."""
     try:
-        checks = run_doctor(profile, _root(root), config_path)
+        checks = run_doctor(task_id, _root(root), config_path)
     except ValueError as error:
-        raise typer.BadParameter(str(error), param_hint="PROFILE") from error
+        raise typer.BadParameter(str(error), param_hint="TASK_ID") from error
 
     for check in checks:
         typer.echo(f"{check.status.value} {check.name}: {check.detail}")
@@ -106,7 +106,7 @@ def doctor_command(
     if failures:
         typer.echo(f"NOT READY: {failures} failure(s), {warnings} warning(s)", err=True)
         raise typer.Exit(code=1)
-    typer.echo(f"READY: PyVRP evaluation prerequisites passed ({warnings} warning(s))")
+    typer.echo(f"READY: {task_id} evaluation prerequisites passed ({warnings} warning(s))")
 
 
 @app.command("evaluate")

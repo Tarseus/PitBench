@@ -11,15 +11,14 @@ import random
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from queue import Queue
 from threading import Event
 
 from pitbench.evaluator.collection import (
-    CONFIGURATION_COLLECTORS,
     ROOT,
+    collection_backend,
     configuration_worker,
+    run_collection_jobs,
     run_collection_process,
     write_json,
 )
@@ -140,7 +139,7 @@ def prepare(
         task = PitBenchTask.from_yaml(ROOT / panel["task_config"]).model_dump(
             mode="json"
         )
-        collector = CONFIGURATION_COLLECTORS[panel["collector"]]
+        repository_plugin = task["repository"]["plugin"]
         python = solver_pythons[panel["collector"]]
         probe = subprocess.run(
             [
@@ -148,8 +147,8 @@ def prepare(
                 "-m",
                 "scripts.collect_configuration_results",
                 "probe",
-                "--collector",
-                panel["collector"],
+                "--repository-plugin",
+                repository_plugin,
             ],
             cwd=ROOT,
             capture_output=True,
@@ -177,8 +176,12 @@ def prepare(
             seed = generator.randrange(upper + 1)
             if seed not in seeds and seed not in retest_seeds:
                 retest_seeds.append(seed)
-        instances = collector.prepare_instances(
-            ROOT / panel["instance_source"], output / "inputs" / task["task_id"]
+        from pitbench.instances.generate import prepare_collection_instances
+
+        instances = prepare_collection_instances(
+            ROOT / panel["instance_source"],
+            output / "inputs" / task["task_id"],
+            path_template=panel.get("instance_path_template"),
         )
         if len(instances) != config["instance_count"] or len(
             {item["id"] for item in instances}
@@ -189,6 +192,7 @@ def prepare(
         for budget in task["evaluation"]["budgets_sec"]:
             search = {
                 **panel,
+                "repository_plugin": repository_plugin,
                 "task_id": task["task_id"],
                 "task_configuration": task,
                 "id": f"{task['task_id']}/budget-{budget:g}",
@@ -286,6 +290,9 @@ class ConfigurationRunner:
                     "fixed_options": search["fixed_options"],
                     "threads": search["threads"],
                     "collector": search["collector"],
+                    "repository_plugin": search["task_configuration"]["repository"][
+                        "plugin"
+                    ],
                     "solver": search["solver"],
                     "task_id": search["task_id"],
                     "source_commit": search["task_configuration"]["release"][
@@ -299,12 +306,9 @@ class ConfigurationRunner:
             ]
             random.Random(search["search_seed"]).shuffle(jobs)
             write_json(plan, jobs)
-        queue = Queue()
         collection_failed = Event()
-        for cpu in self.cpus:
-            queue.put(cpu)
 
-        def execute(job):
+        def execute(job, cpu):
             run = directory / "runs" / job["instance_id"] / f"seed-{job['solver_seed']}"
             attempts = sorted(run.glob("attempt-*/result.json"))
             if attempts:
@@ -327,31 +331,26 @@ class ConfigurationRunner:
             attempt = run / f"attempt-{len(list(run.glob('attempt-*'))):04d}"
             attempt.mkdir(parents=True)
             write_json(attempt / "job.json", job)
-            cpu = queue.get()
-            try:
-                result = run_collection_process(
-                    [
-                        search["solver_python"],
-                        "-m",
-                        "scripts.collect_configuration_results",
-                        "worker",
-                        "--job",
-                        str(attempt / "job.json"),
-                        "--cpu",
-                        str(cpu),
-                    ],
-                    attempt,
-                    {**job, "cpu": cpu},
-                    timeout=search["budget_sec"] + search["watchdog_grace_sec"],
-                )
-                if result.get("execution_status") == "collector_error":
-                    collection_failed.set()
-                return result
-            finally:
-                queue.put(cpu)
+            result = run_collection_process(
+                [
+                    search["solver_python"],
+                    "-m",
+                    "scripts.collect_configuration_results",
+                    "worker",
+                    "--job",
+                    str(attempt / "job.json"),
+                    "--cpu",
+                    str(cpu),
+                ],
+                attempt,
+                {**job, "cpu": cpu},
+                timeout=search["budget_sec"] + search["watchdog_grace_sec"],
+            )
+            if result.get("execution_status") == "collector_error":
+                collection_failed.set()
+            return result
 
-        with ThreadPoolExecutor(max_workers=len(self.cpus)) as pool:
-            records = list(pool.map(execute, jobs))
+        records = run_collection_jobs(jobs, self.cpus, execute)
         write_json(directory / "results.json", records)
         return records
 
@@ -513,13 +512,13 @@ def main(argv: list[str] | None = None) -> None:
     report = commands.add_parser("report")
     report.add_argument("--output", type=Path, required=True)
     probe = commands.add_parser("probe")
-    probe.add_argument("--collector", choices=CONFIGURATION_COLLECTORS, required=True)
+    probe.add_argument("--repository-plugin", required=True)
     worker = commands.add_parser("worker")
     worker.add_argument("--job", type=Path, required=True)
     worker.add_argument("--cpu", type=int, required=True)
     args = parser.parse_args(argv)
     if args.command == "probe":
-        print(json.dumps(CONFIGURATION_COLLECTORS[args.collector].identity()))
+        print(json.dumps(collection_backend(args.repository_plugin).identity()))
         return
     if args.command == "worker":
         configuration_worker(args.job, args.cpu)
