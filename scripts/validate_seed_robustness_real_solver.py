@@ -58,8 +58,7 @@ def _load_checkpoint(path: Path) -> list[RunObservation]:
         except ValueError:
             if line_number == len(lines):
                 checkpoint_text = "".join(
-                    f"{observation.model_dump_json()}\n"
-                    for observation in observations
+                    f"{observation.model_dump_json()}\n" for observation in observations
                 )
                 _write_json(path, checkpoint_text)
                 break
@@ -83,12 +82,12 @@ def _show_progress(message: str) -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate Seed Robustness with real PyVRP outcomes."
+        description="Validate Seed Robustness using a configured repository task."
     )
     parser.add_argument(
         "--task-config",
         type=Path,
-        default=ROOT / "configs/tasks/pyvrp_v0_14_0.yaml",
+        required=True,
     )
     parser.add_argument("--repository", type=Path)
     parser.add_argument("--judge-image")
@@ -195,16 +194,10 @@ def main() -> None:
     )
 
     task = PitBenchTask.from_yaml(args.task_config)
-    if task.task_id not in {
-        "pyvrp_v0_12_2",
-        "pyvrp_v0_13_0",
-        "pyvrp_v0_13_4",
-        "pyvrp_v0_14_0",
-    }:
-        raise ValueError("real validation requires a configured PyVRP release task")
     seed_robustness = task.evaluation.seed_robustness
     if seed_robustness is None:
         raise ValueError("task does not define Seed Robustness")
+    args.judge_image = args.judge_image or task.repository.judge_image
 
     validation_seeds = generate_real_validation_seeds(
         seed_min=seed_robustness.seed_selection.seed_min,
@@ -230,7 +223,11 @@ def main() -> None:
             validation_seeds.model_dump_json(indent=2) + "\n",
         )
 
-    if args.judge_image is not None and not args.inside_judge:
+    if (
+        args.observations is None
+        and args.judge_image is not None
+        and not args.inside_judge
+    ):
         if args.repository is None:
             raise ValueError("--repository is required when running the real solver")
         PitBenchAdapter.validate_repository(task, args.repository)

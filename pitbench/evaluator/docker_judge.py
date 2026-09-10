@@ -28,6 +28,7 @@ class DockerJudge:
         code_states: tuple[CodeState, ...] = tuple(CodeState),
         parallel_runs: int = 1,
         progress_callback: Callable[[str], None] | None = None,
+        reliability_only: bool = False,
     ) -> None:
         digest_pinned = re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image)
         local_image_id = re.fullmatch(r"sha256:[0-9a-f]{64}", image)
@@ -45,6 +46,7 @@ class DockerJudge:
         self.code_states = code_states
         self.parallel_runs = parallel_runs
         self.progress_callback = progress_callback
+        self.reliability_only = reliability_only
 
     def run(self) -> list[RunObservation]:
         package_root = Path(__file__).resolve().parents[2]
@@ -103,6 +105,8 @@ class DockerJudge:
                 self.cpuset_cpus,
             ]
         command.extend(["--parallel-runs", str(self.parallel_runs)])
+        if self.reliability_only:
+            command.append("--reliability-only")
         for state in self.code_states:
             command.extend(["--code-state", state.value])
         process = subprocess.Popen(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import resource
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -72,6 +73,15 @@ def write_solution(output: Path, payload: dict[str, Any]) -> Path:
     path = output.with_suffix(".solution.json")
     path.write_text(json.dumps(payload, indent=2))
     return path
+
+
+def failure_reason(error: Exception) -> str | None:
+    """Preserve explicit failures across a driver subprocess boundary."""
+    if isinstance(error, subprocess.TimeoutExpired):
+        return "timed_out"
+    if isinstance(error, MemoryError):
+        return "out_of_memory"
+    return None
 
 
 def append_trajectory(path: Path, payload: dict[str, Any]) -> None:

@@ -6,9 +6,7 @@ import hashlib
 import json
 import os
 import random
-import subprocess
 import tempfile
-import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,7 +14,7 @@ from pitbench.evaluator.judge import InstanceCase, JudgePlan, LocalProcessJudge
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.evaluator.representations import CustomerRepresentation
 from pitbench.problem_families.verification import CVRPFamily
-from pitbench.schema.observation import RunObservation, RunStatus
+from pitbench.schema.observation import RunObservation
 from pitbench.schema.task import (
     InstanceSetKind,
     PitBenchTask,
@@ -120,70 +118,6 @@ def prepare_cases(
     return cases, transformations
 
 
-class RecordingJudge(LocalProcessJudge):
-    """Preserve process logs in addition to the existing judge artifacts."""
-
-    @staticmethod
-    def _run(command, workspace):
-        if (
-            "pitbench.solver_drivers.run" not in command.argv
-            or command.argv[command.argv.index("pitbench.solver_drivers.run") + 1]
-            != "pyvrp"
-        ):
-            return LocalProcessJudge._run(command, workspace)
-        output = Path(command.argv[command.argv.index("--output") + 1])
-        started = time.monotonic()
-        try:
-            completed = LocalProcessJudge._run(command, workspace)
-        except subprocess.TimeoutExpired as error:
-            stdout, stderr = error.stdout or "", error.stderr or ""
-            returncode = None
-            raise
-        else:
-            stdout, stderr = completed.stdout, completed.stderr
-            returncode = completed.returncode
-            return completed
-        finally:
-            if "stdout" in locals():
-                for suffix, content in (
-                    (".stdout.log", stdout),
-                    (".stderr.log", stderr),
-                ):
-                    output.with_suffix(suffix).write_text(
-                        content.decode(errors="replace")
-                        if isinstance(content, bytes)
-                        else content
-                    )
-                write_json(
-                    output.with_suffix(".process.json"),
-                    {
-                        "argv": command.argv,
-                        "returncode": returncode,
-                        "timed_out": returncode is None,
-                        "elapsed_sec": time.monotonic() - started,
-                    },
-                )
-
-    def _run_case(self, workspace, case, state, seed, budget, *, cpu_ids=None):
-        try:
-            return super()._run_case(
-                workspace, case, state, seed, budget, cpu_ids=cpu_ids
-            )
-        except (ValueError, KeyError, IndexError, TypeError) as error:
-            if case.equivalence_parent_id is None:
-                raise
-            # Malformed solver output remains an individual failed observation.
-            # Filesystem and build failures still propagate to the experiment runner.
-            return self._failure(
-                case,
-                state,
-                seed,
-                budget,
-                RunStatus.INVALID,
-                f"output parsing/verification failed: {error}",
-            )
-
-
 def result_record(
     observation: RunObservation,
     transformation: dict,
@@ -258,7 +192,7 @@ def result_record(
 
 
 def run_with_representation(
-    judge: RecordingJudge, private_root: Path
+    judge: LocalProcessJudge, private_root: Path
 ) -> list[RunObservation]:
     """Run the standard grid and configured relabelings in the same judge."""
     task = judge.task

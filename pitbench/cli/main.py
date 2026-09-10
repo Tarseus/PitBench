@@ -32,6 +32,10 @@ from pitbench.metrics.performance_report import (
     compute_performance_report,
     format_performance_report,
 )
+from pitbench.metrics.reliability_report import (
+    compute_reliability_reports,
+    format_reliability_report,
+)
 from pitbench.metrics.resource_report import (
     compute_resource_report,
     format_resource_report,
@@ -339,6 +343,9 @@ def judge_candidate(
     judge_memory: Annotated[
         str, typer.Option(help="Memory limit for the isolated judge")
     ] = "8g",
+    reliability_only: Annotated[
+        bool, typer.Option(help="Run only the configured boundary reliability suite")
+    ] = False,
     config_path: Annotated[
         Path | None,
         typer.Option(
@@ -447,6 +454,7 @@ def judge_candidate(
                 "judge_image": resolved_judge_image,
                 "judge_cpus": judge_cpus,
                 "judge_memory": judge_memory,
+                "reliability_only": reliability_only,
                 "_progress_callback": typer.echo,
             },
         )
@@ -466,7 +474,9 @@ def judge_candidate(
         "valid observations"
     )
     typer.echo(f"Artifacts: {resolved_output_dir}")
-    typer.echo(f"Report: pitbench report {resolved_output_dir}")
+    typer.echo(
+        f"Report: pitbench report {resolved_output_dir} --task-config {record.task_config_path}"
+    )
 
 
 @tasks_app.command("validate")
@@ -644,26 +654,45 @@ def report_command(
             param_hint="--task-config",
         )
 
-    performance_report = compute_performance_report(
-        observations,
-        primary_budget_sec=task.evaluation.primary_budget_sec,
+    standard = [item for item in observations if item.test_suite is None]
+    performance_report = (
+        compute_performance_report(
+            standard,
+            primary_budget_sec=task.evaluation.primary_budget_sec,
+        )
+        if standard
+        else None
     )
-    resource_report = compute_resource_report(
-        observations,
-        primary_budget_sec=task.evaluation.primary_budget_sec,
-        budgets_sec=task.evaluation.budgets_sec,
-        expected_instance_counts={item.name: item.size for item in task.instance_sets},
-        expected_seed_count=(
-            task.evaluation.seed_robustness.seed_selection.seed_count
-            if task.evaluation.seed_robustness is not None
-            else len(task.evaluation.solver_seeds or [])
-        ),
+    resource_report = (
+        compute_resource_report(
+            standard,
+            primary_budget_sec=task.evaluation.primary_budget_sec,
+            budgets_sec=task.evaluation.budgets_sec,
+            expected_instance_counts={
+                item.name: item.size for item in task.instance_sets
+            },
+            expected_seed_count=(
+                task.evaluation.seed_robustness.seed_selection.seed_count
+                if task.evaluation.seed_robustness is not None
+                else len(task.evaluation.solver_seeds or [])
+            ),
+        )
+        if standard
+        else None
     )
+    reliability_report = None
+    if task.evaluation.operational_reliability:
+        reliability_report, _ = compute_reliability_reports(observations, task=task)
 
     if json_output:
         combined = {
-            "performance": performance_report.model_dump(),
-            "resource_usage": resource_report.model_dump(),
+            "performance": performance_report.model_dump()
+            if performance_report
+            else None,
+            "resource_usage": resource_report.model_dump() if resource_report else None,
+            "operational_reliability": reliability_report.model_dump()
+            if reliability_report
+            else None,
         }
         typer.echo(json.dumps(combined, indent=2))
         return
@@ -673,8 +702,12 @@ def report_command(
     typer.echo(f"  Total observations: {len(observations)}")
     typer.echo("========================================================\n")
 
-    typer.echo(format_performance_report(performance_report))
-    typer.echo("\n" + format_resource_report(resource_report))
+    if performance_report is not None:
+        typer.echo(format_performance_report(performance_report))
+    if resource_report is not None:
+        typer.echo("\n" + format_resource_report(resource_report))
+    if reliability_report is not None:
+        typer.echo("\n" + format_reliability_report(reliability_report))
 
 
 if __name__ == "__main__":

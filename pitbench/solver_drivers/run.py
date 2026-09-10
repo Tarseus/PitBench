@@ -14,6 +14,7 @@ from pathlib import Path
 
 from pitbench.solver_drivers.common import (
     append_trajectory,
+    failure_reason,
     parser,
     process_resources,
     write_result,
@@ -102,6 +103,16 @@ class PyVRPDriver:
                     stop=MaxRuntime(args.budget), seed=args.seed, display=False
                 )
                 resources = process_resources()
+            if not result.best.is_feasible():
+                write_result(
+                    args.output,
+                    started=started,
+                    valid=False,
+                    has_solution=False,
+                    solver_status="Budget stop",
+                    **resources,
+                )
+                return
             routes = [
                 PyVRPDriver._route_visits(route) for route in result.best.routes()
             ]
@@ -128,13 +139,21 @@ class PyVRPDriver:
                 args.output,
                 started=started,
                 valid=True,
+                has_solution=True,
+                solver_status="Budget stop",
                 objective=objective,
                 iterations=result.num_iterations,
                 solver_runtime_sec=result.runtime,
                 **resources,
             )
         except Exception as exc:
-            write_result(args.output, started=started, valid=False, error=str(exc))
+            write_result(
+                args.output,
+                started=started,
+                valid=False,
+                error=str(exc),
+                failure_reason=failure_reason(exc),
+            )
             raise
 
 
@@ -246,14 +265,39 @@ class HighsDriver:
                     if raw_solution.exists()
                     else ""
                 )
+            print(completed.stdout, end="")
+            print(completed.stderr, end="", file=sys.stderr)
             if completed.returncode:
-                raise RuntimeError(completed.stderr.strip() or "HiGHS failed")
+                raise RuntimeError(
+                    f"HiGHS process exit {completed.returncode}: {completed.stderr.strip()}"
+                )
             log = completed.stdout + "\n" + completed.stderr
             objective = HighsDriver._match(rf"Primal bound\s+({_FLOAT})", log)
+            if objective is None:
+                objective = HighsDriver._match(rf"(?m)^Objective\s+({_FLOAT})\s*$", raw)
+            if objective is None:
+                objective = HighsDriver._match(
+                    rf"Objective value\s*:\s*({_FLOAT})", log
+                )
             dual = HighsDriver._match(rf"Dual bound\s+({_FLOAT})", log)
             nodes = HighsDriver._match(r"Nodes\s+(\d+)", log)
             model_status = re.search(r"Model status\s*:\s*([^\n]+)", log, re.IGNORECASE)
-            write_solution(args.output, {"raw_solution": raw, "objective": objective})
+            status = model_status.group(1).strip() if model_status else None
+            if status is None:
+                solution_status = re.search(r"(?m)^Model status\s*\n([^\n]+)", raw)
+                status = solution_status.group(1).strip() if solution_status else None
+            reason = None
+            if status and "memory limit" in status.lower():
+                reason = "out_of_memory"
+            elif status and "error" in status.lower():
+                reason = "solver_error"
+            # A finite primal objective identifies an incumbent. A native time
+            # limit with one is a normal stop, not the outer watchdog timeout.
+            has_solution = objective is not None
+            write_solution(
+                args.output,
+                {"raw_solution": raw, "objective": objective, "solver_status": status},
+            )
             append_trajectory(
                 args.trajectory,
                 {"time_sec": time.perf_counter() - started, "objective": objective},
@@ -262,15 +306,36 @@ class HighsDriver:
                 args.output,
                 started=started,
                 valid=objective is not None,
+                has_solution=has_solution,
+                failure_reason=reason,
                 objective=objective,
                 primal_bound=objective,
                 dual_bound=dual,
                 nodes=int(nodes) if nodes is not None else None,
-                solver_status=model_status.group(1).strip() if model_status else None,
+                solver_status=status,
                 **resources,
             )
         except Exception as exc:
-            write_result(args.output, started=started, valid=False, error=str(exc))
+            if isinstance(exc, subprocess.TimeoutExpired):
+                for content, stream in (
+                    (exc.stdout, sys.stdout),
+                    (exc.stderr, sys.stderr),
+                ):
+                    if content:
+                        print(
+                            content.decode(errors="replace")
+                            if isinstance(content, bytes)
+                            else content,
+                            end="",
+                            file=stream,
+                        )
+            write_result(
+                args.output,
+                started=started,
+                valid=False,
+                error=str(exc),
+                failure_reason=failure_reason(exc),
+            )
             raise
 
 

@@ -25,9 +25,7 @@ def _observation(seed: int) -> RunObservation:
 def test_checkpoint_discards_only_a_truncated_final_line(tmp_path: Path) -> None:
     checkpoint_path = tmp_path / "observations.checkpoint.jsonl"
     first_observation = _observation(10)
-    checkpoint_path.write_text(
-        f'{first_observation.model_dump_json()}\n{{"incomplete"'
-    )
+    checkpoint_path.write_text(f'{first_observation.model_dump_json()}\n{{"incomplete"')
 
     loaded = _load_checkpoint(checkpoint_path)
 
@@ -48,31 +46,65 @@ def test_checkpoint_rejects_duplicate_observations(tmp_path: Path) -> None:
     "task_id",
     ["pyvrp_v0_12_2", "pyvrp_v0_13_0", "pyvrp_v0_13_4", "pyvrp_v0_14_0"],
 )
-def test_runner_accepts_each_pyvrp_release(
+def test_runner_accepts_existing_seed_validation_tasks(
     task_id: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(sys, "argv", [
-        "validate_seed_robustness_real_solver.py",
-        "--task-config", str(ROOT / "configs" / "tasks" / f"{task_id}.yaml"),
-        "--output-dir", str(tmp_path),
-        "--reference-seed-count", "30",
-        "--test-seed-count", "30",
-        "--test-list-count", "1",
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate_seed_robustness_real_solver.py",
+            "--task-config",
+            str(ROOT / "configs" / "tasks" / f"{task_id}.yaml"),
+            "--output-dir",
+            str(tmp_path),
+            "--reference-seed-count",
+            "30",
+            "--test-seed-count",
+            "30",
+            "--test-list-count",
+            "1",
+        ],
+    )
     with pytest.raises(ValueError, match="--repository is required"):
         main()
     assert (tmp_path / "validation_seeds.json").exists()
 
 
-def test_runner_rejects_other_tasks(
+def test_runner_accepts_new_task_identity_with_seed_configuration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
-    task = task.model_copy(update={"task_id": "unsupported_task"})
+    task = task.model_copy(update={"task_id": "another_repository_release"})
     monkeypatch.setattr(PitBenchTask, "from_yaml", lambda path: task)
-    monkeypatch.setattr(sys, "argv", [
-        "validate_seed_robustness_real_solver.py", "--output-dir", str(tmp_path),
-    ])
-    with pytest.raises(ValueError, match="configured PyVRP release task"):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate_seed_robustness_real_solver.py",
+            "--output-dir",
+            str(tmp_path),
+            "--task-config",
+            "task.yaml",
+        ],
+    )
+    with pytest.raises(ValueError, match="--repository is required"):
+        main()
+    assert (tmp_path / "validation_seeds.json").exists()
+
+
+def test_runner_rejects_task_without_seed_configuration(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate_seed_robustness_real_solver.py",
+            "--output-dir",
+            str(tmp_path),
+            "--task-config",
+            str(ROOT / "configs/tasks/highs_v1_15_1.yaml"),
+        ],
+    )
+    with pytest.raises(ValueError, match="task does not define Seed Robustness"):
         main()
     assert not (tmp_path / "validation_seeds.json").exists()

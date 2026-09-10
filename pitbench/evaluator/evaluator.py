@@ -16,6 +16,7 @@ from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest, Evaluator
 from pitbench.metrics.performance_report import compute_performance_report
+from pitbench.metrics.reliability_report import compute_reliability_reports
 from pitbench.metrics.resource_report import compute_resource_reports
 from pitbench.metrics.seed_robustness_report import (
     SeedSelectionMetadata,
@@ -96,6 +97,7 @@ class PitBenchEvaluator(Evaluator):
                 code_states=code_states,
                 parallel_runs=int(config.get("judge_parallel_runs", 1)),
                 progress_callback=progress_callback,
+                reliability_only=bool(config.get("reliability_only", False)),
             ).run()
 
         base_observations_path = config.get("base_observations_path")
@@ -119,7 +121,9 @@ class PitBenchEvaluator(Evaluator):
         nuisance_robustness = None
         seed_robustness_details_ref = None
         original_observations = [
-            item for item in observations if item.equivalence_parent_id is None
+            item
+            for item in observations
+            if item.equivalence_parent_id is None and item.test_suite is None
         ]
         seed_robustness = task.evaluation.seed_robustness
         if original_observations and seed_robustness is not None and not fixture_mode:
@@ -166,6 +170,7 @@ class PitBenchEvaluator(Evaluator):
             task.evaluation.representation_robustness is not None
             and not fixture_mode
             and preflight_validity.accepted
+            and not config.get("reliability_only", False)
         ):
             representation_details_ref = artifact_ref(
                 request.output_dir / "representation" / "details.json",
@@ -199,6 +204,35 @@ class PitBenchEvaluator(Evaluator):
                 media_type="application/json",
                 private=True,
             )
+        reliability = None
+        reliability_details_ref = None
+        if (
+            task.evaluation.operational_reliability
+            and not fixture_mode
+            and preflight_validity.accepted
+        ):
+            reliability, reliability_details = compute_reliability_reports(
+                observations,
+                task=task,
+                code_states=tuple(CodeState)
+                if base_observations_path is not None
+                else code_states,
+            )
+            reliability_dir = request.output_dir / "reliability"
+            reliability_dir.mkdir(parents=True, exist_ok=True)
+            details_path = reliability_dir / "details.json"
+            details_path.write_text(
+                reliability_details.model_dump_json(indent=2) + "\n"
+            )
+            (reliability_dir / "report.json").write_text(
+                reliability.model_dump_json(indent=2) + "\n"
+            )
+            reliability_details_ref = artifact_ref(
+                details_path,
+                root=request.output_dir,
+                media_type="application/json",
+                private=True,
+            )
         artifacts = ArtifactManifest(
             candidate_patch=(
                 artifact_ref(
@@ -218,6 +252,7 @@ class PitBenchEvaluator(Evaluator):
             seed_robustness_details=seed_robustness_details_ref,
             representation_robustness_details=representation_details_ref,
             resource_details=resource_details_ref,
+            reliability_details=reliability_details_ref,
         )
         performance = (
             compute_performance_report(
@@ -238,5 +273,6 @@ class PitBenchEvaluator(Evaluator):
                 performance=performance,
                 nuisance_robustness=nuisance_robustness,
                 resource_usage=resource_usage,
+                operational_reliability=reliability,
             ),
         )

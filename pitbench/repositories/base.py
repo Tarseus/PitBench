@@ -33,6 +33,8 @@ class SolverRunSpec(BaseModel):
 
 class NormalizedSolverOutput(BaseModel):
     valid: bool
+    has_solution: bool | None = None
+    failure_reason: str | None = None
     objective: float | None = None
     primal_bound: float | None = None
     dual_bound: float | None = None

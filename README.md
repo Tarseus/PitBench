@@ -190,15 +190,92 @@ Each trial stores observations under `runs/<run_id>/<task_id>/<trial_name>/evalu
 
 ```bash
 uv run pitbench report \
-  runs/<run_id>/<task_id>/<trial_name>/evaluation
+  runs/<run_id>/<task_id>/<trial_name>/evaluation \
+  --task-config configs/tasks/<task_id>.yaml
 
 uv run pitbench report \
-  runs/<run_id>/<task_id>/<trial_name>/evaluation --json
+  runs/<run_id>/<task_id>/<trial_name>/evaluation \
+  --task-config configs/tasks/<task_id>.yaml --json
 ```
+
+Tasks with `evaluation.operational_reliability: true` also run a public boundary
+test suite. This is enabled for PyVRP 0.14.0 and HiGHS 1.15.1. Each has four
+small feasible cases, using the task's existing budgets, threads, and 30
+development seeds. The normal `evaluate` and `judge` commands include this suite;
+to run just these cases on an already captured candidate patch:
+
+```bash
+uv run pitbench judge pyvrp_v0_14_0 candidate.patch \
+  --expected-patch-sha256 <captured-patch-sha256> \
+  --reliability-only --output-dir runs/boundary-check
+```
+
+This uses the same repository snapshot and isolated solver image configuration as
+the regular judge. `reliability/manifest.json` records inputs and expected behavior;
+`reliability/report.json` reports pass counts for each budget and code state;
+`reliability/details.json` lists failures, missing runs, and paired changes. All
+observations remain in `trials.parquet`, with process logs and solutions alongside.
+
+A passing run must end normally and return a feasible solution that passes the
+independent verifier. A native budget stop with a feasible incumbent passes; an
+external watchdog timeout does not. Crash, timeout, explicit out-of-memory,
+solver error, missing or malformed output, no solution, and invalid solution are
+reported separately. Invalid solutions still fail the existing qualification
+check. The integral MIP cases also check reported objective values and false
+optimality claims against their known optima.
+
+The reported pass rate counts instance–seed runs within each budget, with the
+whole declared grid as its denominator. It is left unset when runs are missing.
+It describes this test suite, not a deployment success probability. Boundary
+observations are excluded from performance, resource, and seed-IQR aggregation.
 
 ---
 
 ## 🛠️ Verification & Developer Tooling
+
+Repository code organization and cleanup rules are in [AGENTS.md](AGENTS.md).
+
+Experiment tools select implementations through task configurations and shared
+modules. To generate empirical BKS anchors, run inside the appropriate solver
+judge environment with a clean source snapshot:
+
+```bash
+python -m scripts.generate_shift_bks \
+  --task-config configs/tasks/<task_id>.yaml --repository /input/base \
+  --instance-set-config /private/hidden_instances/<panel>.yaml \
+  --private-root /private --output-dir /private/oracles/<panel> \
+  --budget-sec 30 --seeds 0 1 2 3 4
+```
+
+`--task-config` and `--repository` replace the former `--solver-python` option.
+The shared judge builds the configured repository and independently verifies each
+solution. Budget and seeds are explicit anchor-generation inputs. Inputs, logs,
+solutions, and observations are retained; an incomplete or invalid run grid does
+not produce a new oracle. Solution references follow the actual output location.
+
+Seed validation requires an explicit `--task-config` defining
+`evaluation.seed_robustness`; there is no solver or release whitelist. A prepared
+batch can run selected tasks sequentially:
+
+```bash
+bash scripts/run-seed-validation-matrix.sh /absolute/batch /absolute/private <task_id>...
+```
+
+The batch must contain `harness/` and `sources/<task_id>/`. Each task supplies its
+`repository.judge_image`, or `PITBENCH_JUDGE_IMAGE` supplies an explicit override.
+Use `PITBENCH_PYTHON` to select the host Python environment. The batch reuses the
+single-task validation runner and its existing sampling settings.
+
+Both retained nuisance collection formats use the same report entry point:
+
+```bash
+python -m scripts.report_nuisance_results --source /path/to/experiment --output /path/to/report
+```
+
+The report reads a job manifest with per-run results, or judge checkpoints with
+their transformation manifest. It derives group sizes and budgets from those
+records, separates code states, and retains missing groups. CSV, JSON summaries,
+and HTML share the same observations; no robustness statistic is selected here.
 
 ```bash
 # Validate task configs and contracts

@@ -16,6 +16,10 @@ class RunStatus(str, Enum):
     CRASHED = "crashed"
     TIMED_OUT = "timed_out"
     BUILD_FAILED = "build_failed"
+    OUTPUT_ERROR = "output_error"
+    NO_SOLUTION = "no_solution"
+    SOLVER_ERROR = "solver_error"
+    OUT_OF_MEMORY = "out_of_memory"
 
 
 class RunObservation(BaseModel):
@@ -46,6 +50,8 @@ class RunObservation(BaseModel):
     peak_rss_bytes: int | None = None
     resource_scope: str | None = None
     solver_status: str | None = None
+    test_suite: str | None = None
+    process_exit_code: int | None = None
     problem_scale: float | None = Field(default=None, gt=0)
     equivalence_parent_id: str | None = None
     equivalence_transform: str | None = None

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -20,7 +22,7 @@ from pitbench.evaluator.private_assets import (
     load_private_seed_robustness_config,
 )
 from pitbench.instances import materialize_generated_instance_set, verify_public_file
-from pitbench.problem_families.base import ProblemFamilyRegistry
+from pitbench.problem_families.base import ProblemFamilyPlugin, ProblemFamilyRegistry
 from pitbench.problem_families.verification import ExternalVerifierFamily
 from pitbench.repositories.base import (
     BuildKind,
@@ -43,6 +45,8 @@ class InstanceCase:
     equivalence_transform: str | None = None
     solver_seeds: tuple[int, ...] | None = None
     budgets_sec: tuple[float, ...] | None = None
+    test_suite: str | None = None
+    verifier: ProblemFamilyPlugin | None = None
 
 
 def _customer_count(path: Path | None) -> float | None:
@@ -395,20 +399,26 @@ class LocalProcessJudge:
         parallel_runs: int = 1,
         run_validation_builds: bool = True,
         progress_callback: Callable[[str], None] | None = None,
+        evaluation_seeds: tuple[int, ...] | None = None,
+        family: ProblemFamilyPlugin | None = None,
+        additional_cases: list[InstanceCase] | None = None,
     ) -> None:
         self.task = task
         self.base_repository = base_repository
         self.public_root = public_root
         self.resolver = PrivateAssetResolver(private_root)
-        self.evaluation_seeds = _evaluation_seeds(task, self.resolver)
+        self.evaluation_seeds = evaluation_seeds or _evaluation_seeds(
+            task, self.resolver
+        )
         self.candidate_patch = candidate_patch
         self.output_dir = output_dir
         self.code_states = code_states
         self.parallel_runs = parallel_runs
         self.run_validation_builds = run_validation_builds
         self.progress_callback = progress_callback
+        self.additional_cases = additional_cases or []
         self.repository = RepositoryPluginRegistry.load(task.repository.plugin)
-        self.family = ProblemFamilyRegistry.load(task.problem_family)
+        self.family = family or ProblemFamilyRegistry.load(task.problem_family)
         if isinstance(self.family, ExternalVerifierFamily):
             self.family.verifier = self.resolver.resolve(task.evaluation.verifier)
 
@@ -416,15 +426,31 @@ class LocalProcessJudge:
     def _run(command: CommandSpec, workspace: Path) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
         environment.update(command.env)
-        return subprocess.run(
+        with subprocess.Popen(
             command.argv,
             cwd=workspace / command.cwd,
             env=None if not environment else environment,
-            check=False,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=command.timeout_sec,
-        )
+            errors="replace",
+            start_new_session=True,
+        ) as process:
+            try:
+                stdout, stderr = process.communicate(timeout=command.timeout_sec)
+            except subprocess.TimeoutExpired as error:
+                # A timed-out wrapper must not leave a native solver running behind it.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                stdout, stderr = process.communicate()
+                raise subprocess.TimeoutExpired(
+                    command.argv, command.timeout_sec, output=stdout, stderr=stderr
+                ) from error
+            return subprocess.CompletedProcess(
+                command.argv, process.returncode, stdout, stderr
+            )
 
     def _state_patch(self, state: CodeState) -> Path | None:
         if state == CodeState.BASE:
@@ -484,6 +510,7 @@ class LocalProcessJudge:
                     evaluation_seeds=self.evaluation_seeds,
                 )
                 cases = plan.cases
+            cases = [*cases, *self.additional_cases]
             total_solver_runs = sum(
                 (
                     case.instance_set.name,
@@ -639,6 +666,8 @@ class LocalProcessJudge:
         stem = f"seed-{seed}-budget-{budget:g}"
         output = run_dir / f"{stem}.json"
         trajectory = run_dir / f"{stem}.trajectory.jsonl"
+        for artifact in (output, output.with_suffix(".solution.json"), trajectory):
+            artifact.unlink(missing_ok=True)
         threads = self.task.evaluation.threads
         command = _limit_solver_cpus(
             self.repository.run_command(
@@ -654,25 +683,108 @@ class LocalProcessJudge:
             threads,
             cpu_ids,
         )
+        started = time.monotonic()
         try:
             completed = self._run(command, workspace)
-        except subprocess.TimeoutExpired:
-            return self._failure(case, state, seed, budget, RunStatus.TIMED_OUT)
-        if completed.returncode or not output.is_file():
-            return self._failure(
-                case,
-                state,
-                seed,
-                budget,
-                RunStatus.CRASHED,
-                completed.stderr,
+        except subprocess.TimeoutExpired as error:
+            completed = None
+            stdout, stderr = error.stdout or "", error.stderr or ""
+        else:
+            stdout, stderr = completed.stdout, completed.stderr
+        elapsed = time.monotonic() - started
+        stdout_path = output.with_suffix(".stdout.log")
+        stderr_path = output.with_suffix(".stderr.log")
+        for path, content in ((stdout_path, stdout), (stderr_path, stderr)):
+            path.write_text(
+                content.decode(errors="replace")
+                if isinstance(content, bytes)
+                else content
             )
-        parsed = self.repository.parse_output(output)
+        exit_code = completed.returncode if completed is not None else None
+        output.with_suffix(".process.json").write_text(
+            json.dumps(
+                {
+                    "argv": command.argv,
+                    "returncode": exit_code,
+                    "timed_out": completed is None,
+                    "elapsed_sec": elapsed,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+
+        def failure(status, detail, parsed=None):
+            observation = self._failure(case, state, seed, budget, status, str(detail))
+            return observation.model_copy(
+                update={
+                    "stdout_path": str(stdout_path),
+                    "stderr_path": str(stderr_path),
+                    "process_exit_code": exit_code,
+                    "wall_time_sec": elapsed,
+                    "solver_status": parsed.solver_status if parsed else None,
+                }
+            )
+
+        if completed is None:
+            return failure(RunStatus.TIMED_OUT, "external process deadline exceeded")
+        parsed = None
+        parse_error = None
+        try:
+            parsed = self.repository.parse_output(output)
+        except (ValueError, OSError, TypeError) as error:
+            parse_error = error
+        if completed.returncode:
+            reasons = {
+                "timed_out": RunStatus.TIMED_OUT,
+                "out_of_memory": RunStatus.OUT_OF_MEMORY,
+                "solver_error": RunStatus.SOLVER_ERROR,
+            }
+            status = reasons.get(
+                parsed.failure_reason if parsed else None, RunStatus.CRASHED
+            )
+            return failure(
+                status,
+                (parsed.error if parsed else None)
+                or stderr
+                or f"process exit {exit_code}",
+                parsed,
+            )
+        if parse_error is not None:
+            return failure(RunStatus.OUTPUT_ERROR, f"result output: {parse_error}")
+        assert parsed is not None
+        if parsed.failure_reason:
+            status = {
+                "timed_out": RunStatus.TIMED_OUT,
+                "out_of_memory": RunStatus.OUT_OF_MEMORY,
+            }.get(parsed.failure_reason, RunStatus.SOLVER_ERROR)
+            return failure(status, parsed.error or parsed.failure_reason, parsed)
+        if case.test_suite is not None and not parsed.solver_status:
+            return failure(
+                RunStatus.OUTPUT_ERROR, "missing solver termination status", parsed
+            )
+        if parsed.has_solution is False:
+            return failure(
+                RunStatus.NO_SOLUTION,
+                "solver stopped without a candidate solution",
+                parsed,
+            )
         solution = output.with_suffix(".solution.json")
-        verified = self.family.verify(case.path, solution)
+        try:
+            verified = (case.verifier or self.family).verify(case.path, solution)
+        except (
+            ValueError,
+            KeyError,
+            IndexError,
+            TypeError,
+            FileNotFoundError,
+        ) as error:
+            return failure(RunStatus.OUTPUT_ERROR, f"solution output: {error}", parsed)
         objective = (
             verified.objective if verified.objective is not None else parsed.objective
         )
+        if objective is not None and not math.isfinite(objective):
+            return failure(RunStatus.INVALID, "non-finite objective", parsed)
         return RunObservation(
             task_id=self.task.task_id,
             code_state=state,
@@ -699,12 +811,15 @@ class LocalProcessJudge:
             peak_rss_bytes=parsed.peak_rss_bytes,
             resource_scope=parsed.resource_scope,
             solver_status=parsed.solver_status,
+            test_suite=case.test_suite,
+            process_exit_code=exit_code,
             problem_scale=case.problem_scale,
             equivalence_parent_id=case.equivalence_parent_id,
             equivalence_transform=case.equivalence_transform,
             trajectory_path=str(trajectory) if trajectory.exists() else None,
             solution_path=str(solution) if solution.exists() else None,
-            stdout_path=str(output),
+            stdout_path=str(stdout_path),
+            stderr_path=str(stderr_path),
             error=None if verified.feasible else verified.detail,
         )
 
@@ -729,6 +844,7 @@ class LocalProcessJudge:
             threads=self.task.evaluation.threads,
             status=status,
             valid=False,
+            test_suite=case.test_suite,
             problem_scale=case.problem_scale,
             equivalence_parent_id=case.equivalence_parent_id,
             equivalence_transform=case.equivalence_transform,

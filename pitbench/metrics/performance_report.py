@@ -190,6 +190,7 @@ def compute_performance_report(
         item
         for item in observations
         if item.equivalence_parent_id is None
+        and item.test_suite is None
         and (item.instance_set_kind or item.instance_set) == "judge_id"
     ]
     if not judge_id:

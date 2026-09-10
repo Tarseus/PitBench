@@ -65,6 +65,7 @@ tasks:
                 "judge",
                 "pyvrp_v0_14_0",
                 str(candidate_patch),
+                "--reliability-only",
                 "--expected-patch-sha256",
                 candidate_patch_sha256,
                 "--root",
@@ -81,6 +82,7 @@ tasks:
     assert request.evaluator_config["private_root"] == str(private_root)
     assert request.evaluator_config["judge_cpus"] == 8.0
     assert request.evaluator_config["judge_memory"] == "8g"
+    assert request.evaluator_config["reliability_only"] is True
     saved = json.loads((evaluation_dir / "evaluation.json").read_text())
     assert saved["completed"] is True
     assert "1440/1440 valid observations" in result.output

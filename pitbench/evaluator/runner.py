@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from pitbench.evaluator.judge import LocalProcessJudge
-from pitbench.evaluator.representation import RecordingJudge, run_with_representation
+from pitbench.evaluator.judge import LocalProcessJudge, _development_seeds
+from pitbench.evaluator.reliability import prepare_boundary_cases
+from pitbench.evaluator.representation import run_with_representation
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.schema.observation import CodeState
 from pitbench.schema.task import PitBenchTask
@@ -20,6 +21,7 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--observations", type=Path, required=True)
     parser.add_argument("--parallel-runs", type=int, default=1)
+    parser.add_argument("--reliability-only", action="store_true")
     parser.add_argument(
         "--code-state",
         action="append",
@@ -27,12 +29,14 @@ def main() -> None:
     )
     args = parser.parse_args()
     task = PitBenchTask.from_yaml(args.task_config)
-    judge_class = (
-        RecordingJudge
-        if task.evaluation.representation_robustness is not None
-        else LocalProcessJudge
+    if args.reliability_only and not task.evaluation.operational_reliability:
+        parser.error("task does not enable operational reliability")
+    boundary_cases = (
+        prepare_boundary_cases(task, args.output_dir)
+        if task.evaluation.operational_reliability
+        else []
     )
-    judge = judge_class(
+    judge = LocalProcessJudge(
         task=task,
         base_repository=args.base_repository,
         public_root=args.public_root,
@@ -42,12 +46,16 @@ def main() -> None:
         code_states=tuple(CodeState(value) for value in (args.code_state or []))
         or tuple(CodeState),
         parallel_runs=args.parallel_runs,
+        additional_cases=boundary_cases,
+        evaluation_seeds=_development_seeds(task) if args.reliability_only else None,
+        family=boundary_cases[0].verifier if args.reliability_only else None,
     )
-    observations = (
-        run_with_representation(judge, args.private_root)
-        if task.evaluation.representation_robustness is not None
-        else judge.run()
-    )
+    if args.reliability_only:
+        observations = judge.run([])
+    elif task.evaluation.representation_robustness is not None:
+        observations = run_with_representation(judge, args.private_root)
+    else:
+        observations = judge.run()
     ObservationStore.write_jsonl(args.observations, observations)
 
 

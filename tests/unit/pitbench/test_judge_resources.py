@@ -72,6 +72,7 @@ def test_local_judge_runs_grid_on_distinct_cpu_slots(tmp_path: Path) -> None:
         evaluation=SimpleNamespace(threads=1, solver_seeds=[0, 1], budgets_sec=[1.0]),
     )
     judge = LocalProcessJudge.__new__(LocalProcessJudge)
+    judge.additional_cases = []
     judge.task = task
     judge.public_root = tmp_path
     judge.resolver = object()
@@ -141,6 +142,7 @@ def test_local_judge_skips_completed_runs(tmp_path: Path) -> None:
         evaluation=SimpleNamespace(threads=1, solver_seeds=[10, 20], budgets_sec=[1.0]),
     )
     judge = LocalProcessJudge.__new__(LocalProcessJudge)
+    judge.additional_cases = []
     judge.task = task
     judge.public_root = tmp_path
     judge.resolver = object()

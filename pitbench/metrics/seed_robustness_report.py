@@ -424,6 +424,7 @@ def compute_seed_robustness_report(
     development_seeds: Sequence[int],
     evaluation_seeds: Sequence[int],
 ) -> SeedRobustnessReport:
+    observations = [item for item in observations if item.test_suite is None]
     (
         declared_budgets,
         development_seed_list,
@@ -548,6 +549,7 @@ def compute_seed_robustness_details(
     development_seeds: Sequence[int],
     evaluation_seeds: Sequence[int],
 ) -> SeedRobustnessDetails:
+    observations = [item for item in observations if item.test_suite is None]
     (
         declared_budgets,
         development_seed_list,

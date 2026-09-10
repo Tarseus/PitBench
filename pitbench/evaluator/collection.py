@@ -570,8 +570,8 @@ class PyVRPCollection:
     @staticmethod
     def main(argv: list[str] | None = None) -> None:
         from adapters.pitbench.adapter import PitBenchAdapter
+        from pitbench.evaluator.judge import LocalProcessJudge
         from pitbench.evaluator.representation import (
-            RecordingJudge,
             prepare_cases,
             preserve_json,
             result_record,
@@ -661,7 +661,7 @@ class PyVRPCollection:
             raise ValueError("experiment requires an empty patch")
         patch.touch()
         if selected_expected - completed:
-            judge = RecordingJudge(
+            judge = LocalProcessJudge(
                 task,
                 args.repository,
                 ROOT,
@@ -708,3 +708,179 @@ class PyVRPCollection:
         }
         write_json(output_dir / "collection_summary.json", summary)
         print(json.dumps(summary), flush=True)
+
+
+class AnchorCollection:
+    """Generate empirical anchors with the task's existing judge and verifier."""
+
+    @staticmethod
+    def main(argv: list[str] | None = None) -> None:
+        from datetime import UTC, datetime
+
+        import yaml
+
+        from adapters.pitbench.adapter import PitBenchAdapter
+        from pitbench.evaluator.judge import InstanceCase, LocalProcessJudge
+        from pitbench.evaluator.storage import ObservationStore
+        from pitbench.instances.generate import materialize_generated_instance_set
+        from pitbench.schema.observation import CodeState, RunStatus
+        from pitbench.schema.task import InstanceSetKind, InstanceSetSpec, PitBenchTask
+
+        parser = argparse.ArgumentParser(
+            description="Generate independently verified empirical BKS anchors."
+        )
+        parser.add_argument("--task-config", type=Path, required=True)
+        parser.add_argument("--repository", type=Path, required=True)
+        parser.add_argument("--instance-set-config", type=Path, required=True)
+        parser.add_argument("--private-root", type=Path, default=ROOT / "private")
+        parser.add_argument("--output-dir", type=Path, required=True)
+        parser.add_argument("--budget-sec", type=float, required=True)
+        parser.add_argument("--seeds", type=int, nargs="+", required=True)
+        parser.add_argument("--workers", type=int, default=5)
+        args = parser.parse_args(argv)
+        if (
+            not math.isfinite(args.budget_sec)
+            or args.budget_sec <= 0
+            or args.workers <= 0
+        ):
+            parser.error("budget and worker count must be positive")
+        if len(set(args.seeds)) != len(args.seeds):
+            parser.error("seeds must be unique")
+        task = PitBenchTask.from_yaml(args.task_config)
+        if task.oracle.objective_sense is None:
+            raise ValueError("anchor generation requires an objective sense")
+        PitBenchAdapter.validate_repository(task, args.repository)
+        output = args.output_dir.resolve()
+        payload = yaml.safe_load(args.instance_set_config.read_text())
+        paths = materialize_generated_instance_set(
+            payload,
+            output / "inputs",
+            expected_visibility="judge",
+            stem_prefix="judge_shift",
+        )
+        instance_set = InstanceSetSpec(
+            name="anchor_generation",
+            kind=InstanceSetKind.JUDGE_SHIFT,
+            instance_set_config=str(args.instance_set_config.resolve()),
+            size=len(paths),
+        )
+        cases = [
+            InstanceCase(
+                instance_set=instance_set,
+                instance_id=path.stem,
+                path=path,
+                anchor=None,
+                solver_seeds=tuple(args.seeds),
+                budgets_sec=(args.budget_sec,),
+            )
+            for path in paths
+        ]
+        judge = LocalProcessJudge(
+            task=task,
+            base_repository=args.repository.resolve(),
+            public_root=ROOT,
+            private_root=args.private_root,
+            candidate_patch=None,
+            output_dir=output / "runs",
+            code_states=(CodeState.BASE,),
+            parallel_runs=args.workers,
+            run_validation_builds=False,
+            evaluation_seeds=tuple(args.seeds),
+        )
+        # Keep every completed observation even if a later run or build fails.
+        with (output / "observations.jsonl").open("w") as checkpoint:
+
+            def save(observation):
+                checkpoint.write(observation.model_dump_json() + "\n")
+                checkpoint.flush()
+
+            observations = judge.run(cases, save_observation=save)
+        ObservationStore.write(output / "observations.parquet", observations)
+        expected = {(path.stem, seed) for path in paths for seed in args.seeds}
+        observed = {(item.instance_id, item.solver_seed) for item in observations}
+        if observed != expected or len(observations) != len(expected):
+            raise ValueError("anchor generation did not complete the declared run grid")
+        if any(
+            item.status != RunStatus.COMPLETED
+            or not item.valid
+            or item.objective is None
+            or not math.isfinite(item.objective)
+            or item.solution_path is None
+            for item in observations
+        ):
+            raise ValueError("invalid BKS candidate; inspect the retained observations")
+        # Resolve all paths before publishing an oracle so missing evidence cannot pass.
+        solutions = {
+            (item.instance_id, item.solver_seed): Path(item.solution_path)
+            for item in observations
+        }
+        if any(not path.is_file() for path in solutions.values()):
+            raise ValueError("BKS candidate solution is missing")
+        private_root = args.private_root.resolve()
+        if output.is_relative_to(private_root):
+            solution_prefix = "private://" + output.relative_to(private_root).as_posix()
+        else:
+            solution_prefix = None
+        anchors = []
+        for path in paths:
+            candidates = [
+                item for item in observations if item.instance_id == path.stem
+            ]
+            direction = 1 if task.oracle.objective_sense == "minimize" else -1
+            best = min(
+                candidates,
+                key=lambda item: (direction * item.objective, item.solver_seed),
+            )
+            destination = output / f"{path.stem}.bks.solution.json"
+            destination.write_bytes(
+                solutions[(path.stem, best.solver_seed)].read_bytes()
+            )
+            anchors.append(
+                {
+                    "id": path.stem,
+                    "bks": best.objective,
+                    **(
+                        {"bks_solution_uri": f"{solution_prefix}/{destination.name}"}
+                        if solution_prefix
+                        else {"bks_solution_file": destination.name}
+                    ),
+                    "instance_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "bks_solution_sha256": hashlib.sha256(
+                        destination.read_bytes()
+                    ).hexdigest(),
+                    "winning_seed": best.solver_seed,
+                    "verified_objectives": {
+                        str(item.solver_seed): item.objective for item in candidates
+                    },
+                }
+            )
+        family = type(judge.family)
+        oracle = {
+            "schema_version": "1.0",
+            "kind": "empirical_best_known_solution",
+            "problem_family": task.problem_family.value,
+            "objective_sense": task.oracle.objective_sense,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "instance_set_config_sha256": hashlib.sha256(
+                args.instance_set_config.read_bytes()
+            ).hexdigest(),
+            "solver": {
+                "name": judge.repository.name,
+                "version": task.release.version,
+                "source_commit": task.release.base_commit,
+            },
+            "protocol": {
+                "budget_sec": args.budget_sec,
+                "seeds": args.seeds,
+                "workers": args.workers,
+                "threads": task.evaluation.threads,
+                "independent_verifier": f"{family.__module__}:{family.__name__}",
+            },
+            "anchors": anchors,
+        }
+        metric = payload["generator"].get("distance_metric")
+        if metric is not None:
+            oracle["distance_metric"] = metric
+        oracle_path = output / "oracle.yaml"
+        oracle_path.write_text(yaml.safe_dump(oracle, sort_keys=False))
+        print(oracle_path)

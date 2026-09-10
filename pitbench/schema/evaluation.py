@@ -5,6 +5,7 @@ from enum import Enum
 from pydantic import BaseModel, Field, computed_field
 
 from pitbench.metrics.performance_report import PerformanceReport
+from pitbench.metrics.reliability_report import ReliabilityReport
 from pitbench.metrics.resource_report import ResourceReport
 from pitbench.metrics.seed_robustness_report import SeedRobustnessReport
 from pitbench.schema.observation import CodeState
@@ -50,6 +51,7 @@ class ArtifactManifest(BaseModel):
     seed_robustness_details: ArtifactRef | None = None
     representation_robustness_details: ArtifactRef | None = None
     resource_details: ArtifactRef | None = None
+    reliability_details: ArtifactRef | None = None
     trajectories: list[ArtifactRef] = Field(default_factory=list)
     solutions: list[ArtifactRef] = Field(default_factory=list)
     logs: list[ArtifactRef] = Field(default_factory=list)
@@ -62,6 +64,7 @@ class EvaluationSummary(BaseModel):
     performance: PerformanceReport | None = None
     nuisance_robustness: SeedRobustnessReport | None = None
     resource_usage: ResourceReport | None = None
+    operational_reliability: ReliabilityReport | None = None
 
 
 class EvaluationResult(BaseModel):

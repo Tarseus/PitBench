@@ -40,6 +40,9 @@ def test_runner_collects_configured_relabelings_and_preserves_failures(
 ):
     task_path = ROOT / "configs/tasks/pyvrp_v0_14_0.yaml"
     task = PitBenchTask.from_yaml(task_path)
+    # This test isolates relabeling; the combined runner is covered separately.
+    task.evaluation.operational_reliability = False
+    monkeypatch.setattr(PitBenchTask, "from_yaml", lambda path: task)
     assert task.evaluation.representation_robustness is not None
     original = {
         "depot": 0,

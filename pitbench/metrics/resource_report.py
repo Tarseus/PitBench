@@ -176,7 +176,11 @@ def compute_resource_reports(
     """
     if expected_seed_count < 1:
         raise ValueError("expected_seed_count must be positive")
-    selected = [item for item in observations if item.equivalence_parent_id is None]
+    selected = [
+        item
+        for item in observations
+        if item.equivalence_parent_id is None and item.test_suite is None
+    ]
     task_ids = {item.task_id for item in selected}
     if len(task_ids) != 1:
         raise ValueError(

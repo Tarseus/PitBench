@@ -151,6 +151,7 @@ class EvaluationProtocol(BaseModel):
     solver_seeds: list[int] | None = None
     seed_robustness: SeedRobustnessConfig | None = None
     representation_robustness: RepresentationRobustnessConfig | None = None
+    operational_reliability: bool = False
     threads: int = Field(default=1, gt=0)
     verifier: str
 
@@ -195,6 +196,11 @@ class PitBenchTask(BaseModel):
 
     @model_validator(mode="after")
     def validate_instance_set_roles(self) -> Self:
+        if self.evaluation.operational_reliability and self.problem_family not in {
+            ProblemFamily.CVRP,
+            ProblemFamily.MIP,
+        }:
+            raise ValueError("boundary reliability tests support CVRP and MIP tasks")
         kinds = {instance_set.kind for instance_set in self.instance_sets}
         required = {InstanceSetKind.AGENT_DEV, InstanceSetKind.JUDGE_ID}
         missing = required - kinds

@@ -24,6 +24,7 @@ oracle:
   source: private://oracles/miplib.json
   objective_sense: minimize
 evaluation:
+  operational_reliability: true
   budgets_sec: [10.0, 30.0]
   primary_budget_sec: 30.0
   solver_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
