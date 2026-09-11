@@ -157,6 +157,45 @@ class PitBenchAdapter:
         if status:
             raise ValueError("repository source has local modifications")
 
+    @staticmethod
+    def _format_instruction(
+        task: PitBenchTask,
+        agent_tools: frozenset[AgentTool] = frozenset(),
+    ) -> str:
+        editable_paths = ", ".join(task.repository.editable_paths)
+        scope = getattr(task, "optimization_scope", None) or "solver performance"
+        primary_budget = getattr(task.evaluation, "primary_budget_sec", None)
+        budget_info = f"{primary_budget:.1f}s" if primary_budget else "the evaluation budget"
+
+        sections = [
+            f"{task.instruction}\n\n"
+            f"The repository is read-only outside these editable paths: {editable_paths}. "
+            "Keep all implementation changes inside them.",
+            "### Task Context\n"
+            f"- Target Solver: {task.release.repository} v{task.release.version}\n"
+            f"- Problem Family: {task.problem_family.value.upper()}\n"
+            f"- Optimization Scope: {scope}\n"
+            f"- Primary Evaluation Budget: {budget_info} per instance",
+            "### Evaluation & Correctness Requirements\n"
+            "- Feasibility & Validity: 100% solution validity, constraint satisfaction, and format compatibility are mandatory. Any crash, timeout, or invalid solution will completely disqualify the candidate (Score = 0).\n"
+            "- Evaluation Metric: Solution quality (normalized gap to optimal/BKS) within the fixed time budget.\n"
+            "- Robustness: The candidate will be evaluated across unseen test instances, multiple random seeds, and perturbed representations. Do not overfit hyperparameters or hardcode behaviors for specific instances.",
+            "### Recommended Performance Engineering SOP\n"
+            "1. Baseline: Run visible development instances (located in `agent_dev`) on the clean repository to establish reference runtime, objective values, and feasibility.\n"
+            f"2. Profile: Run profiling tools on development instances to pinpoint computational bottlenecks in `{scope}`. Formulate concrete hypotheses before making edits.\n"
+            "3. Targeted Optimization: Implement minimal, high-impact, semantics-preserving improvements focused on the identified hot paths (e.g., caching redundant calculations, pruning invalid search neighborhoods early, reducing inner-loop allocations). Avoid blind parameter guessing or disruptive rewrites.\n"
+            "4. Differential Verification: Re-run the development instances under the same budget. Confirm that solution validity is 100% maintained and that performance/objective is genuinely improved.\n"
+            "5. Regression & Cleanup: Run existing repository unit/integration tests and `pitbench validate` (if available) to ensure no regressions. Remove any scratch scripts, profiling traces, or generated output files so that `git status` contains only intentional source changes.",
+        ]
+
+        if agent_tools:
+            commands = ", ".join(
+                f"`pitbench {tool}`" for tool in agent_tool_names(agent_tools)
+            )
+            sections.append(f"Optional PitBench helper commands: {commands}.")
+
+        return "\n\n".join(sections)
+
     def _write_task_yaml(
         self,
         task: PitBenchTask,
@@ -173,17 +212,7 @@ class PitBenchAdapter:
         use_base_cache: bool = True,
         agent_tools: frozenset[AgentTool] = frozenset(),
     ) -> None:
-        editable_paths = ", ".join(task.repository.editable_paths)
-        instruction = (
-            f"{task.instruction}\n\n"
-            "The repository is read-only outside these editable paths: "
-            f"{editable_paths}. Keep all implementation changes inside them."
-        )
-        if agent_tools:
-            commands = ", ".join(
-                f"`pitbench {tool}`" for tool in agent_tool_names(agent_tools)
-            )
-            instruction += f"\n\nOptional PitBench helper commands: {commands}."
+        instruction = self._format_instruction(task, agent_tools=agent_tools)
         payload = {
             "instruction": instruction,
             "author_name": "PitBench",
