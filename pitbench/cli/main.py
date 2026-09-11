@@ -65,6 +65,17 @@ def _warning(message: str) -> None:
     typer.echo(f"WARNING: {message}", err=True)
 
 
+def _normalize_task_ids(raw_ids: list[str]) -> list[str]:
+    normalized = []
+    for item in raw_ids:
+        cleaned = item.strip("[](),'\" \t\r\n")
+        for sub in cleaned.split(","):
+            sub = sub.strip("[](),'\" \t\r\n")
+            if sub:
+                normalized.append(sub)
+    return normalized
+
+
 def _prepare_task_image(task_path: Path, *, rebuild: bool) -> None:
     prepare_task_image(
         task_path,
@@ -202,6 +213,9 @@ def evaluate_task(
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
 ) -> None:
     """Check, materialize, and evaluate tasks together in one harness run."""
+    task_ids = _normalize_task_ids(task_ids)
+    if not task_ids:
+        raise typer.BadParameter("At least one task ID must be provided.", param_hint="TASK_IDS")
     if len(task_ids) != len(set(task_ids)):
         raise typer.BadParameter("task IDs must be unique", param_hint="TASK_IDS")
     if len(task_ids) > 1 and any(
