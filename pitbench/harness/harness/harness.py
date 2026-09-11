@@ -60,6 +60,7 @@ from pitbench.harness.utils.model_names import (
     normalize_model_name_for_reporting,
 )
 from pitbench.harness.utils.pipeline_trace import PipelineTrace
+from pitbench.harness.utils.progress import TaskProgressDisplay
 from pitbench.harness.utils.run_lock import (
     MULTI_AGENT_GLOBAL_KWARGS_KEY,
     MULTI_AGENT_LEGACY_CONFIGS_KEY,
@@ -92,6 +93,7 @@ class Harness:
         "terminal.lifecycle": "Task container",
         "setup.execute": "Setup",
         "agent.execute": "Coding agent",
+        "candidate.capture": "Capture patch",
         "tests.execute": "Visible tests",
         "evaluator.execute": "Independent evaluation",
     }
@@ -550,6 +552,7 @@ class Harness:
             status=status,
             task_id=task_id,
             trial_name=trial_name,
+            execution=execution,
         )
 
     def _update_progress_from_stage(
@@ -559,8 +562,12 @@ class Harness:
         status: str,
         task_id: str | None,
         trial_name: str | None,
+        execution: Any = None,
     ) -> None:
-        """Reflect pipeline stage changes in the non-livestream progress bar."""
+        """Route each lifecycle event to its task attempt's own progress row."""
+        display = getattr(self, "_progress_display", None)
+        if display is not None:
+            display.stage(task_id, trial_name, stage, status, execution=execution)
         label = self._PROGRESS_STAGE_LABELS.get(stage)
         if label is None:
             return
@@ -570,7 +577,9 @@ class Harness:
             "failed": f"{label} failed",
         }.get(status)
         if suffix is not None:
-            self._update_progress_detail(task_id, trial_name, suffix)
+            external_callback = getattr(self, "_external_progress_callback", None)
+            if external_callback is not None:
+                external_callback(suffix)
 
     def _update_progress_detail(
         self,
@@ -584,19 +593,7 @@ class Harness:
         display = getattr(self, "_progress_display", None)
         if display is None:
             return
-        context = task_id or trial_name or "run"
-        description = (
-            f"Running tasks ({display['completed']}/{display['total']}) — "
-            f"{context}: {detail}"
-        )
-        update: dict[str, Any] = {"description": description}
-        solver_runs = re.search(r"solver runs (\d+)/(\d+)", detail)
-        if solver_runs is not None:
-            update.update(
-                completed=int(solver_runs.group(1)),
-                total=int(solver_runs.group(2)),
-            )
-        display["progress"].update(display["task"], **update)
+        display.detail(task_id, trial_name, detail)
 
     @staticmethod
     def _trace_file_input(path: Path) -> dict[str, Any]:
@@ -643,6 +640,12 @@ class Harness:
         model_name: str | None,
     ) -> None:
         """Capture a binary patch and delegate to an opaque evaluator plugin."""
+        self._update_progress_from_stage(
+            stage="candidate.capture",
+            status="started",
+            task_id=trial_handler.task_id,
+            trial_name=trial_handler.trial_name,
+        )
         output_dir = trial_handler.trial_paths.task_output_path / "evaluation"
         output_dir.mkdir(parents=True, exist_ok=True)
         candidate_patch = output_dir / "candidate.patch"
@@ -1058,6 +1061,8 @@ class Harness:
 
     def _init_logger(self) -> None:
         # Use append mode when resuming to preserve existing logs
+        # Keep our configured console level when an SDK installs a root handler.
+        logger.propagate = False
         mode = "a" if self._is_resuming else "w"
         file_handler = logging.FileHandler(self._log_output_path, mode=mode)
         file_handler.setLevel(logging.DEBUG)
@@ -2330,6 +2335,9 @@ class Harness:
                     trial_handler=trial_handler,
                     terminal=terminal,
                     results=results,
+                    agent_name=self._agent_name,
+                    agent_import_path=self._agent_import_path,
+                    model_name=self._model_name,
                 )
         except Exception as exc:
             self._trace_pipeline(
@@ -3093,28 +3101,19 @@ class Harness:
             },
         )
 
-        total_tasks = len(self._dataset) * self._n_attempts
-        progress = None
-        progress_task = None
-        if not self._livestream:
-            progress = Progress(
-                SpinnerColumn(),
-                TextColumn("{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TimeElapsedColumn(),
-            )
-            progress.start()
-            progress_task = progress.add_task(
-                f"Running tasks (0/{total_tasks})",
-                total=total_tasks,
-            )
-            self._progress_display = {
-                "progress": progress,
-                "task": progress_task,
-                "completed": len(results.results),
-                "total": total_tasks,
-            }
+        display = None
+        if not self._livestream and getattr(self, "_progress_bar", True):
+            display = TaskProgressDisplay()
+            for task_path in self._dataset:
+                for attempt in range(1, self._n_attempts + 1):
+                    display.add(
+                        task_path.name,
+                        self._get_trial_name(task_path, attempt),
+                        attempt=attempt,
+                        attempts=self._n_attempts,
+                    )
+            self._progress_display = display
+            display.start()
 
         try:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -3129,56 +3128,22 @@ class Harness:
                         )
                         future_to_task[future] = (trial_name, attempt)
 
-                if self._livestream or progress is None:
-                    for future in as_completed(future_to_task):
-                        trial_results = future.result()
+                for future in as_completed(future_to_task):
+                    trial_results = future.result()
+                    trial_key = (trial_results.task_id, trial_results.trial_name)
+                    for index, previous in enumerate(results.results):
+                        if (previous.task_id, previous.trial_name) == trial_key:
+                            results.results[index] = trial_results
+                            break
+                    else:
                         results.results.append(trial_results)
-                        self._write_results(results)
-                else:
-                    assert progress is not None
-                    assert progress_task is not None
-                    for future in as_completed(future_to_task):
-                        trial_results = future.result()
-
-                        # Check for duplicates before adding
-                        trial_key = (trial_results.task_id, trial_results.trial_name)
-                        existing_trial_keys = {
-                            (r.task_id, r.trial_name) for r in results.results
-                        }
-
-                        if trial_key not in existing_trial_keys:
-                            results.results.append(trial_results)
-                        else:
-                            # Replace existing result with new one (in case of re-run)
-                            for i, existing_result in enumerate(results.results):
-                                if (
-                                    existing_result.task_id,
-                                    existing_result.trial_name,
-                                ) == trial_key:
-                                    results.results[i] = trial_results
-                                    break
-
-                        self._write_results(results)
-
-                        completed_tasks = len(results.results)
-                        self._progress_display.update(
-                            {
-                                "completed": completed_tasks,
-                            }
-                        )
-                        progress.update(
-                            progress_task,
-                            completed=completed_tasks,
-                            total=total_tasks,
-                            description=(
-                                f"Running tasks ({completed_tasks}/{total_tasks}) — "
-                                f"Last: {trial_results.task_id}"
-                            ),
-                        )
+                    self._write_results(results)
+                    if display is not None:
+                        display.finish(trial_results)
         finally:
             self._progress_display = None
-            if progress is not None:
-                progress.stop()
+            if display is not None:
+                display.stop()
 
         self._trace_pipeline(
             stage="tasks.dispatch",

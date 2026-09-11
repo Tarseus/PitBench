@@ -117,26 +117,96 @@ Docker Engine with Compose, and an installed and authenticated Codex or
 Antigravity CLI. Formal runs also require the evaluator-provided private bundle
 and configured agent and judge images.
 
-With those prerequisites provisioned, install PitBench and start a Codex run in
-four commands:
+With those prerequisites provisioned, install PitBench, connect the native CLI
+login, and start a Codex run:
 
 ```bash
 git clone https://github.com/Tarseus/PitBench.git && cd PitBench
 uv sync
 cp config/evaluate.example.yaml config/evaluate.local.yaml
+uv run pitbench auth login codex
+uv run pitbench auth status codex
 uv run pitbench evaluate pyvrp_v0_14_0 \
   --agent codex \
   --model gpt-5.6-sol \
   --agent-kwarg reasoning_effort=xhigh
 ```
 
-Use Antigravity by replacing the final command with:
+To connect and use Antigravity:
 
 ```bash
+uv run pitbench auth login agy
+uv run pitbench auth status agy
 uv run pitbench evaluate pyvrp_v0_14_0 \
   --agent antigravity \
   --model gemini-3.1-pro-high
 ```
+
+`auth login` first reuses a configured or native credential file. For agy on
+Linux, it also imports the existing desktop keyring login into
+`.pitbench/credentials/antigravity-oauth-token` with permissions `0600` and a local
+ignore rule. Keyring import uses `secret-tool` or `/usr/bin/python3` with
+`python3-gi`; a locked or inaccessible keyring produces a diagnostic instead of
+being treated as a missing login. If no credential exists, the command opens the
+native CLI. Complete its sign-in and exit the CLI to return to PitBench.
+The separate Gemini CLI `oauth_creds.json` is not an agy credential.
+
+The command creates or updates `config/evaluate.local.yaml`, preserving other
+agents and task settings. `--config` selects another untracked local YAML.
+`--proxy-url URL` records the proxy used for native login and evaluation;
+`--model MODEL_ID` optionally records a default model. Existing settings are kept
+when those options are omitted. Do not reuse another machine's proxy port.
+
+On a server without a browser, Codex supports device authorization:
+
+```bash
+uv run pitbench auth login codex --device-auth
+```
+
+Codex native login requests file credential storage for that invocation so
+PitBench can read `auth.json` under the native `CODEX_HOME` (default `~/.codex`).
+It does not rewrite the user's global Codex configuration. If existing Codex
+credentials are available only in an OS keyring, complete this native login or
+provide an exported `auth.json`. See the
+[official Codex authentication documentation](https://developers.openai.com/codex/auth)
+for browser/device login and managed storage restrictions.
+
+For an exported credential or unattended setup, use:
+
+```bash
+uv run pitbench auth login agy --auth-file /private/exported-agy.json --non-interactive
+uv run pitbench auth login codex --auth-file /private/auth.json --non-interactive
+```
+
+`--non-interactive` never opens a login UI. `--force-login` opens the native login
+CLI even when a credential is already configured. Credential contents are never
+printed. Authentication state is machine-local; users authorize their own accounts.
+
+`auth status` requires no solver task or private test data. It checks the
+configured Codex credential through native login status, or queries agy models
+inside the configured container, and checks the runner. It does not start model
+inference or benchmark trials. Docker or runner-image problems remain separate
+from login failures; a failed model request is not proof that an account signed out.
+
+To evaluate several configured tasks with the same agent and model, pass their IDs
+to the same command (replace `MODEL_ID` with an ID from `agy models`):
+
+```bash
+uv run pitbench evaluate pyvrp_v0_14_0 highs_v1_15_1 --agent antigravity --model MODEL_ID
+```
+
+Configure each task's source and images under `tasks` in the local YAML. The
+command checks every task and the selected agent before starting any agent work.
+Add `--check-only` to inspect prerequisites and collection coverage without
+materializing tasks or running agents. Tasks share one run directory and run
+serially by default; `--n-concurrent` controls trial concurrency.
+
+The normal candidate judge collects Performance and Resource Efficiency data,
+plus the reliability, seed, and representation runs enabled by each task config.
+Configuration Robustness still uses the separate release collector and is not
+part of candidate judging. The task IDs alone do not imply complete coverage of
+all five dimensions; in particular, the current HiGHS task does not enable
+representation runs. Provision its private assets and judge image before launch.
 
 The default Codex configuration uses `runner_backend: workspace`. Codex and its
 native shell/file tools run inside the solver container, while a separate relay
@@ -171,7 +241,7 @@ every trial.
 ### Schedule multiple agents externally
 
 Each `pitbench evaluate` invocation evaluates one externally selected agent on
-one configured snapshot task. Agent/model selection and batch scheduling stay outside
+one or more configured snapshot tasks. Agent/model selection and batch scheduling stay outside
 the benchmark task definition. The bundled shell script is an example serial
 scheduler whose agent/model combinations are read from an experiment YAML:
 

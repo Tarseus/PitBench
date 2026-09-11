@@ -5,6 +5,7 @@ import os
 import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 
@@ -193,19 +194,40 @@ Task:
                 env[key] = self._proxy_url
         return env
 
+    @staticmethod
+    def check_login(
+        binary: str, auth_path: Path, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        """Check the configured file, not an unrelated login in the host keyring."""
+        raw = auth_path.read_text()
+        json.loads(raw)
+        with tempfile.TemporaryDirectory(prefix="pitbench-auth-check-") as directory:
+            auth_directory = Path(directory)
+            copied_auth = auth_directory / "auth.json"
+            copied_auth.write_text(raw)
+            copied_auth.chmod(0o600)
+            (auth_directory / "config.toml").write_text(
+                'cli_auth_credentials_store = "file"\n'
+            )
+            environment = (env if env is not None else os.environ).copy()
+            environment.pop("OPENAI_API_KEY", None)
+            environment["CODEX_HOME"] = str(auth_directory)
+            return subprocess.run(
+                [binary, "login", "status"],
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+
     def _preflight(self, codex_binary: str, env: dict[str, str]) -> None:
-        result = subprocess.run(
-            [codex_binary, "login", "status"],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
+        result = self.check_login(codex_binary, self._codex_auth_path, env)
         status = f"{result.stdout}\n{result.stderr}"
         if result.returncode != 0 or "Logged in using ChatGPT" not in status:
             raise RuntimeError(
-                "Host Codex is not logged in with ChatGPT. Run `codex login` first."
+                "The configured Codex auth file is not a ChatGPT login. "
+                "Run `pitbench auth login codex` or set codex_auth_path."
             )
         if self._runner_backend == "container":
             self._container_runner = CodexContainerRunner(
@@ -567,66 +589,6 @@ Task:
                 return True
         return False
 
-    def _update_live_progress(self, line: str, counts: dict[str, int]) -> None:
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            return
-        if event.get("type") != "item.completed":
-            return
-        item = event.get("item") or {}
-        if item.get("type") in {"mcp_tool_call", "command_execution"}:
-            counts["tool_calls"] += 1
-        elif item.get("type") == "agent_message":
-            counts["messages"] += 1
-        else:
-            return
-        self._report_progress(
-            f"Agent: tool calls {counts['tool_calls']} · messages {counts['messages']}"
-        )
-
-    def _stream_process(
-        self,
-        process: subprocess.Popen[str],
-        runner_payload: str,
-    ) -> tuple[str, str, int]:
-        stdout_lines: list[str] = []
-        stderr_lines: list[str] = []
-        counts = {"tool_calls": 0, "messages": 0}
-
-        def read_stdout() -> None:
-            if process.stdout is None:
-                return
-            for line in process.stdout:
-                stdout_lines.append(line)
-                self._update_live_progress(line, counts)
-
-        def read_stderr() -> None:
-            if process.stderr is None:
-                return
-            stderr_lines.extend(process.stderr)
-
-        stdout_reader = threading.Thread(target=read_stdout, daemon=True)
-        stderr_reader = threading.Thread(target=read_stderr, daemon=True)
-        stdout_reader.start()
-        stderr_reader.start()
-        try:
-            if process.stdin is not None:
-                try:
-                    process.stdin.write(runner_payload)
-                except BrokenPipeError:
-                    pass
-                finally:
-                    process.stdin.close()
-            process.wait(timeout=self._timeout_sec)
-        except subprocess.TimeoutExpired:
-            self._cancelled.set()
-            self._terminate_process(process)
-        finally:
-            stdout_reader.join()
-            stderr_reader.join()
-        return "".join(stdout_lines), "".join(stderr_lines), process.returncode or 0
-
     def _check_workspace_isolation(
         self,
         *,
@@ -749,12 +711,14 @@ Task:
                         + "\n"
                     )
                 if self._control_plane_preflight:
+                    self._report_progress("Agent: Checking workspace isolation")
                     self._check_workspace_isolation(
                         runtime=runtime,
                         relay=relay,
                         env=env,
                         logging_dir=logging_dir,
                     )
+                self._report_progress("Agent: Waiting for model")
                 process = subprocess.Popen(
                     self._build_workspace_command(
                         runtime=runtime,
@@ -770,7 +734,9 @@ Task:
                 )
                 self._set_process(process)
                 try:
-                    stdout, stderr, return_code = self._stream_process(process, "")
+                    stdout, stderr, return_code = self._stream_process(
+                        process, "", timeout_sec=self._timeout_sec
+                    )
                 finally:
                     self._set_process(None)
         if logging_dir is not None:
@@ -826,11 +792,13 @@ Task:
         del portkey_metadata, portkey_trace_id
         codex_binary = self._resolved_codex_binary()
         env = self._runtime_env()
+        self._report_progress("Agent: Checking credentials and runner")
         self._preflight(codex_binary, env)
         self._cancelled.clear()
         if logging_dir is not None:
             logging_dir.mkdir(parents=True, exist_ok=True)
         if self._runner_backend == "workspace":
+            self._report_progress("Agent: Preparing workspace and relay")
             return self._perform_workspace_task(
                 instruction=instruction,
                 session=session,
@@ -844,6 +812,7 @@ Task:
                 json.dumps(self._runner_metadata, indent=2, sort_keys=True) + "\n"
             )
         if self._control_plane_preflight:
+            self._report_progress("Agent: Checking model connection")
             self._check_control_plane(runner_payload, logging_dir)
         terminal_log = (
             logging_dir / "mcp-terminal.jsonl" if logging_dir is not None else None
@@ -856,6 +825,7 @@ Task:
         stdout = ""
         stderr = ""
         return_code = 1
+        self._report_progress("Agent: Connecting task tools")
         with LoopbackMCPServer(terminal) as mcp_server:
             if mcp_server.url is None:
                 raise RuntimeError("PitBench MCP server URL is unavailable")
@@ -863,6 +833,7 @@ Task:
                 mcp_url=mcp_server.url,
                 instruction=instruction,
             )
+            self._report_progress("Agent: Waiting for model")
             process = subprocess.Popen(
                 command,
                 env=env,
@@ -875,7 +846,7 @@ Task:
             self._set_process(process)
             try:
                 stdout, stderr, return_code = self._stream_process(
-                    process, runner_payload
+                    process, runner_payload, timeout_sec=self._timeout_sec
                 )
             finally:
                 self._set_process(None)

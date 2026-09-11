@@ -4,13 +4,14 @@ import json
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
 from adapters.pitbench.adapter import PitBenchAdapter
 from pitbench.agent_tools import AgentTool
-from pitbench.cli.doctor import CheckStatus, run_doctor
+from pitbench.cli.auth import auth_app
+from pitbench.cli.doctor import CheckStatus, evaluation_checks, run_doctor
 from pitbench.cli.evaluate_config import (
     EvaluationConfig,
     encode_agent_kwargs,
@@ -22,7 +23,7 @@ from pitbench.cli.task_image import prepare_task_image
 from pitbench.evaluator.evaluator import PitBenchEvaluator
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.harness.agents import AgentName
-from pitbench.harness.cli.harness_cli.runs import LogLevel
+from pitbench.harness.cli.harness_cli.runs import LogLevel, _process_agent_kwargs
 from pitbench.harness.cli.harness_cli.runs import create as run_harness
 from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.harness.handlers.trial_handler import TrialHandler
@@ -47,6 +48,7 @@ app = typer.Typer(help="PitBench task, execution harness, and evaluation tooling
 tasks_app = typer.Typer(help="Validate and smoke-test benchmark tasks.")
 app.add_typer(tasks_app, name="tasks")
 app.add_typer(profiles_app, name="profiles")
+app.add_typer(auth_app, name="auth")
 
 # Direct unified run command: `pitbench run --dataset-path ... --agent ...`
 app.command(
@@ -106,12 +108,16 @@ def doctor_command(
     if failures:
         typer.echo(f"NOT READY: {failures} failure(s), {warnings} warning(s)", err=True)
         raise typer.Exit(code=1)
-    typer.echo(f"READY: {task_id} evaluation prerequisites passed ({warnings} warning(s))")
+    typer.echo(
+        f"READY: {task_id} evaluation prerequisites passed ({warnings} warning(s))"
+    )
 
 
 @app.command("evaluate")
 def evaluate_task(
-    task_id: Annotated[str, typer.Argument(help="PitBench task ID")],
+    task_ids: Annotated[
+        list[str], typer.Argument(help="One or more PitBench task IDs")
+    ],
     agent: Annotated[
         AgentName,
         typer.Option("--agent", "-a", help="Coding agent to evaluate"),
@@ -143,6 +149,22 @@ def evaluate_task(
         str | None,
         typer.Option(help="Immutable judge image digest or local image ID"),
     ] = None,
+    judge_parallel_runs: Annotated[
+        int | None,
+        typer.Option("--judge-parallel-runs", min=1, help="Parallel solver runs for the isolated judge"),
+    ] = None,
+    judge_cpus: Annotated[
+        float | None,
+        typer.Option("--judge-cpus", min=0.1, help="CPU limit for the isolated judge container"),
+    ] = None,
+    base_cache: Annotated[
+        bool,
+        typer.Option("--base-cache/--no-base-cache", help="Enable automatic caching and reuse of BASE observations"),
+    ] = True,
+    base_observations_path: Annotated[
+        Path | None,
+        typer.Option("--base-observations-path", help="Path to precomputed BASE observations parquet file"),
+    ] = None,
     n_concurrent: Annotated[
         int, typer.Option("--n-concurrent", min=1, help="Concurrent trials")
     ] = 1,
@@ -171,9 +193,23 @@ def evaluate_task(
             ),
         ),
     ] = None,
+    check_only: Annotated[
+        bool,
+        typer.Option(
+            "--check-only", help="Check all prerequisites without running agents"
+        ),
+    ] = False,
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
 ) -> None:
-    """Materialize one PitBench task and immediately evaluate an agent on it."""
+    """Check, materialize, and evaluate tasks together in one harness run."""
+    if len(task_ids) != len(set(task_ids)):
+        raise typer.BadParameter("task IDs must be unique", param_hint="TASK_IDS")
+    if len(task_ids) > 1 and any(
+        value is not None for value in (repository_source, agent_image, judge_image)
+    ):
+        raise typer.BadParameter(
+            "For multiple tasks, configure per-task sources and images in --config."
+        )
     repository_root = _root(root)
     resolved_config_path = resolve_config_path(repository_root, config_path)
     evaluation_config = (
@@ -187,7 +223,6 @@ def evaluate_task(
         _warning("evaluation config is absent; using built-in configuration defaults")
 
     configured_paths = evaluation_config.paths
-    configured_resources = evaluation_config.resources_for(task_id)
     if output_path is None and "output_path" not in configured_paths.model_fields_set:
         _warning("output_path is not configured; using default runs")
     if (
@@ -199,21 +234,6 @@ def evaluate_task(
         _warning("private_root is not configured; using default private")
     if "agent_tools" not in evaluation_config.model_fields_set:
         _warning("agent_tools is not configured; using default []")
-    if repository_source is None and configured_resources.repository_source is None:
-        _warning(
-            f"repository_source for {task_id} is not configured; using the task "
-            "task-config release snapshot"
-        )
-    if agent_image is None and configured_resources.agent_image is None:
-        _warning(
-            f"agent_image for {task_id} is not configured; using the task config "
-            "image default"
-        )
-    if judge_image is None and configured_resources.judge_image is None:
-        _warning(
-            f"judge_image for {task_id} is not configured; using the task config "
-            "image default"
-        )
     resolved_output_path = resolve_repository_path(
         repository_root, output_path or configured_paths.output_path
     )
@@ -223,48 +243,16 @@ def evaluate_task(
     resolved_private_root = resolve_repository_path(
         repository_root, private_root or configured_paths.private_root
     )
-    configured_repository_source = (
-        resolve_repository_path(repository_root, configured_resources.repository_source)
-        if configured_resources.repository_source is not None
-        else None
-    )
-    resolved_repository_source = repository_source or configured_repository_source
-    if resolved_repository_source is not None:
-        resolved_repository_source = resolve_repository_path(
-            repository_root, resolved_repository_source
-        )
-    resolved_agent_image = agent_image or configured_resources.agent_image
-    resolved_judge_image = judge_image or configured_resources.judge_image
-
     resolved_run_id = run_id or datetime.now().strftime("%Y-%m-%d__%H-%M-%S")
-    dataset_path = (resolved_workspace_path / resolved_run_id).resolve()
-    task_path = dataset_path / task_id
-
-    try:
-        PitBenchAdapter(
-            repository_root,
-            resolved_private_root,
-        ).materialize(
-            task_id,
-            task_path,
-            repository_source=resolved_repository_source,
-            agent_image=resolved_agent_image,
-            judge_image=resolved_judge_image,
-            agent_tools=evaluation_config.agent_tools,
-        )
-    except TaskNotFoundError as exc:
-        available = ", ".join(
-            record.task.task_id
-            for record in TaskCatalog(repository_root).validate_all()
-        )
+    if (
+        not resolved_run_id
+        or Path(resolved_run_id).name != resolved_run_id
+        or resolved_run_id in {".", ".."}
+    ):
         raise typer.BadParameter(
-            f"Unknown task '{task_id}'. Available tasks: {available}",
-            param_hint="TASK_ID",
-        ) from exc
-
-    typer.echo(f"Materialized {task_id} at {task_path}")
-    _prepare_task_image(task_path, rebuild=rebuild or resolved_agent_image is not None)
-    typer.echo(f"Starting evaluation run {resolved_run_id}")
+            "run ID must be a directory name", param_hint="--run-id"
+        )
+    dataset_path = (resolved_workspace_path / resolved_run_id).resolve()
     configured_agent_values = evaluation_config.kwargs_for(agent.value)
     if agent.value not in evaluation_config.agents:
         _warning(
@@ -280,6 +268,89 @@ def evaluate_task(
         )
     configured_agent_kwargs = encode_agent_kwargs(configured_agent_values)
     harness_agent_kwargs = [*configured_agent_kwargs, *agent_kwargs]
+    try:
+        effective_agent_kwargs = _process_agent_kwargs(model_name, harness_agent_kwargs)
+    except ValueError as error:
+        raise typer.BadParameter(
+            "agent options must be key=value", param_hint="--agent-kwarg"
+        ) from error
+
+    effective_config = evaluation_config.model_copy(deep=True)
+    effective_config.paths.private_root = resolved_private_root
+    for task_id in task_ids:
+        resources = effective_config.resources_for(task_id).model_copy()
+        for key, override in (
+            ("repository_source", repository_source),
+            ("agent_image", agent_image),
+            ("judge_image", judge_image),
+            ("judge_cpus", judge_cpus),
+            ("judge_parallel_runs", judge_parallel_runs),
+            ("base_observations_path", base_observations_path),
+        ):
+            if override is not None:
+                setattr(resources, key, override)
+            elif getattr(resources, key) is None and key in ("repository_source", "agent_image", "judge_image"):
+                _warning(
+                    f"{key} for {task_id} is not configured; using the task config default"
+                )
+        if resources.repository_source is not None:
+            resources.repository_source = resolve_repository_path(
+                repository_root, resources.repository_source
+            )
+        effective_config.tasks[task_id] = resources
+
+    checks = evaluation_checks(
+        task_ids, repository_root, effective_config, agent.value, effective_agent_kwargs
+    )
+    for check in checks:
+        typer.echo(f"{check.status.value} {check.name}: {check.detail}")
+        if check.recovery:
+            typer.echo(f"     Recovery: {check.recovery}")
+    if any(check.status == CheckStatus.FAIL for check in checks):
+        typer.echo("NOT READY: no agent was started.", err=True)
+        raise typer.Exit(1)
+    if check_only:
+        typer.echo("READY: prerequisite checks passed; no agent was started.")
+        return
+    if dataset_path.exists() or (resolved_output_path / resolved_run_id).exists():
+        raise typer.BadParameter("run ID already exists; choose a new --run-id")
+    adapter = PitBenchAdapter(repository_root, resolved_private_root)
+    for task_id in task_ids:
+        resources = effective_config.resources_for(task_id)
+        task_path = dataset_path / task_id
+        materialize_kwargs: dict[str, Any] = {
+            "repository_source": resources.repository_source,
+            "agent_image": resources.agent_image,
+            "judge_image": resources.judge_image,
+            "agent_tools": evaluation_config.agent_tools,
+        }
+        judge_cpus_val = resources.judge_cpus or effective_config.judge_cpus
+        if judge_cpus_val is not None:
+            materialize_kwargs["judge_cpus"] = judge_cpus_val
+        judge_mem_val = resources.judge_memory or effective_config.judge_memory
+        if judge_mem_val is not None:
+            materialize_kwargs["judge_memory"] = judge_mem_val
+        judge_par_val = resources.judge_parallel_runs or effective_config.judge_parallel_runs
+        if judge_par_val is not None:
+            materialize_kwargs["judge_parallel_runs"] = judge_par_val
+        if resources.base_observations_path is not None:
+            materialize_kwargs["base_observations_path"] = resources.base_observations_path
+        if effective_config.paths.base_cache_path != Path(".pitbench/cache/base"):
+            materialize_kwargs["base_cache_path"] = effective_config.paths.base_cache_path
+        active_base_cache = base_cache if base_cache is not None else effective_config.base_cache
+        if not active_base_cache:
+            materialize_kwargs["use_base_cache"] = False
+
+        adapter.materialize(
+            task_id,
+            task_path,
+            **materialize_kwargs,
+        )
+        typer.echo(f"Materialized {task_id} at {task_path}")
+        _prepare_task_image(
+            task_path, rebuild=rebuild or resources.agent_image is not None
+        )
+    typer.echo(f"Starting evaluation run {resolved_run_id}")
     run_harness(
         dataset_path=dataset_path,
         dataset_config=None,
@@ -343,9 +414,27 @@ def judge_candidate(
     judge_memory: Annotated[
         str, typer.Option(help="Memory limit for the isolated judge")
     ] = "8g",
+    judge_parallel_runs: Annotated[
+        int | None,
+        typer.Option("--judge-parallel-runs", min=1, help="Parallel solver runs for the isolated judge"),
+    ] = None,
     reliability_only: Annotated[
         bool, typer.Option(help="Run only the configured boundary reliability suite")
     ] = False,
+    base_cache: Annotated[
+        bool | None,
+        typer.Option(
+            "--base-cache/--no-base-cache",
+            help="Enable or disable automatic caching of BASE observations",
+        ),
+    ] = None,
+    base_observations_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--base-observations-path",
+            help="Path to precomputed BASE observations parquet file",
+        ),
+    ] = None,
     config_path: Annotated[
         Path | None,
         typer.Option(
@@ -437,7 +526,30 @@ def judge_candidate(
         else patch_path.parent
     )
     resolved_output_dir.mkdir(parents=True, exist_ok=True)
-    typer.echo(f"Starting isolated judge for {task_id}")
+    active_base_cache = (
+        base_cache if base_cache is not None else evaluation_config.base_cache
+    )
+    active_base_observations_path = (
+        base_observations_path
+        if base_observations_path is not None
+        else configured_resources.base_observations_path
+    )
+    judge_evaluator_config: dict[str, Any] = {
+        "task_config_path": str(record.task_config_path),
+        "base_repository": str(resolved_repository_source),
+        "private_root": str(resolved_private_root),
+        "judge_image": resolved_judge_image,
+        "judge_cpus": judge_cpus,
+        "judge_memory": judge_memory,
+        "judge_parallel_runs": judge_parallel_runs or configured_resources.judge_parallel_runs or evaluation_config.judge_parallel_runs,
+        "reliability_only": reliability_only,
+        "use_base_cache": active_base_cache,
+        "base_cache_path": str(evaluation_config.paths.base_cache_path),
+        "_progress_callback": typer.echo,
+    }
+    if active_base_observations_path is not None:
+        judge_evaluator_config["base_observations_path"] = str(active_base_observations_path)
+
     envelope = PitBenchEvaluator().envelope(
         EvaluationRequest(
             task_id=task_id,
@@ -447,16 +559,7 @@ def judge_candidate(
             output_dir=resolved_output_dir,
             agent_name="replay",
             model_name=None,
-            evaluator_config={
-                "task_config_path": str(record.task_config_path),
-                "base_repository": str(resolved_repository_source),
-                "private_root": str(resolved_private_root),
-                "judge_image": resolved_judge_image,
-                "judge_cpus": judge_cpus,
-                "judge_memory": judge_memory,
-                "reliability_only": reliability_only,
-                "_progress_callback": typer.echo,
-            },
+            evaluator_config=judge_evaluator_config,
         )
     )
     result_path = resolved_output_dir / "evaluation.json"

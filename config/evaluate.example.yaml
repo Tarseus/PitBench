@@ -1,11 +1,19 @@
 # Copy this file to config/evaluate.local.yaml and edit it for one machine.
 # The local file is ignored by Git. Relative paths are resolved from the
 # PitBench repository root. Null proxy values mean direct network access.
+# `pitbench auth login codex` / `pitbench auth login agy` can create or update
+# the machine-local file and connect existing native logins automatically.
 
 paths:
   output_path: runs
   workspace_path: .pitbench/tasks
   private_root: private
+  base_cache_path: .pitbench/cache/base
+
+# Evaluation execution options (null uses system auto-detection, e.g. nproc - 2)
+# judge_parallel_runs: 10
+# judge_cpus: 10.0
+# base_cache: true
 
 # Default: agents receive only the repository snapshot and their native tools.
 # To run a tool-assisted condition, list commands such as [inspect, bench, validate].
@@ -34,6 +42,9 @@ agents:
     relay_max_duration_sec: null
   antigravity:
     agy_binary: agy
+    # The isolated runner reads this agy JSON credential, not the host OS keyring.
+    # `pitbench auth login agy` can export the existing Linux keyring credential
+    # into .pitbench/credentials/ and configure its absolute path automatically.
     auth_token_path: ~/.gemini/antigravity-cli/antigravity-oauth-token
     settings_path: ~/.gemini/antigravity-cli/settings.json
     runner_backend: container

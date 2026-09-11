@@ -17,6 +17,7 @@ class EvaluationPaths(BaseModel):
     output_path: Path = Path("runs")
     workspace_path: Path = Path(".pitbench/tasks")
     private_root: Path = Path("private")
+    base_cache_path: Path = Path(".pitbench/cache/base")
 
 
 class TaskResources(BaseModel):
@@ -25,6 +26,10 @@ class TaskResources(BaseModel):
     repository_source: Path | None = None
     agent_image: str | None = None
     judge_image: str | None = None
+    judge_cpus: float | None = None
+    judge_memory: str | None = None
+    judge_parallel_runs: int | None = None
+    base_observations_path: Path | None = None
 
 
 class EvaluationConfig(BaseModel):
@@ -36,6 +41,10 @@ class EvaluationConfig(BaseModel):
     agent_tools: list[AgentTool] = Field(default_factory=list)
     tasks: dict[str, TaskResources] = Field(default_factory=dict)
     agents: dict[str, dict[str, ConfigValue]] = Field(default_factory=dict)
+    judge_cpus: float | None = None
+    judge_memory: str | None = None
+    judge_parallel_runs: int | None = None
+    base_cache: bool = True
 
     @classmethod
     def from_yaml(cls, path: Path) -> EvaluationConfig:

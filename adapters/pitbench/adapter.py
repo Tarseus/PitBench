@@ -48,6 +48,12 @@ class PitBenchAdapter:
         repository_source: Path | None = None,
         agent_image: str | None = None,
         judge_image: str | None = None,
+        judge_cpus: float | None = None,
+        judge_memory: str | None = None,
+        judge_parallel_runs: int | None = None,
+        base_observations_path: Path | None = None,
+        base_cache_path: Path | None = None,
+        use_base_cache: bool = True,
         agent_tools: Iterable[AgentTool | str] = (),
     ) -> Path:
         record = self.catalog.validate_one(task_id)
@@ -86,6 +92,12 @@ class PitBenchAdapter:
             repository,
             task_dir,
             judge_image=judge_image,
+            judge_cpus=judge_cpus,
+            judge_memory=judge_memory,
+            judge_parallel_runs=judge_parallel_runs,
+            base_observations_path=base_observations_path,
+            base_cache_path=base_cache_path,
+            use_base_cache=use_base_cache,
             agent_tools=tools,
         )
         if tools:
@@ -153,6 +165,12 @@ class PitBenchAdapter:
         task_dir: Path,
         *,
         judge_image: str | None = None,
+        judge_cpus: float | None = None,
+        judge_memory: str | None = None,
+        judge_parallel_runs: int | None = None,
+        base_observations_path: Path | None = None,
+        base_cache_path: Path | None = None,
+        use_base_cache: bool = True,
         agent_tools: frozenset[AgentTool] = frozenset(),
     ) -> None:
         editable_paths = ", ".join(task.repository.editable_paths)
@@ -178,12 +196,23 @@ class PitBenchAdapter:
                 "task_config_path": str(task_config.resolve()),
                 "base_repository": str(repository.resolve()),
                 "private_root": str(self.private_root),
+                "use_base_cache": use_base_cache,
             },
             "max_agent_timeout_sec": 3600,
             "max_setup_timeout_sec": 1800,
         }
         if judge_image is not None:
             payload["evaluator_config"]["judge_image"] = judge_image
+        if judge_cpus is not None:
+            payload["evaluator_config"]["judge_cpus"] = judge_cpus
+        if judge_memory is not None:
+            payload["evaluator_config"]["judge_memory"] = judge_memory
+        if judge_parallel_runs is not None:
+            payload["evaluator_config"]["judge_parallel_runs"] = judge_parallel_runs
+        if base_observations_path is not None:
+            payload["evaluator_config"]["base_observations_path"] = str(base_observations_path)
+        if base_cache_path is not None:
+            payload["evaluator_config"]["base_cache_path"] = str(base_cache_path)
         (task_dir / "task.yaml").write_text(yaml.safe_dump(payload, sort_keys=False))
 
     @staticmethod

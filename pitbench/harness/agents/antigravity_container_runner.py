@@ -98,9 +98,11 @@ def _parse_agy_arguments(arguments: list[str]) -> list[str]:
     return result
 
 
-def _parse_command(arguments: list[str]) -> tuple[str, list[str]]:
+def _parse_command(arguments: list[str]) -> tuple[str | None, list[str]]:
+    if arguments == ["models"]:
+        return None, ["models"]
     if not arguments or arguments[0] != "run":
-        raise ValueError("runner only accepts the run operation")
+        raise ValueError("runner only accepts run or models")
     try:
         separator = arguments.index("--")
     except ValueError as error:
@@ -174,7 +176,7 @@ def _configure_pitbench(gemini_config: Path, mcp_url: str) -> None:
     _write_private_json(config_path, config)
 
 
-def _run_agy(mcp_url: str, arguments: list[str]) -> int:
+def _run_agy(mcp_url: str | None, arguments: list[str]) -> int:
     if not AGY_BINARY.is_file() or not os.access(AGY_BINARY, os.X_OK):
         raise RuntimeError(f"mounted agy binary is unavailable: {AGY_BINARY}")
     payload = json.load(sys.stdin)
@@ -217,7 +219,8 @@ def _run_agy(mcp_url: str, arguments: list[str]) -> int:
         gemini_config = gemini_home / "config"
         gemini_config.mkdir(parents=True, mode=0o700)
         _copy_profile(gemini_config, allow_hooks=allow_hooks)
-        _configure_pitbench(gemini_config, mcp_url)
+        if mcp_url is not None:
+            _configure_pitbench(gemini_config, mcp_url)
         _write_private_json(gemini_home / "settings.json", minimal_settings)
         _write_private_json(
             gemini_home / "antigravity-cli" / "antigravity-oauth-token",
@@ -234,6 +237,10 @@ def _run_agy(mcp_url: str, arguments: list[str]) -> int:
             },
         )
         env = os.environ.copy()
+        # Docker client configuration can inject a host proxy even when PitBench
+        # explicitly selected direct access. Use only the runner payload's proxy.
+        for key in PROXY_KEYS:
+            env.pop(key, None)
         env.update(proxy_env)
         for key in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
             env.pop(key, None)
@@ -249,6 +256,7 @@ def _run_agy(mcp_url: str, arguments: list[str]) -> int:
             env=env,
             stdin=subprocess.DEVNULL,
             check=False,
+            **({"timeout": 25} if mcp_url is None else {}),
         )
         return result.returncode
 

@@ -1,3 +1,6 @@
+import logging
+import subprocess
+import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Callable
@@ -6,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from pitbench.harness.agents.failure_mode import FailureMode
 from pitbench.harness.terminal.tmux_session import TmuxSession
+from pitbench.harness.utils.progress import AgentActivity
 from pitbench.harness.utils.template_utils import render_prompt_template
 
 
@@ -54,6 +58,60 @@ class BaseAgent(ABC):
     def _report_progress(self, detail: str) -> None:
         if self._progress_callback is not None:
             self._progress_callback(detail)
+
+    def _stream_process(
+        self, process: subprocess.Popen[str], runner_payload: str, *, timeout_sec: float
+    ) -> tuple[str, str, int]:
+        """Drain both streams while reporting activity before the process exits."""
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        activity = AgentActivity()
+
+        def read_stdout() -> None:
+            if process.stdout is None:
+                return
+            for line in process.stdout:
+                stdout_lines.append(line)
+                try:
+                    detail = activity.feed(line)
+                    if detail is not None:
+                        self._report_progress(detail)
+                except Exception:
+                    # A display failure must not stop draining a solver/agent
+                    # pipe and deadlock the subprocess.
+                    logging.getLogger(__name__).debug(
+                        "Progress update failed", exc_info=True
+                    )
+
+        def read_stderr() -> None:
+            if process.stderr is not None:
+                stderr_lines.extend(process.stderr)
+
+        stdout_reader = threading.Thread(target=read_stdout, daemon=True)
+        stderr_reader = threading.Thread(target=read_stderr, daemon=True)
+        stdout_reader.start()
+        stderr_reader.start()
+        try:
+            if process.stdin is not None:
+                try:
+                    process.stdin.write(runner_payload)
+                except BrokenPipeError:
+                    pass
+                finally:
+                    try:
+                        process.stdin.close()
+                    except BrokenPipeError:
+                        pass
+            process.wait(timeout=timeout_sec)
+        except subprocess.TimeoutExpired:
+            self.cancel()
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        finally:
+            stdout_reader.join()
+            stderr_reader.join()
+        return "".join(stdout_lines), "".join(stderr_lines), process.returncode or 0
 
     def _get_network_name(self, container_name: str) -> str:
         return f"{container_name}__mcp-network"

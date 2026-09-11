@@ -17,6 +17,7 @@ from typing import Callable
 import docker.errors
 
 import docker
+from adapters.pitbench.adapter import PitBenchAdapter
 from pitbench.cli.evaluate_config import (
     EvaluationConfig,
     resolve_config_path,
@@ -30,6 +31,7 @@ from pitbench.harness.agents.antigravity_container import (
 from pitbench.harness.agents.antigravity_profile import AntigravityProfile
 from pitbench.harness.agents.codex_container import CodexContainerRunner
 from pitbench.harness.agents.codex_profile import CodexProfile
+from pitbench.repositories.base import RepositoryPluginRegistry
 from pitbench.tasks import TaskCatalog, TaskRecord
 
 _GIB = 1024**3
@@ -242,7 +244,7 @@ def _private_assets_check(context: _DoctorContext) -> DoctorCheck:
             CheckStatus.FAIL,
             "private assets",
             f"validation failed under {private_root}: {error}",
-            "Provision the PyVRP private bundle at the configured private_root "
+            "Provision the task's private assets at the configured private_root "
             "and verify that it was copied without modification.",
         )
     return _check(
@@ -344,6 +346,17 @@ def _image_checks(
     checks: list[DoctorCheck] = []
     references_valid = True
     for kind, reference in references.items():
+        if kind == "agent" and reference is None:
+            plugin = RepositoryPluginRegistry.load(context.task.task.repository.plugin)
+            if plugin.agent_environment is not None:
+                checks.append(
+                    _check(
+                        CheckStatus.PASS,
+                        "agent image",
+                        "will build from the repository plugin environment",
+                    )
+                )
+                continue
         invalid = _image_reference_check(kind, reference, task_id)
         if invalid is not None:
             checks.append(invalid)
@@ -483,7 +496,7 @@ def _credential_check(
         _, invalid = _json_file(auth_path, "Codex credentials")
         command = [binary, "login", "status"]
         success_text = "Logged in using ChatGPT"
-        recovery = "Run `codex login` and complete ChatGPT sign-in."
+        recovery = "Run `pitbench auth login codex` to connect or create a ChatGPT login."
     else:
         binary = str(values.get("agy_binary") or "agy")
         auth_path = Path(
@@ -521,7 +534,10 @@ def _credential_check(
             )
         command = [binary, "models"]
         success_text = ""
-        recovery = "Run `agy` and complete Google sign-in."
+        recovery = (
+            "Run `pitbench auth login agy` to connect the existing file or Linux "
+            "keyring login, or use its --auth-file option for an exported credential."
+        )
     if invalid is not None:
         return DoctorCheck(
             invalid.status, invalid.name, invalid.detail, recovery
@@ -534,28 +550,56 @@ def _credential_check(
             recovery,
         ), False
     try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, timeout=15, check=False
-        )
+        if agent == "codex":
+            from pitbench.harness.agents.codex_mcp_agent import CodexMCPAgent
+
+            result = CodexMCPAgent.check_login(binary, auth_path)
+        elif agent == "antigravity" and values.get("runner_backend") == "container":
+            from pitbench.harness.agents.antigravity_mcp_agent import (
+                AntigravityMCPAgent,
+            )
+
+            options = {key: value for key, value in values.items() if value is not None}
+            options.setdefault("model_name", "")
+            models = AntigravityMCPAgent(**options).available_models(pull=False)
+            result = subprocess.CompletedProcess(command, 0, "\n".join(models), "")
+        else:
+            result = subprocess.run(
+                command, capture_output=True, text=True, timeout=15, check=False
+            )
     except Exception as error:
         return _check(
             CheckStatus.WARN,
             f"{agent} credentials",
             f"could not verify login: {error}",
-            recovery,
+            "Check the configured credentials and network/proxy settings.",
         ), False
     output = f"{result.stdout}\n{result.stderr}"
     if result.returncode != 0 or (success_text and success_text not in output):
         return _check(
             CheckStatus.WARN,
             f"{agent} credentials",
-            "host CLI is not logged in",
-            recovery,
+            "CLI authentication/model check failed",
+            "Check the configured credentials and network/proxy settings.",
         ), False
+    if agent == "antigravity" and values.get("model_name"):
+        requested = str(values["model_name"]).split("/")[-1]
+        available = {
+            line.split("\t", 1)[0].strip()
+            for line in result.stdout.splitlines()
+            if line.strip()
+        }
+        if requested not in available:
+            return _check(
+                CheckStatus.WARN,
+                "antigravity model",
+                f"model is unavailable: {requested}",
+                "Use a model ID returned by `agy models`.",
+            ), False
     return _check(
         CheckStatus.PASS,
         f"{agent} credentials",
-        f"host login is ready ({auth_path})",
+        f"configured credentials are ready ({auth_path})",
     ), True
 
 
@@ -868,4 +912,102 @@ def run_doctor(
     close = getattr(client, "close", None)
     if callable(close):
         close()
+    return checks
+
+
+def evaluation_checks(
+    task_ids: list[str],
+    repository_root: Path,
+    config: EvaluationConfig,
+    agent: str,
+    agent_kwargs: dict,
+    *,
+    client_factory: Callable[[], docker.DockerClient] = docker.from_env,
+) -> list[DoctorCheck]:
+    """Check every task before spending agent time; reuse the doctor's checks."""
+    checks: list[DoctorCheck] = []
+    catalog = TaskCatalog(repository_root)
+    client, _, docker_check = _docker_check(client_factory)
+    checks.append(docker_check)
+    try:
+        for task_id in task_ids:
+            try:
+                record = catalog.validate_one(task_id)
+            except ValueError as error:
+                checks.append(_check(CheckStatus.FAIL, task_id, str(error)))
+                continue
+            context = _DoctorContext(repository_root, None, config, record)
+            task_checks = [_private_assets_check(context)]
+            task_checks.extend(_image_checks(context, client)[0])
+            resources = config.resources_for(task_id)
+            if resources.repository_source is not None:
+                source = resolve_repository_path(
+                    repository_root, resources.repository_source
+                )
+                try:
+                    PitBenchAdapter.validate_repository(record.task, source)
+                except (OSError, ValueError, subprocess.SubprocessError) as error:
+                    task_checks.append(
+                        _check(CheckStatus.FAIL, "repository source", str(error))
+                    )
+                else:
+                    task_checks.append(
+                        _check(CheckStatus.PASS, "repository source", str(source))
+                    )
+            protocol = record.task.evaluation
+            task_checks.append(
+                _check(
+                    CheckStatus.PASS,
+                    "collection plan",
+                    f"budgets={protocol.budgets_sec}; Performance and Resource Efficiency observations; "
+                    f"Operational Reliability={'enabled' if protocol.operational_reliability else 'disabled'}; "
+                    f"seed observations={protocol.seed_robustness.seed_selection.seed_count if protocol.seed_robustness else len(protocol.solver_seeds or [])}; "
+                    f"representation transformations={'enabled' if protocol.representation_robustness else 'disabled'}",
+                )
+            )
+            task_checks.append(
+                _check(
+                    CheckStatus.WARN,
+                    "Configuration Robustness",
+                    "separate release-only collector; not included in candidate evaluation",
+                )
+            )
+            checks.extend(
+                DoctorCheck(
+                    item.status, f"{task_id} / {item.name}", item.detail, item.recovery
+                )
+                for item in task_checks
+            )
+        if agent in {"codex", "antigravity"}:
+            if not agent_kwargs.get("model_name"):
+                checks.append(
+                    _check(
+                        CheckStatus.FAIL,
+                        "model",
+                        "specify --model or configure model_name for the selected agent",
+                    )
+                )
+            credential, credentials_ready = _credential_check(agent, agent_kwargs)
+            checks.append(
+                DoctorCheck(
+                    credential.status if credentials_ready else CheckStatus.FAIL,
+                    credential.name,
+                    credential.detail,
+                    credential.recovery,
+                )
+            )
+            if client is not None:
+                runner, runner_ready = _runner_check(agent, agent_kwargs)
+                checks.append(
+                    DoctorCheck(
+                        runner.status if runner_ready else CheckStatus.FAIL,
+                        runner.name,
+                        runner.detail,
+                        runner.recovery,
+                    )
+                )
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
     return checks

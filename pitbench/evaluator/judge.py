@@ -594,6 +594,11 @@ class LocalProcessJudge:
                 finally:
                     slots.put(cpu_ids)
 
+            # Start the solver-stage clock after compilation, so UI ETA measures
+            # observed solver throughput rather than including build time.
+            self._progress(
+                f"Judge progress: solver runs 0/{len(jobs)}, workers {workers}"
+            )
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 future_to_job = {executor.submit(execute, job): job for job in jobs}
                 seed_group_totals: dict[tuple[str, str, CodeState, int], int] = {}

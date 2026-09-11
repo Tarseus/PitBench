@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from pitbench.evaluator.judge import LocalProcessJudge, _development_seeds
@@ -57,6 +58,16 @@ def main() -> None:
     else:
         observations = judge.run()
     ObservationStore.write_jsonl(args.observations, observations)
+    for root_dir, dirs, files in os.walk(args.output_dir):
+        try:
+            os.chmod(root_dir, 0o777)
+        except OSError:
+            pass
+        for f in files:
+            try:
+                os.chmod(Path(root_dir) / f, 0o666)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

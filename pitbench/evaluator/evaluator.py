@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -30,6 +31,25 @@ from pitbench.schema.evaluation import (
 )
 from pitbench.schema.observation import CodeState
 from pitbench.schema.task import PitBenchTask
+
+
+def _default_judge_parallel_runs(task: PitBenchTask) -> int:
+    try:
+        available = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        available = os.cpu_count() or 1
+    threads = getattr(task.evaluation, "threads", 1) or 1
+    slots = available // threads
+    if slots >= 6:
+        return max(1, slots - 2)
+    if slots >= 3:
+        return max(1, slots - 1)
+    return max(1, slots)
+
+
+def _default_judge_cpus(parallel_runs: int, task: PitBenchTask) -> float:
+    threads = getattr(task.evaluation, "threads", 1) or 1
+    return max(float(parallel_runs * threads), 8.0)
 
 
 class PitBenchEvaluator(Evaluator):
@@ -64,6 +84,33 @@ class PitBenchEvaluator(Evaluator):
             CodeState(value)
             for value in config.get("code_states", [state.value for state in CodeState])
         )
+
+        is_real_full_eval = not fixture_mode and not config.get("reliability_only", False)
+        base_observations_path = config.get("base_observations_path")
+        use_base_cache = bool(config.get("use_base_cache", False)) and is_real_full_eval
+        base_cache_file: Path | None = None
+
+        if base_observations_path is None and use_base_cache:
+            cache_root = Path(config.get("base_cache_path", ".pitbench/cache/base"))
+            candidate_cache = cache_root / f"{task.task_id}_base.parquet"
+            if candidate_cache.is_file():
+                base_observations_path = str(candidate_cache)
+            else:
+                base_cache_file = candidate_cache
+
+        cached_base: list[RunObservation] | None = None
+        if base_observations_path is not None:
+            cached_base = ObservationStore.read(Path(base_observations_path))
+            if any(item.task_id != task.task_id for item in cached_base):
+                raise ValueError("cached BASE observations belong to another task")
+            if any(item.code_state != CodeState.BASE for item in cached_base):
+                raise ValueError("cached BASE artifact contains non-BASE observations")
+
+        if cached_base is not None and "code_states" not in config:
+            judge_code_states = (CodeState.AGENT,)
+        else:
+            judge_code_states = code_states
+
         preflight_validity = evaluator_validity(
             patch_exists=patch_exists,
             fixture_mode=fixture_mode,
@@ -73,7 +120,7 @@ class PitBenchEvaluator(Evaluator):
         elif fixture_mode:
             limit = int(config.get("fixture_instances_per_instance_set", 2))
             observations = FixtureJudge().run(
-                JudgePlan.fixture(task, limit), code_states=code_states
+                JudgePlan.fixture(task, limit), code_states=judge_code_states
             )
         else:
             required = ("base_repository", "private_root")
@@ -84,6 +131,12 @@ class PitBenchEvaluator(Evaluator):
             image = config.get("judge_image") or task.repository.judge_image
             if not image:
                 raise ValueError("real judge requires a pinned judge_image")
+            parallel_runs = int(
+                config.get("judge_parallel_runs") or _default_judge_parallel_runs(task)
+            )
+            cpus = float(
+                config.get("judge_cpus") or _default_judge_cpus(parallel_runs, task)
+            )
             observations = DockerJudge(
                 image=image,
                 task_config_path=task_config_path,
@@ -91,23 +144,26 @@ class PitBenchEvaluator(Evaluator):
                 private_root=Path(config["private_root"]),
                 candidate_patch=request.candidate_patch_path,
                 output_dir=request.output_dir,
-                cpus=float(config.get("judge_cpus", 8.0)),
+                cpus=cpus,
                 memory=str(config.get("judge_memory", "8g")),
                 cpuset_cpus=config.get("judge_cpuset_cpus"),
-                code_states=code_states,
-                parallel_runs=int(config.get("judge_parallel_runs", 1)),
+                code_states=judge_code_states,
+                parallel_runs=parallel_runs,
                 progress_callback=progress_callback,
                 reliability_only=bool(config.get("reliability_only", False)),
             ).run()
 
-        base_observations_path = config.get("base_observations_path")
-        if base_observations_path is not None:
-            cached_base = ObservationStore.read(Path(base_observations_path))
-            if any(item.task_id != task.task_id for item in cached_base):
-                raise ValueError("cached BASE observations belong to another task")
-            if any(item.code_state != CodeState.BASE for item in cached_base):
-                raise ValueError("cached BASE artifact contains non-BASE observations")
-            observations = [*cached_base, *observations]
+        if cached_base is not None:
+            existing_states = {item.code_state for item in observations}
+            if CodeState.BASE not in existing_states:
+                observations = [*cached_base, *observations]
+        elif use_base_cache and base_cache_file is not None and observations:
+            base_obs = [item for item in observations if item.code_state == CodeState.BASE]
+            if base_obs:
+                try:
+                    ObservationStore.write(base_cache_file, base_obs)
+                except Exception:
+                    pass
 
         validity = evaluator_validity(
             patch_exists=patch_exists,
@@ -219,14 +275,26 @@ class PitBenchEvaluator(Evaluator):
                 else code_states,
             )
             reliability_dir = request.output_dir / "reliability"
-            reliability_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                reliability_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
             details_path = reliability_dir / "details.json"
-            details_path.write_text(
-                reliability_details.model_dump_json(indent=2) + "\n"
-            )
-            (reliability_dir / "report.json").write_text(
-                reliability.model_dump_json(indent=2) + "\n"
-            )
+            try:
+                details_path.write_text(
+                    reliability_details.model_dump_json(indent=2) + "\n"
+                )
+                (reliability_dir / "report.json").write_text(
+                    reliability.model_dump_json(indent=2) + "\n"
+                )
+            except PermissionError:
+                details_path = request.output_dir / "reliability_details.json"
+                details_path.write_text(
+                    reliability_details.model_dump_json(indent=2) + "\n"
+                )
+                (request.output_dir / "reliability_report.json").write_text(
+                    reliability.model_dump_json(indent=2) + "\n"
+                )
             reliability_details_ref = artifact_ref(
                 details_path,
                 root=request.output_dir,

@@ -176,34 +176,58 @@ Task:
                 env[key] = self._proxy_url
         return env
 
-    def _preflight(self, agy_binary: str, env: dict[str, str]) -> None:
-        result = subprocess.run(
-            [agy_binary, "models"],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(
-                "Host Antigravity is not ready. Run `agy` and complete Google "
-                "sign-in first."
-            )
-        available_models = {
-            line.split("\t", 1)[0].strip()
-            for line in result.stdout.splitlines()
-            if line.strip()
-        }
-        if self._model_name not in available_models:
-            raise RuntimeError(f"Antigravity model is unavailable: {self._model_name}")
+    def available_models(
+        self,
+        *,
+        agy_binary: str | None = None,
+        env: dict[str, str] | None = None,
+        pull: bool = True,
+    ) -> set[str]:
+        """Probe the same credentials and network settings used by the runner."""
+        agy_binary = agy_binary or self._resolved_agy_binary()
+        env = env if env is not None else self._runtime_env()
+        payload = None
+        command = [agy_binary, "models"]
         if self._runner_backend == "container":
+            payload = self._runner_payload(env)
             self._container_runner = AntigravityContainerRunner(
                 image=self._container_runner_image,
                 agy_binary=Path(agy_binary),
                 profile=self._profile,
             )
-            self._runner_metadata = self._container_runner.prepare()
+            self._runner_metadata = self._container_runner.prepare(pull=pull)
+            command = [*self._container_runner.command_prefix(), "models"]
+        try:
+            result = subprocess.run(
+                command,
+                input=payload,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=35,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(
+                "Antigravity model lookup timed out; check connectivity and proxy_url. "
+                "A timeout does not establish that the account is signed out."
+            ) from error
+        if result.returncode != 0:
+            raise RuntimeError(
+                "Antigravity model lookup failed using the configured runner; "
+                "check auth_token_path, connectivity, and proxy_url."
+            )
+        return {
+            line.split("\t", 1)[0].strip()
+            for line in result.stdout.splitlines()
+            if line.strip()
+        }
+
+    def _preflight(self, agy_binary: str, env: dict[str, str]) -> None:
+        available_models = self.available_models(agy_binary=agy_binary, env=env)
+        if self._model_name not in available_models:
+            raise RuntimeError(f"Antigravity model is unavailable: {self._model_name}")
+        if self._runner_backend == "container":
             return
         if not self._runner_path.is_file():
             raise RuntimeError(
@@ -483,6 +507,7 @@ Task:
         del portkey_metadata, portkey_trace_id
         agy_binary = self._resolved_agy_binary()
         env = self._runtime_env()
+        self._report_progress("Agent: Checking credentials and runner")
         self._preflight(agy_binary, env)
         runner_payload = self._runner_payload(env)
         self._cancelled.clear()
@@ -503,6 +528,7 @@ Task:
         stderr = ""
         return_code = 1
         deadline = time.monotonic() + self._timeout_sec
+        self._report_progress("Agent: Connecting task tools")
         with LoopbackMCPServer(terminal) as mcp_server:
             if mcp_server.url is None:
                 raise RuntimeError("PitBench MCP server URL is unavailable")
@@ -510,6 +536,7 @@ Task:
             network_attempts = 0
             quota_attempts = 0
             while True:
+                self._report_progress("Agent: Waiting for model")
                 process = subprocess.Popen(
                     self._build_command(
                         mcp_url=mcp_server.url,
@@ -525,16 +552,11 @@ Task:
                 self._set_process(process)
                 try:
                     remaining = max(0.1, deadline - time.monotonic())
-                    attempt_stdout, attempt_stderr = process.communicate(
-                        input=runner_payload,
-                        timeout=remaining,
+                    attempt_stdout, attempt_stderr, return_code = self._stream_process(
+                        process,
+                        runner_payload,
+                        timeout_sec=remaining,
                     )
-                    return_code = process.returncode
-                except subprocess.TimeoutExpired:
-                    self._cancelled.set()
-                    self._terminate_process(process)
-                    attempt_stdout, attempt_stderr = process.communicate()
-                    return_code = process.returncode
                 finally:
                     self._set_process(None)
 
@@ -548,9 +570,7 @@ Task:
                 if self._has_successful_result(attempt_stdout):
                     break
 
-                quota_delay = self._quota_retry_delay(
-                    attempt_stdout, attempt_stderr
-                )
+                quota_delay = self._quota_retry_delay(attempt_stdout, attempt_stderr)
                 quota_wait = (
                     quota_delay + self._quota_retry_buffer_sec
                     if quota_delay is not None
@@ -587,6 +607,9 @@ Task:
                 if not should_retry_network:
                     break
                 network_attempts += 1
+                self._report_progress(
+                    f"Agent: Network retry {network_attempts}/{self._network_retries}"
+                )
                 attempt_instruction = self._continuation_instruction(instruction)
         if logging_dir is not None:
             (logging_dir / "antigravity.jsonl").write_text(stdout)
