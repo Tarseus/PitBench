@@ -430,7 +430,6 @@ class HighsDriver:
                         f"--random_seed={args.seed}",
                         f"--threads={args.threads}",
                         f"--solution_file={raw_solution}",
-                        "--write_solution_to_file=true",
                     ],
                     check=False,
                     capture_output=True,
