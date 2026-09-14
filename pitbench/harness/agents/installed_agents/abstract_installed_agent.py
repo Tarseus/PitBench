@@ -23,7 +23,7 @@ from pitbench.harness.agents.failure_mode import FailureMode
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
 from pitbench.harness.terminal.models import TerminalCommand
 from pitbench.harness.terminal.tmux_session import TmuxSession
-from pitbench.harness.utils.model_names import normalize_model_name_for_pricing
+from pitbench.harness.utils.pricing import cost_from_tokens
 from pitbench.harness.utils.template_utils import render_setup_script
 
 
@@ -172,45 +172,6 @@ class AbstractInstalledAgent(BaseAgent, ABC):
         """
         return {}
 
-    def _calculate_cost_from_tokens(
-        self, input_tokens: int, output_tokens: int, model_name: str | None
-    ) -> float:
-        """Calculate cost from token counts using model pricing.
-
-        Uses MODEL_COST_OVERRIDES if available, otherwise falls back to LiteLLM pricing.
-
-        Args:
-            input_tokens: Number of input/prompt tokens
-            output_tokens: Number of output/completion tokens
-            model_name: Model name for pricing lookup
-
-        Returns:
-            Cost in USD, or 0.0 if pricing unavailable
-        """
-        if not model_name or (input_tokens == 0 and output_tokens == 0):
-            return 0.0
-
-        try:
-            # Check for override pricing first
-            from pitbench.harness.llms.portkey_llm import MODEL_COST_OVERRIDES
-
-            normalized_name = normalize_model_name_for_pricing(model_name)
-            if normalized_name in MODEL_COST_OVERRIDES:
-                input_cost_per_token, output_cost_per_token = MODEL_COST_OVERRIDES[
-                    normalized_name
-                ]
-                return (input_tokens * input_cost_per_token) + (
-                    output_tokens * output_cost_per_token
-                )
-
-            # Fall back to LiteLLM pricing
-            import litellm
-
-            input_cost, output_cost = litellm.cost_per_token(model=model_name)
-            return (input_tokens * input_cost) + (output_tokens * output_cost)
-        except Exception:
-            return 0.0
-
     def _parse_agent_metrics(self, logging_dir: Path | None) -> tuple[int, int, float]:
         """Parse token usage and calculate cost from agent trajectory logs.
 
@@ -262,9 +223,7 @@ class AbstractInstalledAgent(BaseAgent, ABC):
             model_name = getattr(self, "_model_name", None)
 
             # Calculate cost from tokens
-            cost = self._calculate_cost_from_tokens(
-                prompt_tokens, completion_tokens, model_name
-            )
+            cost = cost_from_tokens(prompt_tokens, completion_tokens, model_name)
 
             return (prompt_tokens, completion_tokens, cost)
         except Exception:
@@ -402,7 +361,9 @@ class AbstractInstalledAgent(BaseAgent, ABC):
             if self._agent_trace is not None and self.NATIVE_HOOKS is not None:
                 provider, config_path = self.NATIVE_HOOKS
                 self._agent_trace.install_native_hooks(
-                    session.container, provider=provider, config_path=config_path,
+                    session.container,
+                    provider=provider,
+                    config_path=config_path,
                     root=self._agent_trace._workdir,
                 )
             # Use prompt template to render instruction if provided

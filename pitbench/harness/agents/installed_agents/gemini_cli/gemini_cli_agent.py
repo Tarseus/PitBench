@@ -10,6 +10,7 @@ from pitbench.harness.terminal.models import TerminalCommand
 
 class GeminiCliAgent(AbstractInstalledAgent):
     NATIVE_HOOKS = ("gemini", "~/.gemini/settings.json")
+
     @staticmethod
     def name() -> str:
         return AgentName.GEMINI_CLI.value

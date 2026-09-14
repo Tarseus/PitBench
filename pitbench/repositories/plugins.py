@@ -5,7 +5,6 @@ from pitbench.repositories.base import (
     BuildKind,
     CommandSpec,
     RepositoryPlugin,
-    SolverRunSpec,
 )
 
 
@@ -22,6 +21,8 @@ class PyVRPRepositoryPlugin(RepositoryPlugin):
     collection_backend = "pitbench.evaluator.collection:PyVRPCollectionBackend"
     representations = {"customer_relabeling": ("judge", "isolated")}
     _PYTHON = ".pitbench-venv/bin/python"
+    driver_name = "pyvrp"
+    driver_python = _PYTHON
     # This test pins the exact local-search trace and move count. Those are
     # performance-policy outputs, not correctness contracts for this benchmark.
     _TRAJECTORY_REGRESSION_TESTS = (
@@ -104,29 +105,6 @@ class PyVRPRepositoryPlugin(RepositoryPlugin):
             ),
         ]
 
-    def run_command(self, run: SolverRunSpec) -> CommandSpec:
-        return CommandSpec(
-            argv=[
-                self._PYTHON,
-                "-m",
-                "pitbench.solver_drivers.run",
-                "pyvrp",
-                "--instance",
-                str(run.instance_path),
-                "--output",
-                str(run.output_path),
-                "--trajectory",
-                str(run.trajectory_path),
-                "--seed",
-                str(run.solver_seed),
-                "--budget",
-                str(run.budget_sec),
-                "--threads",
-                str(run.threads),
-            ],
-            timeout_sec=run.budget_sec + 60,
-        )
-
 
 class VroomRepositoryPlugin(RepositoryPlugin):
     agent_environment = AgentEnvironment(
@@ -140,37 +118,14 @@ class VroomRepositoryPlugin(RepositoryPlugin):
     agent_requirement = "file:bin/vroom"
     representations = {"customer_relabeling": ("judge",)}
     deterministic = True
+    driver_name = "vroom"
+    driver_solver = "./bin/vroom"
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         flags = "-O1 -g -fsanitize=address,undefined"
         if kind == BuildKind.PERFORMANCE:
             flags = "-O3 -DNDEBUG"
         return [CommandSpec(argv=["make", "-j1", f"CXXFLAGS={flags}"])]
-
-    def run_command(self, run: SolverRunSpec) -> CommandSpec:
-        return CommandSpec(
-            argv=[
-                "python",
-                "-m",
-                "pitbench.solver_drivers.run",
-                "vroom",
-                "--solver",
-                "./bin/vroom",
-                "--instance",
-                str(run.instance_path),
-                "--output",
-                str(run.output_path),
-                "--trajectory",
-                str(run.trajectory_path),
-                "--seed",
-                str(run.solver_seed),
-                "--budget",
-                str(run.budget_sec),
-                "--threads",
-                str(run.threads),
-            ],
-            timeout_sec=run.budget_sec + 60,
-        )
 
 
 class HighsRepositoryPlugin(RepositoryPlugin):
@@ -185,6 +140,8 @@ class HighsRepositoryPlugin(RepositoryPlugin):
     agent_requirement = "file:build/bin/highs"
     collection_backend = "pitbench.evaluator.collection:HighsCollectionBackend"
     representations = {"row_column_permutation": ("isolated",)}
+    driver_name = "highs"
+    driver_solver = "./build/bin/highs"
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         build_type = "Debug" if kind == BuildKind.VALIDATION else "Release"
@@ -204,31 +161,6 @@ class HighsRepositoryPlugin(RepositoryPlugin):
             CommandSpec(argv=["cmake", "--build", "build", "-j1"]),
         ]
 
-    def run_command(self, run: SolverRunSpec) -> CommandSpec:
-        return CommandSpec(
-            argv=[
-                "python",
-                "-m",
-                "pitbench.solver_drivers.run",
-                "highs",
-                "--solver",
-                "./build/bin/highs",
-                "--instance",
-                str(run.instance_path),
-                "--output",
-                str(run.output_path),
-                "--trajectory",
-                str(run.trajectory_path),
-                "--seed",
-                str(run.solver_seed),
-                "--budget",
-                str(run.budget_sec),
-                "--threads",
-                str(run.threads),
-            ],
-            timeout_sec=run.budget_sec + 60,
-        )
-
 
 class ChocoRepositoryPlugin(RepositoryPlugin):
     agent_environment = AgentEnvironment(
@@ -240,33 +172,11 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
     agent_python = "python3"
     name = "choco"
     agent_requirement = "env:PITBENCH_CHOCO_RUNNER"
+    driver_name = "choco"
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         goals = ["test"] if kind == BuildKind.VALIDATION else ["package", "-DskipTests"]
         return [CommandSpec(argv=["./mvnw", "-q", *goals])]
-
-    def run_command(self, run: SolverRunSpec) -> CommandSpec:
-        return CommandSpec(
-            argv=[
-                "python",
-                "-m",
-                "pitbench.solver_drivers.run",
-                "choco",
-                "--instance",
-                str(run.instance_path),
-                "--output",
-                str(run.output_path),
-                "--trajectory",
-                str(run.trajectory_path),
-                "--seed",
-                str(run.solver_seed),
-                "--budget",
-                str(run.budget_sec),
-                "--threads",
-                str(run.threads),
-            ],
-            timeout_sec=run.budget_sec + 60,
-        )
 
 
 class OrToolsRepositoryPlugin(RepositoryPlugin):
@@ -280,6 +190,8 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
     name = "ortools"
     agent_requirement = "env:PITBENCH_ORTOOLS_JAVA_RUNNER"
     deterministic = True
+    driver_name = "ortools_model_build"
+    driver_records_trajectory = False
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         config = "Debug" if kind == BuildKind.VALIDATION else "Release"
@@ -297,24 +209,3 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
             ),
             CommandSpec(argv=["cmake", "--build", "build", "-j1"]),
         ]
-
-    def run_command(self, run: SolverRunSpec) -> CommandSpec:
-        return CommandSpec(
-            argv=[
-                "python",
-                "-m",
-                "pitbench.solver_drivers.run",
-                "ortools_model_build",
-                "--instance",
-                str(run.instance_path),
-                "--output",
-                str(run.output_path),
-                "--seed",
-                str(run.solver_seed),
-                "--budget",
-                str(run.budget_sec),
-                "--threads",
-                str(run.threads),
-            ],
-            timeout_sec=run.budget_sec + 60,
-        )

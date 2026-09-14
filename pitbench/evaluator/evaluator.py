@@ -29,7 +29,7 @@ from pitbench.schema.evaluation import (
     EvaluationResult,
     EvaluationSummary,
 )
-from pitbench.schema.observation import CodeState
+from pitbench.schema.observation import CodeState, RunObservation
 from pitbench.schema.task import PitBenchTask
 
 
@@ -85,7 +85,9 @@ class PitBenchEvaluator(Evaluator):
             for value in config.get("code_states", [state.value for state in CodeState])
         )
 
-        is_real_full_eval = not fixture_mode and not config.get("reliability_only", False)
+        is_real_full_eval = not fixture_mode and not config.get(
+            "reliability_only", False
+        )
         base_observations_path = config.get("base_observations_path")
         use_base_cache = bool(config.get("use_base_cache", False)) and is_real_full_eval
         base_cache_file: Path | None = None
@@ -158,7 +160,9 @@ class PitBenchEvaluator(Evaluator):
             if CodeState.BASE not in existing_states:
                 observations = [*cached_base, *observations]
         elif use_base_cache and base_cache_file is not None and observations:
-            base_obs = [item for item in observations if item.code_state == CodeState.BASE]
+            base_obs = [
+                item for item in observations if item.code_state == CodeState.BASE
+            ]
             if base_obs:
                 try:
                     ObservationStore.write(base_cache_file, base_obs)

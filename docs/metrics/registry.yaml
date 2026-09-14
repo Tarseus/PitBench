@@ -6,7 +6,6 @@ performance:
   spec: null
   implementation:
     - pitbench/metrics/performance_report.py
-    - pitbench/metrics/decision_metrics.py
   validation:
     - budget_direction_reversal
     - pairing_antisymmetry
@@ -35,7 +34,7 @@ nuisance_robustness:
   version: 0.0.1
   frozen_commit: cede287d6d7f5151f870efb53654b47f228dcbe6
   frozen_on: "2026-09-07"
-  branch: metric/nuisance-robustness-v1
+  branch: main
   scope: docs/metrics/nuisance-robustness/scope.md
   evidence: docs/metrics/nuisance-robustness/evidence.md
   spec: docs/metrics/nuisance-robustness/spec.md

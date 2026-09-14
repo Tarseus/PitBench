@@ -4,15 +4,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, Optional
 
-from pitbench.harness.terminal.tmux_session import TmuxSession
-from pitbench.harness.utils.livestreamer import Livestreamer
-from pitbench.harness.utils.logger import logger
+from pitbench.harness.terminal.session_manager import TerminalSessionManager
 
 from .aws import EC2RemoteBuilder
 from .config import AWSConfig
 
 
-class RemoteTerminal:
+class RemoteTerminal(TerminalSessionManager):
     """Remote terminal implementation using modular remote builders."""
 
     def __init__(
@@ -49,14 +47,13 @@ class RemoteTerminal:
             aws_config: AWS configuration (uses env defaults if not provided)
         """
         self.client_container_name = client_container_name
-        self.sessions_logs_path = sessions_logs_path
-        self.commands_path = commands_path
-        self.livestream = livestream
-        self.disable_recording = disable_recording
-        self.history_limit = history_limit
-
-        self.logger = logger.getChild(__name__)
-        self.sessions: dict[str, TmuxSession] = {}
+        super().__init__(
+            sessions_logs_path=sessions_logs_path,
+            commands_path=commands_path,
+            livestream=livestream,
+            disable_recording=disable_recording,
+            history_limit=history_limit,
+        )
 
         # Configure AWS settings
         if not aws_config:
@@ -76,74 +73,9 @@ class RemoteTerminal:
             config=aws_config,
         )
 
-        self.container = None
-        self._init_livestreamer()
-
-    def _init_livestreamer(self) -> None:
-        """Initialize livestreamer if enabled."""
-        self.livestreamer = None
-
-        if not self.livestream:
-            return
-
-        if not self.sessions_logs_path:
-            raise ValueError("sessions_logs_path is required to livestream.")
-
-        self.livestreamer = Livestreamer()
-
-    def create_session(
-        self,
-        session_name: str,
-        is_active_stream: bool = False,
-        as_configured_user: bool = True,
-        recording_filename: Optional[str] = None,
-    ) -> TmuxSession:
-        """Create a new tmux session."""
-        if self.container is None:
-            raise ValueError("Container not started. Run start() first.")
-
-        if session_name in self.sessions:
-            raise ValueError(f"Session {session_name} already exists")
-
-        if as_configured_user:
-            user = self.container.attrs["Config"].get("User", "")
-        else:
-            user = "root"
-
-        session = TmuxSession(
-            session_name=session_name,
-            container=self.container,
-            commands_path=self.commands_path,
-            disable_recording=self.disable_recording,
-            user=user,
-            recording_filename=recording_filename,
-            history_limit=self.history_limit,
-        )
-
-        self.sessions[session_name] = session
-
-        if is_active_stream:
-            self.set_active_stream(session_name)
-
-        session.start()
-        return session
-
-    def get_session(self, session_name: str) -> TmuxSession:
-        """Get an existing tmux session by name."""
-        if session_name not in self.sessions:
-            raise ValueError(f"Session {session_name} does not exist")
-        return self.sessions[session_name]
-
-    def close_session(self, session_name: str) -> None:
-        """Stop and remove a tmux session if it exists."""
-        session = self.sessions.pop(session_name, None)
-        if not session:
-            return
-
-        try:
-            session.stop()
-        except Exception as exc:  # pragma: no cover - best effort cleanup
-            self.logger.warning("Failed to stop tmux session %s: %s", session_name, exc)
+    @property
+    def container_session_logs_path(self) -> Path:
+        return Path(self.remote_builder.CONTAINER_SESSION_LOGS_PATH)
 
     def start(self) -> None:
         """Start the remote terminal."""
@@ -158,17 +90,9 @@ class RemoteTerminal:
     ) -> None:
         """Stop the remote container."""
         # Stop all sessions
-        for session_name in list(self.sessions.keys()):
-            self.close_session(session_name)
-
+        self.close_sessions()
         self.remote_builder.stop_container(logs_path, agent_logs_path)
         self.container = None
-
-        # Stop livestreamer
-        if self.livestreamer:
-            self.livestreamer.stop()
-
-        self.sessions.clear()
 
     def stop(self) -> None:
         """Stop the remote terminal."""
@@ -178,11 +102,16 @@ class RemoteTerminal:
         # Stop remote builder
         self.remote_builder.stop()
 
-    def save_container_image(self, snapshot_s3_key: str | None = None) -> None:
+    def save_container_image(
+        self,
+        output_path: Path | None = None,
+        snapshot_s3_key: str | None = None,
+    ) -> None:
         """Save a remote container snapshot as a gzipped Docker image tarball.
 
         Storage destination is determined by the active remote builder.
         """
+        del output_path
         self.remote_builder.save_container_image(snapshot_s3_key=snapshot_s3_key)
 
     def copy_to_container(
@@ -196,27 +125,6 @@ class RemoteTerminal:
             paths=paths,
             container_dir=container_dir,
             container_filename=container_filename,
-        )
-
-    def set_active_stream(self, session_name: str) -> None:
-        """Set which session to livestream."""
-        if not self.livestreamer or not self.sessions_logs_path:
-            return
-
-        if session_name not in self.sessions:
-            raise ValueError(f"Session '{session_name}' does not exist")
-
-        print(f"\\nSwitching livestream to tmux session '{session_name}'")
-
-        session = self.sessions[session_name]
-
-        # Note: This path calculation assumes the original structure
-        # You may need to adjust this based on the actual log paths
-        self.livestreamer.change_livestream_path(
-            self.sessions_logs_path
-            / session.logging_path.relative_to(
-                Path(self.remote_builder.CONTAINER_SESSION_LOGS_PATH)
-            )
         )
 
 

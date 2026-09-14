@@ -1,12 +1,8 @@
 import asyncio
-import hashlib
-import json
 import logging
 import re
 import shlex
-import shutil
-import subprocess
-import uuid
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -14,15 +10,6 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
-import boto3
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
 from tenacity import RetryError
 
 from pitbench.harness.agents.agent_factory import AgentFactory
@@ -33,14 +20,26 @@ from pitbench.harness.agents.installed_agents.abstract_installed_agent import (
 )
 from pitbench.harness.config import config as harness_config
 from pitbench.harness.dataset.dataset import Dataset
-from pitbench.harness.evaluation import EvaluationRequest, EvaluatorFactory
 from pitbench.harness.handlers.asciinema_handler import AsciinemaHandler
 from pitbench.harness.handlers.trial_handler import TrialHandler
+from pitbench.harness.harness.candidate_evaluation import (
+    CandidateEvaluator,
+    trace_file_input,
+)
 from pitbench.harness.harness.models import (
     BenchmarkResults,
     FailureMode,
     RunMetadata,
     TrialResults,
+)
+from pitbench.harness.harness.result_manager import (
+    merge_agent_results,
+    update_agent_metrics,
+)
+from pitbench.harness.harness.run_artifacts import (
+    RunArtifactStore,
+    current_user,
+    git_commit_hash,
 )
 from pitbench.harness.llms.base_llm import (
     ContextLengthExceededError,
@@ -56,13 +55,9 @@ from pitbench.harness.terminal.docker_compose_manager import DockerComposeManage
 from pitbench.harness.terminal.terminal import Terminal, spin_up_terminal
 from pitbench.harness.terminal.tmux_session import TmuxSession
 from pitbench.harness.utils.logger import logger
-from pitbench.harness.utils.model_names import (
-    normalize_model_name_for_pricing,
-    normalize_model_name_for_reporting,
-)
+from pitbench.harness.utils.model_names import normalize_model_name_for_reporting
 from pitbench.harness.utils.pipeline_trace import PipelineTrace
 from pitbench.harness.utils.progress import TaskProgressDisplay
-from pitbench.harness.utils.repository import capture_repository_patch
 from pitbench.harness.utils.run_lock import (
     MULTI_AGENT_GLOBAL_KWARGS_KEY,
     MULTI_AGENT_LEGACY_CONFIGS_KEY,
@@ -369,13 +364,35 @@ class Harness:
             self._validate_resume_configuration()
 
         self._init_logger()
+        self._run_artifacts = RunArtifactStore(
+            run_path=self._run_path,
+            run_id=self._run_id,
+            results_path=self._results_output_path,
+            metadata_path=self._run_metadata_output_path,
+            s3_bucket=self._s3_bucket,
+            logger=self._logger,
+            trace=self._trace_pipeline,
+        )
+        self._candidate_evaluator = CandidateEvaluator(
+            defer_evaluation=self._defer_evaluation,
+            remote_build=self._remote_build,
+            snapshot_bucket=self._evaluation_snapshots_bucket,
+            logger=self._logger,
+            trace=self._trace_pipeline,
+            progress_stage=self._update_progress_from_stage,
+            progress_detail=self._update_progress_detail,
+        )
         self._dataset.sort_by_duration()
         self._logger.info(
             "Structured pipeline trace: %s", self._pipeline_trace_output_path
         )
 
         if self._is_resuming:
-            self._filter_completed_and_cleanup_incomplete_tasks()
+            self._run_artifacts.filter_completed_tasks(
+                dataset=self._dataset,
+                attempts=self._n_attempts,
+                trial_name=self._get_trial_name,
+            )
 
         if self._livestream != livestream:
             self._logger.warning(
@@ -597,163 +614,6 @@ class Harness:
             return
         display.detail(task_id, trial_name, detail)
 
-    @staticmethod
-    def _trace_file_input(path: Path) -> dict[str, Any]:
-        """Describe a pipeline input file, including its exact text when readable."""
-        file_input: dict[str, Any] = {"path": path, "exists": path.exists()}
-        if path.is_file():
-            try:
-                file_input["content"] = path.read_text(errors="replace")
-            except OSError as exc:
-                file_input["read_error"] = exc
-        return file_input
-
-    @staticmethod
-    def _trace_artifact(path: Path, *, include_text: bool = True) -> dict[str, Any]:
-        """Describe an output artifact without attempting to decode binaries."""
-        artifact: dict[str, Any] = {"path": path, "exists": path.exists()}
-        if not path.is_file():
-            return artifact
-        try:
-            payload = path.read_bytes()
-        except OSError as exc:
-            artifact["read_error"] = exc
-            return artifact
-        artifact.update(
-            {
-                "size_bytes": len(payload),
-                "sha256": hashlib.sha256(payload).hexdigest(),
-            }
-        )
-        if include_text:
-            try:
-                artifact["content"] = payload.decode("utf-8")
-            except UnicodeDecodeError:
-                artifact["content"] = None
-        return artifact
-
-    def _evaluate_candidate(
-        self,
-        terminal: Terminal | RemoteTerminal,
-        trial_handler: TrialHandler,
-        results: TrialResults,
-        expected_repository_head: str,
-        agent_label: str,
-        model_name: str | None,
-    ) -> None:
-        """Capture a binary patch and delegate to an opaque evaluator plugin."""
-        self._update_progress_from_stage(
-            stage="candidate.capture",
-            status="started",
-            task_id=trial_handler.task_id,
-            trial_name=trial_handler.trial_name,
-        )
-        output_dir = trial_handler.trial_paths.task_output_path / "evaluation"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        candidate_patch = output_dir / "candidate.patch"
-        container = terminal.container
-        if container is None:
-            raise RuntimeError("agent container is not running")
-        working_dir = container.attrs.get("Config", {}).get("WorkingDir") or None
-        actual_repository_head = self._repository_head(terminal)
-        if actual_repository_head != expected_repository_head:
-            raise RuntimeError(
-                "agent changed repository HEAD: "
-                f"{actual_repository_head} != {expected_repository_head}"
-            )
-        payload = capture_repository_patch(container, workdir=working_dir)
-        candidate_patch_sha256 = hashlib.sha256(payload).hexdigest()
-        candidate_patch.write_bytes(payload)
-
-        if getattr(self, "_defer_evaluation", False):
-            self._trace_pipeline(
-                stage="candidate.capture",
-                status="completed",
-                outputs={"candidate_patch": self._trace_artifact(candidate_patch)},
-                task_id=trial_handler.task_id,
-                trial_name=trial_handler.trial_name,
-            )
-            return
-
-        evaluator = EvaluatorFactory.from_import_path(
-            trial_handler.task.evaluator_import_path
-        )
-        request = EvaluationRequest(
-            task_id=trial_handler.task_id,
-            task_path=trial_handler.task_paths.input_path,
-            candidate_patch_path=candidate_patch,
-            candidate_patch_sha256=candidate_patch_sha256,
-            output_dir=output_dir,
-            agent_name=agent_label,
-            model_name=model_name,
-            evaluator_config={
-                **trial_handler.task.evaluator_config,
-                "_progress_callback": partial(
-                    self._update_progress_detail,
-                    trial_handler.task_id,
-                    trial_handler.trial_name,
-                ),
-            },
-            telemetry={
-                "total_input_tokens": results.total_input_tokens,
-                "total_output_tokens": results.total_output_tokens,
-                "total_cost": results.total_cost,
-            },
-        )
-        self._trace_pipeline(
-            stage="evaluator.execute",
-            status="started",
-            inputs={
-                "evaluator_import_path": trial_handler.task.evaluator_import_path,
-                "candidate_patch_path": candidate_patch,
-            },
-            task_id=trial_handler.task_id,
-            trial_name=trial_handler.trial_name,
-        )
-        try:
-            results.evaluation = evaluator.envelope(request)
-        except Exception as exc:
-            self._trace_pipeline(
-                stage="evaluator.execute",
-                status="failed",
-                task_id=trial_handler.task_id,
-                trial_name=trial_handler.trial_name,
-                error=exc,
-            )
-            raise
-        self._trace_pipeline(
-            stage="evaluator.execute",
-            status="completed" if results.evaluation.completed else "failed",
-            inputs={
-                "evaluator_import_path": trial_handler.task.evaluator_import_path,
-                "candidate_patch": self._trace_artifact(candidate_patch),
-            },
-            outputs={"evaluation": results.evaluation},
-            execution={
-                "component": "pitbench.harness.evaluation.Evaluator",
-                "operation": "Delegate evaluation and persist opaque payload",
-            },
-            task_id=trial_handler.task_id,
-            trial_name=trial_handler.trial_name,
-        )
-
-    @staticmethod
-    def _repository_head(terminal: Terminal | RemoteTerminal) -> str:
-        container = terminal.container
-        if container is None:
-            raise RuntimeError("agent container is not running")
-        working_dir = container.attrs.get("Config", {}).get("WorkingDir") or None
-        result = container.exec_run(["git", "rev-parse", "HEAD"], workdir=working_dir)
-        if result.exit_code != 0:
-            detail = result.output.decode("utf-8", errors="replace")
-            raise RuntimeError(f"repository HEAD capture failed: {detail}")
-        if not isinstance(result.output, bytes):
-            raise TypeError("container returned a non-bytes repository HEAD")
-        head = result.output.decode("ascii").strip()
-        if not head:
-            raise RuntimeError("repository HEAD capture returned an empty value")
-        return head
-
     @property
     def _log_output_path(self) -> Path:
         return self._run_path / "run.log"
@@ -912,91 +772,6 @@ class Harness:
                 registry_url=self._registry_url,
                 local_registry_path=self._local_registry_path,
             )
-
-    def _filter_completed_and_cleanup_incomplete_tasks(self) -> None:
-        """Filter out completed tasks and clean up incomplete task artifacts when
-        resuming.
-
-        A task is considered completed if it has a results.json file in the
-        corresponding output directory. Incomplete tasks with partial artifacts
-        are cleaned up to prevent data corruption.
-        """
-        if not self._is_resuming:
-            return
-
-        # When resuming, use the existing run path
-        resume_run_path = self._run_path
-
-        if not resume_run_path.exists():
-            self._logger.warning(
-                f"Resume output directory {resume_run_path} does not exist. "
-                "Starting a fresh run."
-            )
-            return
-
-        completed_tasks = set()
-        incomplete_tasks = []
-
-        for task_path in self._dataset._tasks:
-            task_id = task_path.name
-
-            # Check if this task has been completed for all attempts
-            task_completed = True
-            task_has_partial_artifacts = False
-
-            for attempt in range(1, self._n_attempts + 1):
-                trial_name = self._get_trial_name(task_path, attempt)
-                task_run_path = resume_run_path / task_id / trial_name
-                results_path = task_run_path / "results.json"
-
-                if not results_path.exists():
-                    task_completed = False
-                    # Check if task directory exists with partial artifacts
-                    if task_run_path.exists():
-                        task_has_partial_artifacts = True
-                    break
-
-            if task_completed:
-                completed_tasks.add(task_id)
-            else:
-                incomplete_tasks.append(task_path)
-
-                # Always clean up incomplete task artifacts to prevent corruption
-                if task_has_partial_artifacts:
-                    self._logger.info(
-                        f"Task {task_id} has partial artifacts from previous run. "
-                        "Cleaning up to prevent data corruption."
-                    )
-                    self._clean_incomplete_task_artifacts(task_id, task_path)
-
-        # Update the dataset with only incomplete tasks
-        self._dataset._tasks = incomplete_tasks
-
-        if completed_tasks:
-            self._logger.info(
-                f"Resuming run {self._run_id}. "
-                f"Skipping {len(completed_tasks)} completed tasks: "
-                f"{', '.join(sorted(completed_tasks))}"
-            )
-
-        if not incomplete_tasks:
-            self._logger.info("All tasks have been completed in the previous run.")
-
-    def _clean_incomplete_task_artifacts(self, task_id: str, task_path: Path) -> None:
-        """Archive interrupted evidence before a fresh attempt reuses its paths."""
-        task_run_path = self._run_path / task_id
-        if task_run_path.exists():
-            try:
-                archive = self._run_path / "interrupted" / uuid.uuid4().hex / task_id
-                archive.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(task_run_path), str(archive))
-                self._logger.info(
-                    "Archived interrupted task %s to %s", task_id, archive
-                )
-            except Exception as e:
-                raise RuntimeError(
-                    f"Could not archive interrupted evidence for task {task_id}"
-                ) from e
 
     def _init_logger(self) -> None:
         # Use append mode when resuming to preserve existing logs
@@ -1320,34 +1095,60 @@ class Harness:
         portkey_metadata: dict[str, str] | None,
         portkey_trace_id: str | None,
     ) -> AgentResult | None:
-        loop = asyncio.get_event_loop()
-        task = loop.run_in_executor(
-            None,
-            partial(
-                BaseAgent.execute_task,
-                agent,
-                instruction=trial_handler.instruction,
-                session=session,
-                logging_dir=logging_dir,
-                remote_logs=getattr(self, "_remote_build", False),
-                trace_context={
-                    "run_id": self._run_id,
-                    "task_id": trial_handler.task_id,
-                    "trial_name": trial_handler.trial_name,
-                },
-                portkey_metadata=portkey_metadata,
-                portkey_trace_id=portkey_trace_id,
-            ),
+        loop = asyncio.get_running_loop()
+        completed = threading.Event()
+        outcome: list[AgentResult | None] = []
+        errors: list[BaseException] = []
+
+        def execute() -> None:
+            try:
+                outcome.append(
+                    BaseAgent.execute_task(
+                        agent,
+                        instruction=trial_handler.instruction,
+                        session=session,
+                        logging_dir=logging_dir,
+                        remote_logs=getattr(self, "_remote_build", False),
+                        trace_context={
+                            "run_id": self._run_id,
+                            "task_id": trial_handler.task_id,
+                            "trial_name": trial_handler.trial_name,
+                        },
+                        portkey_metadata=portkey_metadata,
+                        portkey_trace_id=portkey_trace_id,
+                    )
+                )
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                completed.set()
+
+        # Some sandboxed runtimes lose the event-loop wakeup notification when
+        # a worker thread launches a child process. Polling a dedicated worker
+        # keeps the timeout and trace-finalization contract independent of that
+        # notification path.
+        worker = threading.Thread(
+            target=execute,
+            name=f"pitbench-agent-{trial_handler.task_id}",
+            daemon=True,
         )
-        try:
-            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_sec)
-        except asyncio.TimeoutError:
-            # Cancel before asyncio.run waits for the executor to drain. The
-            # worker owns final trace flushing, including its partial output.
+        worker.start()
+        deadline = loop.time() + timeout_sec
+        while not completed.is_set() and loop.time() < deadline:
+            await asyncio.sleep(min(0.05, max(0.0, deadline - loop.time())))
+
+        if not completed.is_set():
             if agent._agent_trace is not None:
                 agent._agent_trace.record("execution.timeout", timeout_sec=timeout_sec)
             agent.cancel()
-            raise
+            flush_deadline = loop.time() + 10
+            while not completed.is_set() and loop.time() < flush_deadline:
+                await asyncio.sleep(0.05)
+            raise TimeoutError
+
+        if errors:
+            raise errors[0]
+        return outcome[0] if outcome else None
 
     def _build_portkey_context(
         self,
@@ -1520,71 +1321,6 @@ class Harness:
         normalized_model = normalize_model_name_for_reporting(effective_model)
         return f"{effective_agent}:{normalized_model}"
 
-    def _snapshotting_enabled(self) -> bool:
-        """Return whether evaluation snapshot uploads are enabled."""
-        return self._remote_build and bool(self._evaluation_snapshots_bucket)
-
-    def _record_evaluation_snapshot(
-        self,
-        *,
-        results: TrialResults,
-        snapshot_name: str,
-        snapshot_s3_key: str,
-    ) -> None:
-        """Persist snapshot metadata into trial results."""
-        results.evaluation_snapshot_bucket_name = self._evaluation_snapshots_bucket
-        results.evaluation_snapshot_s3_keys[snapshot_name] = snapshot_s3_key
-
-        self._logger.info(
-            "Evaluation snapshot saved to S3: s3://%s/%s",
-            self._evaluation_snapshots_bucket,
-            snapshot_s3_key,
-        )
-
-    def _maybe_save_evaluation_snapshot(
-        self,
-        *,
-        terminal: Terminal | RemoteTerminal,
-        trial_handler: TrialHandler,
-        results: TrialResults,
-        snapshot_name: str,
-        snapshot_s3_key: str,
-        reason: str,
-    ) -> None:
-        """Save and record an evaluation snapshot when snapshotting is enabled."""
-        if not self._remote_build:
-            return
-
-        if not self._snapshotting_enabled():
-            self._logger.info(
-                "Skipping evaluation snapshot (%s) for task %s. "
-                "Set S3_EVALUATION_SNAPSHOTS_BUCKET_NAME to enable snapshot uploads.",
-                reason,
-                trial_handler.task_id,
-            )
-            return
-
-        try:
-            self._logger.info(
-                "Saving evaluation snapshot (%s) for task %s as S3 key %s",
-                reason,
-                trial_handler.task_id,
-                snapshot_s3_key,
-            )
-            terminal.save_container_image(snapshot_s3_key=snapshot_s3_key)
-            self._record_evaluation_snapshot(
-                results=results,
-                snapshot_name=snapshot_name,
-                snapshot_s3_key=snapshot_s3_key,
-            )
-        except Exception as exc:
-            self._logger.warning(
-                "Failed to save evaluation snapshot for task %s: %s",
-                trial_handler.task_id,
-                exc,
-                exc_info=True,
-            )
-
     def _run_trial(
         self,
         trial_handler: TrialHandler,
@@ -1658,7 +1394,7 @@ class Harness:
             stage="terminal.lifecycle",
             status="started",
             inputs={
-                "docker_compose": self._trace_file_input(
+                "docker_compose": trace_file_input(
                     trial_handler.task_paths.docker_compose_path
                 ),
                 "client_container_name": trial_handler.client_container_name,
@@ -1757,9 +1493,10 @@ class Harness:
                     )
 
                 # Parse/update token/cost/trajectory metrics from host logs.
-                agent_results = self._update_results_with_agent_metrics(
+                agent_results = update_agent_metrics(
                     agent_results=agent_results,
                     agent_trial_handler=agent_trial_handler,
+                    agent_model_key=self._build_agent_model_key,
                     agent_name=agent_name,
                     agent_import_path=agent_import_path,
                     model_name=model_name,
@@ -1801,7 +1538,7 @@ class Harness:
             trial_name=trial_handler.trial_name,
         )
         try:
-            self._merge_agent_results(trial_handler, all_results)
+            merge_agent_results(trial_handler, all_results)
         except Exception as exc:
             self._trace_pipeline(
                 stage="results.merge",
@@ -1930,7 +1667,7 @@ class Harness:
                     stage="setup.execute",
                     status="started",
                     inputs={
-                        "script": self._trace_file_input(
+                        "script": trace_file_input(
                             trial_handler.task_paths.run_setup_path
                         ),
                         "environment_overrides": env_overrides,
@@ -1991,7 +1728,7 @@ class Harness:
                 ):
                     results.failure_mode = setup_failure_mode
 
-                    self._maybe_save_evaluation_snapshot(
+                    self._candidate_evaluator.maybe_save_snapshot(
                         terminal=terminal,
                         trial_handler=trial_handler,
                         results=results,
@@ -2003,7 +1740,9 @@ class Harness:
                     results.trial_ended_at = datetime.now(timezone.utc).isoformat()
                     return results
 
-            expected_repository_head = self._repository_head(terminal)
+            expected_repository_head = self._candidate_evaluator.repository_head(
+                terminal
+            )
 
             agent_class = AgentFactory.get_agent_class(
                 agent_name=agent_name,
@@ -2163,7 +1902,7 @@ class Harness:
                     agent_model_key: agent_result.total_cost
                 }
 
-            self._evaluate_candidate(
+            self._candidate_evaluator.evaluate(
                 terminal=terminal,
                 trial_handler=trial_handler,
                 results=results,
@@ -2253,7 +1992,7 @@ class Harness:
             stage="terminal.lifecycle",
             status="started",
             inputs={
-                "docker_compose": self._trace_file_input(
+                "docker_compose": trace_file_input(
                     trial_handler.task_paths.docker_compose_path
                 ),
                 "client_container_name": trial_handler.client_container_name,
@@ -2322,9 +2061,10 @@ class Harness:
 
         # Logs are available on host after terminal context exits; refresh
         # token/cost/trajectory metrics from host-side artifacts.
-        results = self._update_results_with_agent_metrics(
+        results = update_agent_metrics(
             agent_results=results,
             agent_trial_handler=trial_handler,
+            agent_model_key=self._build_agent_model_key,
             agent_name=None,
             model_name=self._model_name,
         )
@@ -2376,397 +2116,6 @@ class Harness:
 
         return results
 
-    def _write_results(self, results: BenchmarkResults) -> None:
-        self._results_output_path.write_text(results.model_dump_json(indent=4))
-        self._trace_pipeline(
-            stage="results.aggregate",
-            status="checkpoint",
-            inputs={"trial_results": results.results},
-            outputs={
-                "benchmark_results": results,
-                "results_path": self._results_output_path,
-                "completed_trial_count": len(results.results),
-            },
-            execution={
-                "component": "Harness._write_results",
-                "operation": (
-                    "Recompute run-level metrics from all completed trial results and "
-                    "persist results.json."
-                ),
-            },
-        )
-
-    def _deep_merge(self, base: dict, updates: dict) -> dict:
-        """Deep merge two dictionaries, preferring values from updates.
-
-        If updates contains valid data, remove any error keys from base.
-
-        Args:
-            base: Base dictionary to merge into
-            updates: Dictionary with updates to apply
-
-        Returns:
-            Merged dictionary
-        """
-        result = base.copy()
-        for key, value in updates.items():
-            if (
-                key in result
-                and isinstance(result[key], dict)
-                and isinstance(value, dict)
-            ):
-                result[key] = self._deep_merge(result[key], value)
-            else:
-                result[key] = value
-
-        # Remove error keys if we have valid data from higher-numbered agents
-        if "error" in result and len(result) > 1:
-            # If there's an error key but also other keys, the error is likely stale
-            result.pop("error", None)
-
-        return result
-
-    def _parse_agent_metrics_from_logs(
-        self,
-        agent_logs_dir: Path,
-        model_name: str | None = None,
-        sessions_dir: Path | None = None,
-    ) -> tuple[int, int, float, int]:
-        """Parse tokens/cost and trajectory length from copied host logs."""
-        prompt_tokens = 0
-        completion_tokens = 0
-        trajectory_length = 0
-
-        if agent_logs_dir is not None and agent_logs_dir.exists():
-            try:
-                json_files = list(agent_logs_dir.glob("*.json"))
-                if json_files:
-                    log_file = max(json_files, key=lambda p: p.stat().st_mtime)
-                    with open(log_file) as f:
-                        trajectory = json.load(f)
-                    if isinstance(trajectory, list):
-                        trajectory_length = len(trajectory)
-                        for entry in reversed(trajectory):
-                            llm_metrics = entry.get("llm_metrics", {})
-                            token_usage = llm_metrics.get("accumulated_token_usage", {})
-                            prompt_tokens = int(token_usage.get("prompt_tokens", 0))
-                            completion_tokens = int(
-                                token_usage.get("completion_tokens", 0)
-                            )
-                            if prompt_tokens > 0 or completion_tokens > 0:
-                                break
-            except Exception as e:
-                self._logger.debug(f"Failed to parse JSON trajectory metrics: {e}")
-
-        if trajectory_length == 0:
-            trajectory_length = self._parse_trajectory_length_from_cast(sessions_dir)
-
-        cost = self._calculate_cost_from_tokens(
-            prompt_tokens, completion_tokens, model_name
-        )
-        return (prompt_tokens, completion_tokens, cost, trajectory_length)
-
-    def _parse_trajectory_length_from_cast(self, sessions_dir: Path | None) -> int:
-        """Best-effort interaction count fallback for cast-based agents."""
-        if sessions_dir is None or not sessions_dir.exists():
-            return 0
-        cast_files = list(sessions_dir.glob("*.cast"))
-        if not cast_files:
-            return 0
-        cast_file = max(cast_files, key=lambda p: p.stat().st_mtime)
-        interactions = 0
-        try:
-            lines = cast_file.read_text(encoding="utf-8").splitlines()
-            for line in lines[1:]:
-                if not line.strip():
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(event, list) and len(event) >= 3:
-                    interactions += 1
-        except Exception:
-            return 0
-        return interactions
-
-    def _calculate_cost_from_tokens(
-        self, input_tokens: int, output_tokens: int, model_name: str | None
-    ) -> float:
-        """Calculate cost from token counts using model pricing.
-
-        Args:
-            input_tokens: Number of input/prompt tokens
-            output_tokens: Number of output/completion tokens
-            model_name: Model name for pricing lookup
-
-        Returns:
-            Cost in USD, or 0.0 if pricing unavailable
-        """
-        if not model_name or (input_tokens == 0 and output_tokens == 0):
-            return 0.0
-
-        try:
-            from pitbench.harness.llms.portkey_llm import MODEL_COST_OVERRIDES
-
-            normalized_name = normalize_model_name_for_pricing(model_name)
-
-            # Check for override pricing first
-            if normalized_name in MODEL_COST_OVERRIDES:
-                input_cost_per_token, output_cost_per_token = MODEL_COST_OVERRIDES[
-                    normalized_name
-                ]
-                return (input_tokens * input_cost_per_token) + (
-                    output_tokens * output_cost_per_token
-                )
-
-            # Also try the original name
-            if model_name in MODEL_COST_OVERRIDES:
-                input_cost_per_token, output_cost_per_token = MODEL_COST_OVERRIDES[
-                    model_name
-                ]
-                return (input_tokens * input_cost_per_token) + (
-                    output_tokens * output_cost_per_token
-                )
-
-            # Fall back to LiteLLM pricing
-            import litellm
-
-            input_cost, output_cost = litellm.cost_per_token(model=model_name)
-            return (input_tokens * input_cost) + (output_tokens * output_cost)
-        except Exception:
-            return 0.0
-
-    def _update_results_with_agent_metrics(
-        self,
-        agent_results: TrialResults,
-        agent_trial_handler: TrialHandler,
-        agent_name: AgentName | None = None,
-        agent_import_path: str | None = None,
-        model_name: str | None = None,
-    ) -> TrialResults:
-        """Update agent results with token/cost data parsed from host logs.
-
-        Called AFTER logs are copied from container to host.
-
-        Args:
-            agent_results: The existing TrialResults object
-            agent_trial_handler: Trial handler with paths to agent logs
-            agent_name: Agent name for reporting key construction
-            agent_import_path: Optional custom agent import path for reporting
-            model_name: Model name for cost calculation
-
-        Returns:
-            Updated TrialResults with token counts and costs
-        """
-        agent_logs_dir = agent_trial_handler.trial_paths.agent_logging_dir
-
-        input_tokens, output_tokens, cost, trajectory_length = (
-            self._parse_agent_metrics_from_logs(
-                agent_logs_dir=agent_logs_dir,
-                model_name=model_name,
-                sessions_dir=agent_trial_handler.trial_paths.sessions_path,
-            )
-        )
-
-        if input_tokens > 0 or output_tokens > 0:
-            agent_results.total_input_tokens = input_tokens
-            agent_results.total_output_tokens = output_tokens
-        if agent_results.total_cost is None or cost > 0:
-            agent_results.total_cost = float(cost)
-
-        if agent_results.costs_by_agent_model is None:
-            agent_results.costs_by_agent_model = {}
-
-        agent_model_key = self._build_agent_model_key(
-            agent_name=agent_name,
-            model_name=model_name,
-            agent_import_path=agent_import_path,
-        )
-        agent_results.costs_by_agent_model[agent_model_key] = float(
-            agent_results.total_cost or 0.0
-        )
-
-        if agent_results.agent_metrics is None:
-            agent_results.agent_metrics = {}
-        agent_results.agent_metrics["trajectory_length"] = trajectory_length
-        agent_results.agent_metrics["task_cost_usd"] = float(
-            agent_results.total_cost or 0.0
-        )
-        agent_results.agent_metrics["agent_model_key"] = agent_model_key
-
-        self._logger.info(
-            "Updated agent metrics: %s input tokens, %s output tokens, $%.6f cost, "
-            "trajectory_length=%s",
-            input_tokens,
-            output_tokens,
-            float(agent_results.total_cost or 0.0),
-            trajectory_length,
-        )
-
-        return agent_results
-
-    def _merge_agent_results(
-        self, trial_handler: TrialHandler, all_agent_results: list[TrialResults]
-    ) -> None:
-        """Merge results from all agents into the aggregated trial directory.
-
-        Args:
-            trial_handler: The trial handler for the main trial
-            all_agent_results: List of results from all agents in order
-        """
-        if not all_agent_results or len(all_agent_results) <= 1:
-            # No merging needed if only one agent or no agents
-            return
-
-        self._logger.info(
-            f"Merging results from {len(all_agent_results)} agents "
-            f"for task {trial_handler.task_id}"
-        )
-
-        # Merge results in order, preferring later agents
-        merged_dict = {}
-        for i, agent_result in enumerate(all_agent_results):
-            agent_dict = agent_result.model_dump()
-            merged_dict = self._deep_merge(merged_dict, agent_dict)
-            self._logger.debug(
-                f"Merged agent {i + 1}/{len(all_agent_results)} "
-                f"for task {trial_handler.task_id}"
-            )
-
-        # Convert merged dict back to TrialResults
-        merged_result = TrialResults.model_validate(merged_dict)
-
-        # Compute aggregated totals from all agent results
-        total_input_tokens = 0
-        total_output_tokens = 0
-        costs_by_agent_model: dict[str, float] = {}
-        for agent_result in all_agent_results:
-            if agent_result.total_input_tokens:
-                total_input_tokens += agent_result.total_input_tokens
-            if agent_result.total_output_tokens:
-                total_output_tokens += agent_result.total_output_tokens
-            if agent_result.costs_by_agent_model:
-                for key, value in agent_result.costs_by_agent_model.items():
-                    costs_by_agent_model[key] = costs_by_agent_model.get(
-                        key, 0.0
-                    ) + float(value or 0.0)
-
-        merged_result.total_input_tokens = total_input_tokens
-        merged_result.total_output_tokens = total_output_tokens
-        merged_result.costs_by_agent_model = costs_by_agent_model
-        merged_result.total_cost = float(sum(costs_by_agent_model.values()))
-
-        # Write merged results to the aggregated trial directory
-        trial_handler.trial_paths.results_path.write_text(
-            merged_result.model_dump_json(indent=4)
-        )
-
-        self._logger.info(
-            f"Successfully merged and wrote results for task {trial_handler.task_id}"
-        )
-
-    def _get_git_commit_hash(self) -> str:
-        """Get the current git commit hash."""
-        try:
-            return (
-                subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
-                )
-                .decode("utf-8")
-                .strip()
-            )
-        except (subprocess.SubprocessError, FileNotFoundError):
-            return "unknown"
-
-    def _get_user(self) -> str:
-        """Get the user who ran the experiment.
-
-        First tries to get the git user.name, falls back to system username.
-        """
-        try:
-            git_user = (
-                subprocess.check_output(
-                    ["git", "config", "user.name"], stderr=subprocess.DEVNULL
-                )
-                .decode("utf-8")
-                .strip()
-            )
-            if git_user:
-                return git_user
-        except (subprocess.SubprocessError, FileNotFoundError):
-            pass
-
-        try:
-            return (
-                subprocess.check_output(["whoami"], stderr=subprocess.DEVNULL)
-                .decode("utf-8")
-                .strip()
-            )
-        except (subprocess.SubprocessError, FileNotFoundError):
-            return "unknown"
-
-    def _upload_results_to_s3(self) -> None:
-        """Upload entire run directory to S3 bucket."""
-        files_to_upload = [f for f in self._run_path.rglob("*") if f.is_file()]
-
-        if not files_to_upload:
-            self._logger.warning(f"No files found to upload in {self._run_path}")
-            return
-
-        try:
-            s3_client = boto3.client("s3")
-            self._logger.info(f"Uploading run results to S3 bucket: {self._s3_bucket}")
-
-            failed_uploads = []
-
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TimeElapsedColumn(),
-            ) as progress:
-                task = progress.add_task(
-                    "Uploading files to S3", total=len(files_to_upload)
-                )
-
-                for file_path in files_to_upload:
-                    relative_path = file_path.relative_to(self._run_path)
-                    s3_key = f"{self._run_id}/{relative_path}"
-
-                    try:
-                        self._logger.info(
-                            f"Uploading {relative_path} to s3://{self._s3_bucket}/{s3_key}"
-                        )
-                        s3_client.upload_file(str(file_path), self._s3_bucket, s3_key)
-                    except Exception as file_error:
-                        self._logger.warning(
-                            f"Failed to upload {relative_path}: {file_error}"
-                        )
-                        failed_uploads.append(str(relative_path))
-
-                    progress.advance(task)
-
-            if not failed_uploads:
-                self._logger.info(
-                    f"Successfully uploaded all {len(files_to_upload)} files to "
-                    f"s3://{self._s3_bucket}/{self._run_id}/"
-                )
-            else:
-                self._logger.warning(
-                    f"Uploaded {len(files_to_upload) - len(failed_uploads)} of "
-                    f"{len(files_to_upload)} files. "
-                    f"{len(failed_uploads)} files failed to upload."
-                )
-                self._logger.warning(
-                    f"Failed files: {', '.join(failed_uploads[:5])}"
-                    + ("..." if len(failed_uploads) > 5 else "")
-                )
-
-        except Exception as e:
-            self._logger.error(f"Failed to upload {self._run_path} results to S3: {e}")
-
     def _write_run_metadata(self) -> None:
         resumed_at = (
             datetime.now(timezone.utc).isoformat() if self._is_resuming else None
@@ -2802,33 +2151,15 @@ class Harness:
                 if self._is_multi_agent
                 else self._model_name
             ),
-            commit_hash=self._get_git_commit_hash(),
-            username=self._get_user(),
+            commit_hash=git_commit_hash(),
+            username=current_user(),
             start_time=datetime.now(timezone.utc).isoformat(),
             s3_bucket=self._s3_bucket if self._s3_bucket else None,
             resumed_at=resumed_at,
         )
         self._run_uuid = metadata.uuid
 
-        # Write metadata using simple JSON write
-        self._run_metadata_output_path.write_text(metadata.model_dump_json(indent=4))
-
-    def _update_metadata_on_end(self) -> None:
-        """Update metadata with final results."""
-        if self._run_metadata_output_path.exists():
-            try:
-                metadata = RunMetadata.model_validate_json(
-                    self._run_metadata_output_path.read_text()
-                )
-
-                metadata.end_time = datetime.now(timezone.utc).isoformat()
-
-                # Write updated metadata back to file
-                self._run_metadata_output_path.write_text(
-                    metadata.model_dump_json(indent=4)
-                )
-            except (json.JSONDecodeError, Exception) as e:
-                self._logger.warning(f"Failed to update metadata: {e}")
+        self._run_artifacts.write_metadata(metadata)
 
     def _execute_single_trial(
         self,
@@ -2850,7 +2181,7 @@ class Harness:
             inputs={
                 "task_path": task_path,
                 "trial_name": trial_name,
-                "task_yaml": self._trace_file_input(task_path / "task.yaml"),
+                "task_yaml": trace_file_input(task_path / "task.yaml"),
             },
             execution={
                 "component": "pitbench.harness.handlers.trial_handler.TrialHandler",
@@ -2947,81 +2278,13 @@ class Harness:
     ) -> str:
         return f"{task_path.name}.{attempt}-of-{self._n_attempts}.{self._run_id}"
 
-    @staticmethod
-    def _is_multi_agent_sub_trial_name(trial_name: str) -> bool:
-        return bool(re.search(r"\.agent-\d+-", trial_name))
-
-    def _load_previous_results(self) -> BenchmarkResults | None:
-        """Load results from individual task directories when resuming.
-
-        Individual task results.json files are the single source of truth.
-        The main results.json file is just an aggregation that gets rebuilt.
-
-        Returns:
-            BenchmarkResults or None if no previous results exist
-        """
-        if not self._is_resuming:
-            return None
-
-        # When resuming, use the existing run path
-        previous_run_path = self._run_path
-
-        if not previous_run_path.exists():
-            self._logger.warning(
-                f"Previous run directory {previous_run_path} does not exist"
-            )
-            return None
-
-        all_results = []
-
-        # Load results from individual task directories
-        for task_dir in previous_run_path.iterdir():
-            if not task_dir.is_dir():
-                continue
-
-            # Look for trial results in this task directory
-            for trial_dir in task_dir.iterdir():
-                if not trial_dir.is_dir():
-                    continue
-
-                if self._is_multi_agent_sub_trial_name(trial_dir.name):
-                    # Skip per-agent sub-trials; aggregated trial directories are the
-                    # source of truth for resumed run-level results.
-                    continue
-
-                trial_results_path = trial_dir / "results.json"
-                if trial_results_path.exists():
-                    try:
-                        trial_result = TrialResults.model_validate_json(
-                            trial_results_path.read_text()
-                        )
-                        all_results.append(trial_result)
-                    except Exception as e:
-                        self._logger.warning(
-                            f"Failed to load trial result from "
-                            f"{trial_results_path}: {e}"
-                        )
-
-        if not all_results:
-            self._logger.warning("No previous results found to load")
-            return None
-
-        # Create BenchmarkResults from individual task results
-        combined_results = BenchmarkResults(results=all_results)
-
-        self._logger.info(
-            f"Loaded {len(all_results)} results from individual task directories"
-        )
-
-        return combined_results
-
     def _execute_tasks(self) -> BenchmarkResults:
         """Execute all tasks in parallel and collect their results."""
         results = BenchmarkResults()
 
         # Load previous results if resuming from a run
         if self._is_resuming:
-            previous_results = self._load_previous_results()
+            previous_results = self._run_artifacts.load_previous_results()
             if previous_results:
                 results.results = previous_results.results
                 self._logger.info(
@@ -3036,7 +2299,7 @@ class Harness:
             )
             # Write the loaded results to the file since no new tasks will trigger
             # writes
-            self._write_results(results)
+            self._run_artifacts.write_results(results)
             return results
 
         max_workers = min(len(self._dataset), self._n_concurrent_trials)
@@ -3095,7 +2358,7 @@ class Harness:
                             break
                     else:
                         results.results.append(trial_results)
-                    self._write_results(results)
+                    self._run_artifacts.write_results(results)
                     if display is not None:
                         display.finish(trial_results)
         finally:
@@ -3113,19 +2376,6 @@ class Harness:
             },
         )
         return results
-
-    def _handle_results_upload(self) -> None:
-        """Upload run artifacts to S3 if configured."""
-        if not self._upload_results:
-            return
-
-        if self._s3_bucket:
-            self._upload_results_to_s3()
-        else:
-            logger.warning(
-                "Upload results requested but no S3 bucket configured. "
-                "Set the S3_BUCKET_NAME environment variable in .env"
-            )
 
     def run(self) -> BenchmarkResults:
         """Run the harness.
@@ -3177,9 +2427,9 @@ class Harness:
 
             # Only update metadata on end if not resuming
             if not self._is_resuming:
-                self._update_metadata_on_end()
+                self._run_artifacts.finish_metadata()
 
-            self._handle_results_upload()
+            self._run_artifacts.handle_upload(self._upload_results)
         except Exception as exc:
             self._trace_pipeline(
                 stage="run.execute",

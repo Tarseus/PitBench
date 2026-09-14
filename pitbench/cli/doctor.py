@@ -25,12 +25,11 @@ from pitbench.cli.evaluate_config import (
 )
 from pitbench.evaluator.judge import JudgePlan
 from pitbench.evaluator.private_assets import PrivateAssetResolver
-from pitbench.harness.agents.antigravity_container import (
+from pitbench.harness.agents.containers import (
     AntigravityContainerRunner,
+    CodexContainerRunner,
 )
-from pitbench.harness.agents.antigravity_profile import AntigravityProfile
-from pitbench.harness.agents.codex_container import CodexContainerRunner
-from pitbench.harness.agents.codex_profile import CodexProfile
+from pitbench.harness.agents.profiles import CodexProfile
 from pitbench.repositories.base import RepositoryPluginRegistry
 from pitbench.tasks import TaskCatalog, TaskRecord
 
@@ -496,7 +495,9 @@ def _credential_check(
         _, invalid = _json_file(auth_path, "Codex credentials")
         command = [binary, "login", "status"]
         success_text = "Logged in using ChatGPT"
-        recovery = "Run `pitbench auth login codex` to connect or create a ChatGPT login."
+        recovery = (
+            "Run `pitbench auth login codex` to connect or create a ChatGPT login."
+        )
     else:
         binary = str(values.get("agy_binary") or "agy")
         auth_path = Path(
@@ -613,9 +614,7 @@ def _runner_check(agent: str, values: dict[str, object]) -> tuple[DoctorCheck, b
             ), False
         return _codex_workspace_runner_check(values)
     if values.get("runner_backend") == "container":
-        if agent == "codex":
-            return _codex_container_runner_check(values)
-        return _antigravity_container_runner_check(values)
+        return _container_runner_check(agent, values)
     defaults = {
         "codex": ("/usr/local/libexec/pitbench-codex-runner", "pitbench-codex"),
         "antigravity": (
@@ -753,34 +752,41 @@ def _codex_workspace_runner_check(
     ), True
 
 
-def _codex_container_runner_check(
+def _container_runner_check(
+    agent: str,
     values: dict[str, object],
 ) -> tuple[DoctorCheck, bool]:
-    binary_value = str(values.get("codex_binary") or "codex")
+    runner_class = {
+        "codex": CodexContainerRunner,
+        "antigravity": AntigravityContainerRunner,
+    }[agent]
+    binary_value = str(
+        values.get(runner_class.binary_config_key) or runner_class.binary_default
+    )
     resolved_binary = shutil.which(binary_value)
     if resolved_binary is None:
         return _check(
             CheckStatus.WARN,
-            "codex runner",
-            f"Codex CLI is not executable: {binary_value}",
-            "Install Codex and run `codex login`.",
+            f"{agent} runner",
+            f"{runner_class.provider_name} CLI is not executable: {binary_value}",
+            runner_class.credential_hint,
         ), False
-    profile: CodexProfile | None = None
+    profile = None
     profile_path = values.get("profile_path")
     if profile_path is not None:
         try:
-            profile = CodexProfile.load(Path(str(profile_path)))
+            profile = runner_class.profile_class.load(Path(str(profile_path)))
         except Exception as error:
             return _check(
                 CheckStatus.WARN,
-                "codex runner",
-                f"invalid Codex profile: {error}",
+                f"{agent} runner",
+                f"invalid {runner_class.provider_name} profile: {error}",
                 "Run `uv run pitbench profiles validate PROFILE_PATH`.",
             ), False
     image = str(values.get("container_runner_image") or "python:3.13-slim-bookworm")
-    runner = CodexContainerRunner(
+    runner = runner_class.from_binary(
         image=image,
-        codex_binary=Path(resolved_binary),
+        binary=Path(resolved_binary),
         profile=profile,
     )
     try:
@@ -788,7 +794,7 @@ def _codex_container_runner_check(
     except Exception as error:
         return _check(
             CheckStatus.WARN,
-            "codex runner",
+            f"{agent} runner",
             f"container self-test failed: {error}",
             f"Run `docker pull {image}`, then rerun doctor.",
         ), False
@@ -797,57 +803,7 @@ def _codex_container_runner_check(
     )
     return _check(
         CheckStatus.PASS,
-        "codex runner",
-        "container has no Docker socket "
-        f"({metadata['runner_image_id']}{profile_detail})",
-    ), True
-
-
-def _antigravity_container_runner_check(
-    values: dict[str, object],
-) -> tuple[DoctorCheck, bool]:
-    binary_value = str(values.get("agy_binary") or "agy")
-    resolved_binary = shutil.which(binary_value)
-    if resolved_binary is None:
-        return _check(
-            CheckStatus.WARN,
-            "antigravity runner",
-            f"Antigravity CLI is not executable: {binary_value}",
-            "Install agy and complete Google sign-in.",
-        ), False
-    profile: AntigravityProfile | None = None
-    profile_path = values.get("profile_path")
-    if profile_path is not None:
-        try:
-            profile = AntigravityProfile.load(Path(str(profile_path)))
-        except Exception as error:
-            return _check(
-                CheckStatus.WARN,
-                "antigravity runner",
-                f"invalid Antigravity profile: {error}",
-                "Run `uv run pitbench profiles validate PROFILE_PATH`.",
-            ), False
-    image = str(values.get("container_runner_image") or "python:3.13-slim-bookworm")
-    runner = AntigravityContainerRunner(
-        image=image,
-        agy_binary=Path(resolved_binary),
-        profile=profile,
-    )
-    try:
-        metadata = runner.prepare(pull=False)
-    except Exception as error:
-        return _check(
-            CheckStatus.WARN,
-            "antigravity runner",
-            f"container self-test failed: {error}",
-            f"Run `docker pull {image}`, then rerun doctor.",
-        ), False
-    profile_detail = (
-        f", profile {profile.name}@{profile.sha256[:12]}" if profile else ""
-    )
-    return _check(
-        CheckStatus.PASS,
-        "antigravity runner",
+        f"{agent} runner",
         "container has no Docker socket "
         f"({metadata['runner_image_id']}{profile_detail})",
     ), True

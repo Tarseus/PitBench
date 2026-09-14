@@ -5,14 +5,66 @@ from __future__ import annotations
 import json
 import math
 import random
+from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     import numpy as np
 
 
-class CustomerRepresentation:
+class RepresentationPlugin(ABC):
+    name: str
+    family: str
+    requires_tolerance: bool
+    suffix: str
+    _plugins: ClassVar[dict[str, type[RepresentationPlugin]]] = {}
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        name = getattr(cls, "name", None)
+        if name:
+            existing = cls._plugins.get(name)
+            if existing is not None and existing is not cls:
+                raise ValueError(f"duplicate representation plugin: {name}")
+            cls._plugins[name] = cls
+
+    @staticmethod
+    @abstractmethod
+    def verifier(tolerance=None): ...
+
+    @staticmethod
+    @abstractmethod
+    def assert_same(original, restored) -> None: ...
+
+    @staticmethod
+    @abstractmethod
+    def generator(seed: int): ...
+
+    @staticmethod
+    @abstractmethod
+    def read_input(path: Path): ...
+
+    @staticmethod
+    @abstractmethod
+    def write_input(path: Path, model) -> None: ...
+
+    @staticmethod
+    @abstractmethod
+    def mappings(model, count: int, generator) -> list: ...
+
+    @staticmethod
+    @abstractmethod
+    def transform(model, mapping): ...
+
+    @staticmethod
+    @abstractmethod
+    def verify_files(
+        original, transformed, solution, mapped_path, mapping, tolerance=None
+    ) -> dict: ...
+
+
+class CustomerRepresentation(RepresentationPlugin):
     """Customer permutations with the depot fixed."""
 
     name = "customer_relabeling"
@@ -142,7 +194,7 @@ VECTOR_FIELDS = ("cost", "col_lower", "col_upper", "integrality", "col_names")
 ROW_FIELDS = ("row_lower", "row_upper", "row_names")
 
 
-class LinearModelRepresentation:
+class LinearModelRepresentation(RepresentationPlugin):
     """MILP row/column permutations and independent primal arithmetic checks."""
 
     name = "row_column_permutation"
@@ -406,13 +458,8 @@ class LinearModelRepresentation:
         return mapped
 
 
-REPRESENTATIONS = {
-    item.name: item for item in (CustomerRepresentation, LinearModelRepresentation)
-}
-
-
-def representation_type(name: str):
+def representation_type(name: str) -> type[RepresentationPlugin]:
     try:
-        return REPRESENTATIONS[name]
+        return RepresentationPlugin._plugins[name]
     except KeyError:
         raise ValueError(f"unsupported representation: {name}") from None

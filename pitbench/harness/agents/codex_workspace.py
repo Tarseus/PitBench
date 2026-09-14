@@ -12,7 +12,7 @@ from docker.models.containers import Container
 from docker.models.networks import Network
 
 import docker
-from pitbench.harness.agents.codex_profile import CodexProfile
+from pitbench.harness.agents.profiles import CodexProfile
 
 
 class CodexWorkspaceRuntime(AbstractContextManager["CodexWorkspaceRuntime"]):

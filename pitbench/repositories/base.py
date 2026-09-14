@@ -15,6 +15,13 @@ class BuildKind(str, Enum):
     PERFORMANCE = "performance"
 
 
+class SolverTermination(str, Enum):
+    OPTIMAL = "optimal"
+    TIME_LIMIT = "time_limit"
+    ERROR = "solver_error"
+    OTHER = "other"
+
+
 class CommandSpec(BaseModel):
     argv: list[str]
     cwd: str = "."
@@ -59,6 +66,10 @@ class AgentEnvironment(BaseModel):
 
 class RepositoryPlugin(ABC):
     name: str
+    driver_name: str
+    driver_python = "python"
+    driver_solver: str | None = None
+    driver_records_trajectory = True
     deterministic = False
     agent_environment: AgentEnvironment | None = None
     agent_requirement: str | None = None
@@ -70,9 +81,32 @@ class RepositoryPlugin(ABC):
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         """Commands executed in a fresh code-state workspace."""
 
-    @abstractmethod
     def run_command(self, run: SolverRunSpec) -> CommandSpec:
-        """Return one normalized solver invocation."""
+        """Return one normalized invocation through the shared driver entry."""
+        argv = [
+            self.driver_python,
+            "-m",
+            "pitbench.solver_drivers.run",
+            self.driver_name,
+        ]
+        if self.driver_solver is not None:
+            argv.extend(["--solver", self.driver_solver])
+        argv.extend(
+            ["--instance", str(run.instance_path), "--output", str(run.output_path)]
+        )
+        if self.driver_records_trajectory:
+            argv.extend(["--trajectory", str(run.trajectory_path)])
+        argv.extend(
+            [
+                "--seed",
+                str(run.solver_seed),
+                "--budget",
+                str(run.budget_sec),
+                "--threads",
+                str(run.threads),
+            ]
+        )
+        return CommandSpec(argv=argv, timeout_sec=run.budget_sec + 60)
 
     def parse_output(self, path: Path) -> NormalizedSolverOutput:
         return NormalizedSolverOutput.model_validate(json.loads(path.read_text()))
@@ -105,7 +139,12 @@ class RepositoryPlugin(ABC):
         if self.collection_backend is None:
             raise ValueError(f"{self.name} does not provide isolated collection")
         module, name = self.collection_backend.split(":", 1)
-        return getattr(importlib.import_module(module), name)
+        backend = getattr(importlib.import_module(module), name)
+        from pitbench.evaluator.collection import CollectionBackend
+
+        if not isinstance(backend, type) or not issubclass(backend, CollectionBackend):
+            raise TypeError(f"{self.collection_backend} is not a CollectionBackend")
+        return backend
 
 
 class RepositoryPluginRegistry:

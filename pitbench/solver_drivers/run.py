@@ -10,8 +10,11 @@ import subprocess
 import sys
 import tempfile
 import time
+from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import ClassVar
 
+from pitbench.repositories.base import SolverTermination
 from pitbench.solver_drivers.common import (
     ParameterRejected,
     append_trajectory,
@@ -25,8 +28,28 @@ from pitbench.solver_drivers.common import (
 from pitbench.solver_drivers.external_runner import execute
 
 
-class PyVRPDriver:
+class SolverDriver(ABC):
+    name: str
+    _drivers: ClassVar[dict[str, type[SolverDriver]]] = {}
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        name = getattr(cls, "name", None)
+        if name:
+            existing = cls._drivers.get(name)
+            if existing is not None and existing is not cls:
+                raise ValueError(f"duplicate solver driver: {name}")
+            cls._drivers[name] = cls
+
+    @staticmethod
+    @abstractmethod
+    def main(argv: list[str] | None = None) -> None: ...
+
+
+class PyVRPDriver(SolverDriver):
     """Invoke the pyvrp backend with its existing configuration contract."""
+
+    name = "pyvrp"
 
     @staticmethod
     def parameters(values: dict):
@@ -207,8 +230,10 @@ class PyVRPDriver:
             raise
 
 
-class VroomDriver:
+class VroomDriver(SolverDriver):
     """Invoke the vroom backend with its existing configuration contract."""
+
+    name = "vroom"
 
     @staticmethod
     def _request(instance: dict) -> dict:
@@ -279,8 +304,10 @@ class VroomDriver:
 _FLOAT = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 
 
-class HighsDriver:
+class HighsDriver(SolverDriver):
     """Invoke the highs backend with its existing configuration contract."""
+
+    name = "highs"
 
     @staticmethod
     def solve_numeric(
@@ -363,6 +390,15 @@ class HighsDriver:
                 if model_status == highspy.HighsModelStatus.kOptimal
                 else None,
                 "solution_value_valid": solution.value_valid,
+                "termination": (
+                    SolverTermination.ERROR.value
+                    if status == highspy.HighsStatus.kError
+                    else SolverTermination.OPTIMAL.value
+                    if model_status == highspy.HighsModelStatus.kOptimal
+                    else SolverTermination.TIME_LIMIT.value
+                    if model_status == highspy.HighsModelStatus.kTimeLimit
+                    else SolverTermination.OTHER.value
+                ),
             }
         )
         result["error_stage"] = "verification"
@@ -516,8 +552,10 @@ class HighsDriver:
             raise
 
 
-class ChocoDriver:
+class ChocoDriver(SolverDriver):
     """Invoke the choco backend with its existing configuration contract."""
+
+    name = "choco"
 
     @staticmethod
     def main(argv: list[str] | None = None) -> None:
@@ -533,8 +571,10 @@ class ChocoDriver:
         )
 
 
-class OrToolsModelBuildDriver:
+class OrToolsModelBuildDriver(SolverDriver):
     """Invoke the ortools_model_build backend with its existing configuration contract."""
+
+    name = "ortools_model_build"
 
     @staticmethod
     def main(argv: list[str] | None = None) -> None:
@@ -550,13 +590,7 @@ class OrToolsModelBuildDriver:
         )
 
 
-DRIVERS = {
-    "pyvrp": PyVRPDriver,
-    "vroom": VroomDriver,
-    "highs": HighsDriver,
-    "choco": ChocoDriver,
-    "ortools_model_build": OrToolsModelBuildDriver,
-}
+DRIVERS = SolverDriver._drivers
 
 
 def main(argv: list[str] | None = None) -> None:

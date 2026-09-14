@@ -14,7 +14,7 @@ from typing import Any
 
 import uvicorn
 from docker.models.containers import Container
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.server import FastMCP, LifespanResultT, Settings
 from mcp.types import CallToolRequest
 
 from pitbench.harness.utils.agent_trace import (
@@ -637,6 +637,12 @@ class LoopbackMCPServer:
         self.url: str | None = None
 
     def _build_app(self):
+        Settings.model_rebuild(
+            _types_namespace={
+                "FastMCP": FastMCP,
+                "LifespanResultT": LifespanResultT,
+            }
+        )
         mcp = FastMCP(
             "pitbench-terminal",
             instructions=(

@@ -162,19 +162,31 @@ def evaluate_task(
     ] = None,
     judge_parallel_runs: Annotated[
         int | None,
-        typer.Option("--judge-parallel-runs", min=1, help="Parallel solver runs for the isolated judge"),
+        typer.Option(
+            "--judge-parallel-runs",
+            min=1,
+            help="Parallel solver runs for the isolated judge",
+        ),
     ] = None,
     judge_cpus: Annotated[
         float | None,
-        typer.Option("--judge-cpus", min=0.1, help="CPU limit for the isolated judge container"),
+        typer.Option(
+            "--judge-cpus", min=0.1, help="CPU limit for the isolated judge container"
+        ),
     ] = None,
     base_cache: Annotated[
         bool,
-        typer.Option("--base-cache/--no-base-cache", help="Enable automatic caching and reuse of BASE observations"),
+        typer.Option(
+            "--base-cache/--no-base-cache",
+            help="Enable automatic caching and reuse of BASE observations",
+        ),
     ] = True,
     base_observations_path: Annotated[
         Path | None,
-        typer.Option("--base-observations-path", help="Path to precomputed BASE observations parquet file"),
+        typer.Option(
+            "--base-observations-path",
+            help="Path to precomputed BASE observations parquet file",
+        ),
     ] = None,
     n_concurrent: Annotated[
         int, typer.Option("--n-concurrent", min=1, help="Concurrent trials")
@@ -215,7 +227,9 @@ def evaluate_task(
     """Check, materialize, and evaluate tasks together in one harness run."""
     task_ids = _normalize_task_ids(task_ids)
     if not task_ids:
-        raise typer.BadParameter("At least one task ID must be provided.", param_hint="TASK_IDS")
+        raise typer.BadParameter(
+            "At least one task ID must be provided.", param_hint="TASK_IDS"
+        )
     if len(task_ids) != len(set(task_ids)):
         raise typer.BadParameter("task IDs must be unique", param_hint="TASK_IDS")
     if len(task_ids) > 1 and any(
@@ -303,7 +317,11 @@ def evaluate_task(
         ):
             if override is not None:
                 setattr(resources, key, override)
-            elif getattr(resources, key) is None and key in ("repository_source", "agent_image", "judge_image"):
+            elif getattr(resources, key) is None and key in (
+                "repository_source",
+                "agent_image",
+                "judge_image",
+            ):
                 _warning(
                     f"{key} for {task_id} is not configured; using the task config default"
                 )
@@ -344,14 +362,22 @@ def evaluate_task(
         judge_mem_val = resources.judge_memory or effective_config.judge_memory
         if judge_mem_val is not None:
             materialize_kwargs["judge_memory"] = judge_mem_val
-        judge_par_val = resources.judge_parallel_runs or effective_config.judge_parallel_runs
+        judge_par_val = (
+            resources.judge_parallel_runs or effective_config.judge_parallel_runs
+        )
         if judge_par_val is not None:
             materialize_kwargs["judge_parallel_runs"] = judge_par_val
         if resources.base_observations_path is not None:
-            materialize_kwargs["base_observations_path"] = resources.base_observations_path
+            materialize_kwargs["base_observations_path"] = (
+                resources.base_observations_path
+            )
         if effective_config.paths.base_cache_path != Path(".pitbench/cache/base"):
-            materialize_kwargs["base_cache_path"] = effective_config.paths.base_cache_path
-        active_base_cache = base_cache if base_cache is not None else effective_config.base_cache
+            materialize_kwargs["base_cache_path"] = (
+                effective_config.paths.base_cache_path
+            )
+        active_base_cache = (
+            base_cache if base_cache is not None else effective_config.base_cache
+        )
         if not active_base_cache:
             materialize_kwargs["use_base_cache"] = False
 
@@ -430,7 +456,11 @@ def judge_candidate(
     ] = "8g",
     judge_parallel_runs: Annotated[
         int | None,
-        typer.Option("--judge-parallel-runs", min=1, help="Parallel solver runs for the isolated judge"),
+        typer.Option(
+            "--judge-parallel-runs",
+            min=1,
+            help="Parallel solver runs for the isolated judge",
+        ),
     ] = None,
     reliability_only: Annotated[
         bool, typer.Option(help="Run only the configured boundary reliability suite")
@@ -555,14 +585,18 @@ def judge_candidate(
         "judge_image": resolved_judge_image,
         "judge_cpus": judge_cpus,
         "judge_memory": judge_memory,
-        "judge_parallel_runs": judge_parallel_runs or configured_resources.judge_parallel_runs or evaluation_config.judge_parallel_runs,
+        "judge_parallel_runs": judge_parallel_runs
+        or configured_resources.judge_parallel_runs
+        or evaluation_config.judge_parallel_runs,
         "reliability_only": reliability_only,
         "use_base_cache": active_base_cache,
         "base_cache_path": str(evaluation_config.paths.base_cache_path),
         "_progress_callback": typer.echo,
     }
     if active_base_observations_path is not None:
-        judge_evaluator_config["base_observations_path"] = str(active_base_observations_path)
+        judge_evaluator_config["base_observations_path"] = str(
+            active_base_observations_path
+        )
 
     envelope = PitBenchEvaluator().envelope(
         EvaluationRequest(

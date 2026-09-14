@@ -7,6 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 from pitbench.problem_families.base import ProblemFamilyPlugin
+from pitbench.repositories.base import SolverTermination
 
 
 def _number(value) -> bool:
@@ -24,8 +25,11 @@ def run_feedback(
         return None, "missing"
     if record.get("execution_status") != "returned":
         return None, record.get("execution_status", "missing_status")
-    if record.get("call_status") == "HighsStatus.kError":
+    termination = record.get("termination")
+    if termination == SolverTermination.ERROR:
         return None, "solver_error"
+    if termination not in set(SolverTermination):
+        return None, "missing_or_unknown_termination"
     verification = record.get("verification") or {}
     feasible = verification.get("feasible") is True
     if record.get("solution_value_valid") and not feasible:
@@ -39,9 +43,9 @@ def run_feedback(
         value = ProblemFamilyPlugin.normalized_gap(objective, bks)
         return (value, None) if _number(value) else (None, "nonfinite_gap")
     if feedback == "capped_optimal_time":
-        if record.get("model_status") == "Time limit":
+        if termination == SolverTermination.TIME_LIMIT:
             return 1.0, None
-        if record.get("model_status") != "Optimal":
+        if termination != SolverTermination.OPTIMAL:
             return None, "unexpected_termination"
         if not feasible:
             return None, "unverified_optimal_solution"

@@ -182,11 +182,18 @@ class BaseAgent(ABC):
                     self._trace_session = None
                     self._agent_trace = None
                     trace.close()
-                    from pitbench.harness.utils.trace_validation import inspect_trace
+                    try:
+                        from pitbench.harness.utils.trace_validation import (
+                            inspect_trace,
+                        )
 
-                    (trace.root / "coverage.json").write_text(
-                        json.dumps(inspect_trace(trace.path), indent=2) + "\n"
-                    )
+                        (trace.root / "coverage.json").write_text(
+                            json.dumps(inspect_trace(trace.path), indent=2) + "\n"
+                        )
+                    except Exception:
+                        logging.getLogger(__name__).exception(
+                            "Agent trace coverage report failed: %s", trace.path
+                        )
 
     def set_progress_callback(self, callback: Callable[[str], None] | None) -> None:
         """Receive live, human-readable progress from an agent implementation."""

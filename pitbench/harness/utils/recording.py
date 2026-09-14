@@ -468,7 +468,7 @@ def watch_workspace(root: Path, spool: Path) -> None:
 
 def hook_configuration(provider: str, command: str) -> dict:
     if provider in {"codex", "claude", "antigravity"}:
-        events = ["PreToolUse", "PostToolUse"]
+        events = ["PreToolUse", "PostToolUse", "PostToolUseFailure"]
         if provider != "antigravity":
             events += [
                 "SubagentStart",

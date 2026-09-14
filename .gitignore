@@ -9,8 +9,10 @@ __pycache__/
 .ruff_cache/
 .coverage
 
-# Local test suite
-/tests/
+# Private or generated test material. Public contract tests are versioned.
+/tests/private/
+/tests/artifacts/
+/tests/.generated/
 
 # Local environments and secrets
 .env
@@ -22,7 +24,8 @@ __pycache__/
 /.vscode/
 
 # Local review notes
-/docs/
+/docs/local/
+/docs/main-review-components.md
 /papers/
 
 # LaTeX build products

@@ -241,9 +241,7 @@ def _group_observations(
 
 
 def _complete_seed_gaps(
-    observations_by_run: dict[
-        tuple[str, str, float, CodeState, int], RunObservation
-    ],
+    observations_by_run: dict[tuple[str, str, float, CodeState, int], RunObservation],
     *,
     instance_set: str,
     instance_id: str,
@@ -312,9 +310,7 @@ def _seed_bootstrap_intervals(
 
 
 def _budget_seed_robustness(
-    observations_by_run: dict[
-        tuple[str, str, float, CodeState, int], RunObservation
-    ],
+    observations_by_run: dict[tuple[str, str, float, CodeState, int], RunObservation],
     *,
     instance_set: str,
     budget_sec: float,
@@ -389,8 +385,8 @@ def _budget_seed_robustness(
         agent_mean_seed_iqr = statistics.fmean(agent_instance_iqrs)
         mean_seed_iqr_change = agent_mean_seed_iqr - base_mean_seed_iqr
         if len(paired_seed_gaps) >= 2:
-            base_interval, agent_interval, change_interval = (
-                _seed_bootstrap_intervals(paired_seed_gaps)
+            base_interval, agent_interval, change_interval = _seed_bootstrap_intervals(
+                paired_seed_gaps
             )
 
     return SeedRobustnessBudget(
@@ -477,9 +473,7 @@ def compute_seed_robustness_report(
 
 
 def _code_state_seed_details(
-    observations_by_run: dict[
-        tuple[str, str, float, CodeState, int], RunObservation
-    ],
+    observations_by_run: dict[tuple[str, str, float, CodeState, int], RunObservation],
     *,
     instance_set: str,
     instance_id: str,
@@ -529,9 +523,7 @@ def _code_state_seed_details(
     return CodeStateSeedDetails(
         complete=complete_seed_gaps is not None,
         seed_iqr=(
-            seed_iqr(complete_seed_gaps)
-            if complete_seed_gaps is not None
-            else None
+            seed_iqr(complete_seed_gaps) if complete_seed_gaps is not None else None
         ),
         seed_results=seed_results,
         sorted_valid_gaps=sorted_valid_gaps,

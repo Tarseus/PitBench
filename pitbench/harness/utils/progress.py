@@ -59,11 +59,7 @@ class _TimingColumn(ProgressColumn):
             completed = task.completed
             total = task.total
             if not self.remaining:
-                value = (
-                    duration(now - started)
-                    if started is not None
-                    else "—"
-                )
+                value = duration(now - started) if started is not None else "—"
                 return Text(f"elapsed {value}", style="bold dim")
             if not completed or not total or completed >= total or started is None:
                 return Text("ETA —", style="bold dim")
@@ -195,7 +191,12 @@ class _PhaseColumn(ProgressColumn):
             res.no_wrap = True
             return res
         phase, detail = task.fields["phase"], task.fields["detail"]
-        return Text(phase + (f"\n{detail}" if detail else ""), style="cyan", no_wrap=True, overflow="ellipsis")
+        return Text(
+            phase + (f"\n{detail}" if detail else ""),
+            style="cyan",
+            no_wrap=True,
+            overflow="ellipsis",
+        )
 
 
 class TaskProgressDisplay:
@@ -218,7 +219,9 @@ class TaskProgressDisplay:
             TextColumn(
                 "{task.description}", markup=False, table_column=Column(no_wrap=True)
             ),
-            _PhaseColumn(table_column=Column(ratio=1, overflow="ellipsis", no_wrap=True)),
+            _PhaseColumn(
+                table_column=Column(ratio=1, overflow="ellipsis", no_wrap=True)
+            ),
             _StageBarColumn(),
             _CountColumn(),
             _TimingColumn(),

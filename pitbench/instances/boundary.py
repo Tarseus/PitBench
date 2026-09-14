@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 
 @dataclass(frozen=True)
@@ -15,7 +17,41 @@ class BoundaryCase:
     reference_solution: dict
 
 
-class RoutingBoundarySuite:
+class BoundarySuite(ABC):
+    problem_family: str
+    _suites: ClassVar[dict[str, type[BoundarySuite]]] = {}
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        family = getattr(cls, "problem_family", None)
+        if family:
+            existing = cls._suites.get(family)
+            if existing is not None and existing is not cls:
+                raise ValueError(f"duplicate boundary suite: {family}")
+            cls._suites[family] = cls
+
+    @staticmethod
+    @abstractmethod
+    def cases() -> list[BoundaryCase]: ...
+
+    @staticmethod
+    @abstractmethod
+    def write(case: BoundaryCase, directory: Path) -> Path: ...
+
+    @staticmethod
+    @abstractmethod
+    def verifier(): ...
+
+
+class RoutingBoundarySuite(BoundarySuite):
+    problem_family = "cvrp"
+
+    @staticmethod
+    def verifier():
+        from pitbench.problem_families.verification import CVRPFamily
+
+        return CVRPFamily()
+
     """Exercise route representation and capacity boundaries on integer distances."""
 
     @staticmethod
@@ -77,7 +113,15 @@ class RoutingBoundarySuite:
         return path
 
 
-class LinearBoundarySuite:
+class LinearBoundarySuite(BoundarySuite):
+    problem_family = "mip"
+
+    @staticmethod
+    def verifier():
+        from pitbench.problem_families.verification import IntegerBoundaryFamily
+
+        return IntegerBoundaryFamily()
+
     """Tiny integer models; feasibility and objective checks need no solver parser."""
 
     @staticmethod
@@ -168,8 +212,8 @@ class LinearBoundarySuite:
 
 
 def boundary_suite(problem_family: str):
-    if problem_family == "cvrp":
-        return RoutingBoundarySuite
-    if problem_family == "mip":
-        return LinearBoundarySuite
-    raise ValueError(f"no boundary suite for {problem_family}")
+    family_name = getattr(problem_family, "value", problem_family)
+    try:
+        return BoundarySuite._suites[str(family_name)]
+    except KeyError:
+        raise ValueError(f"no boundary suite for {problem_family}") from None

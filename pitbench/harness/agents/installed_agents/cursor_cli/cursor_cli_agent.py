@@ -11,6 +11,7 @@ from pitbench.harness.terminal.models import TerminalCommand
 
 class CursorCliAgent(AbstractInstalledAgent):
     NATIVE_HOOKS = ("cursor", "~/.cursor/hooks.json")
+
     @staticmethod
     def name() -> str:
         return AgentName.CURSOR_CLI.value

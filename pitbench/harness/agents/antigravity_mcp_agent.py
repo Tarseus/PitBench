@@ -1,38 +1,27 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
-import signal
 import subprocess
-import threading
 import time
 from pathlib import Path
 from typing import Any
 
 from pitbench.harness.agents.agent_name import AgentName
-from pitbench.harness.agents.antigravity_container import AntigravityContainerRunner
-from pitbench.harness.agents.antigravity_profile import AntigravityProfile
-from pitbench.harness.agents.base_agent import AgentResult, BaseAgent
+from pitbench.harness.agents.base_agent import AgentResult
+from pitbench.harness.agents.containers import AntigravityContainerRunner
 from pitbench.harness.agents.failure_mode import FailureMode
 from pitbench.harness.agents.host_mcp import LoopbackMCPServer, TaskTerminal
+from pitbench.harness.agents.process_agent import ManagedProcessAgent
+from pitbench.harness.agents.profiles import AntigravityProfile
 from pitbench.harness.terminal.tmux_session import TmuxSession
 
 
-class AntigravityMCPAgent(BaseAgent):
+class AntigravityMCPAgent(ManagedProcessAgent):
     """Run host Antigravity as a no-Docker user against an offline task."""
 
-    _PROXY_KEYS = {
-        "ALL_PROXY",
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "NO_PROXY",
-        "all_proxy",
-        "http_proxy",
-        "https_proxy",
-        "no_proxy",
-    }
+    credential_environment_keys = ("GEMINI_API_KEY", "GOOGLE_API_KEY")
     _PROMPT = """You are improving a solver in an isolated PitBench task.
 
 You MUST use only the PitBench MCP server's run_command tool for task repository
@@ -137,9 +126,6 @@ Task:
         self._quota_retries = quota_retries
         self._quota_max_wait_sec = quota_max_wait_sec
         self._quota_retry_buffer_sec = quota_retry_buffer_sec
-        self._process: subprocess.Popen[str] | None = None
-        self._process_lock = threading.Lock()
-        self._cancelled = threading.Event()
 
     def _resolved_agy_binary(self) -> str:
         resolved = shutil.which(self._agy_binary)
@@ -149,32 +135,6 @@ Task:
                 "Install `agy` on the host."
             )
         return resolved
-
-    @staticmethod
-    def _subscription_env() -> dict[str, str]:
-        env = os.environ.copy()
-        for key in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
-            env.pop(key, None)
-        for key in AntigravityMCPAgent._PROXY_KEYS:
-            env.pop(key, None)
-        no_proxy = ["127.0.0.1", "localhost"]
-        env["NO_PROXY"] = ",".join(no_proxy)
-        env["no_proxy"] = env["NO_PROXY"]
-        return env
-
-    def _runtime_env(self) -> dict[str, str]:
-        env = self._subscription_env()
-        if self._proxy_url:
-            for key in (
-                "ALL_PROXY",
-                "HTTP_PROXY",
-                "HTTPS_PROXY",
-                "all_proxy",
-                "http_proxy",
-                "https_proxy",
-            ):
-                env[key] = self._proxy_url
-        return env
 
     def available_models(
         self,
@@ -265,22 +225,6 @@ Task:
             ) from error
         if check.get("docker_socket_access") or "docker" in check.get("groups", []):
             raise RuntimeError("Isolated Antigravity runner still has Docker access")
-
-    def _runner_command_prefix(self) -> list[str]:
-        if self._runner_backend == "container":
-            if self._container_runner is None:
-                raise RuntimeError(
-                    "Antigravity container runner has not passed preflight"
-                )
-            return self._container_runner.command_prefix()
-        return [
-            "sudo",
-            "-n",
-            "-u",
-            self._runner_user,
-            "--",
-            str(self._runner_path),
-        ]
 
     def _build_command(self, *, mcp_url: str, instruction: str) -> list[str]:
         command = [
@@ -473,31 +417,6 @@ Task:
                 continue
             return True
         return False
-
-    def _set_process(self, process: subprocess.Popen[str] | None) -> None:
-        with self._process_lock:
-            self._process = process
-
-    @staticmethod
-    def _terminate_process(process: subprocess.Popen[str]) -> None:
-        if process.poll() is not None:
-            return
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-            process.wait(timeout=5)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
-            if process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-
-    def cancel(self) -> None:
-        self._cancelled.set()
-        with self._process_lock:
-            process = self._process
-        if process is not None:
-            self._terminate_process(process)
 
     def perform_task(
         self,

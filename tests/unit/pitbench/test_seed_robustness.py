@@ -1,0 +1,717 @@
+from __future__ import annotations
+
+import sys
+from collections.abc import Iterable
+from pathlib import Path
+
+import pytest
+
+from pitbench.metrics.seed_robustness_report import (
+    BOOTSTRAP_RESAMPLES,
+    BOOTSTRAP_SEED,
+    SEED_BOOTSTRAP_METHOD,
+    SeedSelectionMetadata,
+    compute_seed_robustness_details,
+    compute_seed_robustness_report,
+    format_seed_robustness_report,
+)
+from pitbench.metrics.seed_robustness_validation import (
+    analyze_real_seed_validation,
+    generate_real_validation_seeds,
+)
+from pitbench.schema.observation import CodeState, RunObservation, RunStatus
+from pitbench.schema.task import PitBenchTask
+from scripts.validate_seed_robustness_real_solver import ROOT, _load_checkpoint, main
+
+# Tests consolidated from tests/unit/pitbench/test_seed_robustness_report.py
+
+
+DEVELOPMENT_SEEDS = tuple(range(30))
+EVALUATION_SEEDS = tuple(range(100, 130))
+
+
+def _seed_selection() -> SeedSelectionMetadata:
+    return SeedSelectionMetadata(
+        seed_min=0,
+        seed_max=2**32 - 1,
+        seed_count=30,
+    )
+
+
+def _observation(
+    code_state: CodeState,
+    instance_set: str,
+    instance_set_kind: str,
+    instance_id: str,
+    solver_seed: int,
+    normalized_gap: float | None,
+    *,
+    budget_sec: float = 10.0,
+    valid: bool = True,
+    status: RunStatus = RunStatus.COMPLETED,
+    equivalence_parent_id: str | None = None,
+) -> RunObservation:
+    return RunObservation(
+        task_id="seed-robustness",
+        code_state=code_state,
+        instance_set=instance_set,
+        instance_set_kind=instance_set_kind,
+        instance_id=instance_id,
+        instance_seed=17,
+        solver_seed=solver_seed,
+        budget_sec=budget_sec,
+        status=status,
+        valid=valid,
+        normalized_gap=normalized_gap,
+        equivalence_parent_id=equivalence_parent_id,
+    )
+
+
+def _complete_instance(
+    instance_set: str,
+    instance_set_kind: str,
+    instance_id: str,
+    seeds: Iterable[int],
+    *,
+    budget_sec: float,
+    gap_scale: float,
+    equivalence_parent_id: str | None = None,
+) -> list[RunObservation]:
+    observations: list[RunObservation] = []
+    for seed_index, solver_seed in enumerate(seeds):
+        base_gap = gap_scale * seed_index / 100
+        observations.extend(
+            [
+                _observation(
+                    CodeState.BASE,
+                    instance_set,
+                    instance_set_kind,
+                    instance_id,
+                    solver_seed,
+                    base_gap,
+                    budget_sec=budget_sec,
+                    equivalence_parent_id=equivalence_parent_id,
+                ),
+                _observation(
+                    CodeState.AGENT,
+                    instance_set,
+                    instance_set_kind,
+                    instance_id,
+                    solver_seed,
+                    base_gap / 2,
+                    budget_sec=budget_sec,
+                    equivalence_parent_id=equivalence_parent_id,
+                ),
+            ]
+        )
+    return observations
+
+
+def _report(
+    observations: list[RunObservation],
+    *,
+    budgets_sec: tuple[float, ...] = (1.0, 10.0),
+):
+    return compute_seed_robustness_report(
+        observations,
+        task_id="seed-robustness",
+        budgets_sec=budgets_sec,
+        primary_budget_sec=10.0,
+        seed_selection=_seed_selection(),
+        development_seeds=DEVELOPMENT_SEEDS,
+        evaluation_seeds=EVALUATION_SEEDS,
+    )
+
+
+def _details(
+    observations: list[RunObservation],
+    *,
+    budgets_sec: tuple[float, ...] = (1.0, 10.0),
+):
+    return compute_seed_robustness_details(
+        observations,
+        task_id="seed-robustness",
+        budgets_sec=budgets_sec,
+        primary_budget_sec=10.0,
+        seed_selection=_seed_selection(),
+        development_seeds=DEVELOPMENT_SEEDS,
+        evaluation_seeds=EVALUATION_SEEDS,
+    )
+
+
+def test_report_computes_type_7_iqr_at_every_budget_and_instance_set() -> None:
+    observations: list[RunObservation] = []
+    for budget_sec in (1.0, 10.0):
+        observations.extend(
+            _complete_instance(
+                "development",
+                "agent_dev",
+                "dev-1",
+                DEVELOPMENT_SEEDS,
+                budget_sec=budget_sec,
+                gap_scale=1,
+            )
+        )
+        observations.extend(
+            _complete_instance(
+                "in-distribution",
+                "judge_id",
+                "id-1",
+                EVALUATION_SEEDS,
+                budget_sec=budget_sec,
+                gap_scale=1,
+            )
+        )
+        observations.extend(
+            _complete_instance(
+                "in-distribution",
+                "judge_id",
+                "id-2",
+                EVALUATION_SEEDS,
+                budget_sec=budget_sec,
+                gap_scale=2,
+                equivalence_parent_id="id-1",
+            )
+        )
+
+    report = _report(observations)
+
+    assert report.metric == "seed_robustness"
+    assert report.budgets_sec == [1.0, 10.0]
+    assert set(report.by_instance_set) == {"development", "in-distribution"}
+    in_distribution = report.by_instance_set["in-distribution"]
+    assert set(in_distribution.by_budget) == {"1", "10"}
+    assert in_distribution.primary is in_distribution.by_budget["10"]
+    primary = in_distribution.primary
+    assert primary.instance_count == 2
+    assert primary.base_complete_instance_count == 2
+    assert primary.agent_complete_instance_count == 2
+    assert primary.paired_complete_instance_count == 2
+    assert primary.base.mean_seed_iqr == pytest.approx(0.2175)
+    assert primary.agent.mean_seed_iqr == pytest.approx(0.10875)
+    assert primary.change.mean_seed_iqr_change == pytest.approx(-0.10875)
+
+    for interval in (
+        primary.base.mean_seed_iqr_ci99,
+        primary.agent.mean_seed_iqr_ci99,
+        primary.change.mean_seed_iqr_change_ci99,
+    ):
+        assert interval is not None
+        assert interval.level == 0.99
+        assert interval.method == SEED_BOOTSTRAP_METHOD
+        assert interval.resamples == BOOTSTRAP_RESAMPLES
+        assert interval.bootstrap_seed == BOOTSTRAP_SEED
+
+
+def test_incomplete_seed_list_is_counted_but_excluded_from_paired_aggregate() -> None:
+    observations = _complete_instance(
+        "in-distribution",
+        "judge_id",
+        "paired",
+        EVALUATION_SEEDS,
+        budget_sec=10,
+        gap_scale=1,
+    )
+    observations.extend(
+        _complete_instance(
+            "in-distribution",
+            "judge_id",
+            "agent-incomplete",
+            EVALUATION_SEEDS,
+            budget_sec=10,
+            gap_scale=2,
+        )
+    )
+    failed_agent_index = next(
+        index
+        for index, observation in enumerate(observations)
+        if observation.instance_id == "agent-incomplete"
+        and observation.code_state is CodeState.AGENT
+        and observation.solver_seed == EVALUATION_SEEDS[-1]
+    )
+    observations[failed_agent_index] = _observation(
+        CodeState.AGENT,
+        "in-distribution",
+        "judge_id",
+        "agent-incomplete",
+        EVALUATION_SEEDS[-1],
+        None,
+        valid=False,
+        status=RunStatus.TIMED_OUT,
+    )
+
+    primary = (
+        _report(observations, budgets_sec=(10.0,))
+        .by_instance_set["in-distribution"]
+        .primary
+    )
+
+    assert primary.instance_count == 2
+    assert primary.base_complete_instance_count == 2
+    assert primary.agent_complete_instance_count == 1
+    assert primary.paired_complete_instance_count == 1
+    assert primary.base.mean_seed_iqr == pytest.approx(0.145)
+    assert primary.agent.mean_seed_iqr == pytest.approx(0.0725)
+    assert primary.change.mean_seed_iqr_change == pytest.approx(-0.0725)
+    assert primary.base.mean_seed_iqr_ci99 is None
+    assert primary.agent.mean_seed_iqr_ci99 is None
+    assert primary.change.mean_seed_iqr_change_ci99 is None
+
+
+def test_no_paired_complete_instance_makes_all_aggregates_unavailable() -> None:
+    observations = [
+        observation
+        for observation in _complete_instance(
+            "in-distribution",
+            "judge_id",
+            "base-only",
+            EVALUATION_SEEDS,
+            budget_sec=10,
+            gap_scale=1,
+        )
+        if observation.code_state is CodeState.BASE
+    ]
+
+    primary = (
+        _report(observations, budgets_sec=(10.0,))
+        .by_instance_set["in-distribution"]
+        .primary
+    )
+
+    assert primary.base_complete_instance_count == 1
+    assert primary.agent_complete_instance_count == 0
+    assert primary.paired_complete_instance_count == 0
+    assert primary.base.mean_seed_iqr is None
+    assert primary.agent.mean_seed_iqr is None
+    assert primary.change.mean_seed_iqr_change is None
+
+
+def test_seed_bootstrap_is_independent_of_observation_order() -> None:
+    observations: list[RunObservation] = []
+    for instance_number, gap_scale in ((2, 2.0), (1, 1.0)):
+        observations.extend(
+            _complete_instance(
+                "in-distribution",
+                "judge_id",
+                f"id-{instance_number}",
+                reversed(EVALUATION_SEEDS),
+                budget_sec=10,
+                gap_scale=gap_scale,
+            )
+        )
+
+    forward_report = _report(observations, budgets_sec=(10.0,))
+    reverse_report = _report(list(reversed(observations)), budgets_sec=(10.0,))
+
+    assert forward_report == reverse_report
+
+
+def test_seed_bootstrap_keeps_instance_weights_and_shared_seed_columns_fixed() -> None:
+    observations: list[RunObservation] = []
+    for instance_number, gap_scale in ((1, 1.0), (2, 2.0)):
+        observations.extend(
+            _complete_instance(
+                "in-distribution",
+                "judge_id",
+                f"id-{instance_number}",
+                EVALUATION_SEEDS,
+                budget_sec=10,
+                gap_scale=gap_scale,
+            )
+        )
+    original = (
+        _report(observations, budgets_sec=(10.0,))
+        .by_instance_set["in-distribution"]
+        .primary
+    )
+    # Repeating every fixed row equally changes neither the statistic nor its
+    # seed uncertainty. Resampling instance rows would change the intervals.
+    repeated = [
+        observation.model_copy(
+            update={"instance_id": f"{observation.instance_id}-copy-{copy_number}"}
+        )
+        for copy_number in range(5)
+        for observation in observations
+    ]
+    expanded = (
+        _report(repeated, budgets_sec=(10.0,))
+        .by_instance_set["in-distribution"]
+        .primary
+    )
+
+    for first, second in (
+        (original.base.mean_seed_iqr_ci99, expanded.base.mean_seed_iqr_ci99),
+        (original.agent.mean_seed_iqr_ci99, expanded.agent.mean_seed_iqr_ci99),
+        (
+            original.change.mean_seed_iqr_change_ci99,
+            expanded.change.mean_seed_iqr_change_ci99,
+        ),
+    ):
+        assert first is not None and second is not None
+        assert first.lower == pytest.approx(second.lower, abs=1e-14)
+        assert first.upper == pytest.approx(second.upper, abs=1e-14)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    (
+        ("wrong_task", "match task_id"),
+        ("undeclared_budget", "not declared"),
+        ("missing_kind", "known instance_set_kind"),
+        ("unexpected_seed", "not assigned"),
+        ("duplicate_run", "duplicate observation"),
+    ),
+)
+def test_report_rejects_observations_outside_the_declared_grid(
+    change: str, message: str
+) -> None:
+    observations = _complete_instance(
+        "in-distribution",
+        "judge_id",
+        "id-1",
+        EVALUATION_SEEDS,
+        budget_sec=10,
+        gap_scale=1,
+    )
+    if change == "wrong_task":
+        observations[0] = observations[0].model_copy(update={"task_id": "other"})
+    elif change == "undeclared_budget":
+        observations[0] = observations[0].model_copy(update={"budget_sec": 5.0})
+    elif change == "missing_kind":
+        observations[0] = observations[0].model_copy(update={"instance_set_kind": None})
+    elif change == "unexpected_seed":
+        observations[0] = observations[0].model_copy(update={"solver_seed": 999})
+    elif change == "duplicate_run":
+        observations.append(observations[0])
+
+    with pytest.raises(ValueError, match=message):
+        _report(observations, budgets_sec=(10.0,))
+
+
+def test_human_report_only_renders_the_primary_budget() -> None:
+    observations: list[RunObservation] = []
+    for budget_sec in (1.0, 10.0):
+        observations.extend(
+            _complete_instance(
+                "in-distribution",
+                "judge_id",
+                "id-1",
+                EVALUATION_SEEDS,
+                budget_sec=budget_sec,
+                gap_scale=budget_sec,
+            )
+        )
+
+    rendered = format_seed_robustness_report(_report(observations))
+
+    assert "Primary budget: 10s" in rendered
+    assert "145.000%" in rendered
+    assert "14.500%" not in rendered
+
+
+def test_public_report_does_not_expose_seed_lists() -> None:
+    observations = _complete_instance(
+        "in-distribution",
+        "judge_id",
+        "id-1",
+        EVALUATION_SEEDS,
+        budget_sec=10,
+        gap_scale=1,
+    )
+
+    payload = _report(observations, budgets_sec=(10.0,)).model_dump()
+
+    assert "development_seeds" not in str(payload)
+    assert "evaluation_seeds" not in str(payload)
+    assert payload["seed_selection"] == {
+        "seed_min": 0,
+        "seed_max": 2**32 - 1,
+        "seed_count": 30,
+    }
+
+
+def test_private_details_retain_seed_results_iqr_and_ecdf() -> None:
+    observations = _complete_instance(
+        "in-distribution",
+        "judge_id",
+        "id-1",
+        EVALUATION_SEEDS,
+        budget_sec=10,
+        gap_scale=1,
+    )
+
+    details = _details(observations, budgets_sec=(10.0,))
+    payload = details.model_dump(mode="json")
+    base = payload["by_instance_set"]["in-distribution"]["by_budget"]["10"][
+        "instances"
+    ][0]["base"]
+
+    assert payload["development_seeds"] == list(DEVELOPMENT_SEEDS)
+    assert payload["evaluation_seeds"] == list(EVALUATION_SEEDS)
+    assert base["complete"] is True
+    assert base["seed_iqr"] == pytest.approx(0.145)
+    assert [result["seed"] for result in base["seed_results"]] == list(EVALUATION_SEEDS)
+    assert base["sorted_valid_gaps"] == sorted(base["sorted_valid_gaps"])
+    assert base["ecdf"][-1]["fraction_at_or_below"] == 1
+
+
+def test_private_details_retain_failed_seed_without_reporting_an_iqr() -> None:
+    observations = _complete_instance(
+        "in-distribution",
+        "judge_id",
+        "id-1",
+        EVALUATION_SEEDS,
+        budget_sec=10,
+        gap_scale=1,
+    )
+    failed_index = next(
+        index
+        for index, observation in enumerate(observations)
+        if observation.code_state is CodeState.AGENT
+        and observation.solver_seed == EVALUATION_SEEDS[-1]
+    )
+    observations[failed_index] = observations[failed_index].model_copy(
+        update={
+            "status": RunStatus.TIMED_OUT,
+            "valid": False,
+            "normalized_gap": None,
+        }
+    )
+
+    details = _details(observations, budgets_sec=(10.0,))
+    agent = (
+        details.by_instance_set["in-distribution"].by_budget["10"].instances[0].agent
+    )
+
+    assert agent.complete is False
+    assert agent.seed_iqr is None
+    assert agent.seed_results[-1].seed == EVALUATION_SEEDS[-1]
+    assert agent.seed_results[-1].status is RunStatus.TIMED_OUT
+    assert agent.seed_results[-1].normalized_gap is None
+
+
+# Tests consolidated from tests/unit/pitbench/test_seed_robustness_validation.py
+
+
+def _observations(reference_seeds: list[int], test_seeds: list[int]):
+    observations = []
+    all_seeds = [*reference_seeds, *test_seeds]
+    for instance_number, instance_scale in ((1, 1.0), (2, 2.0)):
+        for seed_index, seed in enumerate(all_seeds):
+            gap = instance_scale * seed_index / 1000
+            for code_state in CodeState:
+                observations.append(
+                    RunObservation(
+                        task_id="pyvrp_v0_14_0",
+                        code_state=code_state,
+                        instance_set="agent_dev",
+                        instance_set_kind="agent_dev",
+                        instance_id=f"instance-{instance_number}",
+                        solver_seed=seed,
+                        budget_sec=10,
+                        status=RunStatus.COMPLETED,
+                        valid=True,
+                        normalized_gap=gap,
+                    )
+                )
+    return observations
+
+
+def test_real_validation_seed_generation_is_fixed_and_disjoint() -> None:
+    first = generate_real_validation_seeds(
+        seed_min=0,
+        seed_max=2**32 - 1,
+        reference_seed_count=30,
+        test_seed_count=30,
+        test_list_count=2,
+    )
+    second = generate_real_validation_seeds(
+        seed_min=0,
+        seed_max=2**32 - 1,
+        reference_seed_count=30,
+        test_seed_count=30,
+        test_list_count=2,
+    )
+
+    assert first == second
+    assert len(first.reference_seeds) == 30
+    assert len(first.test_seeds) == 30
+    assert set(first.reference_seeds).isdisjoint(first.test_seeds)
+    assert all(len(seed_list) == 30 for seed_list in first.test_seed_lists)
+    assert all(
+        set(seed_list) == set(first.test_seeds) for seed_list in first.test_seed_lists
+    )
+
+
+def test_real_validation_analyzes_no_change_solver_results() -> None:
+    validation_seeds = generate_real_validation_seeds(
+        seed_min=0,
+        seed_max=2**32 - 1,
+        reference_seed_count=30,
+        test_seed_count=30,
+        test_list_count=1,
+    )
+
+    summary = analyze_real_seed_validation(
+        _observations(
+            validation_seeds.reference_seeds,
+            validation_seeds.test_seeds,
+        ),
+        task_id="pyvrp_v0_14_0",
+        budgets_sec=[10],
+        validation_seeds=validation_seeds,
+    )
+
+    assert summary.instance_count == 2
+    budget = summary.by_budget["10"]
+    assert budget.base.reference_value > 0
+    assert budget.base.estimate_count == 1
+    assert budget.base.interval_count == 1
+    assert budget.agent == budget.base
+    assert budget.change.reference_value == 0
+    assert budget.change.mean_estimate == 0
+    assert budget.change.empirical_coverage == 1
+    assert budget.change.mean_interval_width == 0
+
+
+def test_real_validation_allows_independent_no_change_runs_to_differ() -> None:
+    validation_seeds = generate_real_validation_seeds(
+        seed_min=0,
+        seed_max=2**32 - 1,
+        reference_seed_count=30,
+        test_seed_count=30,
+        test_list_count=1,
+    )
+    observations = _observations(
+        validation_seeds.reference_seeds,
+        validation_seeds.test_seeds,
+    )
+    observations = [
+        (
+            observation.model_copy(
+                update={"normalized_gap": 2 * observation.normalized_gap}
+            )
+            if observation.code_state is CodeState.AGENT
+            and observation.normalized_gap is not None
+            else observation
+        )
+        for observation in observations
+    ]
+
+    summary = analyze_real_seed_validation(
+        observations,
+        task_id="pyvrp_v0_14_0",
+        budgets_sec=[10],
+        validation_seeds=validation_seeds,
+    )
+
+    assert summary.by_budget["10"].agent != summary.by_budget["10"].base
+
+
+# Tests consolidated from tests/unit/pitbench/test_seed_robustness_validation_runner.py
+
+
+def _runner_observation(seed: int) -> RunObservation:
+    return RunObservation(
+        task_id="pyvrp_v0_14_0",
+        code_state=CodeState.BASE,
+        instance_set="agent_dev",
+        instance_set_kind="agent_dev",
+        instance_id="instance",
+        solver_seed=seed,
+        budget_sec=1,
+        status=RunStatus.COMPLETED,
+        valid=True,
+    )
+
+
+def test_checkpoint_discards_only_a_truncated_final_line(tmp_path: Path) -> None:
+    checkpoint_path = tmp_path / "observations.checkpoint.jsonl"
+    first_runner_observation = _runner_observation(10)
+    checkpoint_path.write_text(
+        f'{first_runner_observation.model_dump_json()}\n{{"incomplete"'
+    )
+
+    loaded = _load_checkpoint(checkpoint_path)
+
+    assert loaded == [first_runner_observation]
+    assert (
+        checkpoint_path.read_text() == f"{first_runner_observation.model_dump_json()}\n"
+    )
+
+
+def test_checkpoint_rejects_duplicate_runner_observations(tmp_path: Path) -> None:
+    checkpoint_path = tmp_path / "observations.checkpoint.jsonl"
+    observation_json = _runner_observation(10).model_dump_json()
+    checkpoint_path.write_text(f"{observation_json}\n{observation_json}\n")
+
+    with pytest.raises(ValueError, match="duplicate observations"):
+        _load_checkpoint(checkpoint_path)
+
+
+@pytest.mark.parametrize(
+    "task_id",
+    ["pyvrp_v0_12_2", "pyvrp_v0_13_0", "pyvrp_v0_13_4", "pyvrp_v0_14_0"],
+)
+def test_runner_accepts_existing_seed_validation_tasks(
+    task_id: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate_seed_robustness_real_solver.py",
+            "--task-config",
+            str(ROOT / "configs" / "tasks" / f"{task_id}.yaml"),
+            "--output-dir",
+            str(tmp_path),
+            "--reference-seed-count",
+            "30",
+            "--test-seed-count",
+            "30",
+            "--test-list-count",
+            "1",
+        ],
+    )
+    with pytest.raises(ValueError, match="--repository is required"):
+        main()
+    assert (tmp_path / "validation_seeds.json").exists()
+
+
+def test_runner_accepts_new_task_identity_with_seed_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    task = task.model_copy(update={"task_id": "another_repository_release"})
+    monkeypatch.setattr(PitBenchTask, "from_yaml", lambda path: task)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate_seed_robustness_real_solver.py",
+            "--output-dir",
+            str(tmp_path),
+            "--task-config",
+            "task.yaml",
+        ],
+    )
+    with pytest.raises(ValueError, match="--repository is required"):
+        main()
+    assert (tmp_path / "validation_seeds.json").exists()
+
+
+def test_runner_rejects_task_without_seed_configuration(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate_seed_robustness_real_solver.py",
+            "--output-dir",
+            str(tmp_path),
+            "--task-config",
+            str(ROOT / "configs/tasks/highs_v1_15_1.yaml"),
+        ],
+    )
+    with pytest.raises(ValueError, match="task does not define Seed Robustness"):
+        main()
+    assert not (tmp_path / "validation_seeds.json").exists()

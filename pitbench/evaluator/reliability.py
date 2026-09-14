@@ -7,7 +7,6 @@ from pathlib import Path
 
 from pitbench.evaluator.judge import InstanceCase, _development_seeds
 from pitbench.instances.boundary import boundary_suite
-from pitbench.problem_families.verification import CVRPFamily, IntegerBoundaryFamily
 from pitbench.schema.task import InstanceSetKind, InstanceSetSpec, PitBenchTask
 
 SUITE_NAME = "operational_reliability"
@@ -25,9 +24,7 @@ def prepare_boundary_cases(task: PitBenchTask, output_dir: Path) -> list[Instanc
         instance_set_config="reliability/manifest.json",
         size=len(examples),
     )
-    verifier = (
-        CVRPFamily() if task.problem_family == "cvrp" else IntegerBoundaryFamily()
-    )
+    verifier = suite.verifier()
     cases = []
     manifest_cases = []
     for example in examples:

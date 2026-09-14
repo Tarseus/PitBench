@@ -3,12 +3,10 @@ from pathlib import Path
 from typing import Generator
 
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
-from pitbench.harness.terminal.tmux_session import TmuxSession
-from pitbench.harness.utils.livestreamer import Livestreamer
-from pitbench.harness.utils.logger import logger
+from pitbench.harness.terminal.session_manager import TerminalSessionManager
 
 
-class Terminal:
+class Terminal(TerminalSessionManager):
     def __init__(
         self,
         client_container_name: str,
@@ -30,15 +28,14 @@ class Terminal:
         self._client_container_name = client_container_name
         self._docker_image_name_prefix = docker_image_name_prefix
         self._docker_compose_path = docker_compose_path
-        self._sessions_logs_path = sessions_logs_path
         self._agent_logs_path = agent_logs_path
-        self._commands_path = commands_path
-        self._livestream = livestream
-        self._disable_recording = disable_recording
-        self._history_limit = history_limit
-
-        self._logger = logger.getChild(__name__)
-        self._sessions: dict[str, TmuxSession] = {}
+        super().__init__(
+            sessions_logs_path=sessions_logs_path,
+            commands_path=commands_path,
+            livestream=livestream,
+            disable_recording=disable_recording,
+            history_limit=history_limit,
+        )
 
         self._compose_manager = DockerComposeManager(
             client_container_name=client_container_name,
@@ -54,95 +51,25 @@ class Terminal:
             nested_sandbox=nested_sandbox,
         )
 
-        self._init_livestreamer()
-        self.container = None
-
-    def _init_livestreamer(self) -> None:
-        self._livestreamer = None
-
-        if not self._livestream:
-            return
-
-        if not self._sessions_logs_path:
-            raise ValueError("sessions_logs_path is required to livestream.")
-
-        self._livestreamer = Livestreamer()
-
-    def create_session(
-        self,
-        session_name: str,
-        is_active_stream: bool = False,
-        as_configured_user: bool = True,
-        recording_filename: str | None = None,
-    ) -> TmuxSession:
-        """Create a new tmux session with the given name."""
-        if self.container is None:
-            raise ValueError("Container not started. Run start() first.")
-
-        if session_name in self._sessions:
-            raise ValueError(f"Session {session_name} already exists")
-
-        if as_configured_user:
-            user = self.container.attrs["Config"].get("User", "")
-        else:
-            user = "root"
-
-        session = TmuxSession(
-            session_name=session_name,
-            container=self.container,
-            commands_path=self._commands_path,
-            disable_recording=self._disable_recording,
-            user=user,
-            recording_filename=recording_filename,
-            history_limit=self._history_limit,
-        )
-
-        self._sessions[session_name] = session
-
-        if is_active_stream:
-            self.set_active_stream(session_name)
-
-        session.start()
-
-        return session
-
-    def get_session(self, session_name: str) -> TmuxSession:
-        """Get an existing tmux session by name."""
-        if session_name not in self._sessions:
-            raise ValueError(f"Session {session_name} does not exist")
-        return self._sessions[session_name]
-
-    def close_session(self, session_name: str) -> None:
-        """Stop and remove a tmux session if it exists."""
-        session = self._sessions.pop(session_name, None)
-        if not session:
-            return
-
-        try:
-            session.stop()
-        except Exception as exc:  # pragma: no cover - best effort cleanup
-            self._logger.warning(
-                "Failed to stop tmux session %s: %s", session_name, exc
-            )
+    @property
+    def container_session_logs_path(self) -> Path:
+        return Path(DockerComposeManager.CONTAINER_SESSION_LOGS_PATH)
 
     def start(self) -> None:
         self.container = self._compose_manager.start()
 
     def stop(self) -> None:
-        for session_name in list(self._sessions.keys()):
-            self.close_session(session_name)
-
+        self.close_sessions()
         self._compose_manager.stop()
 
-        if self._livestreamer:
-            self._livestreamer.stop()
-
-        self._sessions.clear()
-
     def save_container_image(
-        self, output_path: Path, snapshot_s3_key: str | None = None
+        self,
+        output_path: Path | None = None,
+        snapshot_s3_key: str | None = None,
     ) -> None:
         """Save the current container as a gzipped docker image tarball."""
+        if output_path is None:
+            raise ValueError("local snapshots require output_path")
         self._compose_manager.save_container_image(output_path)
 
     def copy_to_container(
@@ -156,25 +83,6 @@ class Terminal:
             paths=paths,
             container_dir=container_dir,
             container_filename=container_filename,
-        )
-
-    def set_active_stream(self, session_name: str) -> None:
-        """Set which session to livestream, or None to stop streaming."""
-        if not self._livestreamer or not self._sessions_logs_path:
-            return
-
-        if session_name not in self._sessions:
-            raise ValueError(f"Session '{session_name}' does not exist")
-
-        print(f"\nSwitching livestream to tmux session '{session_name}'")
-
-        session = self._sessions[session_name]
-
-        self._livestreamer.change_livestream_path(
-            self._sessions_logs_path
-            / session.logging_path.relative_to(
-                DockerComposeManager.CONTAINER_SESSION_LOGS_PATH
-            )
         )
 
 

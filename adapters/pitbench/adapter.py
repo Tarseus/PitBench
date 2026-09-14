@@ -165,7 +165,9 @@ class PitBenchAdapter:
         editable_paths = ", ".join(task.repository.editable_paths)
         scope = getattr(task, "optimization_scope", None) or "solver performance"
         primary_budget = getattr(task.evaluation, "primary_budget_sec", None)
-        budget_info = f"{primary_budget:.1f}s" if primary_budget else "the evaluation budget"
+        budget_info = (
+            f"{primary_budget:.1f}s" if primary_budget else "the evaluation budget"
+        )
 
         sections = [
             f"{task.instruction}\n\n"
@@ -177,7 +179,8 @@ class PitBenchAdapter:
             f"- Optimization Scope: {scope}\n"
             f"- Primary Evaluation Budget: {budget_info} per instance",
             "### Evaluation & Correctness Requirements\n"
-            "- Feasibility & Validity: 100% solution validity, constraint satisfaction, and format compatibility are mandatory. Any crash, timeout, or invalid solution will completely disqualify the candidate (Score = 0).\n"
+            "- Feasibility & Validity: 100% solution validity, constraint satisfaction, and format compatibility are mandatory. Confirmed semantic invalidity disqualifies the candidate.\n"
+            "- Operational Failures: Crashes, timeouts, out-of-memory failures, numerical failures, and missing targets are retained and reported under Operational Reliability; they do not by themselves fail the correctness qualification.\n"
             "- Evaluation Metric: Solution quality (normalized gap to optimal/BKS) within the fixed time budget.\n"
             "- Robustness: The candidate will be evaluated across unseen test instances, multiple random seeds, and perturbed representations. Do not overfit hyperparameters or hardcode behaviors for specific instances.",
             "### Recommended Performance Engineering SOP\n"
@@ -239,7 +242,9 @@ class PitBenchAdapter:
         if judge_parallel_runs is not None:
             payload["evaluator_config"]["judge_parallel_runs"] = judge_parallel_runs
         if base_observations_path is not None:
-            payload["evaluator_config"]["base_observations_path"] = str(base_observations_path)
+            payload["evaluator_config"]["base_observations_path"] = str(
+                base_observations_path
+            )
         if base_cache_path is not None:
             payload["evaluator_config"]["base_cache_path"] = str(base_cache_path)
         (task_dir / "task.yaml").write_text(yaml.safe_dump(payload, sort_keys=False))

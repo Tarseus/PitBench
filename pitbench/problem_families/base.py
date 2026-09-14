@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import importlib
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import ClassVar
 
 from pydantic import BaseModel
 
@@ -16,6 +15,16 @@ class VerificationResult(BaseModel):
 
 class ProblemFamilyPlugin(ABC):
     name: str
+    _plugins: ClassVar[dict[str, type[ProblemFamilyPlugin]]] = {}
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        name = getattr(cls, "name", None)
+        if name:
+            existing = cls._plugins.get(name)
+            if existing is not None and existing is not cls:
+                raise ValueError(f"duplicate problem family plugin: {name}")
+            cls._plugins[name] = cls
 
     @abstractmethod
     def verify(self, instance_path: Path, solution_path: Path) -> VerificationResult:
@@ -34,23 +43,16 @@ class ProblemFamilyPlugin(ABC):
 
 
 class ProblemFamilyRegistry:
-    _PLUGIN_PATHS = {
-        "cvrp": "pitbench.problem_families.verification:CVRPFamily",
-        "mip": "pitbench.problem_families.verification:MIPFamily",
-        "cp": "pitbench.problem_families.verification:CPFamily",
-    }
-
     @staticmethod
     def load(family: str) -> ProblemFamilyPlugin:
+        from pitbench.problem_families import verification  # noqa: F401
+
+        family_name = getattr(family, "value", family)
         try:
-            import_path = ProblemFamilyRegistry._PLUGIN_PATHS[family]
+            plugin_class = ProblemFamilyPlugin._plugins[str(family_name)]
         except KeyError as error:
             raise ValueError(f"unsupported problem family: {family}") from error
-        if ":" not in import_path:
-            raise ValueError("family plugin must be 'module:Class'")
-        module_name, class_name = import_path.split(":", 1)
-        plugin_class: Any = getattr(importlib.import_module(module_name), class_name)
         plugin = plugin_class()
         if not isinstance(plugin, ProblemFamilyPlugin):
-            raise TypeError(f"{import_path} is not a ProblemFamilyPlugin")
+            raise TypeError(f"{plugin_class.__name__} is not a ProblemFamilyPlugin")
         return plugin

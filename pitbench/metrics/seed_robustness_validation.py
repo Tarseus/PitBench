@@ -118,12 +118,12 @@ def _observations_by_run(
         raise ValueError("real validation requires exactly one instance set")
     if any(observation.task_id != task_id for observation in observations):
         raise ValueError("all observations must match task_id")
-    if any(observation.instance_set_kind != "agent_dev" for observation in observations):
+    if any(
+        observation.instance_set_kind != "agent_dev" for observation in observations
+    ):
         raise ValueError("real validation requires agent_dev observations")
 
-    observations_by_run: dict[
-        tuple[CodeState, str, float, int], RunObservation
-    ] = {}
+    observations_by_run: dict[tuple[CodeState, str, float, int], RunObservation] = {}
     for observation in observations:
         run_key = (
             observation.code_state,
@@ -143,9 +143,7 @@ def _observations_by_run(
 
 
 def _complete_gaps(
-    observations_by_run: dict[
-        tuple[CodeState, str, float, int], RunObservation
-    ],
+    observations_by_run: dict[tuple[CodeState, str, float, int], RunObservation],
     *,
     code_state: CodeState,
     instance_id: str,
@@ -168,9 +166,7 @@ def _complete_gaps(
 
 
 def _reference_value(
-    observations_by_run: dict[
-        tuple[CodeState, str, float, int], RunObservation
-    ],
+    observations_by_run: dict[tuple[CodeState, str, float, int], RunObservation],
     *,
     code_state: CodeState,
     instance_ids: Sequence[str],

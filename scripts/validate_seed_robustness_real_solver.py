@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from adapters.pitbench.adapter import PitBenchAdapter
+from pitbench.evaluator.artifacts import write_text_atomic
 from pitbench.evaluator.judge import JudgePlan, LocalProcessJudge
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.evaluator.storage import ObservationStore
@@ -38,12 +39,6 @@ def _run_identity(
     )
 
 
-def _write_json(path: Path, payload: str) -> None:
-    temporary_path = path.with_suffix(f"{path.suffix}.tmp")
-    temporary_path.write_text(payload)
-    temporary_path.replace(path)
-
-
 def _load_checkpoint(path: Path) -> list[RunObservation]:
     if not path.exists():
         return []
@@ -60,7 +55,7 @@ def _load_checkpoint(path: Path) -> list[RunObservation]:
                 checkpoint_text = "".join(
                     f"{observation.model_dump_json()}\n" for observation in observations
                 )
-                _write_json(path, checkpoint_text)
+                write_text_atomic(path, checkpoint_text)
                 break
             raise ValueError(
                 f"checkpoint contains an invalid line at {line_number}"
@@ -218,7 +213,7 @@ def main() -> None:
                 "output directory contains a different validation seed selection"
             )
     else:
-        _write_json(
+        write_text_atomic(
             validation_seeds_path,
             validation_seeds.model_dump_json(indent=2) + "\n",
         )
@@ -340,7 +335,7 @@ def main() -> None:
         validation_seeds=validation_seeds,
     )
     summary_path = args.output_dir / "validation_summary.json"
-    _write_json(summary_path, summary.model_dump_json(indent=2) + "\n")
+    write_text_atomic(summary_path, summary.model_dump_json(indent=2) + "\n")
     print(f"Observations: {observations_path}")
     print(f"Seed lists: {validation_seeds_path}")
     print(f"Summary: {summary_path}")

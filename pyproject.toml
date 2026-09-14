@@ -47,6 +47,7 @@ include = ["pitbench*", "adapters*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
 markers = [
     "docker: tests requiring Docker",
     "external: tests requiring private task assets or upstream repositories",

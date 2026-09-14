@@ -7,8 +7,7 @@ from typing import Annotated
 import typer
 import yaml
 
-from pitbench.harness.agents.antigravity_profile import AntigravityProfile
-from pitbench.harness.agents.codex_profile import CodexProfile
+from pitbench.harness.agents.profiles import AntigravityProfile, CodexProfile
 
 profiles_app = typer.Typer(help="Create and validate reproducible agent profiles.")
 

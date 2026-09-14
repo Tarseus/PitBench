@@ -103,6 +103,7 @@ class AgentTrace:
         self._active_calls: set[str] = set()
         self._workspace_events: dict[str, str | None] = {}
         self._call_states: dict[str, dict] = {}
+        self._call_results: dict[str, Any] = {}
         self._watcher: threading.Thread | None = None
         self._source_lock = threading.RLock()
         self._transcript_calls: dict[tuple, str] = {}
@@ -150,6 +151,11 @@ class AgentTrace:
             self._sequence += 1
             event_id = f"{self.execution_id}:{self._sequence}"
             payload = json.dumps(data, ensure_ascii=True, default=_encode)
+            effective_call_id = call_id if call_id is not None else _CALL.get()
+            if event.endswith(".result") and effective_call_id is not None:
+                self._call_results[effective_call_id] = _json_safe(
+                    data.get("result", data)
+                )
             row = {
                 "schema_version": 1,
                 "event_id": event_id,
@@ -159,7 +165,7 @@ class AgentTrace:
                 "execution_id": self.execution_id,
                 **self.context,
                 "event": event,
-                "call_id": call_id if call_id is not None else _CALL.get(),
+                "call_id": effective_call_id,
                 "data": self.content(payload),
             }
             self._stream.write(json.dumps(row, ensure_ascii=True) + "\n")
@@ -555,6 +561,57 @@ class AgentTrace:
                     method="ambiguous; not_bound",
                 )
 
+    def close_bound_native_calls(self) -> None:
+        """Recover missing provider post-hooks from exact bound backend results."""
+        with self._harvest_lock:
+            completed = []
+            for key, native_call in self._native_calls.items():
+                backend_id = native_call.get("backend_call_id")
+                if (
+                    backend_id not in self._call_states
+                    or backend_id not in self._call_results
+                ):
+                    continue
+                backend_states = self._call_states[backend_id]
+                result = self._call_results[backend_id]
+                failed = bool(
+                    isinstance(result, dict)
+                    and (result.get("isError") or result.get("is_error"))
+                )
+                call_id = native_call["call_id"]
+                self.record(
+                    "tool.result",
+                    call_id=call_id,
+                    producer=key[0],
+                    provider_call_id=native_call.get("tool_id"),
+                    result=result,
+                    result_present=True,
+                    visibility="exact_bound_backend_result",
+                )
+                self.record(
+                    "tool.finished",
+                    call_id=call_id,
+                    producer=key[0],
+                    boundary="native_hook_with_backend_fallback",
+                    status="failed" if failed else "returned",
+                    before_state_id=backend_states.get("before_state_id"),
+                    after_state_id=backend_states.get("after_state_id"),
+                    missing_request=False,
+                    provider_call_id=native_call.get("tool_id"),
+                    correlation="exact_bound_backend_result_without_post_hook",
+                    backend_call_id=backend_id,
+                )
+                self.record(
+                    "instrumentation.recovered_completion",
+                    native_call_id=call_id,
+                    backend_call_id=backend_id,
+                    provider=key[0],
+                    reason="provider post-tool hook was not emitted",
+                )
+                completed.append(key)
+            for key in completed:
+                self._native_calls.pop(key, None)
+
     def _gap(self, source: str, error: Exception) -> None:
         # Keep a concrete failure visible without flooding a long-running trace.
         key = f"{source}:{type(error).__name__}:{error}"
@@ -828,6 +885,7 @@ class AgentTrace:
         self.harvest_recorder()
         self.harvest_recorder(native=False)
         self.checkpoint("final")
+        self.close_bound_native_calls()
 
     def close(self) -> None:
         with self._lock:

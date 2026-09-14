@@ -9,6 +9,7 @@ import tempfile
 from dataclasses import replace
 from pathlib import Path
 
+from pitbench.evaluator.artifacts import write_json
 from pitbench.evaluator.judge import InstanceCase, JudgePlan, LocalProcessJudge
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.evaluator.representations import representation_type
@@ -20,13 +21,6 @@ from pitbench.schema.task import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def write_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, allow_nan=False) + "\n")
-    temporary.replace(path)
 
 
 def preserve_json(path: Path, payload: object) -> None:

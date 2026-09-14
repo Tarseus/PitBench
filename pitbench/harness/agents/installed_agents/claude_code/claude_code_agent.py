@@ -11,6 +11,7 @@ from pitbench.harness.terminal.models import TerminalCommand
 
 class ClaudeCodeAgent(AbstractInstalledAgent):
     NATIVE_HOOKS = ("claude", "~/.claude/settings.json")
+
     @staticmethod
     def name() -> str:
         return AgentName.CLAUDE_CODE.value

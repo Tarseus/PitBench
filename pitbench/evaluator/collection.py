@@ -13,23 +13,16 @@ import subprocess
 import sys
 import time
 import traceback
+from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from queue import Queue
 
+from pitbench.evaluator.artifacts import write_json
 from pitbench.solver_drivers.common import ParameterRejected
 from pitbench.solver_drivers.run import HighsDriver
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def write_json(path: Path, value) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
-    )
-    temporary.replace(path)
 
 
 def run_collection_process(
@@ -728,7 +721,17 @@ class AnchorCollection:
         print(oracle_path)
 
 
-class PyVRPCollectionBackend:
+class CollectionBackend(ABC):
+    @staticmethod
+    @abstractmethod
+    def identity() -> dict: ...
+
+    @staticmethod
+    @abstractmethod
+    def run(job: dict, directory: Path, result: dict) -> None: ...
+
+
+class PyVRPCollectionBackend(CollectionBackend):
     """Parameter panels reuse the normal routing driver and verifier."""
 
     @staticmethod
@@ -800,7 +803,7 @@ class PyVRPCollectionBackend:
         result.pop("error_stage", None)
 
 
-class HighsCollectionBackend:
+class HighsCollectionBackend(CollectionBackend):
     """Parameter panels reuse the numeric-model collector and its verifier."""
 
     @staticmethod
