@@ -34,6 +34,7 @@ class AbstractInstalledAgent(BaseAgent, ABC):
     """
 
     CONTAINER_AGENT_LOGS_PATH = DockerComposeManager.CONTAINER_AGENT_LOGS_PATH
+    NATIVE_HOOKS: tuple[str, str] | None = None
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -398,6 +399,12 @@ class AbstractInstalledAgent(BaseAgent, ABC):
                 )
 
             # If installation succeeded, run the agent commands
+            if self._agent_trace is not None and self.NATIVE_HOOKS is not None:
+                provider, config_path = self.NATIVE_HOOKS
+                self._agent_trace.install_native_hooks(
+                    session.container, provider=provider, config_path=config_path,
+                    root=self._agent_trace._workdir,
+                )
             # Use prompt template to render instruction if provided
             rendered_instruction = self._render_instruction(instruction)
             run_agent_commands = self._run_agent_commands(rendered_instruction)

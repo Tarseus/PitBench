@@ -6,6 +6,7 @@ from __future__ import annotations
 import grp
 import json
 import os
+import runpy
 import shutil
 import subprocess
 import sys
@@ -89,6 +90,15 @@ def _run_codex(arguments: list[str]) -> int:
         codex_home.mkdir(mode=0o700)
         workspace.mkdir(mode=0o700)
         _copy_profile(codex_home)
+        recording_script = Path("/opt/pitbench/recording.py")
+        recording_hooks = False
+        if recording_script.is_file():
+            recording_hooks = runpy.run_path(str(recording_script))[
+                "configure_mounted_hooks"
+            ](
+                codex_home / "hooks.json",
+                "codex",
+            )
         auth_path = codex_home / "auth.json"
         if auth_path.exists():
             raise ValueError("profile attempted to provide reserved auth.json")
@@ -100,7 +110,7 @@ def _run_codex(arguments: list[str]) -> int:
         env["CODEX_HOME"] = str(codex_home)
         env["HOME"] = str(root)
         command = [str(CODEX_BINARY), "--ask-for-approval", "never"]
-        if allow_hooks:
+        if allow_hooks or recording_hooks:
             command.append("--dangerously-bypass-hook-trust")
         command.extend(arguments)
         result = subprocess.run(
@@ -110,6 +120,8 @@ def _run_codex(arguments: list[str]) -> int:
             stdin=subprocess.DEVNULL,
             check=False,
         )
+        if recording_hooks:
+            runpy.run_path(str(recording_script))["finalize_mounted_recording"]("codex")
         return result.returncode
 
 

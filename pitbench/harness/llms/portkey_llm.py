@@ -29,6 +29,7 @@ from pitbench.harness.llms.base_llm import (
     OutputLengthExceededError,
 )
 from pitbench.harness.llms.lite_llm import LiteLLM
+from pitbench.harness.utils.agent_trace import model_completion
 from pitbench.harness.utils.anthropic_caching import add_anthropic_caching
 from pitbench.harness.utils.logger import logger
 from pitbench.harness.utils.model_names import normalize_model_name_for_pricing
@@ -307,7 +308,8 @@ class PortkeyLiteLLM(LiteLLM):
             kwargs.setdefault("output_cost_per_token", output_cost)
 
         def _call_completion() -> dict:
-            return litellm.completion(
+            return model_completion(
+                litellm.completion,
                 model=self._portkey_model_name,
                 messages=messages,
                 temperature=self._temperature,

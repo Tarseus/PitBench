@@ -9,6 +9,7 @@ from pitbench.harness.terminal.models import TerminalCommand
 
 
 class GeminiCliAgent(AbstractInstalledAgent):
+    NATIVE_HOOKS = ("gemini", "~/.gemini/settings.json")
     @staticmethod
     def name() -> str:
         return AgentName.GEMINI_CLI.value
@@ -56,7 +57,7 @@ class GeminiCliAgent(AbstractInstalledAgent):
 
         return [
             TerminalCommand(
-                command=f"gemini -p {escaped_instruction} -y -m {self._model_name}",
+                command=f"gemini -p {escaped_instruction} -y -m {self._model_name} --output-format stream-json",
                 min_timeout_sec=0.0,
                 max_timeout_sec=float("inf"),
                 block=True,

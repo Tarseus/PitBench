@@ -1,6 +1,9 @@
+import codecs
+import json
 import logging
 import subprocess
 import threading
+import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Callable
@@ -9,6 +12,8 @@ from pydantic import BaseModel, Field
 
 from pitbench.harness.agents.failure_mode import FailureMode
 from pitbench.harness.terminal.tmux_session import TmuxSession
+from pitbench.harness.utils.agent_trace import AgentTrace
+from pitbench.harness.utils.pipeline_trace import _json_safe
 from pitbench.harness.utils.progress import AgentActivity
 from pitbench.harness.utils.template_utils import render_prompt_template
 
@@ -50,12 +55,146 @@ class BaseAgent(ABC):
         self._version = kwargs.get("version", None)
         self._prompt_template = kwargs.get("prompt_template", None)
         self._progress_callback: Callable[[str], None] | None = None
+        self._agent_trace: AgentTrace | None = None
+        self._container_workdir = kwargs.get("container_workdir")
+        self._trace_cancelled = threading.Event()
+        self._trace_session = None
+
+    def execute_task(
+        self,
+        *,
+        instruction: str,
+        session: TmuxSession,
+        logging_dir: Path,
+        trace_context: dict,
+        remote_logs: bool = False,
+        portkey_metadata: dict[str, str] | None = None,
+        portkey_trace_id: str | None = None,
+    ) -> AgentResult:
+        """The harness entry for every built-in and imported agent.
+
+        The trace is a sibling of agent-logs, outside the directory mounted into
+        agent containers. Adapters continue implementing perform_task unchanged.
+        """
+        logging_dir.mkdir(parents=True, exist_ok=True)
+        trace = AgentTrace(logging_dir.parent / "agent-trace", context=trace_context)
+        self._agent_trace = trace
+        self._trace_cancelled.clear()
+        self._trace_session = session
+        session._trace_cancelled = self._trace_cancelled
+        session._agent_trace = trace
+        result = None
+        error = None
+        with trace.activate():
+            try:
+                trace.record(
+                    "execution.started",
+                    instruction=instruction,
+                    agent_class=f"{type(self).__module__}:{type(self).__qualname__}",
+                    agent_version=self.version,
+                    model=getattr(self, "_model_name", None),
+                    configuration=_json_safe(getattr(self, "_trace_configuration", {})),
+                    coverage={
+                        "lifecycle": "harness",
+                        "tools": "instrumented boundaries and provider artifacts",
+                        "repository": "boundary file manifests, native hooks where available, and source sampling",
+                        "native_artifacts": "250ms sampling; short-lived files may be missed",
+                        "model_context": "captured at available model boundaries only",
+                        "hidden_reasoning": "unavailable",
+                        "ignored_files_and_build_artifacts": "included in workspace snapshots",
+                    },
+                )
+                profile = getattr(self, "_profile", None)
+                if profile is not None and hasattr(profile, "trace_files"):
+                    trace.record(
+                        "context.profile",
+                        metadata=profile.metadata(),
+                        files={
+                            name: trace.content(path.read_bytes())
+                            for name, path in profile.trace_files().items()
+                        },
+                    )
+                container = session.container
+                attrs = container.attrs
+                workdir = (
+                    self._container_workdir
+                    or attrs.get("Config", {}).get("WorkingDir")
+                    or None
+                )
+                trace.record(
+                    "environment",
+                    container_id=container.id,
+                    workdir=workdir,
+                    image=attrs.get("Image"),
+                    resources=_json_safe(
+                        {
+                            key: attrs.get("HostConfig", {}).get(key)
+                            for key in (
+                                "NanoCpus",
+                                "CpusetCpus",
+                                "Memory",
+                                "NetworkMode",
+                            )
+                        }
+                    ),
+                )
+                trace.start_collection(
+                    container=container,
+                    workdir=workdir,
+                    sources={
+                        "agent-logs": logging_dir,
+                        "sessions": logging_dir.parent / "sessions",
+                    },
+                    remote_sources=("/agent-logs", "/logs") if remote_logs else (),
+                )
+                result = self.perform_task(
+                    instruction=instruction,
+                    session=session,
+                    logging_dir=logging_dir,
+                    portkey_metadata=portkey_metadata,
+                    portkey_trace_id=portkey_trace_id,
+                )
+                return result
+            except BaseException as exc:
+                error = exc
+                trace.record("execution.failed", error=exc)
+                raise
+            finally:
+                try:
+                    trace.finish_collection()
+                    trace.record(
+                        "execution.finished",
+                        result=result,
+                        error=error,
+                        repository_state_id=trace.latest_state_id,
+                        collection_gap_count=trace.collection_gap_count,
+                        interrupted=self._trace_cancelled.is_set(),
+                        status="failed"
+                        if error is not None
+                        or self._trace_cancelled.is_set()
+                        or result is None
+                        or result.failure_mode != FailureMode.NONE
+                        else "completed",
+                    )
+                finally:
+                    session._agent_trace = None
+                    session._trace_cancelled = None
+                    self._trace_session = None
+                    self._agent_trace = None
+                    trace.close()
+                    from pitbench.harness.utils.trace_validation import inspect_trace
+
+                    (trace.root / "coverage.json").write_text(
+                        json.dumps(inspect_trace(trace.path), indent=2) + "\n"
+                    )
 
     def set_progress_callback(self, callback: Callable[[str], None] | None) -> None:
         """Receive live, human-readable progress from an agent implementation."""
         self._progress_callback = callback
 
     def _report_progress(self, detail: str) -> None:
+        if self._agent_trace is not None:
+            self._agent_trace.record("agent.progress", detail=detail)
         if self._progress_callback is not None:
             self._progress_callback(detail)
 
@@ -66,26 +205,86 @@ class BaseAgent(ABC):
         stdout_lines: list[str] = []
         stderr_lines: list[str] = []
         activity = AgentActivity()
+        trace = self._agent_trace
+        trace_errors: list[Exception] = []
+        process_id = uuid.uuid4().hex
+        if trace is not None:
+            trace.record(
+                "process.started",
+                call_id=process_id,
+                command=process.args,
+                pid=process.pid,
+                timeout_sec=timeout_sec,
+            )
+
+        def stream_chunks(stream):
+            if hasattr(stream, "buffer"):
+                while chunk := stream.buffer.read1(64 * 1024):
+                    yield chunk
+            else:
+                for chunk in stream:
+                    yield chunk.encode("utf-8") if isinstance(chunk, str) else chunk
 
         def read_stdout() -> None:
             if process.stdout is None:
                 return
-            for line in process.stdout:
-                stdout_lines.append(line)
-                try:
-                    detail = activity.feed(line)
-                    if detail is not None:
-                        self._report_progress(detail)
-                except Exception:
-                    # A display failure must not stop draining a solver/agent
-                    # pipe and deadlock the subprocess.
-                    logging.getLogger(__name__).debug(
-                        "Progress update failed", exc_info=True
-                    )
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            pending = ""
+            for chunk in stream_chunks(process.stdout):
+                decoded = decoder.decode(chunk)
+                stdout_lines.append(decoded)
+                pending += decoded
+                if trace is not None and not trace_errors:
+                    try:
+                        trace.record(
+                            "process.stdout",
+                            call_id=process_id,
+                            content=trace.content(chunk),
+                        )
+                    except Exception as error:
+                        trace_errors.append(error)
+                while "\n" in pending:
+                    line, pending = pending.split("\n", 1)
+                    try:
+                        try:
+                            event = json.loads(line)
+                        except json.JSONDecodeError:
+                            event = None
+                        if (
+                            trace is not None
+                            and not trace_errors
+                            and isinstance(event, dict)
+                        ):
+                            trace.record(
+                                "agent.event", call_id=process_id, native=event
+                            )
+                    except Exception as error:
+                        trace_errors.append(error)
+                    try:
+                        detail = activity.feed(line)
+                        if detail is not None:
+                            self._report_progress(detail)
+                    except Exception:
+                        logging.getLogger(__name__).debug(
+                            "Progress update failed", exc_info=True
+                        )
+            stdout_lines.append(decoder.decode(b"", final=True))
 
         def read_stderr() -> None:
             if process.stderr is not None:
-                stderr_lines.extend(process.stderr)
+                decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+                for chunk in stream_chunks(process.stderr):
+                    stderr_lines.append(decoder.decode(chunk))
+                    if trace is not None and not trace_errors:
+                        try:
+                            trace.record(
+                                "process.stderr",
+                                call_id=process_id,
+                                content=trace.content(chunk),
+                            )
+                        except Exception as error:
+                            trace_errors.append(error)
+                stderr_lines.append(decoder.decode(b"", final=True))
 
         stdout_reader = threading.Thread(target=read_stdout, daemon=True)
         stderr_reader = threading.Thread(target=read_stderr, daemon=True)
@@ -104,6 +303,8 @@ class BaseAgent(ABC):
                         pass
             process.wait(timeout=timeout_sec)
         except subprocess.TimeoutExpired:
+            if trace is not None:
+                trace.record("process.timeout", call_id=process_id)
             self.cancel()
             if process.poll() is None:
                 process.kill()
@@ -111,6 +312,14 @@ class BaseAgent(ABC):
         finally:
             stdout_reader.join()
             stderr_reader.join()
+            if trace is not None:
+                trace.record(
+                    "process.finished",
+                    call_id=process_id,
+                    exit_code=process.returncode,
+                )
+        if trace_errors:
+            raise RuntimeError("agent output recording failed") from trace_errors[0]
         return "".join(stdout_lines), "".join(stderr_lines), process.returncode or 0
 
     def _get_network_name(self, container_name: str) -> str:
@@ -187,15 +396,21 @@ class BaseAgent(ABC):
             FileNotFoundError: If the template file doesn't exist
             ValueError: If the template doesn't include an "instruction" variable
         """
-        if self.prompt_template is None:
-            return instruction
-
-        template_path = Path(self.prompt_template)
-        return render_prompt_template(template_path, instruction)
+        rendered = instruction
+        if self.prompt_template is not None:
+            template_path = Path(self.prompt_template)
+            rendered = render_prompt_template(template_path, instruction)
+        if self._agent_trace is not None:
+            self._agent_trace.record("instruction.rendered", instruction=rendered)
+        return rendered
 
     def cancel(self) -> None:
         """Cancel in-flight work after a harness timeout."""
-        return None
+        self._trace_cancelled.set()
+        session = self._trace_session
+        if session is not None:
+            session._exec_run(["tmux", "send-keys", "-t", session._session_name, "C-c"])
+            session._exec_run(["tmux", "wait", "-S", "done"])
 
     def wall_timeout_sec(self, active_timeout_sec: float) -> float:
         """Return the wall-clock timeout needed for an active-time budget."""

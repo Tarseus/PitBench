@@ -7,6 +7,7 @@ import argparse
 import grp
 import json
 import os
+import runpy
 import shutil
 import subprocess
 import sys
@@ -219,6 +220,12 @@ def _run_agy(mcp_url: str | None, arguments: list[str]) -> int:
         gemini_config = gemini_home / "config"
         gemini_config.mkdir(parents=True, mode=0o700)
         _copy_profile(gemini_config, allow_hooks=allow_hooks)
+        recording_script = Path("/opt/pitbench/recording.py")
+        if recording_script.is_file() and mcp_url is not None:
+            runpy.run_path(str(recording_script))["configure_mounted_hooks"](
+                gemini_config / "hooks.json",
+                "antigravity",
+            )
         if mcp_url is not None:
             _configure_pitbench(gemini_config, mcp_url)
         _write_private_json(gemini_home / "settings.json", minimal_settings)
@@ -258,6 +265,10 @@ def _run_agy(mcp_url: str | None, arguments: list[str]) -> int:
             check=False,
             **({"timeout": 25} if mcp_url is None else {}),
         )
+        if recording_script.is_file() and mcp_url is not None:
+            runpy.run_path(str(recording_script))["finalize_mounted_recording"](
+                "antigravity"
+            )
         return result.returncode
 
 

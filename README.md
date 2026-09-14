@@ -217,6 +217,12 @@ search, and applies per-trial request/concurrency admission limits, a
 response-accounted token cutoff, and a request-boundary duration cutoff.
 Codex's network proxy allowlists only the frontend sidecar IP plus container-local
 loopback.
+On hosts with `kernel.apparmor_restrict_unprivileged_userns=1`, workspace
+containers use the distribution's `bwrap` AppArmor profile, which permits the
+nested user namespaces. The profile must be loaded on the Docker host (provided
+by the distribution's bubblewrap package). An explicitly `unconfined` container
+is still affected by this kernel restriction and can fail with
+`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`.
 The run starts only after a real Codex shell probe demonstrates that the relay is
 reachable, the public internet is not, and no relay credential exists in the shell.
 A `profile_path` overlay may include user-installed
@@ -237,6 +243,11 @@ If the run cannot start, diagnose the current shell and machine with
 created with `pitbench profiles init` and selected through `profile_path` in the
 local configuration. PitBench records the runner image ID and profile hash with
 every trial.
+
+Agent execution evidence is recorded automatically for every agent through one
+harness entry, including custom imported agents. See [Agent execution
+traces](AGENT_TRACING.md) for the event format, reconstruction, and observation
+boundaries.
 
 ### Schedule multiple agents externally
 

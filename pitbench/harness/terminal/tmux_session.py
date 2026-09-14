@@ -1,5 +1,6 @@
 import re
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -8,6 +9,7 @@ from docker.models.containers import Container, ExecResult
 import docker
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
 from pitbench.harness.terminal.models import TerminalCommand
+from pitbench.harness.utils.agent_trace import traced_call
 from pitbench.harness.utils.logger import logger
 
 
@@ -243,12 +245,38 @@ class TmuxSession:
         keys: list[str],
         max_timeout_sec: float,
     ):
+        trace = getattr(self, "_agent_trace", None)
+        status_path = f"/tmp/pitbench-command-status-{uuid.uuid4().hex}"
+        if trace is not None:
+            completion = (
+                '; pitbench_command_status=$?; printf "%s" "$pitbench_command_status" > '
+                f"{status_path}; tmux wait -S done"
+            )
+            keys = [
+                completion if key == self._TMUX_COMPLETION_COMMAND else key
+                for key in keys
+            ]
         start_time_sec = time.time()
         self.container.exec_run(self._tmux_send_keys(keys), user=self._user)
 
         result = self._exec_run(
             ["timeout", f"{max_timeout_sec}s", "tmux", "wait", "done"]
         )
+        if trace is not None:
+            captured = self._exec_run(["cat", "--", status_path])
+            exit_code = None
+            if captured.exit_code == 0:
+                try:
+                    exit_code = int(captured.output.strip())
+                except ValueError:
+                    pass
+                self._exec_run(["rm", "--", status_path])
+            trace.record(
+                "terminal.command_result",
+                exit_code=exit_code,
+                timed_out=result.exit_code != 0,
+                exit_status_observed=exit_code is not None,
+            )
         if result.exit_code != 0:
             raise TimeoutError(f"Command timed out after {max_timeout_sec} seconds")
 
@@ -280,6 +308,7 @@ class TmuxSession:
         )
         return float(result.output.decode())
 
+    @traced_call("terminal", checkpoint=True)
     def send_keys(
         self,
         keys: str | list[str],
@@ -348,6 +377,7 @@ class TmuxSession:
         result = self._exec_run(["tmux", "has-session", "-t", self._session_name])
         return result.exit_code == 0
 
+    @traced_call("terminal")
     def capture_pane(self, capture_entire: bool = False) -> str:
         result = self._exec_run(self._tmux_capture_pane(capture_entire=capture_entire))
         return result.output.decode(errors="replace")

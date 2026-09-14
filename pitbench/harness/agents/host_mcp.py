@@ -7,6 +7,7 @@ import socket
 import threading
 import time
 import uuid
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -14,6 +15,13 @@ from typing import Any
 import uvicorn
 from docker.models.containers import Container
 from mcp.server.fastmcp import FastMCP
+from mcp.types import CallToolRequest
+
+from pitbench.harness.utils.agent_trace import (
+    close_event_stream,
+    current_trace,
+    traced_call,
+)
 
 
 @dataclass
@@ -58,6 +66,7 @@ class TaskTerminal:
         self._workdir = workdir.rstrip("/") or "/"
         self._log_path = log_path
         self._log_lock = threading.Lock()
+        self._agent_trace = current_trace()
         self._jobs: dict[str, _CommandJob] = {}
         self._jobs_lock = threading.Lock()
 
@@ -70,9 +79,7 @@ class TaskTerminal:
         return output
 
     @classmethod
-    def _truncate(
-        cls, output: str, limit: int | None = None
-    ) -> tuple[str, bool]:
+    def _truncate(cls, output: str, limit: int | None = None) -> tuple[str, bool]:
         limit = cls.MAX_OUTPUT_CHARS if limit is None else limit
         if len(output) <= limit:
             return output, False
@@ -101,11 +108,13 @@ class TaskTerminal:
             f"target=$(realpath -e -- {quoted_path}) || {{ "
             "echo 'path does not exist' >&2; exit 66; }\n"
             'case "$target" in "$root"|"$root"/*) ;; '
-            "*) echo 'path escapes task repository' >&2; exit 64 ;; esac\n"
-            + body
+            "*) echo 'path escapes task repository' >&2; exit 64 ;; esac\n" + body
         )
 
     def _log(self, payload: dict[str, Any]) -> None:
+        if self._agent_trace is not None:
+            self._agent_trace.record("terminal.job", **payload)
+            return
         if self._log_path is None:
             return
         self._log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,6 +149,15 @@ class TaskTerminal:
             raw_stdout, raw_stderr = result.output
         else:
             raw_stdout, raw_stderr = result.output, None
+        if self._agent_trace is not None:
+            self._agent_trace.record(
+                "tool.raw_output",
+                command=shell_command,
+                stdout=self._agent_trace.content(raw_stdout or b""),
+                stderr=self._agent_trace.content(raw_stderr or b""),
+                exit_code=result.exit_code,
+                visibility="before_tool_output_truncation",
+            )
         stdout, stdout_truncated = self._truncate(
             self._decode(raw_stdout), output_limit
         )
@@ -156,6 +174,7 @@ class TaskTerminal:
             "output_truncated": stdout_truncated or stderr_truncated,
         }
 
+    @traced_call("tool", checkpoint=True)
     def run_command(
         self,
         command: str,
@@ -168,6 +187,7 @@ class TaskTerminal:
         self._log({"tool": "run_command", **payload})
         return payload
 
+    @traced_call("tool", checkpoint=True)
     def read_file(
         self,
         path: str,
@@ -180,9 +200,9 @@ class TaskTerminal:
         limit = min(max(int(limit), 1), self.MAX_FILE_READ_CHARS)
         script = self._path_guard(
             path,
-            'test -f "$target" || { echo \'path is not a file\' >&2; exit 65; }\n'
+            "test -f \"$target\" || { echo 'path is not a file' >&2; exit 65; }\n"
             'size=$(wc -c < "$target") || exit $?\n'
-            'printf \'%s\\n\' "$size"\n'
+            "printf '%s\\n' \"$size\"\n"
             f'dd if="$target" bs=1 skip={offset} count={limit} status=none | '
             "base64 | tr -d '\\n'",
         )
@@ -207,6 +227,7 @@ class TaskTerminal:
         self._log({"tool": "read_file", **payload})
         return payload
 
+    @traced_call("tool")
     def list_files(
         self,
         path: str = ".",
@@ -222,7 +243,7 @@ class TaskTerminal:
             'if test -f "$target"; then realpath --relative-to="$root" "$target"; '
             "else "
             f'find -P "$target" -maxdepth {max_depth} -type f -print | '
-            f'head -n {max_results} | while IFS= read -r item; do '
+            f"head -n {max_results} | while IFS= read -r item; do "
             'realpath --relative-to="$root" "$item"; done; fi',
         )
         result = self._exec(script, output_limit=500_000)
@@ -237,6 +258,7 @@ class TaskTerminal:
         self._log({"tool": "list_files", **payload})
         return payload
 
+    @traced_call("tool", checkpoint=True)
     def search_files(
         self,
         query: str,
@@ -271,7 +293,7 @@ class TaskTerminal:
             path,
             f"set +o pipefail\n({search}) | head -n {max_results}\n"
             "status=${PIPESTATUS[0]}\n"
-            "test \"$status\" -eq 0 -o \"$status\" -eq 1 -o "
+            'test "$status" -eq 0 -o "$status" -eq 1 -o '
             '"$status" -eq 141',
         )
         result = self._exec(script, output_limit=1_000_000)
@@ -301,6 +323,7 @@ class TaskTerminal:
             if candidate.is_absolute() or ".." in candidate.parts:
                 raise ValueError("patch paths must stay within the task repository")
 
+    @traced_call("tool", checkpoint=True)
     def apply_patch(self, patch: str) -> dict[str, Any]:
         """Apply a unified diff inside the task repository using git apply."""
         if not patch.strip():
@@ -314,9 +337,9 @@ class TaskTerminal:
             "set -e\n"
             f"patch_file={shlex.quote(patch_path)}\n"
             "trap 'rm -f -- \"$patch_file\"' EXIT\n"
-            f"printf %s {shlex.quote(encoded)} | base64 -d > \"$patch_file\"\n"
-            "git apply --check \"$patch_file\"\n"
-            "git apply \"$patch_file\""
+            f'printf %s {shlex.quote(encoded)} | base64 -d > "$patch_file"\n'
+            'git apply --check "$patch_file"\n'
+            'git apply "$patch_file"'
         )
         result = self._exec(script, timeout_sec=120.0, output_limit=200_000)
         payload = {
@@ -329,6 +352,7 @@ class TaskTerminal:
             raise ValueError(result["stderr"].strip() or "git apply failed")
         return payload
 
+    @traced_call("tool")
     def git_status(self) -> dict[str, Any]:
         """Return parsed Git index and working-tree status entries."""
         result = self._exec(
@@ -347,6 +371,7 @@ class TaskTerminal:
         self._log({"tool": "git_status", **payload})
         return payload
 
+    @traced_call("tool")
     def git_diff(
         self,
         path: str | None = None,
@@ -393,8 +418,8 @@ class TaskTerminal:
             f"setsid timeout --signal=TERM --kill-after=5s {job.timeout_sec}s "
             'bash -lc "$1" &\n'
             "child=$!\n"
-            "printf '%s' \"$child\" > \"$pid_file\"\n"
-            "wait \"$child\"\n"
+            'printf \'%s\' "$child" > "$pid_file"\n'
+            'wait "$child"\n'
             "exit $?"
         )
         return ["bash", "-lc", script, "pitbench-command", job.command]
@@ -402,6 +427,16 @@ class TaskTerminal:
     def _append_job_output(
         self, job: _CommandJob, stdout: bytes | str | None, stderr: bytes | str | None
     ) -> None:
+        if self._agent_trace is not None:
+            for channel, chunk in (("stdout", stdout), ("stderr", stderr)):
+                if chunk:
+                    self._agent_trace.record(
+                        "tool.raw_output",
+                        handle=job.handle,
+                        channel=channel,
+                        content=self._agent_trace.content(chunk),
+                        visibility="before_tool_output_truncation",
+                    )
         with job.lock:
             for attribute, chunk in (("stdout", stdout), ("stderr", stderr)):
                 decoded = self._decode(chunk)
@@ -432,11 +467,14 @@ class TaskTerminal:
                 )
                 exec_id = created["Id"]
                 output = api.exec_start(exec_id, stream=True, demux=True)
-                for chunk in output:
-                    if isinstance(chunk, tuple):
-                        self._append_job_output(job, chunk[0], chunk[1])
-                    else:
-                        self._append_job_output(job, chunk, None)
+                try:
+                    for chunk in output:
+                        if isinstance(chunk, tuple):
+                            self._append_job_output(job, chunk[0], chunk[1])
+                        else:
+                            self._append_job_output(job, chunk, None)
+                finally:
+                    close_event_stream(output)
                 job.exit_code = int(api.exec_inspect(exec_id)["ExitCode"])
             else:
                 result = self._container.exec_run(
@@ -468,6 +506,8 @@ class TaskTerminal:
                     "output_truncated": job.output_truncated,
                 }
             )
+            if self._agent_trace is not None:
+                self._agent_trace.checkpoint("command_completed")
 
     def _prune_jobs(self) -> None:
         completed = sorted(
@@ -478,9 +518,8 @@ class TaskTerminal:
             old = completed.pop(0)
             self._jobs.pop(old.handle, None)
 
-    def start_command(
-        self, command: str, timeout_sec: float = 120.0
-    ) -> dict[str, Any]:
+    @traced_call("tool", checkpoint=True)
+    def start_command(self, command: str, timeout_sec: float = 120.0) -> dict[str, Any]:
         """Start a command and return a handle that can be polled or cancelled."""
         if not command.strip():
             raise ValueError("command must not be empty")
@@ -499,8 +538,8 @@ class TaskTerminal:
             )
             self._jobs[handle] = job
         thread = threading.Thread(
-            target=self._run_job,
-            args=(job,),
+            target=copy_context().run,
+            args=(self._run_job, job),
             name=f"pitbench-command-{handle[:8]}",
             daemon=True,
         )
@@ -517,6 +556,7 @@ class TaskTerminal:
             raise ValueError("unknown or expired command handle")
         return job
 
+    @traced_call("tool")
     def poll_command(
         self,
         handle: str,
@@ -550,6 +590,7 @@ class TaskTerminal:
             }
         return payload
 
+    @traced_call("tool", checkpoint=True)
     def cancel_command(self, handle: str) -> dict[str, Any]:
         """Terminate the isolated process group for an async command."""
         job = self._job(handle)
@@ -559,11 +600,11 @@ class TaskTerminal:
             job.cancelled = True
         script = (
             f"pid_file={shlex.quote(job.pid_path)}\n"
-            "for attempt in $(seq 1 20); do test -s \"$pid_file\" && break; "
+            'for attempt in $(seq 1 20); do test -s "$pid_file" && break; '
             "sleep 0.05; done\n"
-            "if test -s \"$pid_file\"; then pid=$(cat \"$pid_file\"); "
-            "kill -TERM -- \"-$pid\" 2>/dev/null || true; sleep 0.2; "
-            "kill -KILL -- \"-$pid\" 2>/dev/null || true; fi"
+            'if test -s "$pid_file"; then pid=$(cat "$pid_file"); '
+            'kill -TERM -- "-$pid" 2>/dev/null || true; sleep 0.2; '
+            'kill -KILL -- "-$pid" 2>/dev/null || true; fi'
         )
         self._container.exec_run(
             ["bash", "-lc", script], workdir=self._workdir, demux=True
@@ -573,15 +614,16 @@ class TaskTerminal:
 
     def close(self) -> None:
         with self._jobs_lock:
-            active = [job for job in self._jobs.values() if not job.done]
+            jobs = list(self._jobs.values())
+            active = [job for job in jobs if not job.done]
         for job in active:
             try:
                 self.cancel_command(job.handle)
             except Exception:
                 pass
-        for job in active:
+        for job in jobs:
             if job.thread is not None:
-                job.thread.join(timeout=2.0)
+                job.thread.join(timeout=None if self._agent_trace is not None else 2.0)
 
 
 class LoopbackMCPServer:
@@ -666,9 +708,7 @@ class LoopbackMCPServer:
             return self._terminal.git_diff(path, staged=staged, max_chars=max_chars)
 
         @mcp.tool(structured_output=True)
-        def start_command(
-            command: str, timeout_sec: float = 120.0
-        ) -> dict[str, Any]:
+        def start_command(command: str, timeout_sec: float = 120.0) -> dict[str, Any]:
             """Start a long command and return a handle for polling and cancellation."""
             return self._terminal.start_command(command, timeout_sec)
 
@@ -689,6 +729,29 @@ class LoopbackMCPServer:
             """Terminate an asynchronous command without affecting other task processes."""
             return self._terminal.cancel_command(handle)
 
+        trace = self._terminal._agent_trace
+        if trace is not None:
+            handler = mcp._mcp_server.request_handlers[CallToolRequest]
+
+            async def recorded_call(request):
+                with trace.call(
+                    "mcp",
+                    name=request.params.name,
+                    inputs=request.params.arguments,
+                    checkpoint=True,
+                ) as call_id:
+                    trace.bind_native_call(
+                        request.params.name, request.params.arguments, call_id
+                    )
+                    result = await handler(request)
+                    trace.record("mcp.result", result=result.root)
+                result.root.meta = {
+                    **(result.root.meta or {}),
+                    "pitbench": {"call_id": call_id, **trace._call_states[call_id]},
+                }
+                return result
+
+            mcp._mcp_server.request_handlers[CallToolRequest] = recorded_call
         return mcp.streamable_http_app()
 
     def __enter__(self) -> LoopbackMCPServer:

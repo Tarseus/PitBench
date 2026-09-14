@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Generator
 
 import docker.errors
+import yaml
 from docker.models.containers import Container
 
 import docker
@@ -35,6 +36,30 @@ class DockerComposeManager:
     CONTAINER_SESSION_LOGS_PATH = "/logs"
     CONTAINER_AGENT_LOGS_PATH = "/agent-logs"
     CONTAINER_TEST_DIR = Path("/tests")
+
+    @staticmethod
+    def nested_sandbox_options() -> dict[str, list[str]]:
+        """Docker settings for a sandbox which creates nested user namespaces.
+
+        Ubuntu's restricted unprivileged-userns policy also applies to explicitly
+        unconfined containers. The distro's bwrap profile grants userns creation;
+        the bundled executable's versioned path does not select it automatically.
+        """
+        restriction = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
+        try:
+            restricted = restriction.read_text().strip() == "1"
+        except FileNotFoundError:
+            restricted = False
+        profile = "bwrap" if restricted else "unconfined"
+        return {
+            "cap_drop": ["ALL"],
+            "cap_add": ["SETGID", "SETUID", "SETFCAP"],
+            "security_opt": [
+                "no-new-privileges:true",
+                "seccomp=unconfined",
+                f"apparmor={profile}",
+            ],
+        }
 
     def __init__(
         self,
@@ -143,20 +168,10 @@ class DockerComposeManager:
             delete=False,
         )
         with stream:
-            stream.write(
-                """services:
-  client:
-    cap_drop:
-      - ALL
-    cap_add:
-      - SETGID
-      - SETUID
-      - SETFCAP
-    security_opt:
-      - no-new-privileges:true
-      - seccomp=unconfined
-      - apparmor=unconfined
-"""
+            yaml.safe_dump(
+                {"services": {"client": self.nested_sandbox_options()}},
+                stream,
+                sort_keys=False,
             )
         self._compose_override_path = Path(stream.name)
         return self._compose_override_path

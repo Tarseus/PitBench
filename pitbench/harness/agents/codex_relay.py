@@ -12,6 +12,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,6 +22,8 @@ from typing import TYPE_CHECKING, BinaryIO
 if TYPE_CHECKING:
     from docker.models.containers import Container
     from docker.models.networks import Network
+
+    from pitbench.harness.utils.agent_trace import AgentTrace
 
 
 class CodexRelayError(RuntimeError):
@@ -82,6 +85,7 @@ class _RelayServer(ThreadingHTTPServer):
         log_path: Path | None,
         proxy_url: str | None,
         budget: _RelayBudget,
+        trace: AgentTrace | None = None,
     ) -> None:
         super().__init__(server_address, _RelayHandler)
         self.auth_path = auth_path
@@ -92,8 +96,12 @@ class _RelayServer(ThreadingHTTPServer):
         self.proxy_url = proxy_url
         self.budget = budget
         self.log_lock = threading.Lock()
+        self.trace = trace
 
     def record(self, payload: dict[str, object]) -> None:
+        if self.trace is not None:
+            self.trace.record("relay.status", **payload)
+            return
         if self.log_path is None:
             return
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -125,6 +133,13 @@ class _RelayHandler(BaseHTTPRequestHandler):
 
     def _error(self, status: int, message: str) -> None:
         body = json.dumps({"error": {"message": message}}).encode()
+        if self.server.trace is not None:
+            self.server.trace.record(
+                "model.rejected",
+                call_id=getattr(self, "_trace_request_id", None),
+                status=status,
+                message=message,
+            )
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -286,11 +301,27 @@ class _RelayHandler(BaseHTTPRequestHandler):
         request_id = getattr(headers, "get", lambda _name: None)("OpenAI-Request-ID")
         if request_id:
             self.send_header("OpenAI-Request-ID", request_id)
+        trace = self.server.trace
+        call_id = getattr(self, "_trace_request_id", None)
+        if trace is not None:
+            trace.record(
+                "model.response_started",
+                call_id=call_id,
+                status=status,
+                provider_request_id=request_id,
+            )
         self.send_header("Connection", "close")
         self.end_headers()
         pending = b""
         total_tokens = 0
         while chunk := source.read(64 * 1024):
+            if trace is not None:
+                trace.record(
+                    "model.response_chunk",
+                    call_id=call_id,
+                    content=trace.content(chunk),
+                    visibility="received_by_relay",
+                )
             pending += chunk
             while b"\n" in pending:
                 line, pending = pending.split(b"\n", 1)
@@ -300,6 +331,13 @@ class _RelayHandler(BaseHTTPRequestHandler):
                 total_tokens = max(total_tokens, self._event_total_tokens(line))
                 self.wfile.write(line + b"\n")
                 self.wfile.flush()
+                if trace is not None:
+                    trace.record(
+                        "model.delivered_chunk",
+                        call_id=call_id,
+                        content=trace.content(line + b"\n"),
+                        visibility="written_to_agent_connection",
+                    )
         if pending:
             if self._event_requests_shell_escalation(pending):
                 self.close_connection = True
@@ -307,10 +345,18 @@ class _RelayHandler(BaseHTTPRequestHandler):
             total_tokens = max(total_tokens, self._event_total_tokens(pending))
             self.wfile.write(pending)
             self.wfile.flush()
+            if trace is not None:
+                trace.record(
+                    "model.delivered_chunk",
+                    call_id=call_id,
+                    content=trace.content(pending),
+                    visibility="written_to_agent_connection",
+                )
         self.close_connection = True
         return True, total_tokens
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        self._trace_request_id = uuid.uuid4().hex
         if self.path != "/responses":
             self._error(404, "relay exposes only POST /responses")
             return
@@ -341,6 +387,13 @@ class _RelayHandler(BaseHTTPRequestHandler):
             self.server.budget.finish(response_tokens)
             return
         body = self.rfile.read(length)
+        if self.server.trace is not None:
+            self.server.trace.record(
+                "model.request",
+                call_id=self._trace_request_id,
+                content=self.server.trace.content(body),
+                visibility="received_by_relay",
+            )
         try:
             payload = json.loads(body)
         except json.JSONDecodeError:
@@ -367,6 +420,13 @@ class _RelayHandler(BaseHTTPRequestHandler):
         if restricted_shell_fields:
             body = json.dumps(payload, separators=(",", ":")).encode()
         forwarded_length = len(body)
+        if self.server.trace is not None:
+            self.server.trace.record(
+                "model.forwarded_request",
+                call_id=self._trace_request_id,
+                content=self.server.trace.content(body),
+                shell_permission_fields_restricted=restricted_shell_fields,
+            )
 
         try:
             access_token, account_id = self._load_auth()
@@ -446,6 +506,12 @@ class _RelayHandler(BaseHTTPRequestHandler):
             self._error(502, f"model relay failed: {error}")
         finally:
             self.server.budget.finish(response_tokens)
+            if self.server.trace is not None:
+                self.server.trace.record(
+                    "model.finished",
+                    call_id=self._trace_request_id,
+                    response_tokens=response_tokens,
+                )
             self.server.record(
                 {
                     "client_ip": self._client_id(),
@@ -480,6 +546,7 @@ class CodexModelRelay(AbstractContextManager["CodexModelRelay"]):
         max_total_tokens: int = 10_000_000,
         max_concurrent_requests: int = 1,
         max_duration_sec: float = 3720.0,
+        trace: AgentTrace | None = None,
     ) -> None:
         self.auth_path = auth_path.expanduser().resolve()
         self.model = model
@@ -493,6 +560,7 @@ class CodexModelRelay(AbstractContextManager["CodexModelRelay"]):
         self.max_total_tokens = max_total_tokens
         self.max_concurrent_requests = max_concurrent_requests
         self.max_duration_sec = max_duration_sec
+        self.trace = trace
         self.container: Container | None = None
         self.container_ip: str | None = None
         self._temporary_log: Path | None = None
@@ -597,6 +665,7 @@ class CodexModelRelay(AbstractContextManager["CodexModelRelay"]):
             log_path=self.log_path,
             proxy_url=self.proxy_url,
             budget=budget,
+            trace=self.trace,
         )
         socket_path.chmod(0o666)
         self._thread = threading.Thread(

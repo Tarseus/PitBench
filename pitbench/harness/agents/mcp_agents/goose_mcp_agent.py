@@ -121,15 +121,46 @@ class GooseMCPAgent(BaseAgent):
 
         try:
             self._logger.debug("Running MCP goose agent...")
-            output = self._client.containers.run(
+            running = self._client.containers.run(
                 self._docker_image_name,
                 environment=env,
                 network=network_name,
                 stdout=True,
                 stderr=True,
-                remove=True,
+                detach=True,
                 volumes=volumes,
             )
+            chunks = []
+            try:
+                if self._agent_trace is not None:
+                    self._agent_trace.record(
+                        "process.started",
+                        container_id=running.id,
+                        image=self._docker_image_name,
+                    )
+                for chunk in running.logs(stream=True, follow=True):
+                    chunks.append(chunk)
+                    if self._agent_trace is not None:
+                        self._agent_trace.record(
+                            "process.output",
+                            container_id=running.id,
+                            channel="combined_stdout_stderr",
+                            content=self._agent_trace.content(chunk),
+                        )
+                output = b"".join(chunks)
+                status = running.wait()["StatusCode"]
+                if self._agent_trace is not None:
+                    self._agent_trace.record(
+                        "process.finished",
+                        container_id=running.id,
+                        exit_code=status,
+                    )
+                if status:
+                    raise ContainerError(
+                        running, status, None, self._docker_image_name, output
+                    )
+            finally:
+                running.remove(force=True)
             self._logger.debug("MCP goose agent finished running.")
         except ContainerError as e:
             self._logger.error(f"Error running agent: {e}")

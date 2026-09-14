@@ -15,6 +15,7 @@ class CodexContainerRunner:
     image: str
     codex_binary: Path
     profile: CodexProfile | None = None
+    recording_dir: Path | None = None
 
     CONTAINER_RUNNER = Path("/opt/pitbench/codex_container_runner.py")
     CONTAINER_CODEX = Path("/opt/pitbench/bin/codex")
@@ -80,6 +81,20 @@ class CodexContainerRunner:
                 [
                     "--mount",
                     self._mount(self.profile.codex_home, self.CONTAINER_PROFILE),
+                ]
+            )
+        if self.recording_dir is not None:
+            command.extend(
+                [
+                    "--mount",
+                    self._mount(
+                        Path(__file__).parents[1] / "utils/recording.py",
+                        Path("/opt/pitbench/recording.py"),
+                    ),
+                    "--mount",
+                    self._mount(
+                        self.recording_dir, Path("/opt/pitbench/recording")
+                    ).removesuffix(",readonly"),
                 ]
             )
         command.extend([self.image, "python3", str(self.CONTAINER_RUNNER)])

@@ -28,6 +28,7 @@ from pitbench.harness.llms.base_llm import (
     ContextLengthExceededError,
     OutputLengthExceededError,
 )
+from pitbench.harness.utils.agent_trace import model_completion
 from pitbench.harness.utils.anthropic_caching import add_anthropic_caching
 from pitbench.harness.utils.logger import logger
 
@@ -154,7 +155,8 @@ class LiteLLM(BaseLLM):
         messages = add_anthropic_caching(messages, self._model_name)
 
         try:
-            response = litellm.completion(
+            response = model_completion(
+                litellm.completion,
                 model=self._model_name,
                 messages=messages,
                 temperature=self._temperature,

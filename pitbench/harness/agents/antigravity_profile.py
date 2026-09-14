@@ -147,3 +147,14 @@ class AntigravityProfile:
             "file_count": self.file_count,
             "size_bytes": self.size_bytes,
         }
+
+    def trace_files(self) -> dict[str, Path]:
+        """The same non-secret files validated for injection into the runner."""
+        return {
+            "profile.yaml": self.root / "profile.yaml",
+            **{
+                str(path.relative_to(self.root)): path
+                for path in self.gemini_config.rglob("*")
+                if path.is_file()
+            },
+        }

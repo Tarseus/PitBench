@@ -194,6 +194,9 @@ Task:
                 image=self._container_runner_image,
                 agy_binary=Path(agy_binary),
                 profile=self._profile,
+                recording_dir=self._agent_trace.native_inbox
+                if self._agent_trace
+                else None,
             )
             self._runner_metadata = self._container_runner.prepare(pull=pull)
             command = [*self._container_runner.command_prefix(), "models"]

@@ -59,7 +59,7 @@ Task:
     )
     _WORKSPACE_PROMPT = """You are improving a solver in an isolated PitBench task.
 
-You are running inside the solver container with the repository at /workspace/repo.
+You are running inside the solver container with the repository at {repository}.
 Use the normal Codex shell, file, search, and patch capabilities. The command sandbox
 allows repository writes. The container network can reach only the PitBench model
 relay, not the public internet. Do not use web search. Start with `git status --short`,
@@ -234,6 +234,9 @@ Task:
                 image=self._container_runner_image,
                 codex_binary=Path(codex_binary),
                 profile=self._profile,
+                recording_dir=self._agent_trace.native_inbox
+                if self._agent_trace
+                else None,
             )
             self._runner_metadata = self._container_runner.prepare()
             return
@@ -376,7 +379,9 @@ Task:
             "--ask-for-approval",
             "never",
         ]
-        if self._profile is not None and self._profile.allow_hooks:
+        if self._agent_trace is not None or (
+            self._profile is not None and self._profile.allow_hooks
+        ):
             command.append("--dangerously-bypass-hook-trust")
         command.extend(
             [
@@ -429,7 +434,8 @@ Task:
             *self._workspace_exec_prefix(runtime=runtime, relay=relay),
             "--",
             self._WORKSPACE_PROMPT.format(
-                instruction=self._render_instruction(instruction)
+                instruction=self._render_instruction(instruction),
+                repository=self._container_workdir,
             ),
         ]
 
@@ -685,6 +691,13 @@ Task:
         stderr = ""
         return_code = 1
         with runtime:
+            if self._agent_trace is not None:
+                self._agent_trace.install_native_hooks(
+                    session.container,
+                    config_path=f"{runtime.codex_home}/hooks.json",
+                    provider="codex",
+                    root=self._container_workdir,
+                )
             if runtime.network is None or runtime.container_ip is None:
                 raise RuntimeError("Codex workspace network was not initialized")
             with CodexModelRelay(
@@ -699,6 +712,7 @@ Task:
                 max_total_tokens=self._relay_max_total_tokens,
                 max_concurrent_requests=self._relay_max_concurrent_requests,
                 max_duration_sec=self._relay_max_duration_sec,
+                trace=self._agent_trace,
             ) as relay:
                 if relay.container_ip is None:
                     raise RuntimeError("Codex relay sidecar address is unavailable")

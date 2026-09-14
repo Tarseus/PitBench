@@ -1,6 +1,7 @@
 import asyncio
 import json
 import warnings
+from contextlib import nullcontext
 from pathlib import Path
 
 from litellm import (
@@ -25,6 +26,7 @@ from pitbench.harness.llms.base_llm import (
     OutputLengthExceededError,
 )
 from pitbench.harness.terminal.tmux_session import TmuxSession
+from pitbench.harness.utils.agent_trace import current_trace, model_completion
 from pitbench.harness.utils.anthropic_caching import add_anthropic_caching
 from pitbench.harness.utils.logger import logger
 
@@ -89,7 +91,8 @@ class MCPTerminus(BaseAgent):
         # TODO(alexgshaw): Remove this once LiteLLM fixes the warning
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning)
-            return completion(
+            return model_completion(
+                completion,
                 model=model,
                 messages=cached_messages,
                 tools=tools,
@@ -105,9 +108,27 @@ class MCPTerminus(BaseAgent):
             openai_tool=tool_call.model_dump()
         )
 
-        result = await mcp_session.call_tool(
-            name=mcp_call.name, arguments=mcp_call.arguments
-        )
+        trace = current_trace()
+        with (
+            trace.call(
+                "tool",
+                name=mcp_call.name,
+                inputs={
+                    "arguments": mcp_call.arguments,
+                    "provider_call_id": tool_call.id,
+                },
+                checkpoint=True,
+            )
+            if trace is not None
+            else nullcontext()
+        ):
+            result = await mcp_session.call_tool(
+                name=mcp_call.name, arguments=mcp_call.arguments
+            )
+            if trace is not None:
+                trace.record(
+                    "tool.result", result=result, visibility="returned_to_caller"
+                )
 
         if not result.content or result.content[0].type != "text":
             raise ValueError("MCP Terminus only supports text content for now.")

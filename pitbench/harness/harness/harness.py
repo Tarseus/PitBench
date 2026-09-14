@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -61,6 +62,7 @@ from pitbench.harness.utils.model_names import (
 )
 from pitbench.harness.utils.pipeline_trace import PipelineTrace
 from pitbench.harness.utils.progress import TaskProgressDisplay
+from pitbench.harness.utils.repository import capture_repository_patch
 from pitbench.harness.utils.run_lock import (
     MULTI_AGENT_GLOBAL_KWARGS_KEY,
     MULTI_AGENT_LEGACY_CONFIGS_KEY,
@@ -659,71 +661,7 @@ class Harness:
                 "agent changed repository HEAD: "
                 f"{actual_repository_head} != {expected_repository_head}"
             )
-        tracked = container.exec_run(
-            [
-                "git",
-                "diff",
-                "--binary",
-                "--no-ext-diff",
-                "HEAD",
-                "--",
-                ".",
-                ":(exclude).pitbench",
-                ":(exclude).pitbench/**",
-            ],
-            workdir=working_dir,
-        )
-        if tracked.exit_code != 0:
-            detail = tracked.output.decode("utf-8", errors="replace")
-            raise RuntimeError(f"candidate patch capture failed: {detail}")
-        if not isinstance(tracked.output, bytes):
-            raise TypeError("container returned a non-bytes patch")
-        untracked_paths = container.exec_run(
-            [
-                "git",
-                "ls-files",
-                "--others",
-                "--exclude-standard",
-                "-z",
-                "--",
-                ".",
-                ":(exclude).pitbench",
-                ":(exclude).pitbench/**",
-            ],
-            workdir=working_dir,
-        )
-        if untracked_paths.exit_code != 0:
-            detail = untracked_paths.output.decode("utf-8", errors="replace")
-            raise RuntimeError(f"candidate path capture failed: {detail}")
-        if not isinstance(untracked_paths.output, bytes):
-            raise TypeError("container returned non-bytes candidate paths")
-
-        patch = bytearray(tracked.output)
-        for raw_path in untracked_paths.output.split(b"\0"):
-            if not raw_path:
-                continue
-            path = raw_path.decode("utf-8", errors="surrogateescape")
-            untracked = container.exec_run(
-                [
-                    "git",
-                    "diff",
-                    "--binary",
-                    "--no-ext-diff",
-                    "--no-index",
-                    "--",
-                    "/dev/null",
-                    path,
-                ],
-                workdir=working_dir,
-            )
-            if untracked.exit_code not in {0, 1}:
-                detail = untracked.output.decode("utf-8", errors="replace")
-                raise RuntimeError(f"untracked patch capture failed: {detail}")
-            if not isinstance(untracked.output, bytes):
-                raise TypeError("container returned a non-bytes untracked patch")
-            patch.extend(untracked.output)
-
-        payload = bytes(patch)
+        payload = capture_repository_patch(container, workdir=working_dir)
         candidate_patch_sha256 = hashlib.sha256(payload).hexdigest()
         candidate_patch.write_bytes(payload)
 
@@ -922,11 +860,13 @@ class Harness:
         if effective_model_name:
             resolved_agent_kwargs["model_name"] = effective_model_name
 
-        return AgentFactory.get_agent(
+        agent = AgentFactory.get_agent(
             agent_name=effective_agent_name,
             import_path=effective_agent_import_path,
             **resolved_agent_kwargs,
         )
+        agent._trace_configuration = resolved_agent_kwargs
+        return agent
 
     def _needs_nested_command_sandbox(self) -> bool:
         """Whether this task container must support Codex bubblewrap nesting."""
@@ -1043,21 +983,20 @@ class Harness:
             self._logger.info("All tasks have been completed in the previous run.")
 
     def _clean_incomplete_task_artifacts(self, task_id: str, task_path: Path) -> None:
-        """Clean up artifacts from incomplete tasks when resuming.
-
-        This removes partial trial directories, logs, session files, and other
-        artifacts that might interfere with re-running the task.
-        """
+        """Archive interrupted evidence before a fresh attempt reuses its paths."""
         task_run_path = self._run_path / task_id
         if task_run_path.exists():
             try:
-                # Remove the entire task directory to clean up all artifacts
-                shutil.rmtree(task_run_path)
-                self._logger.info(f"Cleaned up incomplete artifacts for task {task_id}")
-            except Exception as e:
-                self._logger.warning(
-                    f"Failed to clean up artifacts for task {task_id}: {e}"
+                archive = self._run_path / "interrupted" / uuid.uuid4().hex / task_id
+                archive.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(task_run_path), str(archive))
+                self._logger.info(
+                    "Archived interrupted task %s to %s", task_id, archive
                 )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Could not archive interrupted evidence for task {task_id}"
+                ) from e
 
     def _init_logger(self) -> None:
         # Use append mode when resuming to preserve existing logs
@@ -1385,15 +1324,30 @@ class Harness:
         task = loop.run_in_executor(
             None,
             partial(
-                agent.perform_task,
+                BaseAgent.execute_task,
+                agent,
                 instruction=trial_handler.instruction,
                 session=session,
                 logging_dir=logging_dir,
+                remote_logs=getattr(self, "_remote_build", False),
+                trace_context={
+                    "run_id": self._run_id,
+                    "task_id": trial_handler.task_id,
+                    "trial_name": trial_handler.trial_name,
+                },
                 portkey_metadata=portkey_metadata,
                 portkey_trace_id=portkey_trace_id,
             ),
         )
-        return await asyncio.wait_for(task, timeout=timeout_sec)
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_sec)
+        except asyncio.TimeoutError:
+            # Cancel before asyncio.run waits for the executor to drain. The
+            # worker owns final trace flushing, including its partial output.
+            if agent._agent_trace is not None:
+                agent._agent_trace.record("execution.timeout", timeout_sec=timeout_sec)
+            agent.cancel()
+            raise
 
     def _build_portkey_context(
         self,
@@ -2167,6 +2121,10 @@ class Harness:
                         trial_handler.trial_paths.post_agent_pane_path
                     ),
                     "agent_logging_dir": (trial_handler.trial_paths.agent_logging_dir),
+                    "agent_trace_dir": (
+                        trial_handler.trial_paths.agent_logging_dir.parent
+                        / "agent-trace"
+                    ),
                     "started_at": results.agent_started_at,
                     "ended_at": results.agent_ended_at,
                 },
