@@ -202,6 +202,7 @@ def prepare(
                 "solver_seeds": seeds,
                 "retest_seeds": retest_seeds,
                 "budget_sec": budget,
+                "objective_sense": task["oracle"].get("objective_sense"),
                 "threads": task["evaluation"]["threads"],
                 "search_seed": search_seed,
                 "searcher_version": config["searcher_version"],
@@ -240,11 +241,16 @@ def validate_search(search: dict) -> None:
         )
     if not math.isfinite(search["budget_sec"]) or search["budget_sec"] <= 0:
         raise ValueError("budget must be positive and finite")
-    if search["feedback"] == "normalized_gap" and any(
-        not isinstance(item.get("bks"), (int, float)) or not math.isfinite(item["bks"])
-        for item in search["instances"]
-    ):
-        raise ValueError("quality feedback requires finite BKS references")
+    if search["feedback"] == "normalized_gap":
+        if search.get("objective_sense") not in {"minimize", "maximize"}:
+            raise ValueError("quality feedback requires an objective sense")
+        if any(
+            not isinstance(item.get("bks"), (int, float))
+            or not math.isfinite(item["bks"])
+            or item["bks"] == 0
+            for item in search["instances"]
+        ):
+            raise ValueError("quality feedback requires finite nonzero BKS references")
     for name, domain in search["parameters"].items():
         if domain["type"] == "categorical":
             if domain["default"] not in domain["choices"]:
@@ -388,6 +394,7 @@ def run_search(
         "instances": search["instances"],
         "budget": search["budget_sec"],
         "feedback": search["feedback"],
+        "objective_sense": search.get("objective_sense"),
     }
 
     def summary(baseline, candidate, seeds):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -25,7 +26,7 @@ from pitbench.evaluator.reliability import prepare_boundary_cases
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest
-from pitbench.problem_families.base import ProblemFamilyRegistry
+from pitbench.problem_families.base import ProblemFamilyPlugin, ProblemFamilyRegistry
 from pitbench.problem_families.verification import CVRPFamily
 from pitbench.repositories.base import CommandSpec, RepositoryPlugin
 from pitbench.schema.evaluation import ValidityCode
@@ -44,6 +45,68 @@ def test_problem_family_plugins_register_and_reject_duplicate_names():
 
         class DuplicateFamily(CVRPFamily):
             name = "cvrp"
+
+
+@pytest.mark.parametrize(
+    ("objective_sense", "anchor", "objective", "expected_gap"),
+    [
+        ("minimize", 100.0, 110.0, 0.1),
+        ("minimize", 100.0, 90.0, -0.1),
+        ("maximize", 100.0, 90.0, 0.1),
+        ("maximize", 100.0, 110.0, -0.1),
+        ("minimize", -100.0, -90.0, 0.1),
+        ("minimize", -100.0, -110.0, -0.1),
+        ("maximize", -100.0, -110.0, 0.1),
+        ("maximize", -100.0, -90.0, -0.1),
+    ],
+)
+def test_normalized_gap_respects_objective_sense_and_anchor_sign(
+    objective_sense: str,
+    anchor: float,
+    objective: float,
+    expected_gap: float,
+) -> None:
+    assert ProblemFamilyPlugin.normalized_gap(
+        objective,
+        anchor,
+        objective_sense=objective_sense,
+    ) == pytest.approx(expected_gap)
+
+
+@pytest.mark.parametrize("anchor", [0.0, math.inf, -math.inf, math.nan])
+def test_normalized_gap_rejects_invalid_anchor(anchor: float) -> None:
+    with pytest.raises(
+        ValueError,
+        match="normalized gap requires a finite nonzero anchor",
+    ):
+        ProblemFamilyPlugin.normalized_gap(
+            1.0,
+            anchor,
+            objective_sense="minimize",
+        )
+
+
+@pytest.mark.parametrize("objective", [None, math.inf, -math.inf, math.nan])
+def test_normalized_gap_omits_missing_or_nonfinite_objective(
+    objective: float | None,
+) -> None:
+    assert (
+        ProblemFamilyPlugin.normalized_gap(
+            objective,
+            100.0,
+            objective_sense="minimize",
+        )
+        is None
+    )
+
+
+def test_normalized_gap_requires_explicit_objective_sense() -> None:
+    with pytest.raises(ValueError, match="normalized gap requires an objective sense"):
+        ProblemFamilyPlugin.normalized_gap(
+            110.0,
+            100.0,
+            objective_sense=None,
+        )
 
 
 class ScriptRepository(RepositoryPlugin):

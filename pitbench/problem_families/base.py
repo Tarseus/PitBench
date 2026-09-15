@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel
 
@@ -35,11 +36,18 @@ class ProblemFamilyPlugin(ABC):
         objective: float | None,
         anchor: float | None,
         *,
-        epsilon: float = 1e-12,
+        objective_sense: Literal["minimize", "maximize"] | None,
     ) -> float | None:
-        if objective is None or anchor is None:
+        if objective_sense not in {"minimize", "maximize"}:
+            raise ValueError("normalized gap requires an objective sense")
+        if anchor is None:
             return None
-        return (objective - anchor) / (abs(anchor) + epsilon)
+        if not math.isfinite(anchor) or anchor == 0:
+            raise ValueError("normalized gap requires a finite nonzero anchor")
+        if objective is None or not math.isfinite(objective):
+            return None
+        objective_sense_direction = 1 if objective_sense == "minimize" else -1
+        return objective_sense_direction * (objective - anchor) / abs(anchor)
 
 
 class ProblemFamilyRegistry:

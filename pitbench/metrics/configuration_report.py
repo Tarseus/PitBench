@@ -19,7 +19,12 @@ def _number(value) -> bool:
 
 
 def run_feedback(
-    record: dict | None, *, feedback: str, budget: float, bks: float | None
+    record: dict | None,
+    *,
+    feedback: str,
+    budget: float,
+    bks: float | None,
+    objective_sense: str | None,
 ) -> tuple[float | None, str | None]:
     if record is None:
         return None, "missing"
@@ -40,7 +45,11 @@ def run_feedback(
         objective = verification.get("objective")
         if not _number(objective) or not _number(bks):
             return None, "unavailable_objective_or_reference"
-        value = ProblemFamilyPlugin.normalized_gap(objective, bks)
+        value = ProblemFamilyPlugin.normalized_gap(
+            objective,
+            bks,
+            objective_sense=objective_sense,
+        )
         return (value, None) if _number(value) else (None, "nonfinite_gap")
     if feedback == "capped_optimal_time":
         if termination == SolverTermination.TIME_LIMIT:
@@ -64,6 +73,7 @@ def paired_panel(
     seeds: list[int],
     budget: float,
     feedback: str,
+    objective_sense: str | None,
 ) -> dict:
     """Never replace absent runs or average only the successful pairs."""
     expected = {(instance["id"], seed) for instance in instances for seed in seeds}
@@ -96,6 +106,7 @@ def paired_panel(
                 "feedback": feedback,
                 "budget": budget,
                 "bks": instance.get("bks"),
+                "objective_sense": objective_sense,
             }
             baseline, baseline_error = run_feedback(defaults.get(key), **kwargs)
             value, error = run_feedback(candidates.get(key), **kwargs)

@@ -790,6 +790,13 @@ class LocalProcessJudge:
         )
         if objective is not None and not math.isfinite(objective):
             return failure(RunStatus.INVALID, "non-finite objective", parsed)
+        normalized_gap = None
+        if case.anchor is not None:
+            normalized_gap = self.family.normalized_gap(
+                objective,
+                case.anchor,
+                objective_sense=self.task.oracle.objective_sense,
+            )
         return RunObservation(
             task_id=self.task.task_id,
             code_state=state,
@@ -804,7 +811,7 @@ class LocalProcessJudge:
             valid=verified.feasible,
             objective=objective,
             optimal_or_bks=case.anchor,
-            normalized_gap=self.family.normalized_gap(objective, case.anchor),
+            normalized_gap=normalized_gap,
             primal_bound=parsed.primal_bound,
             dual_bound=parsed.dual_bound,
             wall_time_sec=parsed.wall_time_sec,

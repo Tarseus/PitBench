@@ -34,8 +34,8 @@ def record(instance="a", seed=1, objective=100, **fields):
     }
 
 
-def test_pairing_uses_keys_and_retains_negative_and_zero_reference_gaps():
-    instances = [{"id": "a", "bks": 100}, {"id": "b", "bks": 0}]
+def test_pairing_uses_keys_and_retains_negative_reference_gaps():
+    instances = [{"id": "a", "bks": 100}, {"id": "b", "bks": -100}]
     baseline = [record(name, seed) for name in ("a", "b") for seed in (1, 2)]
     candidates = [
         record("b", 2),
@@ -50,6 +50,7 @@ def test_pairing_uses_keys_and_retains_negative_and_zero_reference_gaps():
         seeds=[1, 2],
         budget=10,
         feedback="normalized_gap",
+        objective_sense="minimize",
     )
     assert result["complete"] and result["mean_degradation"] == pytest.approx(0)
     assert result["pairs"][0]["degradation"] == pytest.approx(0.1)
@@ -62,6 +63,7 @@ def test_missing_or_failed_pair_does_not_change_the_averaging_population():
         seeds=[1, 2],
         budget=10,
         feedback="normalized_gap",
+        objective_sense="minimize",
     )
     baseline = [record(seed=1), record(seed=2)]
     result = paired_panel(baseline, [record(seed=2, objective=120)], **kwargs)
@@ -113,7 +115,11 @@ def test_exact_time_feedback_distinguishes_censoring_and_failures(
     change, value, reason
 ):
     assert run_feedback(
-        record(**change), feedback="capped_optimal_time", budget=10, bks=None
+        record(**change),
+        feedback="capped_optimal_time",
+        budget=10,
+        bks=None,
+        objective_sense=None,
     ) == (value, reason)
 
 
@@ -124,6 +130,7 @@ def search():
         "task_id": "example",
         "budget_sec": 10,
         "feedback": "normalized_gap",
+        "objective_sense": "minimize",
         "instances": [{"id": "a", "bks": 100}],
         "solver_seeds": [1, 2],
         "retest_seeds": [3, 4],
@@ -243,6 +250,17 @@ def test_solver_seed_sets_must_be_disjoint(search):
     validate_search(search)
     search["retest_seeds"] = [2, 3]
     with pytest.raises(ValueError, match="disjoint"):
+        validate_search(search)
+
+
+def test_quality_feedback_requires_objective_sense_and_nonzero_anchor(search):
+    search["objective_sense"] = None
+    with pytest.raises(ValueError, match="requires an objective sense"):
+        validate_search(search)
+
+    search["objective_sense"] = "minimize"
+    search["instances"][0]["bks"] = 0
+    with pytest.raises(ValueError, match="finite nonzero BKS"):
         validate_search(search)
 
 
