@@ -17,7 +17,6 @@ from typing import Callable
 import docker.errors
 
 import docker
-from adapters.pitbench.adapter import PitBenchAdapter
 from pitbench.cli.evaluate_config import (
     EvaluationConfig,
     resolve_config_path,
@@ -64,6 +63,9 @@ class _DoctorContext:
     config_path: Path | None
     config: EvaluationConfig
     task: TaskRecord | None
+
+
+_REQUIRED_AGENT_RUNTIME_TOOLS = ("tmux", "asciinema")
 
 
 def _check(
@@ -253,6 +255,174 @@ def _private_assets_check(context: _DoctorContext) -> DoctorCheck:
     )
 
 
+def _global_git_config(name: str) -> str | None:
+    result = subprocess.run(
+        ["git", "config", "--global", "--get", name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    value = result.stdout.strip()
+    return value or None
+
+
+def _github_source_access_check(clone_url: str) -> DoctorCheck:
+    proxy = _global_git_config("http.proxy")
+    http_version = _global_git_config("http.version")
+    transport = "via configured Git proxy" if proxy else "direct"
+    if http_version:
+        transport += f", {http_version}"
+    with tempfile.TemporaryDirectory(prefix="pitbench-doctor-git-") as temporary:
+        try:
+            result = subprocess.run(
+                ["git", "ls-remote", "--heads", clone_url],
+                cwd=temporary,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return _check(
+                CheckStatus.FAIL,
+                "GitHub source access",
+                f"could not reach {clone_url} ({transport}): {error}",
+                "Configure a working GitHub proxy or direct network path, then "
+                "rerun doctor.",
+            )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or "git ls-remote returned a nonzero status"
+        return _check(
+            CheckStatus.FAIL,
+            "GitHub source access",
+            f"{clone_url} failed ({transport}): {detail}",
+            "Configure a working GitHub proxy or direct network path, then rerun "
+            "doctor.",
+        )
+    return _check(
+        CheckStatus.PASS,
+        "GitHub source access",
+        f"{clone_url} reachable ({transport})",
+    )
+
+
+def _repository_source_check(
+    context: _DoctorContext,
+    access_cache: dict[str, DoctorCheck],
+) -> DoctorCheck:
+    if context.task is None:
+        return _check(
+            CheckStatus.WARN,
+            "repository source",
+            "not checked because the task config is invalid",
+        )
+    task_id = context.task.task.task_id
+    resources = context.config.resources_for(task_id)
+    if resources.repository_source is not None:
+        source = resolve_repository_path(
+            context.repository_root, resources.repository_source
+        )
+        return _check(
+            CheckStatus.FAIL,
+            "repository source",
+            f"local repository snapshot override is configured: {source}",
+            "Remove tasks."
+            + task_id
+            + ".repository_source so the release is fetched from its GitHub "
+            "commit.",
+        )
+    clone_url = context.task.task.repository.clone_url
+    if not clone_url.startswith("https://github.com/"):
+        return _check(
+            CheckStatus.PASS,
+            "repository source",
+            f"task config source: {clone_url}",
+        )
+    if clone_url not in access_cache:
+        access_cache[clone_url] = _github_source_access_check(clone_url)
+    return access_cache[clone_url]
+
+
+def _configuration_robustness_check(
+    repository_root: Path, config: EvaluationConfig
+) -> DoctorCheck:
+    configuration = config.configuration_robustness
+    if not configuration.enabled:
+        return _check(
+            CheckStatus.WARN,
+            "Configuration Robustness",
+            "disabled in the evaluation configuration",
+            "Remove configuration_robustness.enabled: false or pass the explicit "
+            "no-configuration-robustness option only when this omission is "
+            "intentional.",
+        )
+    experiment_config = resolve_repository_path(
+        repository_root, configuration.experiment_config
+    )
+    if not experiment_config.is_file():
+        return _check(
+            CheckStatus.FAIL,
+            "Configuration Robustness",
+            f"experiment config does not exist: {experiment_config}",
+            "Restore the configured experiment file, then rerun doctor.",
+        )
+    return _check(
+        CheckStatus.PASS,
+        "Configuration Robustness",
+        "enabled; release-only collector scheduled after candidate evaluation",
+    )
+
+
+def _agent_runtime_check(reference: str, client: object) -> DoctorCheck:
+    try:
+        output = client.containers.run(  # type: ignore[attr-defined]
+            reference,
+            [
+                "-lc",
+                "command -v tmux; command -v asciinema",
+            ],
+            entrypoint=["/bin/sh"],
+            network_disabled=True,
+            remove=True,
+            stdout=True,
+            stderr=True,
+        )
+        rendered = (
+            output.decode(errors="replace")
+            if isinstance(output, bytes)
+            else str(output)
+        )
+        found = {
+            line.strip() for line in rendered.splitlines() if line.strip()
+        }
+        missing = [
+            tool
+            for tool in _REQUIRED_AGENT_RUNTIME_TOOLS
+            if not any(line.endswith(f"/{tool}") for line in found)
+        ]
+        if missing:
+            return _check(
+                CheckStatus.FAIL,
+                "agent runtime",
+                f"missing required tools: {', '.join(missing)}",
+                "Rebuild or replace the configured agent image with tmux and "
+                "asciinema installed, then rerun doctor.",
+            )
+        return _check(
+            CheckStatus.PASS,
+            "agent runtime",
+            "tmux and asciinema are available",
+        )
+    except Exception as error:
+        return _check(
+            CheckStatus.FAIL,
+            "agent runtime",
+            f"could not inspect tmux/asciinema: {error}",
+            "Verify the configured agent image can start /bin/sh, then rerun "
+            "doctor.",
+        )
+
+
 def _docker_check(
     client_factory: Callable[[], docker.DockerClient] = docker.from_env,
 ) -> tuple[object | None, dict, DoctorCheck]:
@@ -322,7 +492,9 @@ def _image_reference_check(
 
 
 def _image_checks(
-    context: _DoctorContext, client: object | None
+    context: _DoctorContext,
+    client: object | None,
+    runtime_cache: dict[str, DoctorCheck] | None = None,
 ) -> tuple[list[DoctorCheck], list[str], bool]:
     if context.task is None:
         return (
@@ -337,6 +509,8 @@ def _image_checks(
             False,
         )
     task_id = context.task.task.task_id
+    if runtime_cache is None:
+        runtime_cache = {}
     resources = context.config.resources_for(task_id)
     references = {
         "agent": resources.agent_image or context.task.task.repository.agent_image,
@@ -395,6 +569,10 @@ def _image_checks(
             )
         else:
             checks.append(_check(CheckStatus.PASS, f"{kind} image", "present locally"))
+            if kind == "agent":
+                if reference not in runtime_cache:
+                    runtime_cache[reference] = _agent_runtime_check(reference, client)
+                checks.append(runtime_cache[reference])
     ghcr = [ref for ref in references.values() if ref and ref.startswith("ghcr.io/")]
     return checks, ghcr, references_valid
 
@@ -790,7 +968,7 @@ def _container_runner_check(
         profile=profile,
     )
     try:
-        metadata = runner.prepare(pull=False)
+        metadata = runner.prepare(pull=True)
     except Exception as error:
         return _check(
             CheckStatus.WARN,
@@ -859,6 +1037,8 @@ def run_doctor(
     context, context_checks = _load_context(root, config_path, task_id)
     checks.extend(context_checks)
     checks.append(_private_assets_check(context))
+    checks.append(_repository_source_check(context, {}))
+    checks.append(_configuration_robustness_check(root, context.config))
     client, docker_info, docker_result = _docker_check(client_factory)
     checks.append(docker_result)
     image_checks, ghcr_references, _ = _image_checks(context, client)
@@ -883,6 +1063,8 @@ def evaluation_checks(
     """Check every task before spending agent time; reuse the doctor's checks."""
     checks: list[DoctorCheck] = []
     catalog = TaskCatalog(repository_root)
+    source_cache: dict[str, DoctorCheck] = {}
+    runtime_cache: dict[str, DoctorCheck] = {}
     client, _, docker_check = _docker_check(client_factory)
     checks.append(docker_check)
     try:
@@ -893,23 +1075,11 @@ def evaluation_checks(
                 checks.append(_check(CheckStatus.FAIL, task_id, str(error)))
                 continue
             context = _DoctorContext(repository_root, None, config, record)
-            task_checks = [_private_assets_check(context)]
-            task_checks.extend(_image_checks(context, client)[0])
-            resources = config.resources_for(task_id)
-            if resources.repository_source is not None:
-                source = resolve_repository_path(
-                    repository_root, resources.repository_source
-                )
-                try:
-                    PitBenchAdapter.validate_repository(record.task, source)
-                except (OSError, ValueError, subprocess.SubprocessError) as error:
-                    task_checks.append(
-                        _check(CheckStatus.FAIL, "repository source", str(error))
-                    )
-                else:
-                    task_checks.append(
-                        _check(CheckStatus.PASS, "repository source", str(source))
-                    )
+            task_checks = [
+                _private_assets_check(context),
+                _repository_source_check(context, source_cache),
+            ]
+            task_checks.extend(_image_checks(context, client, runtime_cache)[0])
             protocol = record.task.evaluation
             task_checks.append(
                 _check(
@@ -921,13 +1091,7 @@ def evaluation_checks(
                     f"representation transformations={'enabled' if protocol.representation_robustness else 'disabled'}",
                 )
             )
-            task_checks.append(
-                _check(
-                    CheckStatus.WARN,
-                    "Configuration Robustness",
-                    "separate release-only collector; not included in candidate evaluation",
-                )
-            )
+            task_checks.append(_configuration_robustness_check(repository_root, config))
             checks.extend(
                 DoctorCheck(
                     item.status, f"{task_id} / {item.name}", item.detail, item.recovery
