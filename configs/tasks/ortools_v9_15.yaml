@@ -19,10 +19,13 @@ repository:
   language: cpp_java
   plugin: pitbench.repositories.plugins:OrToolsRepositoryPlugin
   editable_paths: [ortools, build]
+  agent_image: sha256:6afed80c1f5d1a7c27c4f83f4fa1a577b950f1340e2f51133113114e7d01a537
+  judge_image: sha256:6afed80c1f5d1a7c27c4f83f4fa1a577b950f1340e2f51133113114e7d01a537
 oracle:
     kind: independent_measurement
     source: private://oracles/ortools_v9_15.json
 evaluation:
+  performance_protocol: verified_cp_sat_model_construction
   budgets_sec: [1.0]
   primary_budget_sec: 1.0
   solver_seeds: [0]

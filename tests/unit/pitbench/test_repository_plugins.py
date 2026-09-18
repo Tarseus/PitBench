@@ -2,37 +2,53 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from pitbench.repositories.base import (
     BuildKind,
+    CommandSpec,
     RepositoryPlugin,
     RepositoryPluginRegistry,
     SolverRunSpec,
 )
-from pitbench.repositories.plugins import HighsRepositoryPlugin, PyVRPRepositoryPlugin
+from pitbench.repositories.plugins import (
+    ChocoRepositoryPlugin,
+    HighsRepositoryPlugin,
+    PyVRPRepositoryPlugin,
+)
 from pitbench.solver_drivers.run import PyVRPDriver, SolverDriver
+
+ROOT = Path(__file__).resolve().parents[3]
 
 # Tests consolidated from tests/unit/pitbench/test_solver_drivers.py
 
 
 @pytest.mark.parametrize(
-    ("solver", "class_name"),
+    ("plugin_name", "driver_name", "class_name"),
     [
-        ("pyvrp", "PyVRPRepositoryPlugin"),
-        ("vroom", "VroomRepositoryPlugin"),
-        ("highs", "HighsRepositoryPlugin"),
-        ("choco", "ChocoRepositoryPlugin"),
-        ("ortools", "OrToolsRepositoryPlugin"),
+        ("pyvrp", "pyvrp", "PyVRPRepositoryPlugin"),
+        ("vroom", "vroom", "VroomRepositoryPlugin"),
+        ("highs", "highs", "HighsRepositoryPlugin"),
+        ("choco", "choco", "ChocoRepositoryPlugin"),
+        ("ortools", "ortools_model_build", "OrToolsRepositoryPlugin"),
+        (
+            "ortools",
+            "ortools_cp_sat_exact",
+            "OrToolsCpSatExactRepositoryPlugin",
+        ),
     ],
 )
-def test_repository_plugins_resolve_to_runnable_drivers(solver, class_name, tmp_path):
+def test_repository_plugins_resolve_to_runnable_drivers(
+    plugin_name, driver_name, class_name, tmp_path
+):
     plugin = RepositoryPluginRegistry.load(
         f"pitbench.repositories.plugins:{class_name}"
     )
-    assert plugin.name == solver
+    assert plugin.name == plugin_name
+    assert plugin.driver_name == driver_name
     run = SolverRunSpec(
         instance_path=tmp_path / "instance.json",
         output_path=tmp_path / "result.json",
@@ -92,6 +108,140 @@ def test_collection_backends_share_validated_interface():
 
     with pytest.raises(TypeError, match="is not a CollectionBackend"):
         InvalidRepository().load_collection_backend()
+
+
+def test_choco_builds_official_source_and_generic_jvm_adapter() -> None:
+    plugin = ChocoRepositoryPlugin()
+
+    validation = plugin.build_commands(BuildKind.VALIDATION)
+    performance = plugin.build_commands(BuildKind.PERFORMANCE)
+
+    assert validation[0] == performance[0] == CommandSpec(
+        argv=["mkdir", "-p", "/tmp/choco-maven"]
+    )
+    assert validation[1] == performance[1] == CommandSpec(
+        argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/choco-maven"]
+    )
+    assert validation[2] == CommandSpec(
+        argv=["mvn", "-q", "package", "-DskipTests"],
+        env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/choco-maven"},
+    )
+    assert performance[2] == CommandSpec(
+        argv=["mvn", "-q", "package", "-DskipTests"],
+        env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/choco-maven"},
+    )
+    assert (
+        validation[3].argv
+        == performance[3].argv
+        == [
+            "python3",
+            "/opt/pitbench-jvm/runner.py",
+            "compile",
+            "--solver",
+            "choco",
+        ]
+    )
+    assert plugin.agent_environment is not None
+    assert plugin.agent_environment.image.endswith("eclipse-temurin-17")
+
+
+def test_highs_driver_uses_python3() -> None:
+    assert HighsRepositoryPlugin().driver_python == "python3"
+
+
+def test_choco_driver_uses_python3() -> None:
+    assert ChocoRepositoryPlugin().driver_python == "python3"
+
+
+def test_vroom_build_uses_its_source_makefile_without_replacing_flags() -> None:
+    from pitbench.repositories.plugins import VroomRepositoryPlugin
+
+    validation = VroomRepositoryPlugin().build_commands(BuildKind.VALIDATION)
+    performance = VroomRepositoryPlugin().build_commands(BuildKind.PERFORMANCE)
+
+    assert validation == [
+        CommandSpec(
+            argv=["make", "-j1", "CXXFLAGS+=-O1 -g -fsanitize=address,undefined"],
+            cwd="src",
+        )
+    ]
+    assert performance == [CommandSpec(argv=["make", "-j1"], cwd="src")]
+
+
+def test_ortools_build_reuses_evaluator_owned_dependency_cache() -> None:
+    from pitbench.repositories.plugins import (
+        OrToolsCpSatExactRepositoryPlugin,
+        OrToolsRepositoryPlugin,
+    )
+
+    prepare_cache, prepare_maven, copy_maven, configure, build, compile_adapter = (
+        OrToolsRepositoryPlugin().build_commands(BuildKind.PERFORMANCE)
+    )
+
+    assert prepare_cache.argv == ["mkdir", "-p", "/tmp/ortools-deps"]
+    assert prepare_maven.argv == ["mkdir", "-p", "/tmp/ortools-maven"]
+    assert copy_maven.argv == [
+        "cp",
+        "-a",
+        "/root/.m2/repository/.",
+        "/tmp/ortools-maven",
+    ]
+    assert configure.argv[:6] == ["cmake", "-S", ".", "-B", "build", "-G"]
+    assert "-DFETCHCONTENT_BASE_DIR=/tmp/ortools-deps" in configure.argv
+    assert "-DCMAKE_BUILD_TYPE=Release" in configure.argv
+    assert compile_adapter.argv == [
+        "python3",
+        "/opt/pitbench-jvm/runner.py",
+        "compile",
+        "--solver",
+        "ortools_model_build",
+    ]
+    assert "-DFETCHCONTENT_SOURCE_DIR_ZLIB=/opt/ortools-deps/zlib-src" in configure.argv
+    assert (
+        "-DFETCHCONTENT_SOURCE_DIR_BZIP2=/opt/ortools-deps/bzip2-src" in configure.argv
+    )
+    assert "-DFETCHCONTENT_SOURCE_DIR_ABSL=/opt/ortools-deps/absl-src" in configure.argv
+    assert (
+        "-DFETCHCONTENT_SOURCE_DIR_PROTOBUF=/opt/ortools-deps/protobuf-src"
+        in configure.argv
+    )
+    assert "-DFETCHCONTENT_SOURCE_DIR_RE2=/opt/ortools-deps/re2-src" in configure.argv
+    assert (
+        "-DFETCHCONTENT_SOURCE_DIR_EIGEN3=/opt/ortools-deps/eigen3-src"
+        in configure.argv
+    )
+    assert "-DBUILD_JAVA=ON" in configure.argv
+    assert "-DBUILD_DEPS=ON" in configure.argv
+    assert "-DBUILD_TESTING=OFF" in configure.argv
+    assert "-DUSE_GUROBI=ON" in configure.argv
+    assert "-DBUILD_SAMPLES=OFF" in configure.argv
+    assert "-DBUILD_EXAMPLES=OFF" in configure.argv
+    assert build.argv == [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "java_package",
+        "-j6",
+    ]
+    assert build.env == {"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/ortools-maven"}
+
+    exact_commands = OrToolsCpSatExactRepositoryPlugin().build_commands(
+        BuildKind.PERFORMANCE
+    )
+    assert OrToolsCpSatExactRepositoryPlugin().driver_python == "python3"
+    assert exact_commands[-1].argv == [
+        "python3",
+        "/opt/pitbench-jvm/runner.py",
+        "compile",
+        "--solver",
+        "ortools_cp_sat",
+    ]
+
+
+def test_each_target_plugin_has_an_image_definition() -> None:
+    for name in ("pyvrp", "vroom", "highs", "choco", "ortools"):
+        assert (ROOT / "docker/solver-images" / name / "Dockerfile").is_file()
 
 
 class _LegacyRoute:

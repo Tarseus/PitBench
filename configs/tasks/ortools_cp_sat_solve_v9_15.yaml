@@ -1,0 +1,45 @@
+schema_version: "3.0"
+task_id: ortools_cp_sat_solve_v9_15
+release:
+  repository: google/or-tools
+  version: "9.15"
+  tag: v9.15
+  base_commit: 551ad10d94835c99e5e1e684500d3db398c0e345
+  released_at: 2026-01-12T15:38:30Z
+  url: https://github.com/google/or-tools/releases/tag/v9.15
+task_type: exact_solver
+problem_family: cp
+optimization_scope: cp_sat_solve_efficiency
+instruction: >-
+  Improve CP-SAT solving performance while preserving the fixed model construction,
+  feasibility, and objective semantics. Use only the visible development instances.
+information_regime: snapshot_only
+repository:
+  clone_url: https://github.com/google/or-tools.git
+  language: cpp_java
+  plugin: pitbench.repositories.plugins:OrToolsCpSatExactRepositoryPlugin
+  editable_paths: [ortools, build]
+  agent_image: pitbench-ortools:cp-sat-task-v4
+  judge_image: sha256:0880a07ed9535cccb43e60af252763b450c0ed4969f2bf11c111a0ee29a2718b
+oracle:
+  kind: best_known_solution
+  source: private://oracles/ortools_cp_sat_solve_v9_15.yaml
+  source_sha256: a0045ab296decea3e031fdb3802b4b79029eb0a4beb0182e8a71e31b2d8c2a7e
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  budgets_sec: [10.0, 30.0]
+  primary_budget_sec: 30.0
+  solver_seeds: [0, 1, 2]
+  threads: 8
+  exact_time_basis: solve_wall_time
+  verifier: exact_target
+instance_sets:
+  - name: agent_dev
+    kind: agent_dev
+    instance_set_config: configs/instance_sets/ortools_cp_sat_solve_v9_15_dev.yaml
+    size: 5
+  - name: judge_id
+    kind: judge_id
+    instance_set_config: private://hidden_instances/ortools_cp_sat_solve_v9_15/judge_id.yaml
+    size: 30

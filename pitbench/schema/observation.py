@@ -20,6 +20,31 @@ class RunStatus(str, Enum):
     NO_SOLUTION = "no_solution"
     SOLVER_ERROR = "solver_error"
     OUT_OF_MEMORY = "out_of_memory"
+    INFRASTRUCTURE_ERROR = "infrastructure_error"
+
+
+class SolverTermination(str, Enum):
+    OPTIMAL = "optimal"
+    TIME_LIMIT = "time_limit"
+    ERROR = "solver_error"
+    OTHER = "other"
+
+
+class ExpectedRun(BaseModel):
+    task_id: str
+    code_state: CodeState
+    instance_set: str
+    instance_set_kind: str
+    instance_id: str
+    solver_seed: int
+    budget_sec: float = Field(gt=0)
+    equivalence_parent_id: str | None = None
+    test_suite: str | None = None
+
+
+class ExpectedRunGrid(BaseModel):
+    task_id: str
+    runs: list[ExpectedRun]
 
 
 class RunObservation(BaseModel):
@@ -37,6 +62,7 @@ class RunObservation(BaseModel):
     status: RunStatus
     valid: bool
     objective: float | None = None
+    reported_objective: float | None = None
     optimal_or_bks: float | None = None
     normalized_gap: float | None = None
     primal_bound: float | None = None
@@ -50,6 +76,7 @@ class RunObservation(BaseModel):
     peak_rss_bytes: int | None = None
     resource_scope: str | None = None
     solver_status: str | None = None
+    solver_termination: SolverTermination | None = None
     test_suite: str | None = None
     process_exit_code: int | None = None
     problem_scale: float | None = Field(default=None, gt=0)

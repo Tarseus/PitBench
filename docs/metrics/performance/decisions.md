@@ -15,9 +15,11 @@
   `20260824`.
 - Report the method as `instance bootstrap over per-instance seed means`.
 
-## Deferred Generalization replacement
+## Generalization boundary
 
-- Keep the hidden-shift acceptance logic in `PerformanceDecision` temporarily.
-- Do not treat that logic as part of Frozen Performance semantics.
-- Distributional Generalization must formally replace and take ownership of the
-  hidden-shift acceptance logic when that metric is developed.
+- Performance uses only original `judge_id` observations: observations with no
+  equivalence parent and no separate test-suite identity.
+- `judge_shift` observations remain retained in the evaluator output, but they do
+  not contribute to the Performance estimand or classification.
+- Distributional Generalization may consume `judge_shift` observations when that
+  dimension is developed. It is not a dependency of the Performance protocol.

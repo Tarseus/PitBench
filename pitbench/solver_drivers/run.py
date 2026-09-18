@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import ClassVar
 
-from pitbench.repositories.base import SolverTermination
+from pitbench.schema.observation import SolverTermination
 from pitbench.solver_drivers.common import (
     ParameterRejected,
     append_trajectory,
@@ -504,13 +504,33 @@ class HighsDriver(SolverDriver):
                 reason = "out_of_memory"
             elif status and "error" in status.lower():
                 reason = "solver_error"
-            # A finite primal objective identifies an incumbent. A native time
-            # limit with one is a normal stop, not the outer watchdog timeout.
-            has_solution = objective is not None
-            write_solution(
-                args.output,
-                {"raw_solution": raw, "objective": objective, "solver_status": status},
+            normalized_status = status.lower() if status is not None else ""
+            solver_termination = (
+                SolverTermination.OPTIMAL
+                if normalized_status == "optimal"
+                else SolverTermination.TIME_LIMIT
+                if "time limit" in normalized_status
+                else SolverTermination.ERROR
+                if "error" in normalized_status
+                else SolverTermination.OTHER
             )
+            # Exact Performance accepts only a solver-optimal result as a
+            # candidate solution. A time-limited MIP solve can write a fractional
+            # relaxation with a finite primal bound; it is an ordinary unsolved
+            # run, not a candidate for Qualification verification.
+            has_solution = (
+                objective is not None
+                and solver_termination == SolverTermination.OPTIMAL
+            )
+            if has_solution:
+                write_solution(
+                    args.output,
+                    {
+                        "raw_solution": raw,
+                        "objective": objective,
+                        "solver_status": status,
+                    },
+                )
             append_trajectory(
                 args.trajectory,
                 {"time_sec": time.perf_counter() - started, "objective": objective},
@@ -526,6 +546,7 @@ class HighsDriver(SolverDriver):
                 dual_bound=dual,
                 nodes=int(nodes) if nodes is not None else None,
                 solver_status=status,
+                solver_termination=solver_termination,
                 **resources,
             )
         except Exception as exc:
@@ -581,6 +602,25 @@ class OrToolsModelBuildDriver(SolverDriver):
         args = parser(trajectory=False).parse_args(argv)
         execute(
             environment_key="PITBENCH_ORTOOLS_JAVA_RUNNER",
+            instance=args.instance,
+            output=args.output,
+            trajectory=None,
+            seed=args.seed,
+            budget=args.budget,
+            threads=args.threads,
+        )
+
+
+class OrToolsCpSatExactDriver(SolverDriver):
+    """Invoke the fixed-proto parallel CP-SAT solving adapter."""
+
+    name = "ortools_cp_sat_exact"
+
+    @staticmethod
+    def main(argv: list[str] | None = None) -> None:
+        args = parser(trajectory=False).parse_args(argv)
+        execute(
+            environment_key="PITBENCH_ORTOOLS_CP_SAT_RUNNER",
             instance=args.instance,
             output=args.output,
             trajectory=None,

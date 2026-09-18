@@ -1,4 +1,4 @@
-ARG PYTHON_BASE_IMAGE=python:3.13-trixie
+ARG PYTHON_BASE_IMAGE=public.ecr.aws/docker/library/python:3.13-trixie@sha256:785ba3c54682e15fd75186dd1732d88389884e9b6f7311871674c18e5d32a1f1
 FROM ${PYTHON_BASE_IMAGE}
 
 ARG DEBIAN_MIRROR=http://deb.debian.org/debian

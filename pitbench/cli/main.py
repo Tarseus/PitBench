@@ -19,6 +19,7 @@ from pitbench.cli.evaluate_config import (
     resolve_repository_path,
 )
 from pitbench.cli.profiles import profiles_app
+from pitbench.cli.solver_images import build_solver_image
 from pitbench.cli.task_image import prepare_task_image
 from pitbench.evaluator.evaluator import PitBenchEvaluator
 from pitbench.evaluator.storage import ObservationStore
@@ -30,7 +31,7 @@ from pitbench.harness.handlers.trial_handler import TrialHandler
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
 from pitbench.instances import materialize_instance_set
 from pitbench.metrics.performance_report import (
-    compute_performance_report,
+    compute_task_performance_report,
     format_performance_report,
 )
 from pitbench.metrics.reliability_report import (
@@ -41,12 +42,15 @@ from pitbench.metrics.resource_report import (
     compute_resource_report,
     format_resource_report,
 )
-from pitbench.schema.task import InstanceSetKind, PitBenchTask
+from pitbench.schema.observation import ExpectedRunGrid
+from pitbench.schema.task import InstanceSetKind, PerformanceProtocol, PitBenchTask
 from pitbench.tasks import TaskCatalog, TaskNotFoundError
 
 app = typer.Typer(help="PitBench task, execution harness, and evaluation tooling.")
 tasks_app = typer.Typer(help="Validate and smoke-test benchmark tasks.")
+images_app = typer.Typer(help="Build pinned source images for solver tasks.")
 app.add_typer(tasks_app, name="tasks")
+app.add_typer(images_app, name="images")
 app.add_typer(profiles_app, name="profiles")
 app.add_typer(auth_app, name="auth")
 
@@ -84,6 +88,60 @@ def _prepare_task_image(task_path: Path, *, rebuild: bool) -> None:
         trial_handler_type=TrialHandler,
         manager_type=DockerComposeManager,
     )
+
+
+@images_app.command("build")
+def build_images(
+    task_ids: Annotated[
+        list[str],
+        typer.Argument(help="One or more task IDs whose source images to build"),
+    ],
+    config_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--config",
+            help=(
+                "Machine-local evaluation YAML; defaults to "
+                "config/evaluate.local.yaml when present"
+            ),
+        ),
+    ] = None,
+    image_tag: Annotated[
+        str | None,
+        typer.Option(
+            "--tag",
+            help="Local image tag; allowed only when building one task",
+        ),
+    ] = None,
+    root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
+) -> None:
+    """Build fixed source images, optionally using local proxy settings."""
+    task_ids = _normalize_task_ids(task_ids)
+    if not task_ids:
+        raise typer.BadParameter(
+            "At least one task ID is required", param_hint="TASK_IDS"
+        )
+    if len(task_ids) != len(set(task_ids)):
+        raise typer.BadParameter("task IDs must be unique", param_hint="TASK_IDS")
+    if image_tag is not None and len(task_ids) != 1:
+        raise typer.BadParameter("--tag requires exactly one task ID")
+
+    repository_root = _root(root)
+    resolved_config_path = resolve_config_path(repository_root, config_path)
+    config = (
+        EvaluationConfig.from_yaml(resolved_config_path)
+        if resolved_config_path is not None
+        else EvaluationConfig()
+    )
+    for task_id in task_ids:
+        built = build_solver_image(
+            task_id,
+            repository_root,
+            config=config.solver_image_build,
+            image_tag=image_tag,
+            progress=typer.echo,
+        )
+        typer.echo(f"Built {built.task_id}: {built.image_tag} ({built.image_id})")
 
 
 @app.command("doctor")
@@ -806,10 +864,26 @@ def report_command(
         )
 
     standard = [item for item in observations if item.test_suite is None]
+    expected_run_grid_path = target.parent / "expected-run-grid.json"
+    expected_run_grid = (
+        ExpectedRunGrid.model_validate_json(expected_run_grid_path.read_text())
+        if expected_run_grid_path.is_file()
+        else None
+    )
+    if (
+        task.evaluation.performance_protocol == PerformanceProtocol.EXACT_VERIFIED_SOLVE
+        and standard
+        and expected_run_grid is None
+    ):
+        raise typer.BadParameter(
+            "exact performance requires sibling expected-run-grid.json",
+            param_hint=str(target),
+        )
     performance_report = (
-        compute_performance_report(
+        compute_task_performance_report(
             standard,
-            primary_budget_sec=task.evaluation.primary_budget_sec,
+            task=task,
+            expected_run_grid=expected_run_grid,
         )
         if standard
         else None

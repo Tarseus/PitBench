@@ -16,7 +16,11 @@ from pitbench.evaluator.private_assets import (
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest, Evaluator
-from pitbench.metrics.performance_report import compute_performance_report
+from pitbench.metrics.performance_report import (
+    ExactPerformanceReport,
+    ExactRunOutcomeKind,
+    compute_task_performance_report,
+)
 from pitbench.metrics.reliability_report import compute_reliability_reports
 from pitbench.metrics.resource_report import compute_resource_reports
 from pitbench.metrics.seed_robustness_report import (
@@ -29,8 +33,8 @@ from pitbench.schema.evaluation import (
     EvaluationResult,
     EvaluationSummary,
 )
-from pitbench.schema.observation import CodeState, RunObservation
-from pitbench.schema.task import PitBenchTask
+from pitbench.schema.observation import CodeState, ExpectedRunGrid, RunObservation
+from pitbench.schema.task import PerformanceProtocol, PitBenchTask
 
 
 def _default_judge_parallel_runs(task: PitBenchTask) -> int:
@@ -121,8 +125,17 @@ class PitBenchEvaluator(Evaluator):
             observations = []
         elif fixture_mode:
             limit = int(config.get("fixture_instances_per_instance_set", 2))
+            fixture_plan = JudgePlan.fixture(task, limit)
             observations = FixtureJudge().run(
-                JudgePlan.fixture(task, limit), code_states=judge_code_states
+                fixture_plan,
+                code_states=judge_code_states,
+            )
+            expected_run_grid = fixture_plan.expected_run_grid(
+                code_states=tuple(CodeState),
+            )
+            request.output_dir.mkdir(parents=True, exist_ok=True)
+            (request.output_dir / "expected-run-grid.json").write_text(
+                expected_run_grid.model_dump_json(indent=2) + "\n"
             )
         else:
             required = ("base_repository", "private_root")
@@ -169,14 +182,14 @@ class PitBenchEvaluator(Evaluator):
                 except Exception:
                     pass
 
-        validity = evaluator_validity(
-            patch_exists=patch_exists,
-            fixture_mode=fixture_mode,
-            observations=observations,
-        )
-
         parquet_path = request.output_dir / "trials.parquet"
         ObservationStore.write(parquet_path, observations)
+        expected_run_grid_path = request.output_dir / "expected-run-grid.json"
+        expected_run_grid = (
+            ExpectedRunGrid.model_validate_json(expected_run_grid_path.read_text())
+            if expected_run_grid_path.is_file()
+            else None
+        )
         counts = Counter(item.code_state for item in observations)
         nuisance_robustness = None
         seed_robustness_details_ref = None
@@ -321,18 +334,48 @@ class PitBenchEvaluator(Evaluator):
                 media_type="application/vnd.apache.parquet",
                 private=True,
             ),
+            expected_run_grid=(
+                artifact_ref(
+                    expected_run_grid_path,
+                    root=request.output_dir,
+                    media_type="application/json",
+                    private=True,
+                )
+                if expected_run_grid is not None
+                else None
+            ),
             seed_robustness_details=seed_robustness_details_ref,
             representation_robustness_details=representation_details_ref,
             resource_details=resource_details_ref,
             reliability_details=reliability_details_ref,
         )
         performance = (
-            compute_performance_report(
+            compute_task_performance_report(
                 original_observations,
-                primary_budget_sec=task.evaluation.primary_budget_sec,
+                task=task,
+                expected_run_grid=expected_run_grid,
             )
-            if original_observations
+            if not config.get("reliability_only", False)
+            and (
+                original_observations
+                or task.evaluation.performance_protocol
+                == PerformanceProtocol.EXACT_VERIFIED_SOLVE
+            )
             else None
+        )
+        exact_qualification_failures = 0
+        if isinstance(performance, ExactPerformanceReport):
+            exact_qualification_failures = sum(
+                budget.agent.outcome_counts[
+                    ExactRunOutcomeKind.QUALIFICATION_FAILURE.value
+                ]
+                for budget in performance.by_budget.values()
+            )
+        validity = evaluator_validity(
+            patch_exists=patch_exists,
+            fixture_mode=fixture_mode,
+            observations=observations,
+            exact_qualification_failures=exact_qualification_failures,
         )
         return EvaluationResult(
             task_id=task.task_id,

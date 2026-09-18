@@ -3,9 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pyarrow as pa
-import pyarrow.parquet as pq
-
 from pitbench.schema.observation import RunObservation
 
 
@@ -14,6 +11,9 @@ class ObservationStore:
 
     @staticmethod
     def write(path: Path, observations: list[RunObservation]) -> None:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
         path.parent.mkdir(parents=True, exist_ok=True)
         rows = [item.model_dump(mode="json") for item in observations]
         table = pa.Table.from_pylist(rows)
@@ -21,6 +21,8 @@ class ObservationStore:
 
     @staticmethod
     def read(path: Path) -> list[RunObservation]:
+        import pyarrow.parquet as pq
+
         table = pq.read_table(path)
         return [RunObservation.model_validate(row) for row in table.to_pylist()]
 

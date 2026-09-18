@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -15,28 +16,212 @@ import pytest
 import yaml
 
 from adapters.pitbench.adapter import PitBenchAdapter
+from adapters.pitbench.git_snapshot import GitSnapshot
 from pitbench.evaluator.collection import AnchorCollection
 from pitbench.evaluator.evaluator import (
     PitBenchEvaluator,
     _default_judge_cpus,
     _default_judge_parallel_runs,
 )
-from pitbench.evaluator.judge import LocalProcessJudge
+from pitbench.evaluator.judge import JudgePlan, LocalProcessJudge
+from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.evaluator.reliability import prepare_boundary_cases
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest
+from pitbench.instances.generate import (
+    materialize_generated_instance_set,
+    prepare_cp_sat_job_shop_panel,
+    prepare_trusted_optimum_oracle,
+)
 from pitbench.problem_families.base import ProblemFamilyPlugin, ProblemFamilyRegistry
-from pitbench.problem_families.verification import CVRPFamily
+from pitbench.problem_families.verification import (
+    CVRPFamily,
+    ExternalVerifierFamily,
+    TrustedOptimumFamily,
+    TrustedOptimumOracle,
+    TrustedOptimumRecord,
+)
 from pitbench.repositories.base import CommandSpec, RepositoryPlugin
 from pitbench.schema.evaluation import ValidityCode
 from pitbench.schema.observation import CodeState, RunObservation, RunStatus
-from pitbench.schema.task import PitBenchTask
+from pitbench.schema.task import (
+    InstanceSetKind,
+    InstanceSetSpec,
+    PerformanceProtocol,
+    PitBenchTask,
+)
 
 # Tests consolidated from tests/unit/pitbench/test_judge_failures.py
 
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def git(repository: Path, *arguments: str) -> str:
+    return subprocess.check_output(
+        ["git", *arguments],
+        cwd=repository,
+        text=True,
+    ).strip()
+
+
+def initialize_repository(path: Path) -> None:
+    path.mkdir()
+    git(path, "init", "--quiet")
+    git(path, "config", "user.name", "PitBench Test")
+    git(path, "config", "user.email", "pitbench@example.invalid")
+
+
+def test_git_snapshot_materializes_and_censors_pinned_submodules(
+    tmp_path: Path,
+) -> None:
+    submodule = tmp_path / "submodule-source"
+    initialize_repository(submodule)
+    (submodule / "library.txt").write_text("pinned submodule\n")
+    git(submodule, "add", "library.txt")
+    git(submodule, "commit", "--quiet", "-m", "submodule")
+    submodule_commit = git(submodule, "rev-parse", "HEAD")
+
+    repository = tmp_path / "repository-source"
+    initialize_repository(repository)
+    (repository / ".gitmodules").write_text(
+        f'[submodule "library"]\n\tpath = vendor/library\n\turl = {submodule}\n'
+    )
+    git(repository, "add", ".gitmodules")
+    git(
+        repository,
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        f"160000,{submodule_commit},vendor/library",
+    )
+    git(repository, "commit", "--quiet", "-m", "repository")
+    repository_commit = git(repository, "rev-parse", "HEAD")
+
+    destination = tmp_path / "snapshot"
+    GitSnapshot(str(repository), repository_commit).create(destination)
+
+    assert (destination / "vendor/library/library.txt").read_text() == (
+        "pinned submodule\n"
+    )
+    assert git(destination, "remote") == ""
+    assert git(destination / "vendor/library", "remote") == ""
+    assert git(destination / "vendor/library", "rev-parse", "HEAD") == (
+        submodule_commit
+    )
+    PitBenchAdapter._validate_snapshot(
+        destination,
+        expected_commit=repository_commit,
+    )
+
+
+def test_primary_budget_must_belong_to_evaluation_budgets() -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    payload = task.model_dump()
+    payload["evaluation"]["primary_budget_sec"] = 60
+
+    with pytest.raises(
+        ValueError,
+        match="primary budget must belong to evaluation budgets",
+    ):
+        PitBenchTask.model_validate(payload)
+
+
+def test_removed_performance_decision_is_rejected() -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    payload = task.model_dump()
+    payload["evaluation"]["decision"] = {"minimum_success_rate_delta": 0}
+
+    with pytest.raises(ValueError, match="evaluation.decision has been removed"):
+        PitBenchTask.model_validate(payload)
+
+
+def test_workspace_permissions_reuses_existing_agent_account() -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/highs_v1_15_1.yaml")
+
+    dockerfile = PitBenchAdapter._workspace_permissions(task, include_runs=False)
+
+    assert "getent group pitbench-agent >/dev/null" in dockerfile
+    assert "id --user pitbench-agent >/dev/null 2>&1" in dockerfile
+    assert "|| groupadd --non-unique" in dockerfile
+    assert "|| useradd --non-unique" in dockerfile
+
+
+@pytest.mark.parametrize(
+    ("task_id", "expected_protocol"),
+    [
+        ("pyvrp_v0_14_0", PerformanceProtocol.HEURISTIC_FIXED_BUDGET),
+        ("vroom_v1_15_0", PerformanceProtocol.HEURISTIC_FIXED_BUDGET),
+        ("highs_v1_15_1", PerformanceProtocol.EXACT_VERIFIED_SOLVE),
+        ("choco_v6_0_1", PerformanceProtocol.EXACT_VERIFIED_SOLVE),
+        (
+            "ortools_v9_15",
+            PerformanceProtocol.VERIFIED_CP_SAT_MODEL_CONSTRUCTION,
+        ),
+    ],
+)
+def test_task_declares_performance_protocol(
+    task_id: str,
+    expected_protocol: PerformanceProtocol,
+) -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks" / f"{task_id}.yaml")
+
+    assert task.evaluation.performance_protocol == expected_protocol
+
+
+def test_task_rejects_performance_protocol_that_conflicts_with_task_type() -> None:
+    heuristic = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    heuristic_payload = heuristic.model_dump()
+    heuristic_payload["evaluation"]["performance_protocol"] = "exact_verified_solve"
+    with pytest.raises(ValueError, match="heuristic task requires"):
+        PitBenchTask.model_validate(heuristic_payload)
+
+    exact = PitBenchTask.from_yaml(ROOT / "configs/tasks/highs_v1_15_1.yaml")
+    exact_payload = exact.model_dump()
+    exact_payload["evaluation"]["performance_protocol"] = "heuristic_fixed_budget"
+    with pytest.raises(ValueError, match="exact task requires"):
+        PitBenchTask.model_validate(exact_payload)
+
+
+def test_cp_sat_model_construction_requires_cp_problem_family() -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/ortools_v9_15.yaml")
+    payload = task.model_dump()
+    payload["problem_family"] = "mip"
+
+    with pytest.raises(ValueError, match="requires the CP problem family"):
+        PitBenchTask.model_validate(payload)
+
+
+def test_fixture_plan_materializes_the_complete_expected_run_grid() -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    grid = JudgePlan.fixture(task, instances_per_instance_set=1).expected_run_grid()
+    judge_id_runs = [
+        run
+        for run in grid.runs
+        if run.instance_set_kind == "judge_id"
+        and run.equivalence_parent_id is None
+        and run.test_suite is None
+    ]
+    expected_count = (
+        len(task.evaluation.seed_robustness.development_seeds)
+        * len(task.evaluation.budgets_sec)
+        * len(CodeState)
+    )
+
+    assert len(judge_id_runs) == expected_count
+    assert len(
+        {
+            (
+                run.instance_set,
+                run.instance_id,
+                run.code_state,
+                run.solver_seed,
+                run.budget_sec,
+            )
+            for run in grid.runs
+        }
+    ) == len(grid.runs)
 
 
 def test_problem_family_plugins_register_and_reject_duplicate_names():
@@ -107,6 +292,446 @@ def test_normalized_gap_requires_explicit_objective_sense() -> None:
             100.0,
             objective_sense=None,
         )
+
+
+def test_missing_external_verifier_is_an_infrastructure_error(tmp_path: Path) -> None:
+    result = ExternalVerifierFamily().verify(
+        tmp_path / "instance",
+        tmp_path / "solution",
+    )
+
+    assert result.feasible is False
+    assert result.infrastructure_error is True
+
+
+def prepare_trusted_verifier(
+    tmp_path: Path,
+    *,
+    task_id: str,
+    generator: dict,
+) -> tuple[Path, TrustedOptimumFamily]:
+    private_root = tmp_path / "private"
+    private_root.mkdir()
+    instance_set_config = tmp_path / "instance-set.yaml"
+    instance_set_config.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "1.0",
+                "visibility": "judge",
+                "format": "lp"
+                if generator["kind"] == "single_machine_scheduling_mip"
+                else "normalized_bin_packing_json",
+                "generator": generator,
+            },
+            sort_keys=False,
+        )
+    )
+    oracle_path = private_root / "oracle.yaml"
+    references = private_root / "references"
+    payload = prepare_trusted_optimum_oracle(
+        task_config_path=ROOT / "configs/tasks" / f"{task_id}.yaml",
+        instance_set_name="judge_id",
+        instance_set_config_path=instance_set_config,
+        private_root=private_root,
+        output_path=oracle_path,
+        reference_solution_dir=references,
+    )
+    oracle = TrustedOptimumOracle.model_validate(payload)
+    record = oracle.records[0]
+    reference_path = private_root / record.reference_solution_uri.removeprefix(
+        "private://"
+    )
+    instance_path = materialize_generated_instance_set(
+        yaml.safe_load(instance_set_config.read_text()),
+        tmp_path / "instances",
+        expected_visibility="judge",
+        stem_prefix="judge_id",
+    )[0]
+    return instance_path, TrustedOptimumFamily(record, reference_path)
+
+
+def test_scheduling_trusted_optimum_verifies_integer_model_and_objective(
+    tmp_path: Path,
+) -> None:
+    instance_path, verifier = prepare_trusted_verifier(
+        tmp_path,
+        task_id="highs_v1_15_1",
+        generator={
+            "kind": "single_machine_scheduling_mip",
+            "count": 1,
+            "jobs": [4],
+            "randomness": {"instance_seed": 17},
+        },
+    )
+    processing_times = verifier.record.optimality_basis["processing_times"]
+    reference = json.loads(verifier.reference_solution_path.read_text())
+    starts = reference["start_times"]
+    values = {f"s{index}": start for index, start in enumerate(starts)}
+    for first in range(len(starts)):
+        for second in range(first + 1, len(starts)):
+            values[f"z{first}_{second}"] = int(
+                starts[first] + processing_times[first] <= starts[second]
+            )
+    objective = sum(starts)
+    raw_solution = "\n".join(
+        [
+            f"Objective {objective}",
+            f"# Columns {len(values)}",
+            *[f"{name} {value}" for name, value in values.items()],
+            "# Rows 0",
+        ]
+    )
+    solution_path = tmp_path / "scheduling.solution.json"
+    solution_path.write_text(json.dumps({"raw_solution": raw_solution}))
+
+    result = verifier.verify(instance_path, solution_path)
+
+    assert result.feasible is True
+    assert result.objective == objective == verifier.record.optimal_objective
+    assert "General" in instance_path.read_text()
+
+    overlapping = raw_solution.replace(
+        next(f"s{index} {start}" for index, start in enumerate(starts) if start > 0),
+        next(f"s{index} 0" for index, start in enumerate(starts) if start > 0),
+    )
+    solution_path.write_text(json.dumps({"raw_solution": overlapping}))
+    assert verifier.verify(instance_path, solution_path).feasible is False
+
+
+def test_bin_packing_trusted_optimum_verifies_capacity_certificate(
+    tmp_path: Path,
+) -> None:
+    instance_path, verifier = prepare_trusted_verifier(
+        tmp_path,
+        task_id="choco_v6_0_1",
+        generator={
+            "kind": "bin_packing",
+            "count": 1,
+            "items": [50],
+            "capacity": 100,
+            "weight_distribution": "uniform_integer",
+            "selected_instance_seeds": [60118],
+            "randomness": {"instance_seed": 60110},
+        },
+    )
+    result = verifier.verify(instance_path, verifier.reference_solution_path)
+
+    assert result.feasible is True
+    assert result.objective == verifier.record.optimal_objective
+    assert result.objective == verifier.record.optimality_basis["lower_bound"]
+
+    weights = json.loads(instance_path.read_text())["weights"]
+    invalid_solution = tmp_path / "invalid-bin-packing.solution.json"
+    invalid_solution.write_text(json.dumps({"bins": [list(range(len(weights)))]}))
+    assert verifier.verify(instance_path, invalid_solution).feasible is False
+
+    instance_path.write_text(instance_path.read_text() + "\n")
+    hash_mismatch = verifier.verify(instance_path, verifier.reference_solution_path)
+    assert hash_mismatch.feasible is False
+    assert hash_mismatch.infrastructure_error is True
+
+
+def test_job_shop_trusted_optimum_verifies_start_variables_and_makespan(
+    tmp_path: Path,
+) -> None:
+    instance_path = tmp_path / "instance.pb"
+    instance_path.write_bytes(b"fixed-cp-model-proto")
+    reference_path = tmp_path / "reference.json"
+    reference_path.write_text(json.dumps({"start_times": [0, 3, 0, 3]}))
+    record = TrustedOptimumRecord(
+        instance_set="judge_id",
+        instance_id="la01",
+        instance_sha256=hashlib.sha256(instance_path.read_bytes()).hexdigest(),
+        problem_kind="job_shop_scheduling",
+        objective_sense="minimize",
+        optimal_objective=5,
+        reference_solution_uri="private://references/la01.json",
+        reference_solution_sha256=hashlib.sha256(
+            reference_path.read_bytes()
+        ).hexdigest(),
+        optimality_basis={
+            "kind": "published_job_shop_optimum",
+            "jobs": [
+                [[0, 3], [1, 2]],
+                [[1, 2], [0, 1]],
+            ],
+            "start_variable_indices": [0, 3, 6, 8],
+        },
+        generation_provenance={"source": "test"},
+        verification_provenance=(
+            "pitbench.problem_families.verification:TrustedOptimumFamily"
+        ),
+    )
+    verifier = TrustedOptimumFamily(record, reference_path)
+    solution_path = tmp_path / "solution.json"
+    solution_path.write_text(json.dumps({"values": [0, 0, 0, 3, 0, 0, 0, 0, 3]}))
+
+    verified = verifier.verify(instance_path, solution_path)
+
+    assert verified.feasible is True
+    assert verified.objective == 5
+    solution_path.write_text(json.dumps({"values": [0, 0, 0, 1, 0, 0, 2, 0, 0]}))
+    assert verifier.verify(instance_path, solution_path).feasible is False
+
+
+def test_cp_sat_job_shop_panel_rejects_missing_independent_schedule(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="independent reference schedules"):
+        prepare_cp_sat_job_shop_panel(
+            task_id="test",
+            instance_set_name="agent_dev",
+            visibility="agent",
+            source_root=tmp_path / "source",
+            instance_ids=["la01"],
+            model_preparer_image="sha256:model-preparer",
+            instance_output_dir=tmp_path / "instances",
+            reference_solution_dir=None,
+            instance_set_config_path=tmp_path / "instance-set.yaml",
+        )
+
+
+def test_cp_sat_job_shop_panel_prepares_fixed_proto_in_isolated_container(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "jsplib"
+    instances = source_root / "instances"
+    instances.mkdir(parents=True)
+    (instances / "la01").write_text("1 1\n0 2\n")
+    (source_root / "instances.json").write_text(
+        json.dumps([{"name": "la01", "path": "instances/la01", "optimum": 2}])
+    )
+    reference_source = tmp_path / "source-schedules"
+    reference_source.mkdir()
+    (reference_source / "la01.solution.json").write_text(
+        json.dumps({"start_times": [0]})
+    )
+    instance_output = tmp_path / "generated" / "instances"
+    reference_output = tmp_path / "generated" / "references"
+    instance_set_config = tmp_path / "generated" / "instance-set.yaml"
+
+    def prepare_model(command: list[str], **_: object) -> subprocess.CompletedProcess:
+        (instance_output / "la01.pb").write_bytes(b"fixed-proto")
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout=json.dumps({"start_variable_indices": [0]}),
+            stderr="",
+        )
+
+    with patch(
+        "pitbench.instances.generate.subprocess.run", side_effect=prepare_model
+    ) as run:
+        panel = prepare_cp_sat_job_shop_panel(
+            task_id="agent-development",
+            instance_set_name="agent_dev",
+            visibility="agent",
+            source_root=source_root,
+            instance_ids=["la01"],
+            model_preparer_image="sha256:model-preparer",
+            instance_output_dir=instance_output,
+            reference_solution_dir=reference_output,
+            instance_set_config_path=instance_set_config,
+            reference_solution_source_dirs=[reference_source],
+        )
+
+    command = run.call_args.args[0]
+    assert command[:5] == ["docker", "run", "--rm", "--network", "none"]
+    assert "sha256:model-preparer" in command
+    assert command[command.index("--solver") + 1] == "ortools_cp_sat"
+    assert command[command.index("--solver") - 1] == "prepare-jssp"
+    assert panel["instances"][0]["bks"] == 2
+    assert json.loads((reference_output / "la01.solution.json").read_text()) == {
+        "start_times": [0]
+    }
+
+
+def test_cp_sat_judge_panel_uses_hash_bound_published_bks_without_schedule(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "jsplib"
+    instances = source_root / "instances"
+    instances.mkdir(parents=True)
+    (instances / "la21").write_text("1 1\n0 2\n")
+    source_index = source_root / "instances.json"
+    source_index.write_text(
+        json.dumps([{"name": "la21", "path": "instances/la21", "optimum": 2}])
+    )
+    private_root = tmp_path / "private"
+    instance_output = private_root / "judge_id" / "instances"
+    instance_set_config = private_root / "judge_id.yaml"
+    oracle_path = private_root / "oracle.yaml"
+
+    def prepare_model(command: list[str], **_: object) -> subprocess.CompletedProcess:
+        (instance_output / "la21.pb").write_bytes(b"fixed-proto")
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout=json.dumps({"start_variable_indices": [0]}),
+            stderr="",
+        )
+
+    with patch("pitbench.instances.generate.subprocess.run", side_effect=prepare_model):
+        payload = prepare_cp_sat_job_shop_panel(
+            task_id="cp-sat",
+            instance_set_name="judge_id",
+            visibility="judge",
+            source_root=source_root,
+            instance_ids=["la21"],
+            model_preparer_image="sha256:model-preparer",
+            instance_output_dir=instance_output,
+            reference_solution_dir=None,
+            instance_set_config_path=instance_set_config,
+            private_root=private_root,
+            oracle_output_path=oracle_path,
+        )
+
+    record = payload["records"][0]
+    assert record["target_kind"] == "published_bks"
+    assert "reference_solution_uri" not in record
+    assert record["generation_provenance"]["published_bks_source"] == {
+        "repository": "https://github.com/tamy0612/JSPLIB",
+        "artifact_path": "instances.json",
+        "artifact_sha256": hashlib.sha256(source_index.read_bytes()).hexdigest(),
+        "instance_path": "instances/la21",
+    }
+    assert (
+        "reference_solution_uri"
+        not in yaml.safe_load(oracle_path.read_text())["records"][0]
+    )
+
+
+def test_job_shop_published_bks_verifies_candidate_without_reference_schedule(
+    tmp_path: Path,
+) -> None:
+    instance_path = tmp_path / "instance.pb"
+    instance_path.write_bytes(b"fixed-cp-model-proto")
+    record = TrustedOptimumRecord(
+        instance_set="judge_id",
+        instance_id="la21",
+        instance_sha256=hashlib.sha256(instance_path.read_bytes()).hexdigest(),
+        target_kind="published_bks",
+        problem_kind="job_shop_scheduling",
+        objective_sense="minimize",
+        optimal_objective=5,
+        optimality_basis={
+            "kind": "published_job_shop_bks",
+            "jobs": [
+                [[0, 3], [1, 2]],
+                [[1, 2], [0, 1]],
+            ],
+            "start_variable_indices": [0, 3, 6, 8],
+        },
+        generation_provenance={
+            "published_bks_source": {
+                "repository": "https://example.invalid/jsplib",
+                "artifact_path": "instances.json",
+                "artifact_sha256": "0" * 64,
+                "instance_path": "instances/la21",
+            }
+        },
+        verification_provenance=(
+            "pitbench.problem_families.verification:TrustedOptimumFamily"
+        ),
+    )
+    solution_path = tmp_path / "solution.json"
+    solution_path.write_text(json.dumps({"values": [0, 0, 0, 3, 0, 0, 0, 0, 3]}))
+
+    verified = TrustedOptimumFamily(record, None).verify(instance_path, solution_path)
+
+    assert verified.feasible is True
+    assert verified.objective == 5
+
+
+def test_static_exact_judge_case_uses_published_bks_verifier(
+    tmp_path: Path,
+) -> None:
+    private_root = tmp_path / "private"
+    instance_path = private_root / "instances" / "la21.pb"
+    instance_path.parent.mkdir(parents=True)
+    instance_path.write_bytes(b"fixed-cp-model-proto")
+    record = TrustedOptimumRecord(
+        instance_set="judge_id",
+        instance_id="la21",
+        instance_sha256=hashlib.sha256(instance_path.read_bytes()).hexdigest(),
+        target_kind="published_bks",
+        problem_kind="job_shop_scheduling",
+        objective_sense="minimize",
+        optimal_objective=5,
+        optimality_basis={
+            "kind": "published_job_shop_bks",
+            "jobs": [[[0, 5]]],
+            "start_variable_indices": [0],
+        },
+        generation_provenance={
+            "published_bks_source": {
+                "repository": "https://example.invalid/jsplib",
+                "artifact_path": "instances.json",
+                "artifact_sha256": "0" * 64,
+                "instance_path": "instances/la21",
+            }
+        },
+        verification_provenance=(
+            "pitbench.problem_families.verification:TrustedOptimumFamily"
+        ),
+    )
+    oracle_path = private_root / "oracle.yaml"
+    oracle_path.write_text(
+        yaml.safe_dump(
+            TrustedOptimumOracle(task_id="published-bks", records=[record]).model_dump(
+                mode="json", exclude_none=True
+            ),
+            sort_keys=False,
+        )
+    )
+    judge_config = private_root / "judge.yaml"
+    judge_config.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "1.0",
+                "visibility": "judge",
+                "format": "cp_sat_model_proto",
+                "instances": [
+                    {
+                        "id": "la21",
+                        "uri": "private://instances/la21.pb",
+                        "optimal_or_bks": 5,
+                    }
+                ],
+            },
+            sort_keys=False,
+        )
+    )
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/choco_v6_0_1.yaml")
+    task.task_id = "published-bks"
+    task.oracle.kind = "best_known_solution"
+    task.oracle.source = "private://oracle.yaml"
+    task.oracle.source_sha256 = hashlib.sha256(oracle_path.read_bytes()).hexdigest()
+    task.evaluation.verifier = "exact_target"
+    task.instance_sets = [
+        InstanceSetSpec(
+            name="agent_dev",
+            kind=InstanceSetKind.AGENT_DEV,
+            instance_set_config="unused.yaml",
+            size=1,
+        ),
+        InstanceSetSpec(
+            name="judge_id",
+            kind=InstanceSetKind.JUDGE_ID,
+            instance_set_config="private://judge.yaml",
+            size=1,
+        ),
+    ]
+
+    plan = JudgePlan.from_instance_set_configs(
+        task,
+        PrivateAssetResolver(private_root),
+        public_root=tmp_path,
+    )
+
+    assert len(plan.cases) == 1
+    assert isinstance(plan.cases[0].verifier, TrustedOptimumFamily)
+    assert plan.cases[0].anchor == 5
 
 
 class ScriptRepository(RepositoryPlugin):
@@ -326,8 +951,57 @@ def test_native_status_and_objective_can_be_read_from_solution_file(
     )
     result = json.loads(output.read_text())
     assert result["solver_status"] == "Optimal" and result["objective"] == 5
+    assert result["solver_termination"] == "optimal"
     assert result["has_solution"]
     assert "native diagnostic" in capsys.readouterr().err
+
+
+def test_highs_time_limit_does_not_export_fractional_relaxation(
+    tmp_path, monkeypatch
+):
+    from pitbench.solver_drivers.run import HighsDriver
+
+    raw = "Model status\nTime limit reached\n\n# Columns 1\nx0 0.5\n"
+
+    def solve(argv, **kwargs):
+        output = next(
+            value.split("=", 1)[1]
+            for value in argv
+            if value.startswith("--solution_file=")
+        )
+        Path(output).write_text(raw)
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            "Primal bound 5\nModel status: Time limit reached\n",
+            "",
+        )
+
+    monkeypatch.setattr(subprocess, "run", solve)
+    output = tmp_path / "result.json"
+    HighsDriver.main(
+        [
+            "--solver",
+            "highs",
+            "--instance",
+            str(tmp_path / "input.lp"),
+            "--output",
+            str(output),
+            "--trajectory",
+            str(tmp_path / "trajectory.jsonl"),
+            "--seed",
+            "0",
+            "--budget",
+            "5",
+            "--threads",
+            "1",
+        ]
+    )
+
+    result = json.loads(output.read_text())
+    assert result["solver_termination"] == "time_limit"
+    assert result["has_solution"] is False
+    assert not output.with_suffix(".solution.json").exists()
 
 
 # Tests consolidated from tests/unit/pitbench/test_judge_parallel_and_cache.py
@@ -387,6 +1061,7 @@ def test_evaluator_uses_base_cache_when_available(tmp_path: Path):
     mock_task.evaluation.seed_robustness = None
     mock_task.evaluation.representation_robustness = None
     mock_task.evaluation.operational_reliability = False
+    mock_task.evaluation.performance_protocol = "heuristic_fixed_budget"
     mock_task.evaluation.primary_budget_sec = 5.0
     mock_task.evaluation.budgets_sec = [5.0]
     mock_task.evaluation.solver_seeds = [1]
@@ -475,6 +1150,7 @@ def test_evaluator_saves_base_cache_on_first_run(tmp_path: Path):
     mock_task.evaluation.seed_robustness = None
     mock_task.evaluation.representation_robustness = None
     mock_task.evaluation.operational_reliability = False
+    mock_task.evaluation.performance_protocol = "heuristic_fixed_budget"
     mock_task.evaluation.primary_budget_sec = 5.0
     mock_task.evaluation.budgets_sec = [5.0]
     mock_task.evaluation.solver_seeds = [1]
@@ -943,6 +1619,140 @@ def test_confirmed_invalid_agent_solution_fails_qualification() -> None:
         (ValidityCode.PATCH_APPLY, True),
         (ValidityCode.SOLUTION, False),
     ]
+
+
+def test_semantically_invalid_agent_run_disqualifies_evaluation(
+    tmp_path: Path,
+) -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    candidate_patch = output_dir / "candidate.patch"
+    candidate_patch.write_text("")
+    invalid_observation = RunObservation(
+        task_id=task.task_id,
+        code_state=CodeState.AGENT,
+        instance_set="judge_id",
+        instance_set_kind="judge_id",
+        instance_id="invalid",
+        solver_seed=0,
+        budget_sec=task.evaluation.primary_budget_sec,
+        status=RunStatus.INVALID,
+        valid=False,
+    )
+
+    with patch(
+        "pitbench.evaluator.evaluator.FixtureJudge.run",
+        return_value=[invalid_observation],
+    ):
+        envelope = PitBenchEvaluator().envelope(
+            EvaluationRequest(
+                task_id=task.task_id,
+                task_path=ROOT,
+                candidate_patch_path=candidate_patch,
+                output_dir=output_dir,
+                agent_name="fixture",
+                evaluator_config={
+                    "task_config_path": str(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml"),
+                    "fixture_mode": True,
+                },
+            )
+        )
+
+    assert envelope.completed is True
+    assert envelope.payload["validity"]["accepted"] is False
+    assert envelope.payload["validity"]["checks"][-1]["code"] == "solution"
+    private_observations = ObservationStore.read(output_dir / "trials.parquet")
+    assert private_observations == [invalid_observation]
+    assert envelope.payload["artifacts"]["observations"]["private"] is True
+    assert envelope.payload["summary"]["performance"]["classification"] == (
+        "incomplete"
+    )
+
+
+def test_exact_evaluator_uses_expected_grid_and_exact_report(tmp_path: Path) -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/highs_v1_15_1.yaml")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    candidate_patch = output_dir / "candidate.patch"
+    candidate_patch.write_text("")
+
+    envelope = PitBenchEvaluator().envelope(
+        EvaluationRequest(
+            task_id=task.task_id,
+            task_path=ROOT,
+            candidate_patch_path=candidate_patch,
+            output_dir=output_dir,
+            agent_name="fixture",
+            evaluator_config={
+                "task_config_path": str(ROOT / "configs/tasks/highs_v1_15_1.yaml"),
+                "fixture_mode": True,
+                "fixture_instances_per_instance_set": 1,
+            },
+        )
+    )
+
+    assert envelope.completed is True
+    performance = envelope.payload["summary"]["performance"]
+    assert performance["classification"] == "inconclusive"
+    assert performance["primary"]["base"]["verified_solved_coverage"] == 0
+    assert performance["primary"]["agent"]["verified_solved_coverage"] == 0
+    assert performance["primary"]["base"]["complete"] is True
+    expected_grid = envelope.payload["artifacts"]["expected_run_grid"]
+    assert expected_grid["private"] is True
+    assert (output_dir / expected_grid["path"]).is_file()
+
+
+def test_false_exact_optimality_claim_fails_evaluator_validity(
+    tmp_path: Path,
+) -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/highs_v1_15_1.yaml")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    candidate_patch = output_dir / "candidate.patch"
+    candidate_patch.write_text("")
+    false_claim = RunObservation(
+        task_id=task.task_id,
+        code_state=CodeState.AGENT,
+        instance_set="judge_id",
+        instance_set_kind="judge_id",
+        instance_id="judge_id_0000",
+        solver_seed=0,
+        budget_sec=task.evaluation.primary_budget_sec,
+        status=RunStatus.COMPLETED,
+        valid=True,
+        objective=42,
+        reported_objective=41,
+        optimal_or_bks=42,
+        cpu_time_sec=1,
+        solver_termination="optimal",
+    )
+
+    with patch(
+        "pitbench.evaluator.evaluator.FixtureJudge.run",
+        return_value=[false_claim],
+    ):
+        envelope = PitBenchEvaluator().envelope(
+            EvaluationRequest(
+                task_id=task.task_id,
+                task_path=ROOT,
+                candidate_patch_path=candidate_patch,
+                output_dir=output_dir,
+                agent_name="fixture",
+                evaluator_config={
+                    "task_config_path": str(ROOT / "configs/tasks/highs_v1_15_1.yaml"),
+                    "fixture_mode": True,
+                    "fixture_instances_per_instance_set": 1,
+                },
+            )
+        )
+
+    assert envelope.completed is True
+    assert envelope.payload["validity"]["accepted"] is False
+    assert envelope.payload["validity"]["checks"][-1]["code"] == "objective"
+    assert envelope.payload["summary"]["performance"]["classification"] == (
+        "incomplete"
+    )
 
 
 @pytest.mark.parametrize("status", [RunStatus.TIMED_OUT, RunStatus.CRASHED])

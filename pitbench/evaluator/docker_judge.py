@@ -81,7 +81,7 @@ class DockerJudge:
             "--volume",
             f"{self.output_dir}:/output:rw",
             self.image,
-            "python",
+            "python3",
             "-m",
             "pitbench.evaluator.runner",
             "--task-config",

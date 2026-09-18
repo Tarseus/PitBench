@@ -12,6 +12,7 @@ class VerificationResult(BaseModel):
     feasible: bool
     objective: float | None = None
     detail: str = ""
+    infrastructure_error: bool = False
 
 
 class ProblemFamilyPlugin(ABC):

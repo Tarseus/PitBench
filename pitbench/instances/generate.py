@@ -5,6 +5,8 @@ import json
 import math
 import random
 import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,18 @@ import yaml
 
 def _choice(values: list[int], index: int) -> int:
     return values[index % len(values)]
+
+
+def _instance_seed(config: dict[str, Any], index: int) -> int:
+    selected_seeds = config.get("selected_instance_seeds")
+    if selected_seeds is not None:
+        if len(selected_seeds) != int(config["count"]):
+            raise ValueError("selected_instance_seeds must match generator count")
+        seed = selected_seeds[index]
+        if type(seed) is not int:
+            raise ValueError("selected instance seed must be an integer")
+        return seed
+    return int(config["randomness"]["instance_seed"]) + index
 
 
 def make_euclidean_cvrp_instance(
@@ -139,17 +153,36 @@ def _cvrp(config: dict[str, Any], index: int, destination: Path) -> None:
     destination.write_text(json.dumps(instance, indent=2))
 
 
+def make_bin_packing_instance(
+    *,
+    name: str,
+    item_count: int,
+    capacity: int,
+    instance_seed: int,
+) -> dict[str, Any]:
+    if item_count <= 0 or capacity <= 0:
+        raise ValueError("item count and capacity must be positive")
+    rng = random.Random(instance_seed)
+    return {
+        "name": name,
+        "capacity": capacity,
+        "weights": [rng.randint(1, capacity) for _ in range(item_count)],
+    }
+
+
 def _bin_packing(config: dict[str, Any], index: int, destination: Path) -> None:
-    rng = random.Random(config["randomness"]["instance_seed"] + index)
+    if config.get("weight_distribution", "uniform_integer") != "uniform_integer":
+        raise ValueError("unsupported bin packing weight distribution")
     item_count = _choice(config["items"], index)
     capacity = int(config["capacity"])
     destination.write_text(
         json.dumps(
-            {
-                "name": destination.stem,
-                "capacity": capacity,
-                "weights": [rng.randint(1, capacity) for _ in range(item_count)],
-            },
+            make_bin_packing_instance(
+                name=destination.stem,
+                item_count=item_count,
+                capacity=capacity,
+                instance_seed=_instance_seed(config, index),
+            ),
             indent=2,
         )
     )
@@ -171,10 +204,18 @@ def _ortools(config: dict[str, Any], index: int, destination: Path) -> None:
     )
 
 
-def _scheduling_lp(config: dict[str, Any], index: int, destination: Path) -> None:
-    rng = random.Random(config["randomness"]["instance_seed"] + index)
+def scheduling_processing_times(
+    config: dict[str, Any],
+    index: int,
+) -> list[int]:
+    rng = random.Random(_instance_seed(config, index))
     jobs = _choice(config["jobs"], index)
-    processing = [rng.randint(1, 20) for _ in range(jobs)]
+    return [rng.randint(1, 20) for _ in range(jobs)]
+
+
+def _scheduling_lp(config: dict[str, Any], index: int, destination: Path) -> None:
+    processing = scheduling_processing_times(config, index)
+    jobs = len(processing)
     horizon = sum(processing)
     lines = ["Minimize", " obj: " + " + ".join(f"s{i}" for i in range(jobs))]
     lines.append("Subject To")
@@ -194,8 +235,17 @@ def _scheduling_lp(config: dict[str, Any], index: int, destination: Path) -> Non
                 f"-{processing[second]}"
             )
             constraint += 1
-    lines.extend(["Bounds", *[f" 0 <= s{i} <= {horizon}" for i in range(jobs)]])
-    lines.extend(["Binary", *[f" {name}" for name in binaries], "End"])
+    starts = [f"s{index}" for index in range(jobs)]
+    lines.extend(["Bounds", *[f" 0 <= {name} <= {horizon}" for name in starts]])
+    lines.extend(
+        [
+            "General",
+            *[f" {name}" for name in starts],
+            "Binary",
+            *[f" {name}" for name in binaries],
+            "End",
+        ]
+    )
     destination.write_text("\n".join(lines) + "\n")
 
 
@@ -369,3 +419,384 @@ def prepare_collection_instances(
             {"id": identity, "path": str(target.resolve()), "bks": item.get("bks")}
         )
     return instances
+
+
+def first_fit_decreasing_packing(
+    weights: list[int],
+    capacity: int,
+) -> list[list[int]]:
+    bins: list[list[int]] = []
+    loads: list[int] = []
+    for item_index in sorted(
+        range(len(weights)),
+        key=lambda index: (-weights[index], index),
+    ):
+        weight = weights[item_index]
+        for bin_index, load in enumerate(loads):
+            if load + weight <= capacity:
+                bins[bin_index].append(item_index)
+                loads[bin_index] += weight
+                break
+        else:
+            bins.append([item_index])
+            loads.append(weight)
+    return bins
+
+
+def _job_shop_operations(instance_path: Path) -> list[list[list[int]]]:
+    values = [
+        int(token)
+        for line in instance_path.read_text().splitlines()
+        if not line.strip().startswith("#")
+        for token in line.split()
+    ]
+    if len(values) < 2 or values[0] <= 0 or values[1] <= 0:
+        raise ValueError(
+            "job-shop instance must declare positive job and machine counts"
+        )
+    job_count, machine_count = values[:2]
+    if len(values) != 2 + 2 * job_count * machine_count:
+        raise ValueError("job-shop operation count does not match instance header")
+    operations = []
+    cursor = 2
+    for _ in range(job_count):
+        job = []
+        for _ in range(machine_count):
+            machine, duration = values[cursor : cursor + 2]
+            cursor += 2
+            if machine < 0 or machine >= machine_count or duration <= 0:
+                raise ValueError("job-shop operation is outside its declared domain")
+            job.append([machine, duration])
+        operations.append(job)
+    return operations
+
+
+def prepare_cp_sat_job_shop_panel(
+    *,
+    task_id: str,
+    instance_set_name: str,
+    visibility: str,
+    source_root: Path,
+    instance_ids: list[str],
+    model_preparer_image: str,
+    instance_output_dir: Path,
+    reference_solution_dir: Path | None,
+    instance_set_config_path: Path,
+    private_root: Path | None = None,
+    oracle_output_path: Path | None = None,
+    reference_solution_source_dirs: list[Path] | None = None,
+) -> dict[str, Any]:
+    """Prepare fixed CP-SAT JSSP proto inputs and their exact targets."""
+    from pitbench.problem_families.verification import (
+        TrustedOptimumOracle,
+        TrustedOptimumRecord,
+    )
+
+    if visibility not in {"agent", "judge"}:
+        raise ValueError("job-shop panel visibility must be agent or judge")
+    if len(instance_ids) != len(set(instance_ids)) or not instance_ids:
+        raise ValueError("job-shop panel requires unique instance IDs")
+    if (private_root is None) != (oracle_output_path is None):
+        raise ValueError(
+            "trusted oracle output and private root must be supplied together"
+        )
+    if visibility == "agent" and not reference_solution_source_dirs:
+        raise ValueError("job-shop panel requires independent reference schedules")
+    if visibility == "agent" and reference_solution_dir is None:
+        raise ValueError("agent job-shop panel requires a reference solution directory")
+    if not model_preparer_image:
+        raise ValueError("job-shop panel requires a CP-SAT model preparer image")
+    source_root = source_root.resolve()
+    index_path = source_root / "instances.json"
+    indexed = {item["name"]: item for item in json.loads(index_path.read_text())}
+    missing = [
+        name for name in instance_ids if indexed.get(name, {}).get("optimum") is None
+    ]
+    if missing:
+        raise ValueError(f"job-shop instances lack fixed optima: {missing}")
+
+    instance_output_dir.mkdir(parents=True, exist_ok=True)
+    if reference_solution_dir is not None:
+        reference_solution_dir.mkdir(parents=True, exist_ok=True)
+    records = []
+    config_instances = []
+    for instance_id in instance_ids:
+        source = source_root / indexed[instance_id]["path"]
+        model_path = instance_output_dir / f"{instance_id}.pb"
+        prepared = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--mount",
+                f"type=bind,src={source_root},dst=/input,readonly",
+                "--mount",
+                f"type=bind,src={instance_output_dir.resolve()},dst=/output",
+                model_preparer_image,
+                "python3",
+                "/opt/pitbench-jvm/runner.py",
+                "prepare-jssp",
+                "--solver",
+                "ortools_cp_sat",
+                "--instance",
+                str(Path("/input") / source.relative_to(source_root)),
+                "--output",
+                str(Path("/output") / model_path.name),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        metadata = json.loads(prepared.stdout)
+        instance_sha256 = hashlib.sha256(model_path.read_bytes()).hexdigest()
+        operations = _job_shop_operations(source)
+        relative_model = model_path.relative_to(instance_set_config_path.parent)
+        if visibility == "agent":
+            reference_schedule = None
+            for reference_dir in reference_solution_source_dirs or []:
+                source_path = reference_dir / f"{instance_id}.solution.json"
+                if not source_path.is_file():
+                    continue
+                candidate = json.loads(source_path.read_text())
+                if isinstance(candidate.get("start_times"), list) and all(
+                    type(value) is int for value in candidate["start_times"]
+                ):
+                    reference_schedule = candidate
+                    break
+            if reference_schedule is None:
+                raise ValueError(
+                    f"missing independent reference schedule for {instance_id}"
+                )
+            start_times = reference_schedule["start_times"]
+            expected_operation_count = len(metadata["start_variable_indices"])
+            if len(start_times) != expected_operation_count:
+                raise ValueError(
+                    f"reference schedule has the wrong operation count for {instance_id}"
+                )
+            assert reference_solution_dir is not None
+            reference_path = reference_solution_dir / f"{instance_id}.solution.json"
+            reference_path.write_text(
+                json.dumps({"start_times": start_times}, indent=2) + "\n"
+            )
+            reference_sha256 = hashlib.sha256(reference_path.read_bytes()).hexdigest()
+            config_instances.append(
+                {
+                    "id": instance_id,
+                    "instance_file": relative_model.as_posix(),
+                    "instance_file_sha256": instance_sha256,
+                    "bks": indexed[instance_id]["optimum"],
+                    "bks_solution_file": reference_path.relative_to(
+                        instance_set_config_path.parent
+                    ).as_posix(),
+                    "bks_solution_file_sha256": reference_sha256,
+                    "proven_optimal": True,
+                }
+            )
+            continue
+        assert private_root is not None
+        assert oracle_output_path is not None
+        records.append(
+            TrustedOptimumRecord(
+                instance_set=instance_set_name,
+                instance_id=instance_id,
+                instance_sha256=instance_sha256,
+                target_kind="published_bks",
+                problem_kind="job_shop_scheduling",
+                objective_sense="minimize",
+                optimal_objective=indexed[instance_id]["optimum"],
+                optimality_basis={
+                    "kind": "published_job_shop_bks",
+                    "jobs": operations,
+                    "start_variable_indices": metadata["start_variable_indices"],
+                },
+                generation_provenance={
+                    "published_bks_source": {
+                        "repository": "https://github.com/tamy0612/JSPLIB",
+                        "artifact_path": "instances.json",
+                        "artifact_sha256": hashlib.sha256(
+                            index_path.read_bytes()
+                        ).hexdigest(),
+                        "instance_path": indexed[instance_id]["path"],
+                    },
+                    "source_instance_sha256": hashlib.sha256(
+                        source.read_bytes()
+                    ).hexdigest(),
+                    "model_preparer": "adapters.jvm.runner:prepare-jssp",
+                    "model_preparer_image": model_preparer_image,
+                },
+                verification_provenance=(
+                    "pitbench.problem_families.verification:TrustedOptimumFamily"
+                ),
+            )
+        )
+        config_instances.append(
+            {
+                "id": instance_id,
+                "uri": "private://" + model_path.relative_to(private_root).as_posix(),
+                "optimal_or_bks": indexed[instance_id]["optimum"],
+            }
+        )
+
+    instance_set_config_path.parent.mkdir(parents=True, exist_ok=True)
+    instance_set_config_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "1.0",
+                "visibility": visibility,
+                "format": "cp_sat_model_proto",
+                "instances": config_instances,
+            },
+            sort_keys=False,
+        )
+    )
+    if oracle_output_path is not None:
+        oracle = TrustedOptimumOracle(task_id=task_id, records=records)
+        oracle_output_path.parent.mkdir(parents=True, exist_ok=True)
+        oracle_output_path.write_text(
+            yaml.safe_dump(
+                oracle.model_dump(mode="json", exclude_none=True), sort_keys=False
+            )
+        )
+        return oracle.model_dump(mode="json", exclude_none=True)
+    return {"instances": config_instances}
+
+
+def prepare_trusted_optimum_oracle(
+    *,
+    task_config_path: Path,
+    instance_set_name: str,
+    instance_set_config_path: Path,
+    private_root: Path,
+    output_path: Path,
+    reference_solution_dir: Path,
+) -> dict[str, Any]:
+    from pitbench.problem_families.verification import (
+        TrustedOptimumOracle,
+        TrustedOptimumRecord,
+    )
+    from pitbench.schema.task import PitBenchTask
+
+    task = PitBenchTask.from_yaml(task_config_path)
+    instance_set_config = yaml.safe_load(instance_set_config_path.read_text())
+    generator = instance_set_config["generator"]
+    if instance_set_config.get("visibility") != "judge":
+        raise ValueError("trusted optimum generation requires a judge instance set")
+    if generator["kind"] not in {
+        "single_machine_scheduling_mip",
+        "bin_packing",
+    }:
+        raise ValueError("unsupported trusted optimum problem kind")
+    private_root = private_root.resolve()
+    output_path = output_path.resolve()
+    reference_solution_dir = reference_solution_dir.resolve()
+    if not output_path.is_relative_to(private_root) or not (
+        reference_solution_dir == private_root
+        or reference_solution_dir.is_relative_to(private_root)
+    ):
+        raise ValueError("trusted optimum artifacts must remain in private storage")
+    reference_solution_dir.mkdir(parents=True, exist_ok=True)
+
+    records = []
+    with tempfile.TemporaryDirectory(prefix="pitbench-trusted-optimum-") as temporary:
+        instance_paths = materialize_generated_instance_set(
+            instance_set_config,
+            Path(temporary),
+            expected_visibility="judge",
+            stem_prefix=instance_set_name,
+        )
+        for index, instance_path in enumerate(instance_paths):
+            instance_id = instance_path.stem
+            if generator["kind"] == "single_machine_scheduling_mip":
+                processing_times = scheduling_processing_times(generator, index)
+                order = sorted(
+                    range(len(processing_times)),
+                    key=lambda job: (processing_times[job], job),
+                )
+                start_times = [0] * len(processing_times)
+                elapsed = 0
+                for job in order:
+                    start_times[job] = elapsed
+                    elapsed += processing_times[job]
+                optimal_objective = sum(start_times)
+                problem_kind = "single_machine_scheduling"
+                reference_solution = {
+                    "order": order,
+                    "start_times": start_times,
+                }
+                optimality_basis = {
+                    "kind": "shortest_processing_time",
+                    "processing_times": processing_times,
+                }
+            else:
+                instance = json.loads(instance_path.read_text())
+                weights = instance["weights"]
+                capacity = instance["capacity"]
+                reference_bins = first_fit_decreasing_packing(weights, capacity)
+                capacity_lower_bound = math.ceil(sum(weights) / capacity)
+                if len(reference_bins) != capacity_lower_bound:
+                    raise ValueError(
+                        f"instance {instance_id} reference packing does not match "
+                        "its capacity lower bound"
+                    )
+                optimal_objective = capacity_lower_bound
+                problem_kind = "bin_packing"
+                reference_solution = {"bins": reference_bins}
+                optimality_basis = {
+                    "kind": "capacity_lower_bound",
+                    "total_weight": sum(weights),
+                    "capacity": capacity,
+                    "lower_bound": capacity_lower_bound,
+                }
+
+            reference_solution_path = (
+                reference_solution_dir / f"{instance_id}.solution.json"
+            )
+            reference_solution_path.write_text(
+                json.dumps(reference_solution, indent=2) + "\n"
+            )
+            records.append(
+                TrustedOptimumRecord(
+                    instance_set=instance_set_name,
+                    instance_id=instance_id,
+                    instance_sha256=hashlib.sha256(
+                        instance_path.read_bytes()
+                    ).hexdigest(),
+                    problem_kind=problem_kind,
+                    objective_sense=task.oracle.objective_sense,
+                    optimal_objective=optimal_objective,
+                    reference_solution_uri=(
+                        "private://"
+                        + reference_solution_path.relative_to(private_root).as_posix()
+                    ),
+                    reference_solution_sha256=hashlib.sha256(
+                        reference_solution_path.read_bytes()
+                    ).hexdigest(),
+                    optimality_basis=optimality_basis,
+                    generation_provenance={
+                        "instance_generator": generator["kind"],
+                        "instance_seed": _instance_seed(generator, index),
+                        "instance_set_config_sha256": hashlib.sha256(
+                            instance_set_config_path.read_bytes()
+                        ).hexdigest(),
+                        "task_release_commit": task.release.base_commit,
+                        "oracle_builder": (
+                            "pitbench.instances.generate:prepare_trusted_optimum_oracle"
+                        ),
+                    },
+                    verification_provenance=(
+                        "pitbench.problem_families.verification:TrustedOptimumFamily"
+                    ),
+                )
+            )
+
+    oracle = TrustedOptimumOracle(
+        task_id=task.task_id,
+        records=records,
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        yaml.safe_dump(oracle.model_dump(mode="json"), sort_keys=False)
+    )
+    return oracle.model_dump(mode="json")

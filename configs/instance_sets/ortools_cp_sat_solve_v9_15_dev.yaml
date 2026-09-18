@@ -1,0 +1,39 @@
+schema_version: '1.0'
+visibility: agent
+format: cp_sat_model_proto
+instances:
+- id: la01
+  instance_file: ortools_cp_sat_solve_v9_15_dev/instances/la01.pb
+  instance_file_sha256: b9467a3b24f8aea04f072918e23afd6aabbb7f363c4e29464e0fb0299a519276
+  bks: 666
+  bks_solution_file: ortools_cp_sat_solve_v9_15_dev/bks_solutions/la01.solution.json
+  bks_solution_file_sha256: 7a40a9d44dc048f2c1911b74e9e0f62a54b5310dbbfd42842c4da0830e8b3c9f
+  proven_optimal: true
+- id: la02
+  instance_file: ortools_cp_sat_solve_v9_15_dev/instances/la02.pb
+  instance_file_sha256: 70bfeee61fe1a2ba6af5e8c31971dcd96699b35be82329f4b43cce7cf0f1f504
+  bks: 655
+  bks_solution_file: ortools_cp_sat_solve_v9_15_dev/bks_solutions/la02.solution.json
+  bks_solution_file_sha256: 419ff48f7968e5ed10e4ddda95c77ff85ef0e37c1a03db64fb90c3a79a9fafaa
+  proven_optimal: true
+- id: la03
+  instance_file: ortools_cp_sat_solve_v9_15_dev/instances/la03.pb
+  instance_file_sha256: 21b2b86ec62657fb80e059f95dad741221aa88631b01d7fd3ad6c78c8dab8a40
+  bks: 597
+  bks_solution_file: ortools_cp_sat_solve_v9_15_dev/bks_solutions/la03.solution.json
+  bks_solution_file_sha256: df3eb52493a72f31213059fe5a47ba8d7d55eae0183eb285041b1d72bfb08437
+  proven_optimal: true
+- id: la04
+  instance_file: ortools_cp_sat_solve_v9_15_dev/instances/la04.pb
+  instance_file_sha256: f71461ad05a7e69251387d0399bb3dc7c1b616d8e73ac4a5c9a1248169082bbd
+  bks: 590
+  bks_solution_file: ortools_cp_sat_solve_v9_15_dev/bks_solutions/la04.solution.json
+  bks_solution_file_sha256: bab16c77644a5a18756f7b7e726e44bea72b808d19f930b5f99e592b3b04778d
+  proven_optimal: true
+- id: la05
+  instance_file: ortools_cp_sat_solve_v9_15_dev/instances/la05.pb
+  instance_file_sha256: 2b6102a8088a1053caa66a8f0ab350cfbeb911d6418290b72c76deab4fd863a1
+  bks: 593
+  bks_solution_file: ortools_cp_sat_solve_v9_15_dev/bks_solutions/la05.solution.json
+  bks_solution_file_sha256: e539525379fcbd65a1bb16068cd55411c37046922fab2323a9133e09ff65564a
+  proven_optimal: true

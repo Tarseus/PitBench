@@ -23,15 +23,30 @@ from pitbench.evaluator.private_assets import (
 )
 from pitbench.instances import materialize_generated_instance_set, verify_public_file
 from pitbench.problem_families.base import ProblemFamilyPlugin, ProblemFamilyRegistry
-from pitbench.problem_families.verification import ExternalVerifierFamily
+from pitbench.problem_families.verification import (
+    ExternalVerifierFamily,
+    TrustedOptimumFamily,
+    TrustedOptimumOracle,
+)
 from pitbench.repositories.base import (
     BuildKind,
     CommandSpec,
     RepositoryPluginRegistry,
     SolverRunSpec,
 )
-from pitbench.schema.observation import CodeState, RunObservation, RunStatus
-from pitbench.schema.task import InstanceSetKind, InstanceSetSpec, PitBenchTask
+from pitbench.schema.observation import (
+    CodeState,
+    ExpectedRun,
+    ExpectedRunGrid,
+    RunObservation,
+    RunStatus,
+)
+from pitbench.schema.task import (
+    InstanceSetKind,
+    InstanceSetSpec,
+    PerformanceProtocol,
+    PitBenchTask,
+)
 
 
 @dataclass(frozen=True)
@@ -73,6 +88,19 @@ def _development_seeds(task: PitBenchTask) -> tuple[int, ...]:
     if task.evaluation.solver_seeds is None:
         raise ValueError("task does not provide development seeds")
     return tuple(task.evaluation.solver_seeds)
+
+
+def _exact_target_verifier(
+    record,
+    resolver: PrivateAssetResolver,
+) -> TrustedOptimumFamily:
+    reference_solution_path = None
+    if record.reference_solution_uri is not None:
+        reference_solution_path = resolver.resolve(
+            record.reference_solution_uri,
+            record.reference_solution_sha256,
+        )
+    return TrustedOptimumFamily(record, reference_solution_path)
 
 
 def _instance_generation_seeds(
@@ -131,6 +159,45 @@ class JudgePlan:
         self.task = task
         self.cases = cases
 
+    def expected_run_grid(
+        self,
+        *,
+        evaluation_seeds: tuple[int, ...] | None = None,
+        code_states: tuple[CodeState, ...] = tuple(CodeState),
+    ) -> ExpectedRunGrid:
+        runs = []
+        for case in self.cases:
+            seeds = (
+                case.solver_seeds or evaluation_seeds or _development_seeds(self.task)
+            )
+            budgets = case.budgets_sec or tuple(self.task.evaluation.budgets_sec)
+            for seed in seeds:
+                for budget in budgets:
+                    for state in code_states:
+                        runs.append(
+                            ExpectedRun(
+                                task_id=self.task.task_id,
+                                code_state=state,
+                                instance_set=case.instance_set.name,
+                                instance_set_kind=case.instance_set.kind.value,
+                                instance_id=case.instance_id,
+                                solver_seed=seed,
+                                budget_sec=budget,
+                                equivalence_parent_id=case.equivalence_parent_id,
+                                test_suite=case.test_suite,
+                            )
+                        )
+        runs.sort(
+            key=lambda item: (
+                item.instance_set,
+                item.instance_id,
+                item.solver_seed,
+                item.budget_sec,
+                item.code_state.value,
+            )
+        )
+        return ExpectedRunGrid(task_id=self.task.task_id, runs=runs)
+
     @classmethod
     def fixture(
         cls, task: PitBenchTask, instances_per_instance_set: int = 2
@@ -167,6 +234,41 @@ class JudgePlan:
     ) -> "JudgePlan":
         cases: list[InstanceCase] = []
         development_seeds = _development_seeds(task)
+        trusted_records = {}
+        if (
+            task.evaluation.performance_protocol
+            == PerformanceProtocol.EXACT_VERIFIED_SOLVE
+        ):
+            if task.oracle.kind not in {"known_optimum", "best_known_solution"}:
+                raise ValueError(
+                    "exact verified solve requires a known-optimum or best-known-solution oracle"
+                )
+            trusted_oracle_path = resolver.resolve(
+                task.oracle.source,
+                task.oracle.source_sha256,
+            )
+            trusted_oracle = TrustedOptimumOracle.from_yaml(trusted_oracle_path)
+            if trusted_oracle.task_id != task.task_id:
+                raise ValueError("trusted optimum oracle belongs to a different task")
+            if any(
+                record.objective_sense != task.oracle.objective_sense
+                for record in trusted_oracle.records
+            ):
+                raise ValueError("trusted optimum objective sense differs from task")
+            expected_target_kind = (
+                "trusted_optimum"
+                if task.oracle.kind == "known_optimum"
+                else "published_bks"
+            )
+            if any(
+                record.target_kind != expected_target_kind
+                for record in trusted_oracle.records
+            ):
+                raise ValueError("exact target kind differs from task oracle kind")
+            trusted_records = {
+                (record.instance_set, record.instance_id): record
+                for record in trusted_oracle.records
+            }
         for instance_set in task.instance_sets:
             public_instance_set = instance_set.kind == InstanceSetKind.AGENT_DEV
             solver_seeds = (
@@ -205,6 +307,25 @@ class JudgePlan:
                     raise ValueError(
                         f"instance set {instance_set.name} size does not match config"
                     )
+                trusted_instance_records = {
+                    instance_id: record
+                    for (
+                        record_instance_set,
+                        instance_id,
+                    ), record in trusted_records.items()
+                    if record_instance_set == instance_set.name
+                }
+                generated_instance_ids = {path.stem for path in paths}
+                if (
+                    instance_set.kind == InstanceSetKind.JUDGE_ID
+                    and task.evaluation.performance_protocol
+                    == PerformanceProtocol.EXACT_VERIFIED_SOLVE
+                    and not generated_instance_ids <= set(trusted_instance_records)
+                ):
+                    raise ValueError(
+                        f"instance set {instance_set.name} lacks trusted optimum support "
+                        "for generated instances"
+                    )
                 anchors: dict[str, dict] = {}
                 oracle_spec = payload.get("oracle")
                 if oracle_spec is not None:
@@ -232,6 +353,7 @@ class JudgePlan:
                         )
                 for path in paths:
                     anchor = anchors.get(path.stem)
+                    trusted_record = trusted_instance_records.get(path.stem)
                     if anchor is not None:
                         instance_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
                         if instance_sha256 != anchor.get("instance_sha256"):
@@ -239,16 +361,26 @@ class JudgePlan:
                                 f"instance set {instance_set.name} generated instance "
                                 f"hash mismatch for {path.stem}"
                             )
+                    trusted_verifier = None
+                    if trusted_record is not None:
+                        trusted_verifier = _exact_target_verifier(
+                            trusted_record, resolver
+                        )
                     cases.append(
                         InstanceCase(
                             instance_set=instance_set,
                             instance_id=path.stem,
                             path=path,
                             anchor=(
-                                float(anchor["bks"]) if anchor is not None else None
+                                float(trusted_record.optimal_objective)
+                                if trusted_record is not None
+                                else float(anchor["bks"])
+                                if anchor is not None
+                                else None
                             ),
                             problem_scale=_customer_count(path),
                             solver_seeds=solver_seeds,
+                            verifier=trusted_verifier,
                         )
                     )
                 continue
@@ -256,7 +388,27 @@ class JudgePlan:
                 raise ValueError(
                     f"instance set {instance_set.name} size does not match config"
                 )
+            exact_instance_records = {
+                instance_id: record
+                for (
+                    record_instance_set,
+                    instance_id,
+                ), record in trusted_records.items()
+                if record_instance_set == instance_set.name
+            }
+            if (
+                instance_set.kind == InstanceSetKind.JUDGE_ID
+                and task.evaluation.performance_protocol
+                == PerformanceProtocol.EXACT_VERIFIED_SOLVE
+                and set(exact_instance_records)
+                != {item["id"] for item in payload["instances"]}
+            ):
+                raise ValueError(
+                    f"instance set {instance_set.name} exact target support does not "
+                    "match configured instances"
+                )
             for item in payload["instances"]:
+                exact_record = exact_instance_records.get(item["id"])
                 if public_instance_set:
                     path = verify_public_file(
                         instance_set_config_path.parent,
@@ -287,6 +439,13 @@ class JudgePlan:
                             "instance"
                         )
                     path = resolver.resolve(uri)
+                if exact_record is not None:
+                    if anchor != exact_record.optimal_objective:
+                        raise ValueError(
+                            f"instance set {instance_set.name} exact target value "
+                            f"does not match {item['id']}"
+                        )
+                    anchor = exact_record.optimal_objective
                 cases.append(
                     InstanceCase(
                         instance_set=instance_set,
@@ -295,6 +454,11 @@ class JudgePlan:
                         anchor=float(anchor) if anchor is not None else None,
                         problem_scale=_customer_count(path),
                         solver_seeds=solver_seeds,
+                        verifier=(
+                            _exact_target_verifier(exact_record, resolver)
+                            if exact_record is not None
+                            else None
+                        ),
                     )
                 )
         return cls(task, cases)
@@ -419,7 +583,10 @@ class LocalProcessJudge:
         self.additional_cases = additional_cases or []
         self.repository = RepositoryPluginRegistry.load(task.repository.plugin)
         self.family = family or ProblemFamilyRegistry.load(task.problem_family)
-        if isinstance(self.family, ExternalVerifierFamily):
+        if isinstance(
+            self.family,
+            ExternalVerifierFamily,
+        ) and task.evaluation.verifier.startswith("private://"):
             self.family.verifier = self.resolver.resolve(task.evaluation.verifier)
 
     @staticmethod
@@ -511,6 +678,13 @@ class LocalProcessJudge:
                 )
                 cases = plan.cases
             cases = [*cases, *self.additional_cases]
+            expected_run_grid = JudgePlan(self.task, cases).expected_run_grid(
+                evaluation_seeds=self.evaluation_seeds,
+            )
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            (self.output_dir / "expected-run-grid.json").write_text(
+                expected_run_grid.model_dump_json(indent=2) + "\n"
+            )
             total_solver_runs = sum(
                 (
                     case.instance_set.name,
@@ -728,6 +902,10 @@ class LocalProcessJudge:
                     "process_exit_code": exit_code,
                     "wall_time_sec": elapsed,
                     "solver_status": parsed.solver_status if parsed else None,
+                    "solver_termination": (
+                        parsed.solver_termination if parsed else None
+                    ),
+                    "reported_objective": parsed.objective if parsed else None,
                 }
             )
 
@@ -785,6 +963,12 @@ class LocalProcessJudge:
             FileNotFoundError,
         ) as error:
             return failure(RunStatus.OUTPUT_ERROR, f"solution output: {error}", parsed)
+        if verified.infrastructure_error:
+            return failure(
+                RunStatus.INFRASTRUCTURE_ERROR,
+                verified.detail or "independent verifier infrastructure error",
+                parsed,
+            )
         objective = (
             verified.objective if verified.objective is not None else parsed.objective
         )
@@ -810,6 +994,7 @@ class LocalProcessJudge:
             status=RunStatus.COMPLETED if verified.feasible else RunStatus.INVALID,
             valid=verified.feasible,
             objective=objective,
+            reported_objective=parsed.objective,
             optimal_or_bks=case.anchor,
             normalized_gap=normalized_gap,
             primal_bound=parsed.primal_bound,
@@ -823,6 +1008,7 @@ class LocalProcessJudge:
             peak_rss_bytes=parsed.peak_rss_bytes,
             resource_scope=parsed.resource_scope,
             solver_status=parsed.solver_status,
+            solver_termination=parsed.solver_termination,
             test_suite=case.test_suite,
             process_exit_code=exit_code,
             problem_scale=case.problem_scale,

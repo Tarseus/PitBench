@@ -32,12 +32,25 @@ class TaskResources(BaseModel):
     base_observations_path: Path | None = None
 
 
+class SolverImageBuildConfig(BaseModel):
+    """Machine-local network settings for source solver image builds."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    proxy_url: str | None = None
+    docker_network: str | None = None
+    no_proxy: str | None = None
+
+
 class EvaluationConfig(BaseModel):
     """Machine-local settings for the unified evaluation command."""
 
     model_config = ConfigDict(extra="forbid")
 
     paths: EvaluationPaths = Field(default_factory=EvaluationPaths)
+    solver_image_build: SolverImageBuildConfig = Field(
+        default_factory=SolverImageBuildConfig
+    )
     agent_tools: list[AgentTool] = Field(default_factory=list)
     tasks: dict[str, TaskResources] = Field(default_factory=dict)
     agents: dict[str, dict[str, ConfigValue]] = Field(default_factory=dict)

@@ -9,17 +9,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from pitbench.schema.observation import SolverTermination
+
 
 class BuildKind(str, Enum):
     VALIDATION = "validation"
     PERFORMANCE = "performance"
-
-
-class SolverTermination(str, Enum):
-    OPTIMAL = "optimal"
-    TIME_LIMIT = "time_limit"
-    ERROR = "solver_error"
-    OTHER = "other"
 
 
 class CommandSpec(BaseModel):
@@ -54,6 +49,7 @@ class NormalizedSolverOutput(BaseModel):
     peak_rss_bytes: int | None = None
     resource_scope: str | None = None
     solver_status: str | None = None
+    solver_termination: SolverTermination | None = None
     error: str | None = None
 
 

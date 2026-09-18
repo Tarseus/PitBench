@@ -108,10 +108,10 @@ class PyVRPRepositoryPlugin(RepositoryPlugin):
 
 class VroomRepositoryPlugin(RepositoryPlugin):
     agent_environment = AgentEnvironment(
-        image="ubuntu:22.04",
+        image="ubuntu:24.04",
         system_packages="build-essential libssl-dev libasio-dev libglpk-dev pkg-config",
         python_packages="",
-        prebuild="RUN cd /workspace/repo && make -j1 CXXFLAGS='-O3 -DNDEBUG'\n",
+        prebuild="RUN make -C /workspace/repo/src -j1\n",
     )
     agent_python = "python3"
     name = "vroom"
@@ -122,10 +122,15 @@ class VroomRepositoryPlugin(RepositoryPlugin):
     driver_solver = "./bin/vroom"
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
-        flags = "-O1 -g -fsanitize=address,undefined"
-        if kind == BuildKind.PERFORMANCE:
-            flags = "-O3 -DNDEBUG"
-        return [CommandSpec(argv=["make", "-j1", f"CXXFLAGS={flags}"])]
+        extra_flags = ""
+        if kind == BuildKind.VALIDATION:
+            extra_flags = "CXXFLAGS+=-O1 -g -fsanitize=address,undefined"
+        return [
+            CommandSpec(
+                argv=["make", "-j1", *([extra_flags] if extra_flags else [])],
+                cwd="src",
+            )
+        ]
 
 
 class HighsRepositoryPlugin(RepositoryPlugin):
@@ -141,6 +146,7 @@ class HighsRepositoryPlugin(RepositoryPlugin):
     collection_backend = "pitbench.evaluator.collection:HighsCollectionBackend"
     representations = {"row_column_permutation": ("isolated",)}
     driver_name = "highs"
+    driver_python = "python3"
     driver_solver = "./build/bin/highs"
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
@@ -164,38 +170,64 @@ class HighsRepositoryPlugin(RepositoryPlugin):
 
 class ChocoRepositoryPlugin(RepositoryPlugin):
     agent_environment = AgentEnvironment(
-        image="maven:3.9-eclipse-temurin-11",
+        image="maven:3.9-eclipse-temurin-17",
         system_packages="",
         python_packages="",
         prebuild="",
     )
     agent_python = "python3"
     name = "choco"
+    driver_python = "python3"
     agent_requirement = "env:PITBENCH_CHOCO_RUNNER"
     driver_name = "choco"
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
-        goals = ["test"] if kind == BuildKind.VALIDATION else ["package", "-DskipTests"]
-        return [CommandSpec(argv=["./mvnw", "-q", *goals])]
+        del kind
+        goals = ["package", "-DskipTests"]
+        return [
+            CommandSpec(argv=["mkdir", "-p", "/tmp/choco-maven"]),
+            CommandSpec(
+                argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/choco-maven"]
+            ),
+            CommandSpec(
+                argv=["mvn", "-q", *goals],
+                env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/choco-maven"},
+            ),
+            CommandSpec(
+                argv=[
+                    "python3",
+                    "/opt/pitbench-jvm/runner.py",
+                    "compile",
+                    "--solver",
+                    "choco",
+                ]
+            ),
+        ]
 
 
 class OrToolsRepositoryPlugin(RepositoryPlugin):
     agent_environment = AgentEnvironment(
-        image="maven:3.9-eclipse-temurin-11",
-        system_packages="build-essential cmake openjdk-11-jdk maven swig",
+        image="maven:3.9-eclipse-temurin-17",
+        system_packages="build-essential cmake ninja-build swig",
         python_packages="",
         prebuild="",
     )
     agent_python = "python3"
     name = "ortools"
+    driver_python = "python3"
     agent_requirement = "env:PITBENCH_ORTOOLS_JAVA_RUNNER"
     deterministic = True
     driver_name = "ortools_model_build"
     driver_records_trajectory = False
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
-        config = "Debug" if kind == BuildKind.VALIDATION else "Release"
+        del kind
         return [
+            CommandSpec(argv=["mkdir", "-p", "/tmp/ortools-deps"]),
+            CommandSpec(argv=["mkdir", "-p", "/tmp/ortools-maven"]),
+            CommandSpec(
+                argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/ortools-maven"]
+            ),
             CommandSpec(
                 argv=[
                     "cmake",
@@ -203,9 +235,57 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
                     ".",
                     "-B",
                     "build",
-                    f"-DCMAKE_BUILD_TYPE={config}",
+                    "-G",
+                    "Ninja",
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    "-DFETCHCONTENT_BASE_DIR=/tmp/ortools-deps",
+                    "-DFETCHCONTENT_SOURCE_DIR_ZLIB=/opt/ortools-deps/zlib-src",
+                    "-DFETCHCONTENT_SOURCE_DIR_BZIP2=/opt/ortools-deps/bzip2-src",
+                    "-DFETCHCONTENT_SOURCE_DIR_ABSL=/opt/ortools-deps/absl-src",
+                    "-DFETCHCONTENT_SOURCE_DIR_PROTOBUF=/opt/ortools-deps/protobuf-src",
+                    "-DFETCHCONTENT_SOURCE_DIR_RE2=/opt/ortools-deps/re2-src",
+                    "-DFETCHCONTENT_SOURCE_DIR_EIGEN3=/opt/ortools-deps/eigen3-src",
                     "-DBUILD_JAVA=ON",
+                    "-DBUILD_DEPS=ON",
+                    "-DBUILD_MATH_OPT=ON",
+                    "-DBUILD_TESTING=OFF",
+                    "-DBUILD_SAMPLES=OFF",
+                    "-DBUILD_EXAMPLES=OFF",
+                    "-DBUILD_FLATZINC=OFF",
+                    "-DUSE_BOP=ON",
+                    "-DUSE_COINOR=OFF",
+                    "-DUSE_GUROBI=ON",
+                    "-DUSE_HIGHS=OFF",
+                    "-DUSE_PDLP=OFF",
+                    "-DUSE_SCIP=OFF",
+                    "-DUSE_XPRESS=ON",
                 ]
             ),
-            CommandSpec(argv=["cmake", "--build", "build", "-j1"]),
+            CommandSpec(
+                argv=["cmake", "--build", "build", "--target", "java_package", "-j6"],
+                env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/ortools-maven"},
+            ),
+            CommandSpec(
+                argv=["python3", "/opt/pitbench-jvm/runner.py", "compile", "--solver", "ortools_model_build"]
+            ),
+        ]
+
+
+class OrToolsCpSatExactRepositoryPlugin(OrToolsRepositoryPlugin):
+    """Build the OR-Tools Java runtime and fixed-proto CP-SAT solve adapter."""
+
+    driver_name = "ortools_cp_sat_exact"
+
+    def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
+        return [
+            *super().build_commands(kind),
+            CommandSpec(
+                argv=[
+                    "python3",
+                    "/opt/pitbench-jvm/runner.py",
+                    "compile",
+                    "--solver",
+                    "ortools_cp_sat",
+                ]
+            ),
         ]

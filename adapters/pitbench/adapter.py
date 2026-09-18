@@ -118,20 +118,33 @@ class PitBenchAdapter:
 
     @staticmethod
     def validate_repository(task: PitBenchTask, repository: Path) -> None:
+        PitBenchAdapter._validate_snapshot(
+            repository,
+            expected_commit=task.release.base_commit,
+            expected_tree=task.release.tree_sha,
+        )
+
+    @staticmethod
+    def _validate_snapshot(
+        repository: Path,
+        *,
+        expected_commit: str,
+        expected_tree: str | None = None,
+    ) -> None:
         import subprocess
 
         head = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=repository, text=True
         ).strip()
-        if head != task.release.base_commit:
+        if head != expected_commit:
             tree = subprocess.check_output(
                 ["git", "rev-parse", "HEAD^{tree}"], cwd=repository, text=True
             ).strip()
-            if task.release.tree_sha is None or tree != task.release.tree_sha:
+            if expected_tree is None or tree != expected_tree:
                 raise ValueError(
                     "repository release identity mismatch: "
-                    f"HEAD {head} != {task.release.base_commit} and "
-                    f"tree {tree} != {task.release.tree_sha}"
+                    f"HEAD {head} != {expected_commit} and "
+                    f"tree {tree} != {expected_tree}"
                 )
         refs = subprocess.check_output(
             ["git", "for-each-ref", "--format=%(refname)"],
@@ -156,6 +169,21 @@ class PitBenchAdapter:
         ).splitlines()
         if status:
             raise ValueError("repository source has local modifications")
+        gitlinks = subprocess.check_output(
+            ["git", "ls-files", "--stage"],
+            cwd=repository,
+            text=True,
+        ).splitlines()
+        for line in gitlinks:
+            fields = line.split(maxsplit=3)
+            if len(fields) != 4 or fields[0] != "160000":
+                continue
+            submodule_commit = fields[1]
+            submodule_path = fields[3]
+            PitBenchAdapter._validate_snapshot(
+                repository / submodule_path,
+                expected_commit=submodule_commit,
+            )
 
     @staticmethod
     def _format_instruction(
@@ -353,9 +381,11 @@ RUN chmod 0755 /usr/local/bin/pitbench
         return f"""ARG PITBENCH_AGENT_UID=1000
 ARG PITBENCH_AGENT_GID=1000
 USER root
-RUN groupadd --non-unique --gid ${{PITBENCH_AGENT_GID}} pitbench-agent \
-    && useradd --non-unique --uid ${{PITBENCH_AGENT_UID}} \
-       --gid ${{PITBENCH_AGENT_GID}} --create-home --shell /bin/bash pitbench-agent \
+RUN (getent group pitbench-agent >/dev/null \
+       || groupadd --non-unique --gid ${{PITBENCH_AGENT_GID}} pitbench-agent) \
+    && (id --user pitbench-agent >/dev/null 2>&1 \
+        || useradd --non-unique --uid ${{PITBENCH_AGENT_UID}} \
+           --gid ${{PITBENCH_AGENT_GID}} --create-home --shell /bin/bash pitbench-agent) \
     && chown -R root:root /workspace/repo \
     && chmod -R a=rX /workspace/repo \
     && mkdir -p {writable} \

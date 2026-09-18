@@ -10,6 +10,7 @@ from typing import Any
 
 from pitbench.solver_drivers.common import (
     append_trajectory,
+    process_resources,
     write_result,
     write_solution,
 )
@@ -47,6 +48,7 @@ def execute(
             text=True,
             timeout=budget + 60,
         )
+        resources = process_resources(child_process=True)
         if completed.returncode:
             raise RuntimeError(completed.stderr.strip() or "external runner failed")
         response = json.loads(completed.stdout)
@@ -60,7 +62,11 @@ def execute(
                     "objective": response.get("objective"),
                 },
             )
-        write_result(output, started=started, **response)
+        write_result(
+            output,
+            started=started,
+            **{**resources, **response},
+        )
     except Exception as exc:
         write_result(output, started=started, valid=False, error=str(exc))
         raise

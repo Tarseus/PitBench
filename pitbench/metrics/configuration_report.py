@@ -7,7 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 from pitbench.problem_families.base import ProblemFamilyPlugin
-from pitbench.repositories.base import SolverTermination
+from pitbench.schema.observation import SolverTermination
 
 
 def _number(value) -> bool:

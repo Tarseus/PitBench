@@ -19,11 +19,14 @@ repository:
   language: cpp
   plugin: pitbench.repositories.plugins:VroomRepositoryPlugin
   editable_paths: [src, include, bin, obj]
+  agent_image: sha256:c778639d3d18ef94faddd7b5b578ce837df9be9e86e6b4b4b76a1abbedb60955
+  judge_image: sha256:c778639d3d18ef94faddd7b5b578ce837df9be9e86e6b4b4b76a1abbedb60955
 oracle:
     kind: best_known_solution
     source: private://oracles/cvrp.json
     objective_sense: minimize
 evaluation:
+  performance_protocol: heuristic_fixed_budget
   budgets_sec: [1.0, 5.0, 10.0]
   primary_budget_sec: 10.0
   solver_seeds: [0]

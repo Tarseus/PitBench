@@ -19,16 +19,20 @@ repository:
   language: java
   plugin: pitbench.repositories.plugins:ChocoRepositoryPlugin
   editable_paths: [solver]
+  agent_image: sha256:11376547899ea6c9bcfe1dd5245f555417e192ae387d4c477b8b1419b4179181
+  judge_image: sha256:11376547899ea6c9bcfe1dd5245f555417e192ae387d4c477b8b1419b4179181
 oracle:
-  kind: solver_certificate
-  source: private://oracles/bin_packing.json
+  kind: known_optimum
+  source: private://oracles/choco_v6_0_1.yaml
+  source_sha256: 6980d01db80647f06eafb272e0f4be0e0bebb65324aa1dccb4d973d1cfe23d82
   objective_sense: minimize
 evaluation:
+  performance_protocol: exact_verified_solve
   budgets_sec: [5.0, 20.0]
   primary_budget_sec: 20.0
   solver_seeds: [0, 1, 2]
   threads: 1
-  verifier: private://oracles/verifiers/bin_packing_solution
+  verifier: trusted_optimum
 instance_sets:
   - name: agent_dev
     kind: agent_dev
@@ -40,9 +44,3 @@ instance_sets:
     instance_set_config: private://hidden_instances/choco_v6_0_1/judge_id.yaml
     size: 30
     randomness: {instance_seed: 60110}
-  - name: capacity_shift
-    kind: judge_shift
-    instance_set_config: private://hidden_instances/choco_v6_0_1/capacity_shift.yaml
-    size: 30
-    shift: bin_capacity_distribution
-    randomness: {instance_seed: 60120}

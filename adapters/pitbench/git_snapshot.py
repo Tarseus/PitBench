@@ -34,7 +34,9 @@ class GitSnapshot:
 
     def create(self, destination: Path, bundle_path: Path | None = None) -> Path:
         if destination.exists():
-            raise GitSnapshotError(f"snapshot destination exists: {destination}")
+            if not destination.is_dir() or any(destination.iterdir()):
+                raise GitSnapshotError(f"snapshot destination exists: {destination}")
+            destination.rmdir()
         destination.mkdir(parents=True)
         self._run(["git", "init", "--quiet"], destination)
         self._run(["git", "remote", "add", "origin", self.clone_url], destination)
@@ -51,8 +53,9 @@ class GitSnapshot:
                 destination,
             )
             self._run(
-                ["git", "checkout", "--quiet", "--detach", "FETCH_HEAD"], destination
+                ["git", "switch", "--quiet", "--detach", self.base_commit], destination
             )
+            self._materialize_submodules(destination)
         finally:
             subprocess.run(
                 ["git", "remote", "remove", "origin"],
@@ -70,6 +73,45 @@ class GitSnapshot:
                 destination,
             )
         return destination
+
+    def _materialize_submodules(self, repository: Path) -> None:
+        gitmodules = repository / ".gitmodules"
+        if not gitmodules.is_file():
+            return
+        configured = self._run(
+            [
+                "git",
+                "config",
+                "--file",
+                str(gitmodules),
+                "--get-regexp",
+                r"^submodule\..*\.path$",
+            ],
+            repository,
+        ).stdout.splitlines()
+        for line in configured:
+            key, relative_path = line.split(maxsplit=1)
+            name = key.removeprefix("submodule.").removesuffix(".path")
+            url = self._run(
+                [
+                    "git",
+                    "config",
+                    "--file",
+                    str(gitmodules),
+                    "--get",
+                    f"submodule.{name}.url",
+                ],
+                repository,
+            ).stdout.strip()
+            tree_entry = self._run(
+                ["git", "ls-tree", "HEAD", "--", relative_path],
+                repository,
+            ).stdout.strip()
+            fields = tree_entry.split(maxsplit=3)
+            if len(fields) != 4 or fields[:2] != ["160000", "commit"]:
+                raise GitSnapshotError(f"invalid submodule gitlink: {relative_path}")
+            submodule_commit = fields[2]
+            GitSnapshot(url, submodule_commit).create(repository / relative_path)
 
     def _assert_censored(self, repository: Path) -> None:
         head = self._run(["git", "rev-parse", "HEAD"], repository).stdout.strip()

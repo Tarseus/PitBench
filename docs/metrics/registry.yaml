@@ -1,21 +1,28 @@
 performance:
   status: freeze_candidate
-  protocol: heuristic_fixed_budget
-  version: 1.0.0-rc1
+  stage: M6
+  protocols:
+    - heuristic_fixed_budget
+    - exact_verified_solve
+    - verified_cp_sat_model_construction
+  version: null
   branch: metric/performance-v1
-  spec: null
+  scope: docs/metrics/performance/scope.md
+  evidence: docs/metrics/performance/evidence.md
+  spec: docs/metrics/performance/spec.md
+  validation_plan: docs/metrics/performance/validation-plan.md
+  validation_results: docs/metrics/performance/validation-results.md
+  audit: docs/metrics/performance/audit.md
   implementation:
     - pitbench/metrics/performance_report.py
   validation:
     - budget_direction_reversal
     - pairing_antisymmetry
-    - seed_convergence
     - bootstrap_target
     - semantic_invalid
     - bks_beating
     - primary_budget_versioning
-  blockers:
-    - generalization_boundary
+  blockers: []
   completed:
     - item: correctness_hard_gate
       commit: c9705ed8
@@ -26,6 +33,9 @@ performance:
     - item: bootstrap_estimand
       commit: 95b964aa
       tests: 352_passed
+    - item: generalization_boundary
+      commit: c27bb273
+      tests: test_performance_report_excludes_generalization_observations
   frozen_commit: null
 
 nuisance_robustness:

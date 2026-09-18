@@ -14,6 +14,17 @@ class TaskType(str, Enum):
     EXACT_SOLVER = "exact_solver"
 
 
+class PerformanceProtocol(str, Enum):
+    HEURISTIC_FIXED_BUDGET = "heuristic_fixed_budget"
+    EXACT_VERIFIED_SOLVE = "exact_verified_solve"
+    VERIFIED_CP_SAT_MODEL_CONSTRUCTION = "verified_cp_sat_model_construction"
+
+
+class ExactTimeBasis(str, Enum):
+    CPU_TIME = "cpu_time"
+    SOLVE_WALL_TIME = "solve_wall_time"
+
+
 class ProblemFamily(str, Enum):
     CVRP = "cvrp"
     MIP = "mip"
@@ -72,6 +83,10 @@ class OracleReference(BaseModel):
         "independent_measurement",
     ]
     source: str
+    source_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     objective_sense: Literal["minimize", "maximize"] | None = None
 
 
@@ -148,6 +163,7 @@ class RepresentationRobustnessConfig(BaseModel):
 
 
 class EvaluationProtocol(BaseModel):
+    performance_protocol: PerformanceProtocol
     budgets_sec: list[float]
     primary_budget_sec: float = Field(gt=0)
     solver_seeds: list[int] | None = None
@@ -155,6 +171,7 @@ class EvaluationProtocol(BaseModel):
     representation_robustness: RepresentationRobustnessConfig | None = None
     operational_reliability: bool = False
     threads: int = Field(default=1, gt=0)
+    exact_time_basis: ExactTimeBasis = ExactTimeBasis.CPU_TIME
     verifier: str
 
     @model_validator(mode="before")
@@ -179,6 +196,13 @@ class EvaluationProtocol(BaseModel):
                 raise ValueError("at least one solver seed is required")
             if len(set(self.solver_seeds)) != len(self.solver_seeds):
                 raise ValueError("solver seeds must be unique")
+        if (
+            self.performance_protocol != PerformanceProtocol.EXACT_VERIFIED_SOLVE
+            and self.exact_time_basis != ExactTimeBasis.CPU_TIME
+        ):
+            raise ValueError(
+                "non-exact performance protocols cannot select an exact time basis"
+            )
         return self
 
 
@@ -198,6 +222,53 @@ class PitBenchTask(BaseModel):
 
     @model_validator(mode="after")
     def validate_instance_set_roles(self) -> Self:
+        performance_protocol = self.evaluation.performance_protocol
+        if (
+            self.task_type == TaskType.HEURISTIC_SOLVER
+            and performance_protocol != PerformanceProtocol.HEURISTIC_FIXED_BUDGET
+        ):
+            raise ValueError("heuristic task requires heuristic performance protocol")
+        if (
+            self.task_type == TaskType.EXACT_SOLVER
+            and performance_protocol == PerformanceProtocol.HEURISTIC_FIXED_BUDGET
+        ):
+            raise ValueError("exact task requires an exact performance protocol")
+        if performance_protocol == PerformanceProtocol.EXACT_VERIFIED_SOLVE:
+            if (
+                self.oracle.kind not in {"known_optimum", "best_known_solution"}
+                or not self.oracle.source.startswith("private://")
+                or self.oracle.source_sha256 is None
+                or self.oracle.objective_sense is None
+            ):
+                raise ValueError(
+                    "exact verified solve requires a hash-pinned private "
+                    "known-optimum or best-known-solution oracle"
+                )
+            expected_verifier = (
+                "trusted_optimum"
+                if self.oracle.kind == "known_optimum"
+                else "exact_target"
+            )
+            if self.evaluation.verifier != expected_verifier:
+                raise ValueError(
+                    f"exact verified solve with {self.oracle.kind} requires the "
+                    f"{expected_verifier} verifier"
+                )
+            if self.evaluation.exact_time_basis == ExactTimeBasis.SOLVE_WALL_TIME:
+                if self.problem_family != ProblemFamily.CP:
+                    raise ValueError(
+                        "solve wall time is reserved for the parallel CP-SAT task"
+                    )
+                if self.evaluation.threads != 8:
+                    raise ValueError(
+                        "parallel CP-SAT exact solving requires exactly eight threads"
+                    )
+        if (
+            performance_protocol
+            == PerformanceProtocol.VERIFIED_CP_SAT_MODEL_CONSTRUCTION
+            and self.problem_family != ProblemFamily.CP
+        ):
+            raise ValueError("CP-SAT model construction requires the CP problem family")
         if self.evaluation.operational_reliability and self.problem_family not in {
             ProblemFamily.CVRP,
             ProblemFamily.MIP,

@@ -9,6 +9,7 @@ def evaluator_validity(
     patch_exists: bool,
     fixture_mode: bool,
     observations: list[RunObservation] | None = None,
+    exact_qualification_failures: int = 0,
 ) -> ValidityResult:
     checks = [
         ValidityCheck(
@@ -37,6 +38,21 @@ def evaluator_validity(
                 detail=(
                     f"candidate produced {invalid_agent_runs} independently "
                     "verified invalid solution(s)"
+                ),
+            )
+        )
+    additional_exact_failures = max(
+        0,
+        exact_qualification_failures - invalid_agent_runs,
+    )
+    if additional_exact_failures:
+        checks.append(
+            ValidityCheck(
+                code=ValidityCode.OBJECTIVE,
+                passed=False,
+                detail=(
+                    f"candidate produced {additional_exact_failures} false exact "
+                    "optimality claim(s)"
                 ),
             )
         )
