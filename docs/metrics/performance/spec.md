@@ -105,7 +105,8 @@ time is not added to the solver Performance outcome.
 Current sequential exact tasks use solver CPU time as their Performance time
 observation. The parallel CP-SAT exact-solving task instead uses the wall-clock
 time reported from within the CP-SAT `Solve()` call. Its timing interval excludes
-the fixed `CpModelProto` read, Java runner startup, and model construction.
+the fixed `CpModelProto` read and Java runner startup. Model construction is not
+evaluated by Performance 0.0.2.
 
 The parallel CP-SAT task fixes eight CP-SAT workers on eight allocated CPU cores.
 It does not permit a candidate-created external multiprocess portfolio. CPU time
@@ -332,102 +333,8 @@ public classification. Apply the following order:
 A Qualification failure disqualifies the candidate independently of this
 classification. The PAR-2 classification does not replace Qualification.
 
-## M2: CP-SAT Java model-construction dimensioning target
-
-The `verified_cp_sat_model_construction` protocol uses a one-time dimensioning
-experiment before its final JMH fork, warmup, and measurement counts are frozen.
-Re-run dimensioning when the pinned benchmark workload, JDK, JVM, or execution
-platform changes.
-
-The complete model-construction portion of one candidate evaluation, including Base
-and Agent over the declared `judge_id` panel, has a maximum wall-clock budget of 15
-minutes. The target is a 95% confidence interval for geometric-mean speedup whose
-relative half-width is no greater than 5%.
-
-The dimensioning experiment starts with at least five fresh JVM executions at the
-highest repetition level. It retains the complete per-fork and per-iteration timing
-sequence and measures warmup behavior, variation between JVM executions, variation
-between in-process iterations, and dependence between successive measurements. It
-then allocates repetitions to the observed variance levels subject to the approved
-time and precision targets.
-
-The selected JMH version, forks, warmup cutoff, measurement iterations, iteration
-duration, JVM arguments, CPU allocation, and memory limit are fixed in task
-configuration before candidate evaluation. Candidate evaluation does not adaptively
-extend or reduce repetitions based on a candidate's observed result.
-
-If the frozen 15-minute protocol cannot provide the approved 5% precision for a
-candidate comparison, report the model-construction classification as `inconclusive`.
-Do not exceed the time budget or silently weaken the precision target.
-
-## CP-SAT Java model-construction estimator
-
-After dimensioning freezes the JMH configuration, every original `judge_id` instance
-has the same declared set of Base and Agent JVM fork indices. Warmup observations are
-retained as diagnostics and do not enter the estimator.
-
-For each measured fork, use the JMH post-warmup average-time result in nanoseconds per
-model-construction operation. Every timing value must be finite and strictly positive.
-Pair Base and Agent by:
-
-```text
-(instance_set, instance_id, jvm_fork_index)
-```
-
-For each instance, average the paired log speedup across JVM forks:
-
-```text
-instance_log_speedup = mean_jvm_fork(
-    log(base_nanoseconds_per_operation / agent_nanoseconds_per_operation)
-)
-```
-
-Give every instance equal weight and exponentiate the mean log speedup:
-
-```text
-geometric_mean_speedup = exp(mean_instance(instance_log_speedup))
-```
-
-A `geometric_mean_speedup` greater than one means that Agent constructs the same
-verified CP-SAT model faster than Base. Also report Base and Agent geometric-mean
-nanoseconds per operation, using the same within-instance fork aggregation and
-equal-instance weighting.
-
-Bootstrap `instance_log_speedup` over instances with replacement. Use a 95%
-percentile interval, 5000 resamples, and fixed bootstrap seed `20260824`, then
-exponentiate the interval endpoints to obtain the speedup interval.
-
-Define relative interval half-width as:
-
-```text
-(speedup_interval_upper - speedup_interval_lower)
-/
-(2 * geometric_mean_speedup)
-```
-
-Classification requires the complete declared fork grid and relative interval
-half-width no greater than 5%:
-
-- `improved` when the complete, sufficiently precise speedup interval is entirely
-  greater than one;
-- `regressed` when it is entirely less than one;
-- `inconclusive` when it includes one or its relative half-width exceeds 5%;
-- `incomplete` when a required fork is missing or has a nonfinite or nonpositive
-  measurement.
-
-A model-equivalence failure is a Qualification failure rather than a timing result. A
-JVM crash, timeout, or other operational failure remains owned by Operational
-Reliability and makes the model-construction Performance result incomplete. No missing
-or failed measurement is imputed or replaced.
-
-The protocol does not use solver seeds, normalized objective gap, PAR-2, or a solver
-time-budget penalty.
-
 ## Remaining M2 decisions
 
 The checker limits, accepted formats, and independent checker implementations for a
 future certificate-native protocol remain open. They do not block the trusted-optimum
 v1 protocol.
-
-The final `verified_cp_sat_model_construction` JMH parameters remain open until the
-dimensioning experiment is completed.

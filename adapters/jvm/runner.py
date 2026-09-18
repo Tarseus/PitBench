@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -69,6 +70,40 @@ def _adapter_output(repository: Path, solver: str) -> Path:
     return repository / "solver" / "target" / "pitbench-adapter"
 
 
+def _repository_commit(repository: Path) -> str | None:
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    commit = completed.stdout.strip()
+    return commit if completed.returncode == 0 and commit else None
+
+
+def _solver_identity(repository: Path, solver: str) -> dict:
+    if solver == "choco":
+        assembly = _choco_assembly(repository)
+        match = re.search(r"choco-solver-([0-9][^-]+)-jar-with-dependencies", assembly.name)
+        if match is None:
+            raise RuntimeError(f"cannot determine Choco version from {assembly.name}")
+        version = match.group(1)
+    elif solver == "ortools_cp_sat":
+        artifact = _ortools_java_artifact(repository, "ortools-java")
+        match = re.search(r"-(\d+\.\d+)(?:\.\d+)?$", artifact.stem)
+        if match is None:
+            raise RuntimeError(f"cannot determine OR-Tools version from {artifact.name}")
+        version = match.group(1)
+    else:
+        raise ValueError(f"unsupported external identity probe: {solver}")
+    identity = {"version": version}
+    source_commit = _repository_commit(repository)
+    if source_commit is not None:
+        identity["source_commit"] = source_commit
+    return identity
+
+
 _ORTOOLS_CP_SAT_RUNNER_SOURCE = """\
 package org.pitbench.adapters;
 
@@ -80,6 +115,7 @@ import com.google.ortools.sat.CpSolverResponse;
 import com.google.ortools.sat.CpSolverStatus;
 import com.google.ortools.sat.IntVar;
 import com.google.ortools.sat.IntervalVar;
+import com.google.ortools.sat.SatParameters;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -110,6 +146,24 @@ public final class OrToolsCpSatRunner {
       result.append(values[index]);
     }
     return result.append(']').toString();
+  }
+
+  private static boolean booleanField(String input, String name, boolean defaultValue) {
+    java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+        "\\\"" + name + "\\\"\\s*:\\s*(true|false)").matcher(input);
+    return matcher.find() ? Boolean.parseBoolean(matcher.group(1)) : defaultValue;
+  }
+
+  private static int integerField(String input, String name, int defaultValue) {
+    java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+        "\\\"" + name + "\\\"\\s*:\\s*(-?\\d+)").matcher(input);
+    return matcher.find() ? Integer.parseInt(matcher.group(1)) : defaultValue;
+  }
+
+  private static String stringField(String input, String name, String defaultValue) {
+    java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+        "\\\"" + name + "\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"").matcher(input);
+    return matcher.find() ? matcher.group(1) : defaultValue;
   }
 
   private static int[] readJobShopIntegers(Path instancePath) throws IOException {
@@ -213,15 +267,38 @@ public final class OrToolsCpSatRunner {
       prepareJobShop(args[1], args[2]);
       return;
     }
-    if (args.length != 4) {
+    if (args.length < 4 || args.length > 5) {
       throw new IllegalArgumentException(
-          "expected model_proto_path solver_seed budget_sec threads");
+          "expected model_proto_path solver_seed budget_sec threads [parameters_json]");
     }
     long solverSeed = Long.parseLong(args[1]);
     double budgetSec = Double.parseDouble(args[2]);
     int threads = Integer.parseInt(args[3]);
     if (!Double.isFinite(budgetSec) || budgetSec <= 0 || threads != 8) {
       throw new IllegalArgumentException("parallel CP-SAT requires a positive budget and eight threads");
+    }
+    String parameters = args.length == 5 ? args[4] : "{}";
+    boolean cpModelPresolve = booleanField(parameters, "cp_model_presolve", true);
+    int cpModelProbingLevel = integerField(parameters, "cp_model_probing_level", 2);
+    int linearizationLevel = integerField(parameters, "linearization_level", 1);
+    int symmetryLevel = integerField(parameters, "symmetry_level", 2);
+    String searchBranching = stringField(parameters, "search_branching", "automatic_search");
+    SatParameters.SearchBranching branching;
+    switch (searchBranching) {
+      case "automatic_search":
+        branching = SatParameters.SearchBranching.AUTOMATIC_SEARCH;
+        break;
+      case "lp_search":
+        branching = SatParameters.SearchBranching.LP_SEARCH;
+        break;
+      case "pseudo_cost_search":
+        branching = SatParameters.SearchBranching.PSEUDO_COST_SEARCH;
+        break;
+      case "portfolio_search":
+        branching = SatParameters.SearchBranching.PORTFOLIO_SEARCH;
+        break;
+      default:
+        throw new IllegalArgumentException("unsupported search_branching: " + searchBranching);
     }
 
     Loader.loadNativeLibraries();
@@ -233,6 +310,11 @@ public final class OrToolsCpSatRunner {
     solver.getParameters().setMaxTimeInSeconds(budgetSec);
     solver.getParameters().setNumWorkers(threads);
     solver.getParameters().setRandomSeed(Math.toIntExact(solverSeed));
+    solver.getParameters().setCpModelPresolve(cpModelPresolve);
+    solver.getParameters().setCpModelProbingLevel(cpModelProbingLevel);
+    solver.getParameters().setLinearizationLevel(linearizationLevel);
+    solver.getParameters().setSymmetryLevel(symmetryLevel);
+    solver.getParameters().setSearchBranching(branching);
     CpSolverStatus status = solver.solve(model);
     CpSolverResponse response = solver.response();
     boolean hasSolution = status == CpSolverStatus.OPTIMAL || status == CpSolverStatus.FEASIBLE;
@@ -256,6 +338,12 @@ public final class OrToolsCpSatRunner {
             + ",\\\"solver_runtime_sec\\\":" + solver.wallTime()
             + ",\\\"wall_time_sec\\\":" + solver.wallTime()
             + ",\\\"nodes\\\":" + response.getNumBranches()
+            + ",\\\"effective_parameters\\\":{"
+            + "\\\"cp_model_presolve\\\":" + solver.getParameters().getCpModelPresolve()
+            + ",\\\"cp_model_probing_level\\\":" + solver.getParameters().getCpModelProbingLevel()
+            + ",\\\"linearization_level\\\":" + solver.getParameters().getLinearizationLevel()
+            + ",\\\"symmetry_level\\\":" + solver.getParameters().getSymmetryLevel()
+            + ",\\\"search_branching\\\":\\\"" + searchBranching + "\\\"}"
             + ",\\\"solution\\\":" + solution
             + "}");
   }
@@ -283,15 +371,6 @@ def compile_adapter(repository: Path, solver: str) -> None:
             check=True,
         )
         return
-    if solver == "ortools_model_build":
-        source = output / "ModelBuildRunner.java"
-        source.write_text((Path(__file__).with_name("ModelBuildRunner.java")).read_text())
-        subprocess.run(
-            ["javac", "-cp", _ortools_classpath(repository, output), "-d", str(output), str(source)],
-            cwd=repository,
-            check=True,
-        )
-        return
     subprocess.run(
         [
             "javac",
@@ -308,6 +387,9 @@ def compile_adapter(repository: Path, solver: str) -> None:
 
 def run_choco(repository: Path) -> None:
     request = json.load(sys.stdin)
+    if request.get("probe"):
+        print(json.dumps(_solver_identity(repository, "choco")))
+        return
     if request.get("threads") != 1:
         raise ValueError("Choco exact runner requires one thread")
     classpath = os.pathsep.join(
@@ -326,6 +408,11 @@ def run_choco(repository: Path) -> None:
             str(request["solver_seed"]),
             str(request["budget_sec"]),
             str(request["threads"]),
+            *(
+                [json.dumps(request["parameters"], separators=(",", ":"))]
+                if request.get("parameters") is not None
+                else []
+            ),
         ],
         cwd=repository,
         check=False,
@@ -345,6 +432,9 @@ def run_choco(repository: Path) -> None:
 
 def run_ortools_cp_sat(repository: Path) -> None:
     request = json.load(sys.stdin)
+    if request.get("probe"):
+        print(json.dumps(_solver_identity(repository, "ortools_cp_sat")))
+        return
     if request.get("threads") != 8:
         raise ValueError("parallel CP-SAT runner requires eight threads")
     output = _adapter_output(repository, "ortools_cp_sat")
@@ -358,6 +448,11 @@ def run_ortools_cp_sat(repository: Path) -> None:
             str(request["solver_seed"]),
             str(request["budget_sec"]),
             str(request["threads"]),
+            *(
+                [json.dumps(request["parameters"], separators=(",", ":"))]
+                if request.get("parameters") is not None
+                else []
+            ),
         ],
         cwd=repository,
         check=False,
@@ -373,18 +468,6 @@ def run_ortools_cp_sat(repository: Path) -> None:
         )
     response = json.loads(completed.stdout)
     print(json.dumps(response, allow_nan=False))
-
-
-def run_ortools_model_build(repository: Path) -> None:
-    request = json.load(sys.stdin)
-    output = _adapter_output(repository, "ortools_model_build")
-    completed = subprocess.run(
-        ["java", "-cp", _ortools_classpath(repository, output), "org.pitbench.adapters.ModelBuildRunner", str(request["instance_path"]), str(request["solver_seed"]), str(request["budget_sec"]), str(request["threads"])],
-        cwd=repository, check=False, capture_output=True, text=True,
-    )
-    if completed.returncode:
-        raise RuntimeError(completed.stderr.strip() or "OR-Tools model build runner failed")
-    print(json.dumps(json.loads(completed.stdout), allow_nan=False))
 
 
 def prepare_ortools_cp_sat_job_shop(
@@ -417,7 +500,7 @@ def main() -> None:
         "command",
         choices=["compile", "run", "prepare-jssp"],
     )
-    parser.add_argument("--solver", choices=["choco", "ortools_cp_sat", "ortools_model_build"], required=True)
+    parser.add_argument("--solver", choices=["choco", "ortools_cp_sat"], required=True)
     parser.add_argument("--repository", type=Path, default=Path.cwd())
     parser.add_argument("--instance", type=Path)
     parser.add_argument("--output", type=Path)
@@ -446,8 +529,6 @@ def main() -> None:
         )
     elif args.solver == "choco":
         run_choco(repository)
-    elif args.solver == "ortools_model_build":
-        run_ortools_model_build(repository)
     else:
         run_ortools_cp_sat(repository)
 

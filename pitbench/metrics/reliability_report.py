@@ -6,7 +6,7 @@ from collections import Counter
 
 from pydantic import BaseModel, Field
 
-from pitbench.instances.boundary import boundary_suite
+from pitbench.instances.boundary import BoundaryCase, boundary_suite
 from pitbench.schema.observation import CodeState, RunObservation, RunStatus
 from pitbench.schema.task import PitBenchTask
 
@@ -81,7 +81,25 @@ def compute_reliability_reports(
     task: PitBenchTask,
     code_states: tuple[CodeState, ...] = tuple(CodeState),
 ) -> tuple[ReliabilityReport, ReliabilityDetails]:
-    examples = boundary_suite(task.problem_family).cases()
+    try:
+        examples = boundary_suite(task.problem_family).cases()
+    except ValueError:
+        observed_case_names = sorted(
+            {
+                item.instance_id
+                for item in observations
+                if item.test_suite == "operational_reliability"
+            }
+        )
+        examples = [
+            BoundaryCase(
+                name=instance_id,
+                description="task visible agent_dev reliability case",
+                data={},
+                reference_solution={},
+            )
+            for instance_id in observed_case_names
+        ]
     seeds = (
         task.evaluation.seed_robustness.development_seeds
         if task.evaluation.seed_robustness is not None

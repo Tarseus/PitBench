@@ -62,7 +62,7 @@ def test_solver_image_build_uses_task_release_and_reports_local_image_id() -> No
         return subprocess.CompletedProcess(command, 0, "", "")
 
     built = build_solver_image(
-        "ortools_v9_15",
+        "ortools_cp_sat_solve_v9_15",
         ROOT,
         config=SolverImageBuildConfig(proxy_url="http://127.0.0.1:7897"),
         progress=progress.append,

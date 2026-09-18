@@ -235,8 +235,6 @@ The current evaluator does not satisfy these conclusions yet:
 - HiGHS and Choco do not yet provide a common normalized optimal-termination field to
   the Performance estimator.
 - The current workspace lacks the complete Choco private panel, oracle, and verifier.
-- The OR-Tools model-construction task requires its separate verified-construction
-  protocol and must not be treated as an exact-solve normalized-gap task.
 
 These are implementation and protocol blockers. This evidence item does not authorize
 their fixes or change the existing M2 specification by itself.

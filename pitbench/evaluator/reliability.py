@@ -3,16 +3,81 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
-from pitbench.evaluator.judge import InstanceCase, _development_seeds
+from pitbench.evaluator.judge import InstanceCase, JudgePlan, _development_seeds
+from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.instances.boundary import boundary_suite
 from pitbench.schema.task import InstanceSetKind, InstanceSetSpec, PitBenchTask
 
 SUITE_NAME = "operational_reliability"
 
 
-def prepare_boundary_cases(task: PitBenchTask, output_dir: Path) -> list[InstanceCase]:
+def prepare_boundary_cases(
+    task: PitBenchTask,
+    output_dir: Path,
+    *,
+    private_root: Path | None = None,
+    public_root: Path | None = None,
+) -> list[InstanceCase]:
+    if task.problem_family.value == "cp":
+        repository_root = Path(__file__).resolve().parents[2]
+        resolver = PrivateAssetResolver(private_root or repository_root / "private")
+        plan = JudgePlan.from_instance_set_configs(
+            task,
+            resolver,
+            public_root=public_root or repository_root,
+        )
+        source_cases = [
+            case
+            for case in plan.cases
+            if case.instance_set.kind is InstanceSetKind.AGENT_DEV
+        ]
+        if not source_cases:
+            raise ValueError("CP reliability requires visible agent_dev instances")
+        seeds = _development_seeds(task)
+        instance_set = InstanceSetSpec(
+            name="boundary_cases",
+            kind=InstanceSetKind.AGENT_DEV,
+            instance_set_config="reliability/task_agent_dev.json",
+            size=len(source_cases),
+        )
+        directory = output_dir.resolve() / "reliability"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "task_id": task.task_id,
+                    "test_suite": SUITE_NAME,
+                    "problem_family": task.problem_family.value,
+                    "source": "task visible agent_dev instance set",
+                    "budgets_sec": task.evaluation.budgets_sec,
+                    "solver_seeds": list(seeds),
+                    "threads": task.evaluation.threads,
+                    "cases": [
+                        {
+                            "instance_id": case.instance_id,
+                            "description": "task visible agent_dev reliability case",
+                        }
+                        for case in source_cases
+                    ],
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return [
+            replace(
+                case,
+                instance_set=instance_set,
+                solver_seeds=seeds,
+                budgets_sec=tuple(task.evaluation.budgets_sec),
+                test_suite=SUITE_NAME,
+            )
+            for case in source_cases
+        ]
+
     suite = boundary_suite(task.problem_family)
     examples = suite.cases()
     directory = output_dir.resolve() / "reliability" / "inputs"

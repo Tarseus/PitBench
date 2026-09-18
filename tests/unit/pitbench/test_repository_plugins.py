@@ -33,7 +33,6 @@ ROOT = Path(__file__).resolve().parents[3]
         ("vroom", "vroom", "VroomRepositoryPlugin"),
         ("highs", "highs", "HighsRepositoryPlugin"),
         ("choco", "choco", "ChocoRepositoryPlugin"),
-        ("ortools", "ortools_model_build", "OrToolsRepositoryPlugin"),
         (
             "ortools",
             "ortools_cp_sat_exact",
@@ -174,7 +173,7 @@ def test_ortools_build_reuses_evaluator_owned_dependency_cache() -> None:
         OrToolsRepositoryPlugin,
     )
 
-    prepare_cache, prepare_maven, copy_maven, configure, build, compile_adapter = (
+    prepare_cache, prepare_maven, copy_maven, configure, build = (
         OrToolsRepositoryPlugin().build_commands(BuildKind.PERFORMANCE)
     )
 
@@ -189,13 +188,6 @@ def test_ortools_build_reuses_evaluator_owned_dependency_cache() -> None:
     assert configure.argv[:6] == ["cmake", "-S", ".", "-B", "build", "-G"]
     assert "-DFETCHCONTENT_BASE_DIR=/tmp/ortools-deps" in configure.argv
     assert "-DCMAKE_BUILD_TYPE=Release" in configure.argv
-    assert compile_adapter.argv == [
-        "python3",
-        "/opt/pitbench-jvm/runner.py",
-        "compile",
-        "--solver",
-        "ortools_model_build",
-    ]
     assert "-DFETCHCONTENT_SOURCE_DIR_ZLIB=/opt/ortools-deps/zlib-src" in configure.argv
     assert (
         "-DFETCHCONTENT_SOURCE_DIR_BZIP2=/opt/ortools-deps/bzip2-src" in configure.argv

@@ -1,11 +1,10 @@
 performance:
-  status: frozen
-  stage: M7
+  status: freeze_candidate
+  stage: M6
   protocols:
     - heuristic_fixed_budget
     - exact_verified_solve
-    - verified_cp_sat_model_construction
-  version: 0.0.1
+  version: 0.0.2
   branch: metric/performance-v1
   scope: docs/metrics/performance/scope.md
   evidence: docs/metrics/performance/evidence.md
@@ -38,8 +37,6 @@ performance:
     - item: generalization_boundary
       commit: c27bb273
       tests: test_performance_report_excludes_generalization_observations
-  frozen_commit: 57780dc1
-  frozen_on: "2026-09-18"
 
 nuisance_robustness:
   status: frozen

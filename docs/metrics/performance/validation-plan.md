@@ -3,8 +3,7 @@
 ## M3 status
 
 This plan records the approved minimum counterexamples for the
-`heuristic_fixed_budget`, `exact_verified_solve`, and
-`verified_cp_sat_model_construction` protocols. Each case is intended to expose an
+`heuristic_fixed_budget` and `exact_verified_solve` protocols. Each case is intended to expose an
 attractive but incorrect implementation or interpretation.
 
 ## Heuristic fixed-budget cases
@@ -133,55 +132,6 @@ was not launched or whose evaluator infrastructure failed.
 
 Expected result: the solver timeout receives `2T`; the infrastructure failure has no
 ordinary outcome and makes the required aggregate `incomplete`.
-
-## CP-SAT Java model-construction cases
-
-### Fast but non-equivalent model
-
-Construct an Agent result with lower construction time whose produced `CpModelProto`
-fails the independent equivalence contract.
-
-Expected result: Qualification fails. No speedup classification can replace that
-failure.
-
-### Speedup inversion
-
-Construct a complete panel with a non-unit geometric-mean speedup, then exchange Base
-and Agent timing identities.
-
-Expected result: the speedup and both interval endpoints become their multiplicative
-inverses, and `improved` and `regressed` exchange.
-
-### Equal ratios across unequal-duration instances
-
-Construct instances with substantially different absolute nanoseconds per operation but
-the same Base-to-Agent timing ratio.
-
-Expected result: the equal-instance geometric-mean speedup equals that common ratio.
-Weighting the result by absolute duration or total operations fails the case.
-
-### Missing JVM fork
-
-Remove one required Base or Agent JVM fork from an otherwise complete declared grid.
-
-Expected result: classification is `incomplete`. Dropping the unmatched fork or reducing
-the expected grid fails the case.
-
-### Imprecise interval
-
-Construct a complete timing panel whose speedup interval excludes one but whose approved
-relative interval half-width exceeds 5%.
-
-Expected result: classification is `inconclusive`. Statistical direction alone cannot
-override the precision requirement.
-
-### Warmup exclusion
-
-Construct JMH output in which warmup timings favor Agent while the measured fork result
-does not.
-
-Expected result: the estimator uses only the post-warmup measured result. Including
-warmup values in the speedup estimate fails the case.
 
 ## Required retention
 

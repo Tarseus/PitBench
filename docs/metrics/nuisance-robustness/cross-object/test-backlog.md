@@ -11,7 +11,7 @@ tests that must be added and run before M3-M5 support claims.
   private 30-seed evaluation list.
 - Verify every private seed file hash, task identity, domain bound, and seed
   order.
-- Verify deterministic VROOM and OR-Tools model-build tasks remain unsupported
+- Verify deterministic VROOM remains unsupported for Seed Robustness
   for Seed Robustness.
 - Verify seed lists are reused identically across Base, Agent, instances, and
   budgets.

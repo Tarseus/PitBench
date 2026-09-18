@@ -50,6 +50,14 @@ public final class ExactSolverRunner {
         return values;
     }
 
+    private static String stringField(String input, String name, String defaultValue) {
+        Pattern pattern = Pattern.compile(
+            "\\\"" + name + "\\\"\\s*:\\s*\\\"([^\\\"]+)\\\""
+        );
+        Matcher matcher = pattern.matcher(input);
+        return matcher.find() ? matcher.group(1) : defaultValue;
+    }
+
     private static long processCpuTime() {
         java.lang.management.OperatingSystemMXBean bean =
             ManagementFactory.getOperatingSystemMXBean();
@@ -90,9 +98,9 @@ public final class ExactSolverRunner {
     }
 
     public static void main(String[] args) throws IOException {
-        if (args.length != 4) {
+        if (args.length < 4 || args.length > 5) {
             throw new IllegalArgumentException(
-                "expected instance_path solver_seed budget_sec threads"
+                "expected instance_path solver_seed budget_sec threads [parameters_json]"
             );
         }
         Path instancePath = Path.of(args[0]);
@@ -102,6 +110,8 @@ public final class ExactSolverRunner {
         if (!Double.isFinite(budgetSec) || budgetSec <= 0 || threads != 1) {
             throw new IllegalArgumentException("invalid budget or thread count");
         }
+        String parameters = args.length == 5 ? args[4] : "{}";
+        String searchStrategy = stringField(parameters, "search_strategy", "input_order_lb");
         String instance = Files.readString(instancePath);
         int capacity = integerField(instance, "capacity");
         int[] originalWeights = integerArray(instance, "weights");
@@ -162,7 +172,22 @@ public final class ExactSolverRunner {
         model.setSeed(solverSeed);
 
         Solver solver = model.getSolver();
-        solver.setSearch(Search.inputOrderLBSearch(itemBins));
+        switch (searchStrategy) {
+            case "input_order_lb":
+                solver.setSearch(Search.inputOrderLBSearch(itemBins));
+                break;
+            case "min_dom_lb":
+                solver.setSearch(Search.minDomLBSearch(itemBins));
+                break;
+            case "dom_over_wdeg":
+                solver.setSearch(Search.domOverWDegSearch(itemBins));
+                break;
+            case "activity_based":
+                solver.setSearch(Search.activityBasedSearch(itemBins));
+                break;
+            default:
+                throw new IllegalArgumentException("unsupported search_strategy: " + searchStrategy);
+        }
         solver.limitTime((long) Math.ceil(budgetSec * 1000.0));
         long cpuStart = processCpuTime();
         Solution solution = solver.findOptimalSolution(maximumBin, false);
@@ -200,6 +225,8 @@ public final class ExactSolverRunner {
                 + ",\"solver_runtime_sec\":" + solver.getTimeCount()
                 + ",\"cpu_time_sec\":" + cpuTime
                 + ",\"nodes\":" + solver.getNodeCount()
+                + ",\"effective_parameters\":{\"search_strategy\":\""
+                + searchStrategy + "\"}"
                 + ",\"solution\":" + solutionJson + "}"
         );
     }

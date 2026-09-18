@@ -35,3 +35,46 @@ panels:
       mip_detect_symmetry: {type: categorical, choices: [true, false], default: true}
       mip_heuristic_run_feasibility_jump: {type: categorical, choices: [true, false], default: true}
       mip_heuristic_effort: {type: real, bounds: [0, 1], default: 0.05}
+  - task_config: configs/tasks/choco_v6_0_1.yaml
+    collector: choco
+    instance_count: 5
+    solver_seed_count: 30
+    feedback: capped_optimal_time
+    instance_source: configs/instance_sets/choco_v6_0_1_dev.yaml
+    seed_source: configs/tasks/choco_v6_0_1.yaml
+    seed_key: evaluation.seed_robustness.development_seeds
+    seed_max: 9223372036854775807
+    parameters:
+      search_strategy:
+        type: categorical
+        choices: [input_order_lb, min_dom_lb, dom_over_wdeg, activity_based]
+        default: input_order_lb
+  - task_config: configs/tasks/ortools_cp_sat_solve_v9_15.yaml
+    collector: ortools_cp_sat
+    instance_count: 5
+    solver_seed_count: 30
+    feedback: capped_optimal_time
+    instance_source: configs/instance_sets/ortools_cp_sat_solve_v9_15_dev.yaml
+    seed_source: configs/tasks/ortools_cp_sat_solve_v9_15.yaml
+    seed_key: evaluation.seed_robustness.development_seeds
+    seed_max: 2147483647
+    parameters:
+      cp_model_presolve: {type: categorical, choices: [true, false], default: true}
+      cp_model_probing_level: {type: integer, bounds: [0, 2], default: 2}
+      linearization_level: {type: integer, bounds: [0, 2], default: 1}
+      symmetry_level: {type: integer, bounds: [0, 4], default: 2}
+      search_branching:
+        type: categorical
+        choices: [automatic_search, lp_search, pseudo_cost_search, portfolio_search]
+        default: automatic_search
+  - task_config: configs/tasks/vroom_v1_15_0.yaml
+    collector: vroom
+    instance_count: 10
+    solver_seed_count: 1
+    feedback: normalized_gap
+    instance_source: configs/instance_sets/vroom_v1_15_0_dev.yaml
+    seed_source: configs/tasks/vroom_v1_15_0.yaml
+    seed_key: evaluation.solver_seeds
+    seed_max: 0
+    parameters:
+      exploration_level: {type: integer, bounds: [0, 5], default: 5}

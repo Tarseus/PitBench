@@ -26,4 +26,5 @@ RUN test -n "$BASE_COMMIT" \
     && git -C /workspace/repo gc --prune=now --quiet
 RUN make -C /workspace/repo/src -j1
 
+ENV PITBENCH_VROOM_SOLVER="/workspace/repo/bin/vroom"
 WORKDIR /workspace/repo

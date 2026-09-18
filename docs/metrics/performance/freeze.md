@@ -1,16 +1,13 @@
-# Performance M7 freeze record
+# Performance 0.0.2 scope-change record
 
 Metric: Performance.
-Version: 0.0.1.
-Stage: M7.
-Status: frozen.
-Implementation commit: `57780dc1`.
-Frozen on: 2026-09-18.
+Version: 0.0.2.
+Stage: M6.
+Status: freeze candidate; not frozen.
 
-The frozen implementation is backed by the approved Performance specification,
-falsification plan, M5 validation results, HiGHS and Choco lightweight controls,
-the OR-Tools CP-SAT exact-solving control, and the lightweight CP-SAT
-model-construction dimensioning/control artifact.
+This scope-change record removes the OR-Tools 9.15 model-construction task and
+protocol. The active Performance scope retains heuristic fixed-budget evaluation
+and exact verified solving, including OR-Tools CP-SAT exact solving.
 
-This record freezes Performance only. It does not freeze any other ontology
-dimension or authorize changes to their lifecycle status.
+The implementation commit and a new M7 freeze decision are pending. This record
+does not freeze any other ontology dimension.

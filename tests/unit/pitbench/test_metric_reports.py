@@ -492,12 +492,6 @@ def test_format_exact_performance_report_states_coverage_priority() -> None:
     assert "PAR-2" in rendered
 
 
-def test_task_performance_dispatch_keeps_cp_sat_construction_separate() -> None:
-    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/ortools_v9_15.yaml")
-
-    assert compute_task_performance_report([], task=task) is None
-
-
 def performance_observation(
     code_state: CodeState,
     instance_set_kind: str,

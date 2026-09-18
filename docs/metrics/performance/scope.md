@@ -4,12 +4,12 @@
 
 Performance measures the result delivered by Base and Agent under a declared
 evaluation budget, after the result passes the applicable independent qualification
-checks. The dimension covers heuristic optimization, exact optimization, and
-correctness-preserving model construction through separate protocol variants.
+checks. The dimension covers heuristic and exact optimization through separate
+protocol variants.
 
 The variants share the candidate-evaluation entry point and preserve all run outcomes,
-but they do not force objective quality, time to a verified exact result, and model
-construction time into one common scalar.
+but they do not force objective quality and time to a verified exact result into one
+common scalar.
 
 ## Heuristic optimization
 
@@ -46,29 +46,12 @@ procedure are deferred to M2.
 The OR-Tools exact-solving task consumes an evaluator-owned `CpModelProto` whose
 content and hash are fixed before candidate evaluation. Base and Agent receive the
 same proto. The timed and editable solving scope may include model loading, presolve,
-propagation, search, cuts, and solving heuristics, but it does not call or measure the
-Java `CpModel` construction API.
+propagation, search, cuts, and solving heuristics. Model construction is outside the
+Performance 0.0.2 scope.
 
 The exact-solving task evaluates the CP-SAT solving implementation. It does not combine
 model-construction time with solving time or allow construction improvements to offset
 solving regressions.
-
-## Correctness-preserving model construction
-
-The separate OR-Tools model-construction task covers the OR-Tools 9.15 Java CP-SAT
-`CpModel` and `CpModelProto` construction path. It measures the time required to build
-an independently verified equivalent CP-SAT model from a fixed input specification.
-
-The model-construction task does not run or measure `CpSolver`, presolve, propagation,
-search, cuts, or solving heuristics. It does not fabricate an objective anchor,
-normalized optimization gap, verified-solved result, or PAR-2 outcome.
-
-Model construction and exact solving are separate tasks and protocol results. They may
-use the same pinned OR-Tools release, but their measurements are not added together and
-neither result can mask a regression in the other task.
-
-The construction-time estimand, repetition protocol, aggregation, and uncertainty
-procedure are deferred to M2.
 
 ## Evaluation population and boundaries
 

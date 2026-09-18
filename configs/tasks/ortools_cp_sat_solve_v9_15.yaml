@@ -11,8 +11,9 @@ task_type: exact_solver
 problem_family: cp
 optimization_scope: cp_sat_solve_efficiency
 instruction: >-
-  Improve CP-SAT solving performance while preserving the fixed model construction,
-  feasibility, and objective semantics. Use only the visible development instances.
+  Improve only CP-SAT solving performance while preserving the fixed model
+  construction, feasibility, and objective semantics. Do not optimize model
+  construction. Use only the visible development instances.
 information_regime: snapshot_only
 repository:
   clone_url: https://github.com/google/or-tools.git
@@ -28,6 +29,7 @@ oracle:
   objective_sense: minimize
 evaluation:
   performance_protocol: exact_verified_solve
+  operational_reliability: true
   budgets_sec: [10.0, 30.0]
   primary_budget_sec: 30.0
   seed_robustness:

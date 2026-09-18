@@ -38,9 +38,7 @@ solvers:
 - HiGHS exact MIP: 10 and 30 seconds, one thread;
 - OR-Tools CP-SAT exact solving: 10 and 30 seconds, eight workers;
 - Choco exact solving: 5 and 20 seconds, one thread;
-- VROOM: no Seed Robustness panel because the solver is deterministic; and
-- OR-Tools model construction: no Seed Robustness panel because the model
-  builder is deterministic.
+- VROOM: no Seed Robustness panel because the solver is deterministic.
 
 The HiGHS, CP-SAT, and Choco task files now declare 30 development seeds and
 private 30-seed evaluation lists under this candidate protocol. Their existing
@@ -92,9 +90,7 @@ D_{\mathrm{CP\text{-}SAT}}^{\mathrm{candidate}}
 \]
 
 The candidate requires M1 evidence that changing this seed produces meaningful
-solver variation for the selected CP-SAT task. It does not apply to the
-deterministic model-construction protocol, whose model builder does not use the
-solver seed to vary the constructed model.
+solver variation for the selected CP-SAT task.
 
 ### Choco
 

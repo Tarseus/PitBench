@@ -25,6 +25,7 @@ def execute(
     seed: int,
     budget: float,
     threads: int,
+    parameters: dict[str, Any] | None = None,
 ) -> None:
     """Run an immutable judge-image adapter with a JSON stdin/stdout contract."""
     started = time.perf_counter()
@@ -39,6 +40,7 @@ def execute(
             "solver_seed": seed,
             "budget_sec": budget,
             "threads": threads,
+            "parameters": parameters,
         }
         completed = subprocess.run(
             shlex.split(configured),

@@ -650,8 +650,6 @@ def compute_task_performance_report(
             expected_run_grid=expected_run_grid,
             time_basis=task.evaluation.exact_time_basis,
         )
-    if protocol == PerformanceProtocol.VERIFIED_CP_SAT_MODEL_CONSTRUCTION:
-        return None
     raise ValueError(f"unsupported performance protocol: {protocol}")
 
 

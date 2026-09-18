@@ -118,23 +118,6 @@ different labels would not establish a solver-seed nuisance axis. VROOM may
 enter Representation Robustness only through an independently verified
 equivalent-transformation adapter.
 
-## OR-Tools model construction
-
-### Evidence
-
-- The model-building adapter accepts the shared solver-seed argument in its
-  command contract.
-- The model builder constructs and serializes the CP model without using the
-  seed to vary model construction.
-- The model-construction task currently declares only solver seed 0.
-- The repository plugin marks the model-building protocol deterministic.
-
-### Status
-
-OR-Tools model construction is unsupported for Seed Robustness. Its seed input
-is a common interface field, not evidence of stochastic model-construction
-behavior.
-
 ## Cross-solver conclusions
 
 The evidence supports a shared sampling and reporting structure, not one shared
@@ -145,10 +128,9 @@ numeric seed domain or universal stochastic capability. The current matrix is:
 - OR-Tools CP-SAT exact solving: explicit seed input, domain and sensitivity
   candidate;
 - Choco: explicit seed input, domain and sensitivity candidate;
-- VROOM: deterministic, Seed Robustness unsupported; and
-- OR-Tools model construction: deterministic, Seed Robustness unsupported.
+- VROOM: deterministic, Seed Robustness unsupported.
 
-No current evidence justifies adding VROOM or deterministic model construction to
-Seed Robustness. No candidate solver may enter M5 until its seed domain,
+No current evidence justifies adding VROOM to Seed Robustness. No candidate solver
+may enter M5 until its seed domain,
 seed-list configuration, outcome adapter, independent verification, and
 solver-specific M3 cases are approved.

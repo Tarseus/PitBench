@@ -17,7 +17,6 @@ class TaskType(str, Enum):
 class PerformanceProtocol(str, Enum):
     HEURISTIC_FIXED_BUDGET = "heuristic_fixed_budget"
     EXACT_VERIFIED_SOLVE = "exact_verified_solve"
-    VERIFIED_CP_SAT_MODEL_CONSTRUCTION = "verified_cp_sat_model_construction"
 
 
 class ExactTimeBasis(str, Enum):
@@ -263,17 +262,6 @@ class PitBenchTask(BaseModel):
                     raise ValueError(
                         "parallel CP-SAT exact solving requires exactly eight threads"
                     )
-        if (
-            performance_protocol
-            == PerformanceProtocol.VERIFIED_CP_SAT_MODEL_CONSTRUCTION
-            and self.problem_family != ProblemFamily.CP
-        ):
-            raise ValueError("CP-SAT model construction requires the CP problem family")
-        if self.evaluation.operational_reliability and self.problem_family not in {
-            ProblemFamily.CVRP,
-            ProblemFamily.MIP,
-        }:
-            raise ValueError("boundary reliability tests support CVRP and MIP tasks")
         kinds = {instance_set.kind for instance_set in self.instance_sets}
         required = {InstanceSetKind.AGENT_DEV, InstanceSetKind.JUDGE_ID}
         missing = required - kinds

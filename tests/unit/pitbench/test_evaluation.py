@@ -155,10 +155,6 @@ def test_workspace_permissions_reuses_existing_agent_account() -> None:
         ("vroom_v1_15_0", PerformanceProtocol.HEURISTIC_FIXED_BUDGET),
         ("highs_v1_15_1", PerformanceProtocol.EXACT_VERIFIED_SOLVE),
         ("choco_v6_0_1", PerformanceProtocol.EXACT_VERIFIED_SOLVE),
-        (
-            "ortools_v9_15",
-            PerformanceProtocol.VERIFIED_CP_SAT_MODEL_CONSTRUCTION,
-        ),
     ],
 )
 def test_task_declares_performance_protocol(
@@ -182,15 +178,6 @@ def test_task_rejects_performance_protocol_that_conflicts_with_task_type() -> No
     exact_payload["evaluation"]["performance_protocol"] = "heuristic_fixed_budget"
     with pytest.raises(ValueError, match="exact task requires"):
         PitBenchTask.model_validate(exact_payload)
-
-
-def test_cp_sat_model_construction_requires_cp_problem_family() -> None:
-    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/ortools_v9_15.yaml")
-    payload = task.model_dump()
-    payload["problem_family"] = "mip"
-
-    with pytest.raises(ValueError, match="requires the CP problem family"):
-        PitBenchTask.model_validate(payload)
 
 
 def test_fixture_plan_materializes_the_complete_expected_run_grid() -> None:

@@ -117,6 +117,7 @@ class VroomRepositoryPlugin(RepositoryPlugin):
     name = "vroom"
     agent_requirement = "file:bin/vroom"
     representations = {"customer_relabeling": ("judge",)}
+    collection_backend = "pitbench.evaluator.collection:VroomCollectionBackend"
     deterministic = True
     driver_name = "vroom"
     driver_solver = "./bin/vroom"
@@ -179,6 +180,7 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
     name = "choco"
     driver_python = "python3"
     agent_requirement = "env:PITBENCH_CHOCO_RUNNER"
+    collection_backend = "pitbench.evaluator.collection:ChocoCollectionBackend"
     driver_name = "choco"
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
@@ -215,9 +217,9 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
     agent_python = "python3"
     name = "ortools"
     driver_python = "python3"
-    agent_requirement = "env:PITBENCH_ORTOOLS_JAVA_RUNNER"
-    deterministic = True
-    driver_name = "ortools_model_build"
+    agent_requirement = "env:PITBENCH_ORTOOLS_CP_SAT_RUNNER"
+    deterministic = False
+    driver_name = "ortools_cp_sat_exact"
     driver_records_trajectory = False
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
@@ -265,9 +267,6 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
                 argv=["cmake", "--build", "build", "--target", "java_package", "-j6"],
                 env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/ortools-maven"},
             ),
-            CommandSpec(
-                argv=["python3", "/opt/pitbench-jvm/runner.py", "compile", "--solver", "ortools_model_build"]
-            ),
         ]
 
 
@@ -275,6 +274,9 @@ class OrToolsCpSatExactRepositoryPlugin(OrToolsRepositoryPlugin):
     """Build the OR-Tools Java runtime and fixed-proto CP-SAT solve adapter."""
 
     driver_name = "ortools_cp_sat_exact"
+    collection_backend = (
+        "pitbench.evaluator.collection:OrToolsCpSatCollectionBackend"
+    )
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         return [

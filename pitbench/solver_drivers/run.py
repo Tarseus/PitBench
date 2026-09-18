@@ -265,9 +265,25 @@ class VroomDriver(SolverDriver):
 
     @staticmethod
     def main(argv: list[str] | None = None) -> None:
-        args = parser(solver=True).parse_args(argv)
+        arguments = parser(solver=True)
+        arguments.add_argument("--parameters", type=Path)
+        args = arguments.parse_args(argv)
         started = time.perf_counter()
         try:
+            parameters = (
+                json.loads(args.parameters.read_text()) if args.parameters else None
+            )
+            if parameters is not None:
+                if set(parameters) != {"exploration_level"}:
+                    raise ParameterRejected("invalid VROOM parameter set")
+                exploration_level = parameters["exploration_level"]
+                if (
+                    type(exploration_level) is not int
+                    or not 0 <= exploration_level <= 5
+                ):
+                    raise ParameterRejected(
+                        "exploration_level must be an integer in [0, 5]"
+                    )
             with tempfile.TemporaryDirectory(prefix="pitbench-vroom-") as temporary:
                 request = Path(temporary) / "request.json"
                 request.write_text(
@@ -275,8 +291,19 @@ class VroomDriver(SolverDriver):
                         VroomDriver._request(json.loads(args.instance.read_text()))
                     )
                 )
+                command = [
+                    args.solver,
+                    "-i",
+                    str(request),
+                    "-t",
+                    str(args.threads),
+                    "-l",
+                    str(args.budget),
+                ]
+                if parameters is not None:
+                    command.extend(["-x", str(parameters["exploration_level"])])
                 completed = subprocess.run(
-                    [args.solver, "-i", str(request), "-t", str(args.threads)],
+                    command,
                     check=False,
                     capture_output=True,
                     text=True,
@@ -295,7 +322,15 @@ class VroomDriver(SolverDriver):
                 args.trajectory,
                 {"time_sec": time.perf_counter() - started, "objective": objective},
             )
-            write_result(args.output, started=started, valid=True, objective=objective)
+            write_result(
+                args.output,
+                started=started,
+                valid=True,
+                has_solution=True,
+                solver_status="Budget stop",
+                solver_termination=SolverTermination.TIME_LIMIT,
+                objective=objective,
+            )
         except Exception as exc:
             write_result(args.output, started=started, valid=False, error=str(exc))
             raise
@@ -580,7 +615,10 @@ class ChocoDriver(SolverDriver):
 
     @staticmethod
     def main(argv: list[str] | None = None) -> None:
-        args = parser().parse_args(argv)
+        arguments = parser()
+        arguments.add_argument("--parameters", type=Path)
+        args = arguments.parse_args(argv)
+        parameters = json.loads(args.parameters.read_text()) if args.parameters else None
         execute(
             environment_key="PITBENCH_CHOCO_RUNNER",
             instance=args.instance,
@@ -589,25 +627,7 @@ class ChocoDriver(SolverDriver):
             seed=args.seed,
             budget=args.budget,
             threads=args.threads,
-        )
-
-
-class OrToolsModelBuildDriver(SolverDriver):
-    """Invoke the ortools_model_build backend with its existing configuration contract."""
-
-    name = "ortools_model_build"
-
-    @staticmethod
-    def main(argv: list[str] | None = None) -> None:
-        args = parser(trajectory=False).parse_args(argv)
-        execute(
-            environment_key="PITBENCH_ORTOOLS_JAVA_RUNNER",
-            instance=args.instance,
-            output=args.output,
-            trajectory=None,
-            seed=args.seed,
-            budget=args.budget,
-            threads=args.threads,
+            parameters=parameters,
         )
 
 
@@ -618,7 +638,10 @@ class OrToolsCpSatExactDriver(SolverDriver):
 
     @staticmethod
     def main(argv: list[str] | None = None) -> None:
-        args = parser(trajectory=False).parse_args(argv)
+        arguments = parser(trajectory=False)
+        arguments.add_argument("--parameters", type=Path)
+        args = arguments.parse_args(argv)
+        parameters = json.loads(args.parameters.read_text()) if args.parameters else None
         execute(
             environment_key="PITBENCH_ORTOOLS_CP_SAT_RUNNER",
             instance=args.instance,
@@ -627,6 +650,7 @@ class OrToolsCpSatExactDriver(SolverDriver):
             seed=args.seed,
             budget=args.budget,
             threads=args.threads,
+            parameters=parameters,
         )
 
 

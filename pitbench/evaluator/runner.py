@@ -33,7 +33,12 @@ def main() -> None:
     if args.reliability_only and not task.evaluation.operational_reliability:
         parser.error("task does not enable operational reliability")
     boundary_cases = (
-        prepare_boundary_cases(task, args.output_dir)
+        prepare_boundary_cases(
+            task,
+            args.output_dir,
+            private_root=args.private_root,
+            public_root=args.public_root,
+        )
         if task.evaluation.operational_reliability
         else []
     )

@@ -32,5 +32,4 @@ RUN cmake -S /workspace/repo -B /workspace/repo/build -G Ninja \
     && cmake --build /workspace/repo/build --target java_package -j6
 
 ENV PITBENCH_ORTOOLS_CP_SAT_RUNNER="python3 /opt/pitbench-jvm/runner.py run --solver ortools_cp_sat"
-ENV PITBENCH_ORTOOLS_JAVA_RUNNER="python3 /opt/pitbench-jvm/runner.py run --solver ortools_model_build"
 WORKDIR /workspace/repo

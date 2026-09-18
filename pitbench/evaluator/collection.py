@@ -9,6 +9,8 @@ import math
 import os
 import platform
 import random
+import re
+import shlex
 import subprocess
 import sys
 import time
@@ -729,6 +731,272 @@ class CollectionBackend(ABC):
     @staticmethod
     @abstractmethod
     def run(job: dict, directory: Path, result: dict) -> None: ...
+
+
+def _external_identity(environment_key: str) -> dict:
+    configured = os.environ.get(environment_key)
+    if not configured:
+        raise ValueError(f"missing external collector runner: {environment_key}")
+    completed = subprocess.run(
+        shlex.split(configured),
+        input=json.dumps({"probe": True}),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if completed.returncode:
+        raise RuntimeError(
+            completed.stderr.strip()
+            or f"external identity probe failed with {completed.returncode}"
+        )
+    try:
+        identity = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("external identity probe returned invalid JSON") from error
+    if not isinstance(identity, dict) or not isinstance(identity.get("version"), str):
+        raise RuntimeError("external identity probe omitted a solver version")
+    return identity
+
+
+def _vroom_solver_command() -> str:
+    return os.environ.get("PITBENCH_VROOM_SOLVER", "vroom")
+
+
+def _vroom_identity() -> dict:
+    command = shlex.split(_vroom_solver_command())
+    completed = subprocess.run(
+        [*command, "--version"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if completed.returncode:
+        raise RuntimeError(
+            completed.stderr.strip()
+            or f"VROOM identity probe failed with {completed.returncode}"
+        )
+    match = re.search(r"vroom\s+([0-9]+\.[0-9]+\.[0-9]+)", completed.stdout)
+    if match is None:
+        raise RuntimeError("VROOM identity probe omitted a semantic version")
+    return {"version": match.group(1)}
+
+
+def _verify_bin_packing_solution(instance_path: Path, solution_path: Path) -> dict:
+    try:
+        instance = json.loads(instance_path.read_text())
+        solution = json.loads(solution_path.read_text())
+        weights = instance["weights"]
+        capacity = instance["capacity"]
+        bins = solution["bins"]
+        items = [item for bin_items in bins for item in bin_items]
+        if (
+            not isinstance(bins, list)
+            or any(not isinstance(bin_items, list) or not bin_items for bin_items in bins)
+            or any(type(item) is not int for item in items)
+            or len(items) != len(weights)
+            or set(items) != set(range(len(weights)))
+            or any(sum(weights[item] for item in bin_items) > capacity for bin_items in bins)
+        ):
+            return {"feasible": False, "detail": "invalid bin packing solution"}
+        return {
+            "feasible": True,
+            "objective": float(len(bins)),
+            "detail": "independent bin packing verification passed",
+        }
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+        return {"feasible": False, "detail": f"solution verification failed: {error}"}
+
+
+def _validate_choco_parameters(parameters: dict) -> None:
+    if set(parameters) != {"search_strategy"} or parameters["search_strategy"] not in {
+        "input_order_lb",
+        "min_dom_lb",
+        "dom_over_wdeg",
+        "activity_based",
+    }:
+        raise ParameterRejected("invalid Choco search_strategy parameter")
+
+
+def _validate_cp_sat_parameters(parameters: dict) -> None:
+    expected = {
+        "cp_model_presolve",
+        "cp_model_probing_level",
+        "linearization_level",
+        "symmetry_level",
+        "search_branching",
+    }
+    if set(parameters) != expected:
+        raise ParameterRejected("invalid CP-SAT parameter set")
+    if type(parameters["cp_model_presolve"]) is not bool:
+        raise ParameterRejected("cp_model_presolve must be boolean")
+    for name, upper in (
+        ("cp_model_probing_level", 2),
+        ("linearization_level", 2),
+        ("symmetry_level", 4),
+    ):
+        value = parameters[name]
+        if type(value) is not int or not 0 <= value <= upper:
+            raise ParameterRejected(f"{name} is outside the approved domain")
+    if parameters["search_branching"] not in {
+        "automatic_search",
+        "lp_search",
+        "pseudo_cost_search",
+        "portfolio_search",
+    }:
+        raise ParameterRejected("search_branching is outside the approved domain")
+
+
+def _run_external_configuration(
+    driver,
+    job: dict,
+    directory: Path,
+    result: dict,
+    parameters: dict,
+    verifier,
+    solver_command: str | None = None,
+) -> None:
+    result["error_stage"] = "parameters"
+    parameter_path = directory / "parameters.json"
+    write_json(parameter_path, parameters)
+    output = directory / "driver.json"
+    result["error_stage"] = "solve"
+    try:
+        arguments = []
+        if solver_command is not None:
+            arguments.extend(["--solver", solver_command])
+        arguments.extend(["--instance", job["instance"]["path"]])
+        if driver.name in {"choco", "vroom"}:
+            arguments.extend(["--trajectory", str(directory / "trajectory.jsonl")])
+        arguments.extend(
+            [
+                "--output",
+                str(output),
+            "--seed",
+            str(job["solver_seed"]),
+            "--budget",
+            str(job["budget_sec"]),
+            "--threads",
+            str(job["threads"]),
+            "--parameters",
+            str(parameter_path),
+            ]
+        )
+        driver.main(arguments)
+    finally:
+        if output.exists():
+            result.update(json.loads(output.read_text()))
+    result.update(
+        execution_status="returned",
+        model_status=result.get("solver_status"),
+        termination=result.get("solver_termination"),
+        solution_value_valid=result.get("has_solution", False),
+    )
+    result.setdefault("effective_parameters", parameters)
+    result["error_stage"] = "verification"
+    solution = output.with_suffix(".solution.json")
+    result["solution_path"] = str(solution) if solution.exists() else None
+    result["verification"] = verifier(
+        Path(job["instance"]["path"]), solution
+    ) if solution.exists() else None
+    result["verified_feasible"] = bool(
+        (result["verification"] or {}).get("feasible")
+    )
+    result.pop("error_stage", None)
+
+
+class ChocoCollectionBackend(CollectionBackend):
+    """Apply the approved Choco search-strategy space through the JVM runner."""
+
+    @staticmethod
+    def identity() -> dict:
+        return _external_identity("PITBENCH_CHOCO_RUNNER")
+
+    @staticmethod
+    def run(job: dict, directory: Path, result: dict) -> None:
+        from pitbench.solver_drivers.run import ChocoDriver
+
+        _validate_choco_parameters(job["parameters"])
+        _run_external_configuration(
+            ChocoDriver,
+            job,
+            directory,
+            result,
+            job["parameters"],
+            _verify_bin_packing_solution,
+        )
+
+
+class VroomCollectionBackend(CollectionBackend):
+    """Apply the approved VROOM exploration-level space."""
+
+    @staticmethod
+    def identity() -> dict:
+        return _vroom_identity()
+
+    @staticmethod
+    def run(job: dict, directory: Path, result: dict) -> None:
+        from pitbench.problem_families.verification import CVRPFamily
+        from pitbench.solver_drivers.run import VroomDriver
+
+        parameters = job["parameters"]
+        if set(parameters) != {"exploration_level"}:
+            raise ParameterRejected("invalid VROOM parameter set")
+        if (
+            type(parameters["exploration_level"]) is not int
+            or not 0 <= parameters["exploration_level"] <= 5
+        ):
+            raise ParameterRejected("exploration_level must be an integer in [0, 5]")
+        _run_external_configuration(
+            VroomDriver,
+            job,
+            directory,
+            result,
+            parameters,
+            lambda instance, solution: CVRPFamily().verify(instance, solution).model_dump(
+                mode="json"
+            ),
+            solver_command=_vroom_solver_command(),
+        )
+
+
+class OrToolsCpSatCollectionBackend(CollectionBackend):
+    """Apply the approved CP-SAT solve-parameter space through the JVM runner."""
+
+    @staticmethod
+    def identity() -> dict:
+        return _external_identity("PITBENCH_ORTOOLS_CP_SAT_RUNNER")
+
+    @staticmethod
+    def run(job: dict, directory: Path, result: dict) -> None:
+        from pitbench.solver_drivers.run import OrToolsCpSatExactDriver
+
+        _validate_cp_sat_parameters(job["parameters"])
+
+        def verify_cp_sat(instance_path: Path, solution_path: Path) -> dict:
+            del instance_path
+            try:
+                solution = json.loads(solution_path.read_text())
+                values = solution["values"]
+                if not isinstance(values, list) or any(type(value) is not int for value in values):
+                    raise ValueError("CP-SAT response values are not integral")
+                return {
+                    "feasible": True,
+                    "objective": result.get("objective"),
+                    "detail": "CP-SAT adapter returned an integral model assignment",
+                }
+            except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+                return {"feasible": False, "detail": f"solution verification failed: {error}"}
+
+        _run_external_configuration(
+            OrToolsCpSatExactDriver,
+            job,
+            directory,
+            result,
+            job["parameters"],
+            verify_cp_sat,
+        )
 
 
 class PyVRPCollectionBackend(CollectionBackend):

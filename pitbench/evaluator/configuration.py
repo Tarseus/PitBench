@@ -120,6 +120,7 @@ def prepare(
     cpus: list[int],
     search_seed: int,
 ) -> dict:
+    from pitbench.repositories.base import RepositoryPluginRegistry
     from pitbench.schema.task import PitBenchTask
 
     config = read_data(config_path)
@@ -140,6 +141,7 @@ def prepare(
             mode="json"
         )
         repository_plugin = task["repository"]["plugin"]
+        repository = RepositoryPluginRegistry.load(repository_plugin)
         python = solver_pythons[panel["collector"]]
         probe = subprocess.run(
             [
@@ -165,17 +167,21 @@ def prepare(
         seeds = read_data(ROOT / panel["seed_source"])
         for key in panel["seed_key"].split("."):
             seeds = seeds[key]
-        if len(seeds) != config["solver_seed_count"] or len(set(seeds)) != len(seeds):
+        seed_count = panel.get("solver_seed_count", config["solver_seed_count"])
+        if len(seeds) != seed_count or len(set(seeds)) != len(seeds):
             raise ValueError("solver seed count or uniqueness differs from protocol")
         upper = panel["seed_max"]
         if any(type(seed) is not int or not 0 <= seed <= upper for seed in seeds):
             raise ValueError("solver seed outside declared domain")
-        retest_seeds = []
-        generator = random.SystemRandom()
-        while len(retest_seeds) < len(seeds):
-            seed = generator.randrange(upper + 1)
-            if seed not in seeds and seed not in retest_seeds:
-                retest_seeds.append(seed)
+        if repository.deterministic:
+            retest_seeds = list(seeds)
+        else:
+            retest_seeds = []
+            generator = random.SystemRandom()
+            while len(retest_seeds) < len(seeds):
+                seed = generator.randrange(upper + 1)
+                if seed not in seeds and seed not in retest_seeds:
+                    retest_seeds.append(seed)
         from pitbench.instances.generate import prepare_collection_instances
 
         instances = prepare_collection_instances(
@@ -183,7 +189,8 @@ def prepare(
             output / "inputs" / task["task_id"],
             path_template=panel.get("instance_path_template"),
         )
-        if len(instances) != config["instance_count"] or len(
+        instance_count = panel.get("instance_count", config["instance_count"])
+        if len(instances) != instance_count or len(
             {item["id"] for item in instances}
         ) != len(instances):
             raise ValueError("instance panel size or uniqueness differs from protocol")
@@ -197,6 +204,7 @@ def prepare(
                 "task_configuration": task,
                 "id": f"{task['task_id']}/budget-{budget:g}",
                 "solver": identity,
+                "deterministic": repository.deterministic,
                 "solver_python": python,
                 "instances": instances,
                 "solver_seeds": seeds,
@@ -224,21 +232,20 @@ def prepare(
 
 
 def validate_search(search: dict) -> None:
-    if search["threads"] != 1:
-        raise ValueError("configuration protocol requires one solver thread")
+    if type(search["threads"]) is not int or search["threads"] <= 0:
+        raise ValueError("configuration protocol requires positive solver threads")
     if search["feedback"] not in ("normalized_gap", "capped_optimal_time"):
         raise ValueError("unknown configuration feedback")
     seeds, retest = search["solver_seeds"], search["retest_seeds"]
-    if (
-        not seeds
-        or len(set(seeds)) != len(seeds)
-        or len(set(retest)) != len(seeds)
-        or len(retest) != len(seeds)
-        or set(seeds) & set(retest)
-    ):
+    if not seeds or len(set(seeds)) != len(seeds) or len(retest) != len(seeds):
         raise ValueError(
-            "search and retest must have equally sized distinct, disjoint seeds"
+            "search and retest must have equally sized unique seeds"
         )
+    if search.get("deterministic"):
+        if retest != seeds:
+            raise ValueError("deterministic retest must reuse the fixed seed panel")
+    elif len(set(retest)) != len(seeds) or set(seeds) & set(retest):
+        raise ValueError("stochastic search and retest seeds must be disjoint")
     if not math.isfinite(search["budget_sec"]) or search["budget_sec"] <= 0:
         raise ValueError("budget must be positive and finite")
     if search["feedback"] == "normalized_gap":

@@ -29,6 +29,7 @@ oracle:
     objective_sense: minimize
 evaluation:
   performance_protocol: heuristic_fixed_budget
+  operational_reliability: true
   budgets_sec: [5.0, 10.0]
   primary_budget_sec: 10.0
   seed_robustness:
