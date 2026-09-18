@@ -102,4 +102,6 @@ establish that 30 relabelings are sufficient for every solver or instance, does
 not generalize to other representation transformations, and does not validate
 a patch effect.
 
-M6 freeze-candidate review and M7 protocol freezing remain outstanding.
+The M6 freeze-candidate review and M7 protocol freeze are recorded in
+[audit.md](audit.md) and [freeze.md](freeze.md). The frozen implementation
+commit is `22d19065`.

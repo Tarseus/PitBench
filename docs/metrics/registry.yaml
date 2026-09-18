@@ -81,3 +81,55 @@ nuisance_robustness:
       version: 0.0.1
       commit: cede287d6d7f5151f870efb53654b47f228dcbe6
       evidence: docs/metrics/nuisance-robustness/changelog.md
+
+representation_robustness:
+  parent_dimension: nuisance_robustness
+  status: frozen
+  stage: M7
+  version: 0.0.1
+  branch: metric/representation-robustness-v1
+  scope: docs/metrics/nuisance-robustness/representation/scope.md
+  evidence: docs/metrics/nuisance-robustness/representation/evidence.md
+  spec: docs/metrics/nuisance-robustness/representation/spec.md
+  validation_plan: docs/metrics/nuisance-robustness/representation/validation-plan.md
+  validation_results: docs/metrics/nuisance-robustness/representation/validation-results.md
+  audit: docs/metrics/nuisance-robustness/representation/audit.md
+  changelog: docs/metrics/nuisance-robustness/representation/changelog.md
+  freeze_record: docs/metrics/nuisance-robustness/representation/freeze.md
+  implementation:
+    - pitbench/metrics/nuisance_report.py
+    - pitbench/evaluator/representation.py
+  validation:
+    - type_7_quantile_exactness
+    - relabeling_order_invariance
+    - constant_shift_invariance
+    - single_tail_outlier_behavior
+    - equal_instance_weight_aggregation
+    - base_agent_change_antisymmetry
+    - incomplete_data_propagation
+    - pyvrp_v0_14_0_complete_panel
+  blockers: []
+  completed:
+    - item: representation_scope
+      approved_on: "2026-09-18"
+      evidence: docs/metrics/nuisance-robustness/representation/scope.md
+    - item: representation_evidence
+      evidence: docs/metrics/nuisance-robustness/representation/evidence.md
+    - item: representation_formal_specification
+      approved_on: "2026-09-18"
+      evidence: docs/metrics/nuisance-robustness/representation/spec.md
+    - item: representation_falsification_plan
+      approved_on: "2026-09-18"
+      evidence: docs/metrics/nuisance-robustness/representation/validation-plan.md
+    - item: representation_implementation_and_validation
+      evidence: docs/metrics/nuisance-robustness/representation/validation-results.md
+    - item: representation_freeze_candidate_review
+      approved_on: "2026-09-18"
+      evidence: docs/metrics/nuisance-robustness/representation/audit.md
+    - item: representation_protocol_freeze
+      approved_on: "2026-09-18"
+      version: 0.0.1
+      commit: 22d19065
+      evidence: docs/metrics/nuisance-robustness/representation/freeze.md
+  frozen_commit: 22d19065
+  frozen_on: "2026-09-18"
