@@ -1,6 +1,6 @@
 performance:
-  status: freeze_candidate
-  stage: M6
+  status: frozen
+  stage: M7
   protocols:
     - heuristic_fixed_budget
     - exact_verified_solve
@@ -13,6 +13,8 @@ performance:
   validation_plan: docs/metrics/performance/validation-plan.md
   validation_results: docs/metrics/performance/validation-results.md
   audit: docs/metrics/performance/audit.md
+  changelog: docs/metrics/performance/changelog.md
+  freeze_record: docs/metrics/performance/freeze.md
   implementation:
     - pitbench/metrics/performance_report.py
   validation:
@@ -36,7 +38,8 @@ performance:
     - item: generalization_boundary
       commit: c27bb273
       tests: test_performance_report_excludes_generalization_observations
-  frozen_commit: null
+  frozen_commit: 57780dc1
+  frozen_on: "2026-09-18"
 
 nuisance_robustness:
   status: frozen
