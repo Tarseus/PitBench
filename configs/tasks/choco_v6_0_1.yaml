@@ -30,7 +30,14 @@ evaluation:
   performance_protocol: exact_verified_solve
   budgets_sec: [5.0, 20.0]
   primary_budget_sec: 20.0
-  solver_seeds: [0, 1, 2]
+  seed_robustness:
+    development_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+    evaluation_seeds_file: private://seed_robustness/choco_v6_0_1.yaml
+    evaluation_seeds_file_sha256: a4c7f6c4d31e27a7eeb3d9fe4aca8e8f8c15f779cd53a1b99177facf13fc69cb
+    seed_selection:
+      seed_min: 0
+      seed_max: 9223372036854775807
+      seed_count: 30
   threads: 1
   verifier: trusted_optimum
 instance_sets:

@@ -25,6 +25,7 @@ from pitbench.metrics.reliability_report import compute_reliability_reports
 from pitbench.metrics.resource_report import compute_resource_reports
 from pitbench.metrics.seed_robustness_report import (
     SeedSelectionMetadata,
+    compute_exact_seed_robustness_report,
     compute_seed_robustness_details,
     compute_seed_robustness_report,
 )
@@ -218,14 +219,22 @@ class PitBenchEvaluator(Evaluator):
                 "development_seeds": seed_robustness.development_seeds,
                 "evaluation_seeds": private_seed_config.evaluation_seeds,
             }
-            nuisance_robustness = compute_seed_robustness_report(
-                original_observations,
-                **seed_report_inputs,
-            )
-            seed_robustness_details = compute_seed_robustness_details(
-                original_observations,
-                **seed_report_inputs,
-            )
+            if task.evaluation.performance_protocol is PerformanceProtocol.EXACT_VERIFIED_SOLVE:
+                nuisance_robustness = compute_exact_seed_robustness_report(
+                    original_observations,
+                    time_basis=task.evaluation.exact_time_basis,
+                    **seed_report_inputs,
+                )
+                seed_robustness_details = nuisance_robustness
+            else:
+                nuisance_robustness = compute_seed_robustness_report(
+                    original_observations,
+                    **seed_report_inputs,
+                )
+                seed_robustness_details = compute_seed_robustness_details(
+                    original_observations,
+                    **seed_report_inputs,
+                )
             seed_robustness_details_path = (
                 request.output_dir / "seed_robustness_details.json"
             )

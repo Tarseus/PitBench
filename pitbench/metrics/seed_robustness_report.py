@@ -8,8 +8,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from pitbench.schema.observation import CodeState, RunObservation, RunStatus
-from pitbench.schema.task import InstanceSetKind
+from pitbench.schema.observation import (
+    CodeState,
+    RunObservation,
+    RunStatus,
+    SolverTermination,
+)
+from pitbench.schema.task import ExactTimeBasis, InstanceSetKind
 
 BOOTSTRAP_RESAMPLES = 5000
 BOOTSTRAP_SEED = 20260824
@@ -65,6 +70,396 @@ class SeedRobustnessReport(BaseModel):
     budgets_sec: list[float]
     seed_selection: SeedSelectionMetadata
     by_instance_set: dict[str, InstanceSetSeedRobustness]
+
+
+class ExactSeedInstanceResult(BaseModel):
+    instance_id: str
+    expected_seed_count: int = Field(gt=0)
+    capped_time_iqr_sec: float | None = None
+    final_gap_iqr: float | None = None
+    verified_optimal_count: int = Field(ge=0)
+
+
+class ExactSeedCodeStateResult(BaseModel):
+    instance_count: int = Field(ge=0)
+    complete_capped_time_instance_count: int = Field(ge=0)
+    complete_final_gap_instance_count: int = Field(ge=0)
+    verified_optimal_count: int = Field(ge=0)
+    expected_optimal_count: int = Field(ge=0)
+    verified_optimal_coverage_by_instance: dict[str, float]
+    mean_capped_time_iqr_sec: float | None = None
+    mean_capped_time_iqr_fraction: float | None = None
+    mean_final_gap_iqr: float | None = None
+    capped_time_iqr_ci99: SeedRobustnessConfidenceInterval | None = None
+    final_gap_iqr_ci99: SeedRobustnessConfidenceInterval | None = None
+    instances: dict[str, ExactSeedInstanceResult]
+
+
+class ExactSeedChangeResult(BaseModel):
+    capped_time_iqr_change_sec: float | None = None
+    capped_time_iqr_change_fraction: float | None = None
+    final_gap_iqr_change: float | None = None
+    capped_time_iqr_change_ci99: SeedRobustnessConfidenceInterval | None = None
+    final_gap_iqr_change_ci99: SeedRobustnessConfidenceInterval | None = None
+
+
+class ExactSeedRobustnessBudget(BaseModel):
+    budget_sec: float = Field(gt=0)
+    base: ExactSeedCodeStateResult
+    agent: ExactSeedCodeStateResult
+    change: ExactSeedChangeResult
+
+
+class ExactInstanceSetSeedRobustness(BaseModel):
+    instance_set_kind: InstanceSetKind
+    primary: ExactSeedRobustnessBudget
+    by_budget: dict[str, ExactSeedRobustnessBudget]
+
+
+class ExactSeedRobustnessReport(BaseModel):
+    task_id: str
+    metric: Literal["exact_seed_robustness"] = "exact_seed_robustness"
+    time_basis: ExactTimeBasis
+    primary_budget_sec: float = Field(gt=0)
+    budgets_sec: list[float]
+    seed_selection: SeedSelectionMetadata
+    by_instance_set: dict[str, ExactInstanceSetSeedRobustness]
+
+
+def _exact_verified_optimal(observation: RunObservation | None) -> bool:
+    return bool(
+        observation is not None
+        and observation.status is RunStatus.COMPLETED
+        and observation.valid
+        and observation.solver_termination is SolverTermination.OPTIMAL
+        and observation.objective is not None
+        and observation.reported_objective == observation.objective
+        and observation.optimal_or_bks is not None
+        and observation.objective == observation.optimal_or_bks
+    )
+
+
+def _exact_capped_time(
+    observation: RunObservation | None,
+    *,
+    budget_sec: float,
+    time_basis: ExactTimeBasis,
+) -> float | None:
+    if observation is None or observation.status in {
+        RunStatus.INVALID,
+        RunStatus.BUILD_FAILED,
+        RunStatus.INFRASTRUCTURE_ERROR,
+        RunStatus.CRASHED,
+        RunStatus.OUT_OF_MEMORY,
+        RunStatus.SOLVER_ERROR,
+        RunStatus.OUTPUT_ERROR,
+    }:
+        return None
+    if observation.solver_termination is SolverTermination.TIME_LIMIT:
+        return budget_sec
+    if not _exact_verified_optimal(observation):
+        return None
+    measured_time = (
+        observation.cpu_time_sec
+        if time_basis is ExactTimeBasis.CPU_TIME
+        else observation.wall_time_sec
+    )
+    if measured_time is None or not math.isfinite(measured_time) or measured_time < 0:
+        return None
+    return min(measured_time, budget_sec)
+
+
+def _exact_final_gap(observation: RunObservation | None) -> float | None:
+    if (
+        observation is None
+        or observation.status is not RunStatus.COMPLETED
+        or not observation.valid
+        or observation.normalized_gap is None
+        or not math.isfinite(observation.normalized_gap)
+    ):
+        return None
+    return observation.normalized_gap
+
+
+def _exact_bootstrap_intervals(
+    paired_values: Sequence[tuple[list[float], list[float]]],
+) -> tuple[
+    SeedRobustnessConfidenceInterval,
+    SeedRobustnessConfidenceInterval,
+    SeedRobustnessConfidenceInterval,
+]:
+    seed_count = len(paired_values[0][0])
+    random_generator = random.Random(BOOTSTRAP_SEED)
+    base_values: list[float] = []
+    agent_values: list[float] = []
+    changes: list[float] = []
+    for _ in range(BOOTSTRAP_RESAMPLES):
+        indices = [
+            math.floor(seed_count * random_generator.random())
+            for _ in range(seed_count)
+        ]
+        base_iqrs = [
+            seed_iqr([base[index] for index in indices])
+            for base, _agent in paired_values
+        ]
+        agent_iqrs = [
+            seed_iqr([agent[index] for index in indices])
+            for _base, agent in paired_values
+        ]
+        base_mean = statistics.fmean(base_iqrs)
+        agent_mean = statistics.fmean(agent_iqrs)
+        base_values.append(base_mean)
+        agent_values.append(agent_mean)
+        changes.append(agent_mean - base_mean)
+    return (
+        _confidence_interval(base_values),
+        _confidence_interval(agent_values),
+        _confidence_interval(changes),
+    )
+
+
+def _exact_state_result(
+    observations_by_run: dict[tuple[str, str, float, CodeState, int], RunObservation],
+    *,
+    instance_set: str,
+    instance_ids: Sequence[str],
+    budget_sec: float,
+    code_state: CodeState,
+    expected_seeds: tuple[int, ...],
+    time_basis: ExactTimeBasis,
+) -> tuple[ExactSeedCodeStateResult, list[list[float] | None], list[list[float] | None]]:
+    instances: dict[str, ExactSeedInstanceResult] = {}
+    time_values: list[list[float] | None] = []
+    gap_values: list[list[float] | None] = []
+    for instance_id in instance_ids:
+        observations = [
+            observations_by_run.get(
+                (instance_set, instance_id, budget_sec, code_state, seed)
+            )
+            for seed in expected_seeds
+        ]
+        capped_times = [
+            value
+            for observation in observations
+            if (value := _exact_capped_time(
+                observation,
+                budget_sec=budget_sec,
+                time_basis=time_basis,
+            ))
+            is not None
+        ]
+        final_gaps = [
+            value
+            for observation in observations
+            if (value := _exact_final_gap(observation)) is not None
+        ]
+        complete_time = (
+            capped_times if len(capped_times) == len(expected_seeds) else None
+        )
+        complete_gap = final_gaps if len(final_gaps) == len(expected_seeds) else None
+        instances[instance_id] = ExactSeedInstanceResult(
+            instance_id=instance_id,
+            expected_seed_count=len(expected_seeds),
+            capped_time_iqr_sec=(
+                seed_iqr(complete_time) if complete_time is not None else None
+            ),
+            final_gap_iqr=(seed_iqr(complete_gap) if complete_gap is not None else None),
+            verified_optimal_count=sum(
+                _exact_verified_optimal(observation) for observation in observations
+            ),
+        )
+        time_values.append(complete_time)
+        gap_values.append(complete_gap)
+
+    complete_time_iqrs = [
+        item.capped_time_iqr_sec
+        for item in instances.values()
+        if item.capped_time_iqr_sec is not None
+    ]
+    complete_gap_iqrs = [
+        item.final_gap_iqr
+        for item in instances.values()
+        if item.final_gap_iqr is not None
+    ]
+    return (
+        ExactSeedCodeStateResult(
+            instance_count=len(instance_ids),
+            complete_capped_time_instance_count=len(complete_time_iqrs),
+            complete_final_gap_instance_count=len(complete_gap_iqrs),
+            verified_optimal_count=sum(
+                item.verified_optimal_count for item in instances.values()
+            ),
+            expected_optimal_count=len(instance_ids) * len(expected_seeds),
+            verified_optimal_coverage_by_instance={
+                instance_id: item.verified_optimal_count / len(expected_seeds)
+                for instance_id, item in instances.items()
+            },
+            mean_capped_time_iqr_sec=(
+                statistics.fmean(complete_time_iqrs)
+                if len(complete_time_iqrs) == len(instance_ids)
+                else None
+            ),
+            mean_capped_time_iqr_fraction=(
+                statistics.fmean(complete_time_iqrs) / budget_sec
+                if len(complete_time_iqrs) == len(instance_ids)
+                else None
+            ),
+            mean_final_gap_iqr=(
+                statistics.fmean(complete_gap_iqrs)
+                if len(complete_gap_iqrs) == len(instance_ids)
+                else None
+            ),
+            instances=instances,
+        ),
+        time_values,
+        gap_values,
+    )
+
+
+def compute_exact_seed_robustness_report(
+    observations: Sequence[RunObservation],
+    *,
+    task_id: str,
+    budgets_sec: Sequence[float],
+    primary_budget_sec: float,
+    time_basis: ExactTimeBasis,
+    seed_selection: SeedSelectionMetadata,
+    development_seeds: Sequence[int],
+    evaluation_seeds: Sequence[int],
+) -> ExactSeedRobustnessReport:
+    observations = [
+        item
+        for item in observations
+        if item.test_suite is None and item.equivalence_parent_id is None
+    ]
+    declared_budgets, development_seed_list, evaluation_seed_list = (
+        _validate_declared_inputs(
+            observations,
+            task_id=task_id,
+            budgets_sec=budgets_sec,
+            primary_budget_sec=primary_budget_sec,
+            seed_selection=seed_selection,
+            development_seeds=development_seeds,
+            evaluation_seeds=evaluation_seeds,
+        )
+    )
+    instance_set_kinds, observations_by_run = _group_observations(
+        observations,
+        development_seeds=development_seed_list,
+        evaluation_seeds=evaluation_seed_list,
+    )
+    by_instance_set: dict[str, ExactInstanceSetSeedRobustness] = {}
+    for instance_set in sorted(instance_set_kinds):
+        kind = instance_set_kinds[instance_set]
+        expected_seeds = (
+            development_seed_list
+            if kind is InstanceSetKind.AGENT_DEV
+            else evaluation_seed_list
+        )
+        instance_ids = sorted(
+            {
+                instance_id
+                for observed_set, instance_id, budget, _state, _seed in observations_by_run
+                if observed_set == instance_set and budget in declared_budgets
+            }
+        )
+        by_budget: dict[str, ExactSeedRobustnessBudget] = {}
+        for budget_sec in declared_budgets:
+            base, base_times, base_gaps = _exact_state_result(
+                observations_by_run,
+                instance_set=instance_set,
+                instance_ids=instance_ids,
+                budget_sec=budget_sec,
+                code_state=CodeState.BASE,
+                expected_seeds=expected_seeds,
+                time_basis=time_basis,
+            )
+            agent, agent_times, agent_gaps = _exact_state_result(
+                observations_by_run,
+                instance_set=instance_set,
+                instance_ids=instance_ids,
+                budget_sec=budget_sec,
+                code_state=CodeState.AGENT,
+                expected_seeds=expected_seeds,
+                time_basis=time_basis,
+            )
+            paired_times = [
+                (base_values, agent_values)
+                for base_values, agent_values in zip(
+                    base_times, agent_times, strict=True
+                )
+                if base_values is not None and agent_values is not None
+            ]
+            paired_gaps = [
+                (base_values, agent_values)
+                for base_values, agent_values in zip(
+                    base_gaps, agent_gaps, strict=True
+                )
+                if base_values is not None and agent_values is not None
+            ]
+            time_ci = (
+                _exact_bootstrap_intervals(paired_times)
+                if len(paired_times) >= 2
+                else None
+            )
+            gap_ci = (
+                _exact_bootstrap_intervals(paired_gaps)
+                if len(paired_gaps) >= 2
+                else None
+            )
+            if time_ci is not None:
+                base.capped_time_iqr_ci99, agent.capped_time_iqr_ci99, time_change_ci = time_ci
+            else:
+                time_change_ci = None
+            if gap_ci is not None:
+                base.final_gap_iqr_ci99, agent.final_gap_iqr_ci99, gap_change_ci = gap_ci
+            else:
+                gap_change_ci = None
+            by_budget[f"{budget_sec:g}"] = ExactSeedRobustnessBudget(
+                budget_sec=budget_sec,
+                base=base,
+                agent=agent,
+                change=ExactSeedChangeResult(
+                    capped_time_iqr_change_sec=(
+                        agent.mean_capped_time_iqr_sec - base.mean_capped_time_iqr_sec
+                        if agent.mean_capped_time_iqr_sec is not None
+                        and base.mean_capped_time_iqr_sec is not None
+                        else None
+                    ),
+                    capped_time_iqr_change_fraction=(
+                        agent.mean_capped_time_iqr_fraction
+                        - base.mean_capped_time_iqr_fraction
+                        if agent.mean_capped_time_iqr_fraction is not None
+                        and base.mean_capped_time_iqr_fraction is not None
+                        else None
+                    ),
+                    final_gap_iqr_change=(
+                        agent.mean_final_gap_iqr - base.mean_final_gap_iqr
+                        if agent.mean_final_gap_iqr is not None
+                        and base.mean_final_gap_iqr is not None
+                        else None
+                    ),
+                    capped_time_iqr_change_ci99=(
+                        time_change_ci[2] if time_change_ci is not None else None
+                    ),
+                    final_gap_iqr_change_ci99=(
+                        gap_change_ci[2] if gap_change_ci is not None else None
+                    ),
+                ),
+            )
+        by_instance_set[instance_set] = ExactInstanceSetSeedRobustness(
+            instance_set_kind=kind,
+            primary=by_budget[f"{primary_budget_sec:g}"],
+            by_budget=by_budget,
+        )
+    return ExactSeedRobustnessReport(
+        task_id=task_id,
+        time_basis=time_basis,
+        primary_budget_sec=primary_budget_sec,
+        budgets_sec=declared_budgets,
+        seed_selection=seed_selection,
+        by_instance_set=by_instance_set,
+    )
 
 
 class SeedResult(BaseModel):

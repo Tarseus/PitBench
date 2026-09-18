@@ -10,7 +10,10 @@ from pitbench.metrics.performance_report import (
 )
 from pitbench.metrics.reliability_report import ReliabilityReport
 from pitbench.metrics.resource_report import ResourceReport
-from pitbench.metrics.seed_robustness_report import SeedRobustnessReport
+from pitbench.metrics.seed_robustness_report import (
+    ExactSeedRobustnessReport,
+    SeedRobustnessReport,
+)
 from pitbench.schema.observation import CodeState
 
 
@@ -66,7 +69,7 @@ class EvaluationSummary(BaseModel):
     valid_observation_count: int = Field(ge=0)
     counts_by_state: dict[CodeState, int] = Field(default_factory=dict)
     performance: PerformanceReport | ExactPerformanceReport | None = None
-    nuisance_robustness: SeedRobustnessReport | None = None
+    nuisance_robustness: SeedRobustnessReport | ExactSeedRobustnessReport | None = None
     resource_usage: ResourceReport | None = None
     operational_reliability: ReliabilityReport | None = None
 

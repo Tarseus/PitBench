@@ -30,7 +30,14 @@ evaluation:
   performance_protocol: exact_verified_solve
   budgets_sec: [10.0, 30.0]
   primary_budget_sec: 30.0
-  solver_seeds: [0, 1, 2]
+  seed_robustness:
+    development_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+    evaluation_seeds_file: private://seed_robustness/ortools_cp_sat_solve_v9_15.yaml
+    evaluation_seeds_file_sha256: 4cb3c2de75d1803b9ce4aa1303fe46952d29b509eaf45ed0c2298b6d102e95a5
+    seed_selection:
+      seed_min: 0
+      seed_max: 2147483647
+      seed_count: 30
   threads: 8
   exact_time_basis: solve_wall_time
   verifier: exact_target

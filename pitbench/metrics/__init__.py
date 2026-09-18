@@ -33,6 +33,7 @@ from pitbench.metrics.resource_report import (
     format_resource_report,
 )
 from pitbench.metrics.seed_robustness_report import (
+    ExactSeedRobustnessReport,
     InstanceSetSeedRobustness,
     MeanSeedIqrChangeEstimate,
     MeanSeedIqrEstimate,
@@ -41,6 +42,7 @@ from pitbench.metrics.seed_robustness_report import (
     SeedRobustnessDetails,
     SeedRobustnessReport,
     SeedSelectionMetadata,
+    compute_exact_seed_robustness_report,
     compute_seed_robustness_details,
     compute_seed_robustness_report,
     format_seed_robustness_report,
@@ -53,6 +55,7 @@ __all__ = [
     "ExactPerformanceReport",
     "ExactRunOutcome",
     "ExactRunOutcomeKind",
+    "ExactSeedRobustnessReport",
     "ExactStatePerformance",
     "GapEstimate",
     "PairedGapEvidence",
@@ -75,6 +78,7 @@ __all__ = [
     "SeedSelectionMetadata",
     "compute_exact_performance_report",
     "compute_exact_run_outcome",
+    "compute_exact_seed_robustness_report",
     "compute_performance_report",
     "compute_task_performance_report",
     "compute_representation_robustness_report",
