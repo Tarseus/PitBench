@@ -71,7 +71,7 @@ Demand fluctuations and coordinate errors can change the feasible set or route
 costs. They require a separate experimental question and are not treated as
 equivalent representations in this study.
 
-## Experimental observations and deferred statistic selection
+## Experimental observations and selected statistic
 
 The first experiment holds the ten development instances, solver seed `0`, and
 each budget fixed while varying customer order. It retains the outcomes of all
@@ -79,11 +79,11 @@ each budget fixed while varying customer order. It retains the outcomes of all
 and 10-second budgets. Complete outcomes, mappings, solutions, verification
 results, and failure records are retained under [spec.md](spec.md).
 
-Statistic selection and its related M3 validation are deferred until all
-robustness experiments have been developed. IQR and its associated aggregation
-and completeness rules remain a candidate in the specification, not a required
-statistical report. This replaces the earlier scope direction to require IQR and
-repeat the representation experiment over multiple solver seeds.
+The formal M2 specification selects Type 7 IQR over the 30 relabeling outcomes
+for each instance, followed by an equal-weight mean over the ten instances.
+The complete-data rules and the `Agent - Base` change are defined in
+[spec.md](spec.md). M3 falsification and M5 validation for this protocol are
+recorded in the corresponding validation artifacts.
 
 The experiment examines representation sensitivity conditional on the fixed
 solver seed. Seed Robustness instead measures dispersion across solver seeds
@@ -94,7 +94,7 @@ random choices or identical search trajectories after relabeling. The study does
 not require individual runs to return the same mapped route. Different routes or
 search paths alone do not establish poor robustness or a correctness failure.
 
-This scope does not select a final statistic or complete the deferred formal
-specification and statistical validation.
+This scope does not add a robustness threshold, confidence interval, or claim
+that the fixed 30 relabelings are sufficient for every solver or instance.
 
 The frozen Seed Robustness 0.0.1 protocol remains unchanged.

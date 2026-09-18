@@ -1,19 +1,17 @@
-# Representation Robustness specification draft
+# Representation Robustness formal specification
 
-## M2: experimental protocol, statistic selection deferred
+## M2: equivalent customer relabeling protocol
 
-This document records the user's approved simplified design for equivalent
+This document records the user's approved `0.0.1` protocol for equivalent
 customer relabeling in PyVRP/CVRP. The first experiment uses only PyVRP 0.14.0
 (`pyvrp_v0_14_0`), with the source revision pinned by the existing
 [task configuration](../../../../configs/tasks/pyvrp_v0_14_0.yaml).
-It is an experimental protocol draft, not a frozen metric specification.
 
-On 2026-09-08, the user deferred the choice of Representation Robustness
-statistic and its related M3 validation until all robustness experiments have
-been developed. IQR remains a candidate rather than a required estimator. The
-approved experimental protocol and complete result retention remain in place.
-Confidence intervals and hard acceptance thresholds are not included in this
-iteration.
+On 2026-09-18, the user confirmed the headline statistic and aggregation for
+M2. This is the formal M2 specification for the `0.0.1` protocol; it is not a
+freeze record. M3 falsification and later lifecycle stages remain separate.
+Confidence intervals and hard acceptance thresholds are not part of this
+protocol.
 
 The user selected one fixed solver seed and 30 equivalent customer relabelings
 per instance. This decision supersedes the earlier multiple-seed direction in
@@ -60,39 +58,52 @@ Retain the following information for every run:
 Retain unsuccessful runs as well as successful ones. Complete result retention
 does not require a failed run to have an objective value or a solution.
 
-## Deferred IQR candidate
+## Headline estimand
 
-The following scheme was approved earlier and is retained for reconsideration.
-It is not the current required reporting scheme; the statistic and its
-associated aggregation will be revisited after the robustness experiments.
+For original instance \(x\), code state \(c\), and budget \(T\), let
 
-Under this scheme, each original instance, code state, and budget would have an
-IQR computed from the 30 normalized gap outcomes of its customer relabelings
-under solver seed `0`.
-The IQR is the 75th percentile minus the 25th percentile, using the Hyndman–Fan
-Type 7 sample-quantile convention: linear interpolation at zero-based position
-`(sample_count - 1) * probability` in the sorted outcomes. This is the convention
-used by `numpy.quantile(..., method="linear")`.
+\[
+R(c,x,T)
+=
+Q_{0.75}\left(\{g(c,x,\rho_j;T)\}_{j=1}^{30}\right)
+-
+Q_{0.25}\left(\{g(c,x,\rho_j;T)\}_{j=1}^{30}\right),
+\]
 
-For each code state and budget, the scheme would take the arithmetic mean of
-the per-instance IQR values over the fixed panel of ten original instances,
-giving each instance equal weight. The IQR would be computed within each
-instance before averaging, without pooling gap outcomes from different
-instances or budgets. There would be no averaging across solver seeds.
+where \(g\) is the normalized gap from a valid, independently verified run and
+\(\rho_1,\ldots,\rho_{30}\) are the declared customer relabelings for \(x\).
+The sample quantiles use the Hyndman–Fan Type 7 convention. Smaller
+\(R(c,x,T)\) means less central dispersion across equivalent representations.
 
-The scheme would report the 5-second and 10-second budgets separately. Base and
-Agent use the same solver seed and customer relabelings. Complete outcomes and
-mappings remain retained regardless of the eventual statistic.
+The point estimate is the equal-weight mean over the ten-instance panel:
 
-The user has paused the proposed M3 checks associated with statistic selection.
-Neither the candidate scheme nor the collected results establish an ability to
-detect real patch improvements.
+\[
+\overline{R}_{c,T}
+=
+\frac{1}{10}\sum_{x \in \mathcal{X}} R(c,x,T),
+\]
 
-## Outcome retention and deferred IQR completeness rules
+where \(\mathcal{X}\) is the fixed panel of ten original instances. Gap
+outcomes from different instances are not pooled, and the fixed solver seed is
+not averaged over.
 
-The completeness rules below were approved for the IQR scheme. They remain
-part of that deferred candidate, rather than a final rule for an as-yet
-unselected statistic.
+The representation-robustness change induced by the patch is
+
+\[
+\Delta R_T
+=
+\overline{R}_{\mathrm{Agent},T}
+-
+\overline{R}_{\mathrm{Base},T}.
+\]
+
+Negative \(\Delta R_T\) means that Agent has lower central representation
+dispersion; positive \(\Delta R_T\) means higher central representation
+dispersion.
+
+## Outcome retention and completeness rules
+
+The following rules apply to the formal IQR estimand.
 
 A run contributes a valid statistical outcome only when its solution passes the
 required verification and its normalized gap is a finite number. A normal stop
@@ -110,20 +121,21 @@ fixed instances have an available IQR. Otherwise, report the overall mean as
 reduce the instance panel to obtain an overall mean.
 
 Determine completeness separately for Base, Agent, and each budget. A Base/Agent
-comparison requires both corresponding summaries to be available.
+comparison and its \(\Delta R_T\) require both corresponding summaries to be
+available.
 
-Raw-result retention continues while statistic selection is deferred. Retain
-all raw results and failure records. Do not impute missing or invalid gap values,
-including with zero or infinity, and do not replace a failed relabeling with a
-different relabeling. These rules keep the declared set of observations fixed.
+Retain all raw results and failure records. Do not impute missing or invalid gap
+values, including with zero or infinity, and do not replace a failed relabeling
+with a different relabeling. These rules keep the declared set of observations
+fixed.
 
 ## Interpretation and separation from Seed Robustness
 
 The experiment examines representation sensitivity conditional on the declared
-solver seed. The IQR candidate describes central dispersion across the sampled
-relabelings; a smaller IQR means less central dispersion. That candidate does
-not average over the solver's seed domain or measure a distance between marginal
-output distributions. No final statistic is selected at this stage.
+solver seed. The IQR describes central dispersion across the sampled
+relabelings; a smaller IQR means less central dispersion. It does not average
+over the solver's seed domain or measure a distance between marginal output
+distributions.
 
 Using the same solver seed does not require identical search trajectories or
 identical mapped routes after relabeling.
@@ -145,13 +157,11 @@ The solver version, fixed solver seed, relabeling count and generation seed,
 exclusion of the original ordering, and empty-patch baseline are approved for
 the first experiment.
 
-The user's decision on 2026-09-08 supersedes the earlier decision to fix IQR as
-the M2 statistic. Type 7 IQR, the equal-weight instance mean, and their
-complete-data rules are retained as the earlier candidate for later review.
-Statistical selection and its related M3 validation are deferred until all
-robustness experiments have been developed; they do not block the experimental
-work. The approved experimental settings and complete result retention remain
-in effect.
+On 2026-09-18, the user confirmed Type 7 IQR as the headline statistic, the
+equal-weight instance mean, the complete-data rules, and
+\(\Delta R_T = \overline{R}_{\mathrm{Agent},T} -
+\overline{R}_{\mathrm{Base},T}\) as the patch comparison.
 
-This deferral does not complete the formal metric specification or M3
-validation, and it does not mark the metric frozen.
+M2 is complete for this protocol. M3 falsification, implementation validation,
+freeze-candidate review, and protocol freeze remain outstanding and are not
+implied by this specification.

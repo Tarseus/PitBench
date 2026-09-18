@@ -1,3 +1,11 @@
+from pitbench.metrics.nuisance_report import (
+    RepresentationBudgetResult,
+    RepresentationCodeStateResult,
+    RepresentationInstanceResult,
+    RepresentationRobustnessReport,
+    compute_representation_robustness_report,
+    representation_iqr,
+)
 from pitbench.metrics.performance_report import (
     BudgetPerformance,
     ConfidenceInterval,
@@ -51,6 +59,10 @@ __all__ = [
     "PairedExactPerformance",
     "PerformanceClassification",
     "PerformanceReport",
+    "RepresentationBudgetResult",
+    "RepresentationCodeStateResult",
+    "RepresentationInstanceResult",
+    "RepresentationRobustnessReport",
     "ResourceDetails",
     "ResourceReport",
     "InstanceSetSeedRobustness",
@@ -65,6 +77,7 @@ __all__ = [
     "compute_exact_run_outcome",
     "compute_performance_report",
     "compute_task_performance_report",
+    "compute_representation_robustness_report",
     "compute_resource_report",
     "compute_resource_reports",
     "compute_seed_robustness_details",
@@ -72,4 +85,5 @@ __all__ = [
     "format_performance_report",
     "format_resource_report",
     "format_seed_robustness_report",
+    "representation_iqr",
 ]

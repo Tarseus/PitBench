@@ -5,11 +5,218 @@ from __future__ import annotations
 import csv
 import html
 import json
+import math
 import os
+import statistics
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 from pitbench.schema.observation import RunObservation
+
+REPRESENTATION_PROTOCOL_VERSION = "0.0.1"
+REPRESENTATION_STATISTICS_NAME = "type_7_iqr_equal_instance_mean"
+REPRESENTATION_SOLVER_SEED = 0
+REPRESENTATION_RELABELINGS_PER_INSTANCE = 30
+
+
+class RepresentationInstanceResult(BaseModel):
+    instance_id: str
+    expected_relabelings: int = Field(gt=0)
+    observed_relabelings: int = Field(ge=0)
+    valid_relabelings: int = Field(ge=0)
+    iqr: float | None = None
+
+
+class RepresentationCodeStateResult(BaseModel):
+    instance_count: int = Field(ge=0)
+    complete_instance_count: int = Field(ge=0)
+    mean_iqr: float | None = None
+    instances: list[RepresentationInstanceResult]
+
+
+class RepresentationBudgetResult(BaseModel):
+    budget_sec: float = Field(gt=0)
+    base: RepresentationCodeStateResult
+    agent: RepresentationCodeStateResult
+    change: float | None = None
+
+
+class RepresentationRobustnessReport(BaseModel):
+    task_id: str
+    metric: Literal["representation_robustness"] = "representation_robustness"
+    protocol_version: str = REPRESENTATION_PROTOCOL_VERSION
+    statistics: str = REPRESENTATION_STATISTICS_NAME
+    solver_seed: int = REPRESENTATION_SOLVER_SEED
+    relabelings_per_instance: int = Field(
+        default=REPRESENTATION_RELABELINGS_PER_INSTANCE, gt=0
+    )
+    instance_ids: list[str]
+    budgets_sec: list[float]
+    by_budget: dict[str, RepresentationBudgetResult]
+
+
+def _type_7_quantile(values: Sequence[float], probability: float) -> float:
+    ordered_values = sorted(values)
+    if not ordered_values:
+        raise ValueError("cannot compute a quantile without values")
+    position = probability * (len(ordered_values) - 1)
+    lower_index = math.floor(position)
+    upper_index = math.ceil(position)
+    if lower_index == upper_index:
+        return ordered_values[lower_index]
+    upper_weight = position - lower_index
+    return (
+        ordered_values[lower_index] * (1 - upper_weight)
+        + ordered_values[upper_index] * upper_weight
+    )
+
+
+def representation_iqr(values: Sequence[float]) -> float:
+    """Compute the approved Type 7 IQR for equivalent representations."""
+    return _type_7_quantile(values, 0.75) - _type_7_quantile(values, 0.25)
+
+
+def _finite_gap(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _representation_instance_result(
+    records: Sequence[dict],
+    *,
+    instance_id: str,
+    relabelings_per_instance: int,
+) -> RepresentationInstanceResult:
+    valid_gaps = [
+        record["normalized_gap"]
+        for record in records
+        if record.get("verified_feasible") is True
+        and _finite_gap(record.get("normalized_gap"))
+    ]
+    complete = len(records) == relabelings_per_instance and len(valid_gaps) == (
+        relabelings_per_instance
+    )
+    return RepresentationInstanceResult(
+        instance_id=instance_id,
+        expected_relabelings=relabelings_per_instance,
+        observed_relabelings=len(records),
+        valid_relabelings=len(valid_gaps),
+        iqr=representation_iqr(valid_gaps) if complete else None,
+    )
+
+
+def compute_representation_robustness_report(
+    records: Sequence[dict],
+    *,
+    task_id: str,
+    instance_ids: Sequence[str],
+    budgets_sec: Sequence[float],
+    solver_seed: int = REPRESENTATION_SOLVER_SEED,
+    relabelings_per_instance: int = REPRESENTATION_RELABELINGS_PER_INSTANCE,
+) -> RepresentationRobustnessReport:
+    """Compute the formal customer-relabeling Representation Robustness report."""
+    declared_instances = list(instance_ids)
+    declared_budgets = list(budgets_sec)
+    if len(declared_instances) != 10 or len(set(declared_instances)) != 10:
+        raise ValueError("representation protocol requires ten distinct instances")
+    if not declared_budgets or any(
+        not _finite_gap(budget) or budget <= 0 for budget in declared_budgets
+    ):
+        raise ValueError("budgets_sec must contain positive finite budgets")
+    if len(set(declared_budgets)) != len(declared_budgets):
+        raise ValueError("budgets_sec must not contain duplicates")
+    if solver_seed != REPRESENTATION_SOLVER_SEED:
+        raise ValueError("representation protocol requires solver seed 0")
+    if relabelings_per_instance != REPRESENTATION_RELABELINGS_PER_INSTANCE:
+        raise ValueError("representation protocol requires 30 relabelings per instance")
+
+    expected_instances = set(declared_instances)
+    expected_budgets = set(declared_budgets)
+    indexed: dict[tuple[str, float, str, int, int], dict] = {}
+    for record in records:
+        if record.get("task_id") not in (None, task_id):
+            raise ValueError("representation record belongs to another task")
+        if record.get("axis") != "representation":
+            raise ValueError("representation report requires representation records")
+        instance_id = record.get("instance")
+        budget_sec = record.get("budget_sec")
+        code_state = record.get("code_state")
+        replicate = record.get("replicate")
+        observed_solver_seed = record.get("solver_seed")
+        if instance_id not in expected_instances:
+            raise ValueError("representation record uses an undeclared instance")
+        if budget_sec not in expected_budgets:
+            raise ValueError("representation record uses an undeclared budget")
+        if code_state not in {"base", "agent"}:
+            raise ValueError("representation record uses an undeclared code state")
+        if observed_solver_seed != solver_seed:
+            raise ValueError("representation record uses an undeclared solver seed")
+        if not isinstance(replicate, int) or isinstance(replicate, bool):
+            raise ValueError("representation replicate must be an integer")
+        if not 0 <= replicate < relabelings_per_instance:
+            raise ValueError("representation replicate is outside the declared grid")
+        key = (instance_id, budget_sec, code_state, replicate, observed_solver_seed)
+        if key in indexed:
+            raise ValueError("duplicate representation observation")
+        indexed[key] = record
+
+    by_budget: dict[str, RepresentationBudgetResult] = {}
+    for budget_sec in declared_budgets:
+        state_results: dict[str, RepresentationCodeStateResult] = {}
+        for code_state in ("base", "agent"):
+            instances = [
+                _representation_instance_result(
+                    [
+                        indexed[key]
+                        for key in indexed
+                        if key[:3] == (instance_id, budget_sec, code_state)
+                    ],
+                    instance_id=instance_id,
+                    relabelings_per_instance=relabelings_per_instance,
+                )
+                for instance_id in declared_instances
+            ]
+            complete_iqrs = [
+                result.iqr for result in instances if result.iqr is not None
+            ]
+            state_results[code_state] = RepresentationCodeStateResult(
+                instance_count=len(instances),
+                complete_instance_count=len(complete_iqrs),
+                mean_iqr=(
+                    statistics.fmean(complete_iqrs)
+                    if len(complete_iqrs) == len(instances)
+                    else None
+                ),
+                instances=instances,
+            )
+        base_mean = state_results["base"].mean_iqr
+        agent_mean = state_results["agent"].mean_iqr
+        by_budget[f"{budget_sec:g}"] = RepresentationBudgetResult(
+            budget_sec=budget_sec,
+            base=state_results["base"],
+            agent=state_results["agent"],
+            change=(
+                agent_mean - base_mean
+                if base_mean is not None and agent_mean is not None
+                else None
+            ),
+        )
+
+    return RepresentationRobustnessReport(
+        task_id=task_id,
+        solver_seed=solver_seed,
+        relabelings_per_instance=relabelings_per_instance,
+        instance_ids=declared_instances,
+        budgets_sec=declared_budgets,
+        by_budget=by_budget,
+    )
 
 
 def _relative(source: Path, output: Path, value: str | None) -> str | None:
@@ -30,10 +237,16 @@ class DirectoryRunResults:
                 continue
             record = json.loads(path.read_text())
             verification = record.get("verification") or {}
+            normalized_gap = record.get("normalized_gap")
+            if normalized_gap is None:
+                normalized_gap = (record.get("observation") or {}).get(
+                    "normalized_gap"
+                )
             records.append(
                 {
                     **job,
                     **record,
+                    "normalized_gap": normalized_gap,
                     "verified_objective": verification.get("objective")
                     if verification.get("feasible")
                     else None,
@@ -103,6 +316,7 @@ class JudgeRunResults:
                 )
                 records.append(
                     {
+                        "task_id": observation.task_id,
                         **by_transform[observation.instance_id],
                         "budget_sec": observation.budget_sec,
                         "code_state": observation.code_state.value,
@@ -110,6 +324,9 @@ class JudgeRunResults:
                         "execution_status": observation.status.value,
                         "model_status": observation.solver_status,
                         "verified_feasible": feasible,
+                        "normalized_gap": (
+                            observation.normalized_gap if feasible else None
+                        ),
                         "verified_objective": mapped.get("objective")
                         if feasible
                         else None,
@@ -153,6 +370,32 @@ def _group(record: dict) -> tuple:
     return tuple(
         record[key] for key in ("instance", "budget_sec", "axis", "code_state")
     )
+
+
+def _representation_configuration(manifest: dict) -> dict:
+    configuration = manifest.get("config") or manifest.get("configuration") or {}
+    if "representation" in configuration:
+        return configuration["representation"]
+    if {
+        "relabeling_generation_seed",
+        "relabelings_per_instance",
+    } <= manifest.keys():
+        return {
+            "kind": "customer_relabeling",
+            "solver_seed": manifest.get("solver_seed", REPRESENTATION_SOLVER_SEED),
+            "relabelings_per_instance": manifest["relabelings_per_instance"],
+        }
+    return configuration
+
+
+def _representation_instance_ids(manifest: dict) -> list[str]:
+    instance_ids = []
+    for instance in manifest.get("instances", []):
+        instance_id = instance.get("name", instance.get("id"))
+        if instance_id is None:
+            raise ValueError("representation manifest instance has no identifier")
+        instance_ids.append(instance_id)
+    return instance_ids
 
 
 def report_nuisance_results(source: Path, output: Path) -> dict:
@@ -236,6 +479,32 @@ def report_nuisance_results(source: Path, output: Path) -> dict:
                 else None
             )
         summary["groups"].append(item)
+    formal_representation_report = None
+    planned_axes = {job.get("axis") for job in manifest["jobs"]}
+    representation_configuration = _representation_configuration(manifest)
+    if (
+        planned_axes == {"representation"}
+        and representation_configuration.get("kind") == "customer_relabeling"
+    ):
+        formal_representation_report = compute_representation_robustness_report(
+            records,
+            task_id=manifest["task_id"],
+            instance_ids=_representation_instance_ids(manifest),
+            budgets_sec=manifest["budgets_sec"],
+            solver_seed=representation_configuration.get(
+                "solver_seed", REPRESENTATION_SOLVER_SEED
+            ),
+            relabelings_per_instance=representation_configuration.get(
+                "relabelings_per_instance",
+                representation_configuration.get(
+                    "count", REPRESENTATION_RELABELINGS_PER_INSTANCE
+                ),
+            ),
+        )
+        summary["statistics"] = REPRESENTATION_STATISTICS_NAME
+        summary["representation_robustness"] = (
+            formal_representation_report.model_dump(mode="json")
+        )
     manifest["code_states"] = list(
         dict.fromkeys(job["code_state"] for job in manifest["jobs"])
     )
@@ -264,6 +533,10 @@ def report_nuisance_results(source: Path, output: Path) -> dict:
         .replace("__DATA__", data)
     )
     output.mkdir(parents=True, exist_ok=True)
+    if formal_representation_report is not None:
+        (output / "representation_robustness.json").write_text(
+            formal_representation_report.model_dump_json(indent=2) + "\n"
+        )
     fields = [
         "instance",
         "axis",
@@ -314,7 +587,7 @@ body{margin:0;background:#fafaf8;color:#242a30;font:15px/1.65 system-ui,sans-ser
 <p id="protocol"></p>
 <div class="facts" id="facts"></div>
 <nav><a href="observations.csv" download>全部运行 CSV</a><a href="summary.json">逐实例结果摘要</a><a href="__MANIFEST__">实验清单与原始资产位置</a></nav>
-<p class="note">保留原始分布，本轮未选择 IQR、置信区间、总分或验收阈值。可行性、最优性界和终止状态按原始记录展示；求解器报告最优不等同于独立核验证明。未提供的观察量显示为空。</p>
+<p class="note">保留原始分布；正式统计量及其版本见 summary.json。可行性、最优性界和终止状态按原始记录展示；求解器报告最优不等同于独立核验证明。未提供的观察量显示为空。</p>
 <h2>逐实例观察</h2>
 <div class="filters"><label>实例<select id="instance"></select></label><label>预算<select id="budget"></select></label><label>代码状态<select id="state"></select></label><label>观察量<select id="measure">
 <option value="verified_objective">验证后的可行解目标值</option><option value="solver_gap">求解器 primal–dual gap（%）</option><option value="dual_bound">求解器最优性界</option><option value="solver_runtime_sec">记录的运行耗时（秒，含时限退出）</option><option value="time_to_solver_optimal_sec">达到最优容差的耗时（秒，仅已达标运行）</option><option value="nodes">搜索节点数</option></select></label></div>

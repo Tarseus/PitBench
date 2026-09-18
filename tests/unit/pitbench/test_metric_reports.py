@@ -14,7 +14,11 @@ from typer.testing import CliRunner
 
 from pitbench.cli.main import app
 from pitbench.evaluator.storage import ObservationStore
-from pitbench.metrics.nuisance_report import report_nuisance_results
+from pitbench.metrics.nuisance_report import (
+    compute_representation_robustness_report,
+    report_nuisance_results,
+    representation_iqr,
+)
 from pitbench.metrics.performance_report import (
     ExactPerformanceReport,
     ExactRunOutcome,
@@ -948,6 +952,7 @@ def directory_panel(source):
             "execution_status": "completed",
             "verified_feasible": True,
             "verification": {"feasible": True, "objective": 0},
+            "observation": {"normalized_gap": 0.25},
             "solver_runtime_sec": 3,
             "solution_value_valid": True,
         },
@@ -981,6 +986,7 @@ def test_directory_report_uses_manifest_counts_budgets_and_identity(tmp_path):
     data = embedded(output)
     assert data["manifest"]["budgets_sec"] == [5, 15]
     assert data["records"][0]["verification"]["objective"] == 0
+    assert data["records"][0]["normalized_gap"] == 0.25
     page = (output / "report.html").read_text()
     assert "Another solver &lt;release&gt;" in page
     assert "HiGHS" not in page and "2026-09-09" not in page
@@ -1066,6 +1072,124 @@ def test_judge_report_separates_states_and_preserves_failure(tmp_path, manifest_
     checkpoint.write_text(original.decode() + json.dumps(records[0]) + "\n")
     with pytest.raises(ValueError, match="duplicate nuisance observation"):
         report_nuisance_results(source, output)
+
+
+def representation_panel(*, scales=None, omit=None):
+    scales = scales or {}
+    omit = omit or set()
+    records = []
+    for instance_index in range(10):
+        instance_id = f"instance-{instance_index}"
+        for budget in (5, 10):
+            for state in ("base", "agent"):
+                scale = scales.get((state, instance_index), 1 / 14.5)
+                for replicate in range(30):
+                    key = (instance_id, budget, state, replicate)
+                    if key in omit:
+                        continue
+                    records.append(
+                        {
+                            "task_id": "representation-test",
+                            "instance": instance_id,
+                            "axis": "representation",
+                            "replicate": replicate,
+                            "solver_seed": 0,
+                            "budget_sec": budget,
+                            "code_state": state,
+                            "verified_feasible": True,
+                            "normalized_gap": replicate * scale,
+                        }
+                    )
+    return records
+
+
+def representation_report(records):
+    return compute_representation_robustness_report(
+        records,
+        task_id="representation-test",
+        instance_ids=[f"instance-{index}" for index in range(10)],
+        budgets_sec=[5, 10],
+    )
+
+
+def test_representation_type_7_iqr_matches_the_approved_case():
+    assert representation_iqr(list(range(30))) == pytest.approx(
+        14.5, rel=1e-12, abs=1e-12
+    )
+
+
+def test_representation_iqr_is_invariant_to_order_shift_and_single_tail_outlier():
+    outcomes = list(range(30))
+    assert representation_iqr(outcomes) == representation_iqr(list(reversed(outcomes)))
+    assert representation_iqr([value + 5 for value in outcomes]) == pytest.approx(
+        14.5, rel=1e-12, abs=1e-12
+    )
+    assert representation_iqr([*range(29), 10000]) == pytest.approx(
+        14.5, rel=1e-12, abs=1e-12
+    )
+
+
+def test_representation_report_uses_equal_instance_weights():
+    records = representation_panel(
+        scales={
+            ("base", instance_index): (
+                11 / 14.5 if instance_index == 9 else 1 / 14.5
+            )
+            for instance_index in range(10)
+        }
+    )
+    report = representation_report(records)
+    assert report.by_budget["5"].base.mean_iqr == pytest.approx(
+        2.0, rel=1e-12, abs=1e-12
+    )
+
+
+def test_representation_report_preserves_base_agent_change_direction():
+    records = representation_panel(
+        scales={
+            (state, instance_index): scale / 14.5
+            for state, scale in (("base", 1), ("agent", 3))
+            for instance_index in range(10)
+        }
+    )
+    report = representation_report(records)
+    assert report.by_budget["5"].base.mean_iqr == pytest.approx(
+        1.0, rel=1e-12, abs=1e-12
+    )
+    assert report.by_budget["5"].agent.mean_iqr == pytest.approx(
+        3.0, rel=1e-12, abs=1e-12
+    )
+    assert report.by_budget["5"].change == pytest.approx(
+        2.0, rel=1e-12, abs=1e-12
+    )
+
+    swapped = [
+        {
+            **record,
+            "code_state": (
+                "agent" if record["code_state"] == "base" else "base"
+            ),
+        }
+        for record in records
+    ]
+    assert representation_report(swapped).by_budget["5"].change == pytest.approx(
+        -2.0, rel=1e-12, abs=1e-12
+    )
+    assert representation_report(representation_panel()).by_budget["5"].change == (
+        pytest.approx(0.0, rel=1e-12, abs=1e-12)
+    )
+
+
+def test_representation_report_propagates_incomplete_data_without_imputation():
+    omit = {("instance-0", 5, "base", 29)}
+    report = representation_report(representation_panel(omit=omit))
+    result = report.by_budget["5"]
+    first_instance = result.base.instances[0]
+    assert first_instance.valid_relabelings == 29
+    assert first_instance.iqr is None
+    assert result.base.mean_iqr is None
+    assert result.agent.mean_iqr is not None
+    assert result.change is None
 
 
 # Tests consolidated from tests/unit/pitbench/test_resource_report.py

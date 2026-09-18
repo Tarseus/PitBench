@@ -244,7 +244,7 @@ def run_with_representation(
         "completed_run_count": 0,
         "transformations": "transformations.json",
         "results": "results.jsonl",
-        "statistics": "deferred",
+        "statistics": "type_7_iqr_equal_instance_mean",
     }
     write_json(output_dir / "details.json", details)
     with tempfile.TemporaryDirectory(
@@ -273,5 +273,14 @@ def run_with_representation(
                 details["completed_run_count"] += 1
 
             observations = judge.run([*plan.cases, *cases], save_observation=save)
+    write_json(output_dir / "details.json", details)
+    from pitbench.metrics.nuisance_report import report_nuisance_results
+
+    representation_summary = report_nuisance_results(
+        output_dir, output_dir / "report"
+    )
+    details["representation_robustness"] = representation_summary[
+        "representation_robustness"
+    ]
     write_json(output_dir / "details.json", details)
     return observations

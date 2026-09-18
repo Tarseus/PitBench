@@ -415,7 +415,16 @@ def test_runner_collects_configured_relabelings_and_preserves_failures(
     directory = output_dir / "representation"
     details = json.loads((directory / "details.json").read_text())
     assert details["expected_run_count"] == details["completed_run_count"] == 1200
-    assert details["statistics"] == "deferred"
+    assert details["statistics"] == "type_7_iqr_equal_instance_mean"
+    assert details["representation_robustness"]["protocol_version"] == "0.0.1"
+    assert (
+        details["representation_robustness"]["by_budget"]["5"]["change"]
+        is not None
+    )
+    assert (
+        details["representation_robustness"]["by_budget"]["10"]["change"]
+        is None
+    )
     assert (
         details["candidate_patch_sha256"]
         == hashlib.sha256(patch_path.read_bytes()).hexdigest()
