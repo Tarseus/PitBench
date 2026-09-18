@@ -10,6 +10,14 @@ paths:
   private_root: private
   base_cache_path: .pitbench/cache/base
 
+# Configuration Robustness is launched automatically after the candidate run.
+configuration_robustness:
+  enabled: true
+  experiment_config: configs/experiments/configuration_robustness.yaml
+  output_path: configuration-robustness
+  cpus: null
+  search_seed: 20260918
+
 # Evaluation execution options (null uses system auto-detection, e.g. nproc - 2)
 # judge_parallel_runs: 10
 # judge_cpus: 10.0

@@ -12,7 +12,7 @@ RUN sed -i \
        /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-       git python3 python3-pip \
+       asciinema git python3 python3-pip tmux \
     && rm -rf /var/lib/apt/lists/*
 RUN python3 -m pip install --break-system-packages --no-cache-dir \
     --index-url "$PYPI_INDEX_URL" \

@@ -36,6 +36,41 @@ def _external_panel(config, seed=0):
     raise RuntimeError("PitBench evaluates complete panels through ask/tell")
 
 
+def _docker_collector_command(
+    image: str,
+    command: list[str],
+    *,
+    cpu: int | None = None,
+) -> list[str]:
+    """Run one collector action inside its pinned solver image."""
+    result = [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=missing",
+        "--network",
+        "none",
+        "--read-only",
+        "--tmpfs",
+        "/tmp:rw,nosuid,nodev,size=1g,mode=1777",
+        "--env",
+        "PITBENCH_VROOM_SOLVER=/workspace/repo/bin/vroom",
+        "--env",
+        f"PYTHONPATH={ROOT}:/workspace/repo",
+        "--volume",
+        f"{ROOT}:{ROOT}:rw",
+        "--volume",
+        f"{ROOT / 'adapters/jvm'}:/opt/pitbench-jvm:ro",
+        "--workdir",
+        "/workspace/repo",
+    ]
+    if cpu is not None:
+        result.extend(["--cpuset-cpus", str(cpu)])
+    result.extend([image, "python3", "-m", "scripts.collect_configuration_results"])
+    result.extend(command)
+    return result
+
+
 class SmacSearch:
     """One outer trial per complete panel, with signed costs and no racing."""
 
@@ -142,22 +177,28 @@ def prepare(
         )
         repository_plugin = task["repository"]["plugin"]
         repository = RepositoryPluginRegistry.load(repository_plugin)
-        python = solver_pythons[panel["collector"]]
+        collector_image = config.get("collector_images", {}).get(panel["collector"])
+        python = solver_pythons.get(panel["collector"], sys.executable)
+        probe_command = [
+            "probe",
+            "--repository-plugin",
+            repository_plugin,
+        ]
         probe = subprocess.run(
-            [
+            _docker_collector_command(collector_image, probe_command)
+            if collector_image
+            else [
                 python,
                 "-m",
                 "scripts.collect_configuration_results",
-                "probe",
-                "--repository-plugin",
-                repository_plugin,
+                *probe_command,
             ],
             cwd=ROOT,
             capture_output=True,
             text=True,
             check=True,
         )
-        identity = json.loads(probe.stdout)
+        identity = json.loads(probe.stdout.strip().splitlines()[-1])
         if identity["version"] != task["release"]["version"]:
             raise ValueError("installed solver version differs from task release")
         if identity.get("binding_git_hash") and not task["release"][
@@ -205,6 +246,7 @@ def prepare(
                 "id": f"{task['task_id']}/budget-{budget:g}",
                 "solver": identity,
                 "deterministic": repository.deterministic,
+                "collector_image": collector_image,
                 "solver_python": python,
                 "instances": instances,
                 "solver_seeds": seeds,
@@ -344,17 +386,27 @@ class ConfigurationRunner:
             attempt = run / f"attempt-{len(list(run.glob('attempt-*'))):04d}"
             attempt.mkdir(parents=True)
             write_json(attempt / "job.json", job)
-            result = run_collection_process(
-                [
+            worker_command = [
+                "worker",
+                "--job",
+                str(attempt / "job.json"),
+                "--cpu",
+                str(cpu),
+            ]
+            command = (
+                _docker_collector_command(
+                    search["collector_image"], worker_command, cpu=cpu
+                )
+                if search.get("collector_image")
+                else [
                     search["solver_python"],
                     "-m",
                     "scripts.collect_configuration_results",
-                    "worker",
-                    "--job",
-                    str(attempt / "job.json"),
-                    "--cpu",
-                    str(cpu),
-                ],
+                    *worker_command,
+                ]
+            )
+            result = run_collection_process(
+                command,
                 attempt,
                 {**job, "cpu": cpu},
                 timeout=search["budget_sec"] + search["watchdog_grace_sec"],
@@ -513,7 +565,7 @@ def main(argv: list[str] | None = None) -> None:
     preparation.add_argument("--config", type=Path, required=True)
     preparation.add_argument("--output", type=Path, required=True)
     preparation.add_argument(
-        "--solver-python", action="append", required=True, metavar="COLLECTOR=PYTHON"
+        "--solver-python", action="append", default=[], metavar="COLLECTOR=PYTHON"
     )
     preparation.add_argument("--cpus", type=int, nargs="+", required=True)
     preparation.add_argument("--search-seed", type=int, required=True)

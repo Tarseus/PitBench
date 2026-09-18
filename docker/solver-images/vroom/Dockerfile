@@ -6,7 +6,7 @@ ARG PYPI_INDEX_URL=https://pypi.org/simple
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-       build-essential git libasio-dev libglpk-dev libssl-dev pkg-config \
+       asciinema build-essential git libasio-dev libglpk-dev libssl-dev pkg-config tmux \
        python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 RUN python3 -m pip install --break-system-packages --no-cache-dir \

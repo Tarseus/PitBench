@@ -4,6 +4,11 @@ max_configurations: 16
 instance_count: 10
 solver_seed_count: 30
 watchdog_grace_sec: 60
+collector_images:
+  pyvrp: ghcr.io/tarseus/pitbench-pyvrp:0.14.0
+  choco: pitbench-choco:final
+  ortools_cp_sat: pitbench-ortools:cp-sat-task-v4
+  vroom: pitbench-vroom:final
 panels:
   - task_config: configs/tasks/pyvrp_v0_14_0.yaml
     collector: pyvrp
@@ -69,10 +74,10 @@ panels:
         default: automatic_search
   - task_config: configs/tasks/vroom_v1_15_0.yaml
     collector: vroom
-    instance_count: 10
+    instance_count: 38
     solver_seed_count: 1
     feedback: normalized_gap
-    instance_source: configs/instance_sets/vroom_v1_15_0_dev.yaml
+    instance_source: private/calibration/cvrplib_x/oracle.yaml
     seed_source: configs/tasks/vroom_v1_15_0.yaml
     seed_key: evaluation.solver_seeds
     seed_max: 0

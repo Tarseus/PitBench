@@ -23,7 +23,8 @@ repository:
   judge_image: sha256:c778639d3d18ef94faddd7b5b578ce837df9be9e86e6b4b4b76a1abbedb60955
 oracle:
     kind: best_known_solution
-    source: private://oracles/cvrp.json
+    source: private://calibration/cvrplib_x/oracle.yaml
+    source_sha256: 84833f98c4d1f2480889ed8f5f0b9046402bc899fd06f8a6b7602f186cc8ca13
     objective_sense: minimize
 evaluation:
   performance_protocol: heuristic_fixed_budget
@@ -41,12 +42,5 @@ instance_sets:
     randomness: {instance_seed: 11500, coordinate_seed: 11501, demand_seed: 11502}
   - name: judge_id
     kind: judge_id
-    instance_set_config: private://hidden_instances/vroom_v1_15_0/judge_id.yaml
-    size: 100
-    randomness: {instance_seed: 11510, coordinate_seed: 11511, demand_seed: 11512}
-  - name: demand_skewed
-    kind: judge_shift
-    instance_set_config: private://hidden_instances/vroom_v1_15_0/demand_skewed.yaml
-    size: 100
-    shift: demand_skewed
-    randomness: {instance_seed: 11510, coordinate_seed: 11511, demand_seed: 11522}
+    instance_set_config: private://calibration/cvrplib_x/oracle.yaml
+    size: 38

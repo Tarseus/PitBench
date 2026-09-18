@@ -397,7 +397,19 @@ def prepare_collection_instances(
     import shutil
 
     payload = yaml.safe_load(source.read_text())
+    private_root = Path(__file__).resolve().parents[2] / "private"
     destination.mkdir(parents=True, exist_ok=True)
+    if "generator" in payload:
+        paths = materialize_generated_instance_set(
+            payload,
+            destination,
+            expected_visibility=payload.get("visibility", "agent"),
+            stem_prefix=source.stem,
+        )
+        return [
+            {"id": path.stem, "path": str(path.resolve()), "bks": None}
+            for path in paths
+        ]
     instances = []
     for item in payload["instances"]:
         identity = item.get("id", item.get("name"))
@@ -406,9 +418,17 @@ def prepare_collection_instances(
             if path_template is not None
             else item.get("instance_file", item.get("path"))
         )
-        if identity is None or relative is None:
+        private_uri = item.get("instance_uri")
+        if identity is None or (relative is None and private_uri is None):
             raise ValueError("each instance requires an ID and explicit input path")
-        original = source.parent / relative
+        if private_uri is not None:
+            if not private_uri.startswith("private://"):
+                raise ValueError("instance_uri must use private:// storage")
+            original = private_root / private_uri.removeprefix("private://")
+        else:
+            original = source.parent / relative
+        if not original.is_file():
+            raise FileNotFoundError(f"missing collection instance: {original}")
         target = destination / f"{identity}{''.join(original.suffixes)}"
         if target.exists():
             if target.read_bytes() != original.read_bytes():

@@ -42,6 +42,18 @@ class SolverImageBuildConfig(BaseModel):
     no_proxy: str | None = None
 
 
+class ConfigurationRobustnessConfig(BaseModel):
+    """Default release-only configuration search launched with evaluation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    experiment_config: Path = Path("configs/experiments/configuration_robustness.yaml")
+    output_path: Path = Path("configuration-robustness")
+    cpus: list[int] | None = None
+    search_seed: int = 20260918
+
+
 class EvaluationConfig(BaseModel):
     """Machine-local settings for the unified evaluation command."""
 
@@ -50,6 +62,9 @@ class EvaluationConfig(BaseModel):
     paths: EvaluationPaths = Field(default_factory=EvaluationPaths)
     solver_image_build: SolverImageBuildConfig = Field(
         default_factory=SolverImageBuildConfig
+    )
+    configuration_robustness: ConfigurationRobustnessConfig = Field(
+        default_factory=ConfigurationRobustnessConfig
     )
     agent_tools: list[AgentTool] = Field(default_factory=list)
     tasks: dict[str, TaskResources] = Field(default_factory=dict)

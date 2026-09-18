@@ -41,17 +41,31 @@ class GitSnapshot:
         self._run(["git", "init", "--quiet"], destination)
         self._run(["git", "remote", "add", "origin", self.clone_url], destination)
         try:
-            self._run(
-                [
-                    "git",
-                    "fetch",
-                    "--quiet",
-                    "--no-tags",
-                    "origin",
-                    self.base_commit,
-                ],
-                destination,
-            )
+            fetch_command = [
+                "git",
+                "-c",
+                "http.version=HTTP/1.1",
+                "-c",
+                "http.lowSpeedLimit=1000",
+                "-c",
+                "http.lowSpeedTime=60",
+                "fetch",
+                "--quiet",
+                "--depth=1",
+                "--no-tags",
+                "origin",
+                self.base_commit,
+            ]
+            last_fetch_error: GitSnapshotError | None = None
+            for attempt in range(3):
+                try:
+                    self._run(fetch_command, destination)
+                    last_fetch_error = None
+                    break
+                except GitSnapshotError as error:
+                    last_fetch_error = error
+            if last_fetch_error is not None:
+                raise last_fetch_error
             self._run(
                 ["git", "switch", "--quiet", "--detach", self.base_commit], destination
             )

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -88,6 +91,63 @@ def _prepare_task_image(task_path: Path, *, rebuild: bool) -> None:
         trial_handler_type=TrialHandler,
         manager_type=DockerComposeManager,
     )
+
+
+def _run_configuration_robustness(
+    repository_root: Path,
+    evaluation_config: EvaluationConfig,
+    output_root: Path,
+    run_id: str,
+) -> None:
+    configuration = evaluation_config.configuration_robustness
+    if not configuration.enabled:
+        return
+    uv = shutil.which("uv")
+    if uv is None:
+        raise RuntimeError(
+            "Configuration Robustness is enabled by default but uv is unavailable"
+        )
+    experiment_config = resolve_repository_path(
+        repository_root, configuration.experiment_config
+    )
+    output = resolve_repository_path(
+        repository_root, output_root / run_id / configuration.output_path
+    )
+    cpus = configuration.cpus or sorted(os.sched_getaffinity(0))
+    if not cpus:
+        raise RuntimeError("Configuration Robustness requires at least one CPU")
+    prepare = [
+        uv,
+        "run",
+        "--extra",
+        "configuration",
+        "python",
+        "-m",
+        "scripts.collect_configuration_results",
+        "prepare",
+        "--config",
+        str(experiment_config),
+        "--output",
+        str(output),
+        "--cpus",
+        *[str(cpu) for cpu in cpus],
+        "--search-seed",
+        str(configuration.search_seed),
+    ]
+    subprocess.run(prepare, cwd=repository_root, check=True)
+    run = [
+        uv,
+        "run",
+        "--extra",
+        "configuration",
+        "python",
+        "-m",
+        "scripts.collect_configuration_results",
+        "run",
+        "--output",
+        str(output),
+    ]
+    subprocess.run(run, cwd=repository_root, check=True)
 
 
 @images_app.command("build")
@@ -280,6 +340,13 @@ def evaluate_task(
             "--check-only", help="Check all prerequisites without running agents"
         ),
     ] = False,
+    configuration_robustness: Annotated[
+        bool,
+        typer.Option(
+            "--configuration-robustness/--no-configuration-robustness",
+            help="Run the default release-only configuration search",
+        ),
+    ] = True,
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
 ) -> None:
     """Check, materialize, and evaluate tasks together in one harness run."""
@@ -473,6 +540,13 @@ def evaluate_task(
         remote_build=False,
         history_limit=None,
     )
+    if configuration_robustness:
+        _run_configuration_robustness(
+            repository_root,
+            effective_config,
+            resolved_output_path,
+            resolved_run_id,
+        )
 
 
 @app.command("judge")
