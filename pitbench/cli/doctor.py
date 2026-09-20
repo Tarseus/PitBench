@@ -23,7 +23,11 @@ from pitbench.cli.evaluate_config import (
     resolve_repository_path,
 )
 from pitbench.evaluator.judge import JudgePlan
-from pitbench.evaluator.private_assets import PrivateAssetResolver
+from pitbench.evaluator.private_assets import (
+    PrivateAssetResolver,
+    load_private_seed_robustness_config,
+)
+from pitbench.evaluator.reliability import prepare_boundary_cases
 from pitbench.harness.agents.containers import (
     AntigravityContainerRunner,
     CodexContainerRunner,
@@ -255,6 +259,83 @@ def _private_assets_check(context: _DoctorContext) -> DoctorCheck:
     )
 
 
+def _seed_protocol_check(context: _DoctorContext) -> DoctorCheck:
+    if context.task is None:
+        return _check(
+            CheckStatus.WARN,
+            "seed protocol",
+            "not checked because the task config is invalid",
+        )
+    seed_robustness = context.task.task.evaluation.seed_robustness
+    if seed_robustness is None:
+        return _check(
+            CheckStatus.PASS,
+            "seed protocol",
+            "task does not declare seed robustness",
+        )
+    private_root = resolve_repository_path(
+        context.repository_root, context.config.paths.private_root
+    )
+    try:
+        private_config = load_private_seed_robustness_config(
+            PrivateAssetResolver(private_root),
+            task_id=context.task.task.task_id,
+            public_config=seed_robustness,
+        )
+    except Exception as error:
+        return _check(
+            CheckStatus.FAIL,
+            "seed protocol",
+            f"development/evaluation seed validation failed: {error}",
+            "Fix the task's public and private seed declarations, then rerun doctor.",
+        )
+    return _check(
+        CheckStatus.PASS,
+        "seed protocol",
+        f"validated {len(seed_robustness.development_seeds)} development and "
+        f"{len(private_config.evaluation_seeds)} evaluation seeds",
+    )
+
+
+def _reliability_plan_check(context: _DoctorContext) -> DoctorCheck:
+    if context.task is None:
+        return _check(
+            CheckStatus.WARN,
+            "reliability boundary plan",
+            "not checked because the task config is invalid",
+        )
+    if not context.task.task.evaluation.operational_reliability:
+        return _check(
+            CheckStatus.PASS,
+            "reliability boundary plan",
+            "operational reliability is disabled",
+        )
+    private_root = resolve_repository_path(
+        context.repository_root, context.config.paths.private_root
+    )
+    try:
+        with tempfile.TemporaryDirectory(prefix="pitbench-doctor-reliability-") as root:
+            cases = prepare_boundary_cases(
+                context.task.task,
+                Path(root),
+                private_root=private_root,
+                public_root=context.repository_root,
+            )
+    except Exception as error:
+        return _check(
+            CheckStatus.FAIL,
+            "reliability boundary plan",
+            f"could not materialize operational reliability cases: {error}",
+            "Fix the task's agent_dev instance set and generated-instance "
+            "configuration, then rerun doctor.",
+        )
+    return _check(
+        CheckStatus.PASS,
+        "reliability boundary plan",
+        f"materialized {len(cases)} boundary cases",
+    )
+
+
 def _global_git_config(name: str) -> str | None:
     result = subprocess.run(
         ["git", "config", "--global", "--get", name],
@@ -423,6 +504,101 @@ def _agent_runtime_check(reference: str, client: object) -> DoctorCheck:
         )
 
 
+def _agent_requirement_check(
+    context: _DoctorContext,
+    reference: str,
+    client: object,
+) -> DoctorCheck:
+    plugin = RepositoryPluginRegistry.load(context.task.task.repository.plugin)
+    requirement = plugin.agent_requirement
+    if requirement is None:
+        return _check(
+            CheckStatus.PASS,
+            "agent solver runtime",
+            "plugin does not declare an agent runtime requirement",
+        )
+    if requirement.startswith("import:"):
+        command = [
+            "-lc",
+            f"{plugin.agent_python or 'python3'} -c "
+            f"'import {requirement.removeprefix('import:')}'",
+        ]
+    elif requirement.startswith("file:"):
+        command = [
+            "-lc",
+            f"test -e /workspace/repo/{requirement.removeprefix('file:')}",
+        ]
+    elif requirement.startswith("env:"):
+        variable = requirement.removeprefix("env:")
+        command = ["-lc", 'test -n "$' + "{" + variable + ':-}"']
+    else:
+        return _check(
+            CheckStatus.WARN,
+            "agent solver runtime",
+            f"unrecognized plugin requirement: {requirement}",
+        )
+    try:
+        client.containers.run(  # type: ignore[attr-defined]
+            reference,
+            command,
+            entrypoint=["/bin/sh"],
+            network_disabled=True,
+            remove=True,
+            stdout=True,
+            stderr=True,
+        )
+    except Exception as error:
+        return _check(
+            CheckStatus.FAIL,
+            "agent solver runtime",
+            f"{plugin.name} requirement failed ({requirement}): {error}",
+            "Rebuild the configured solver image and verify its published "
+            "runtime artifact, then rerun doctor.",
+        )
+    return _check(
+        CheckStatus.PASS,
+        "agent solver runtime",
+        f"{plugin.name} requirement available: {requirement}",
+    )
+
+
+def _judge_environment_check(
+    context: _DoctorContext,
+    reference: str,
+    client: object,
+) -> DoctorCheck:
+    plugin = RepositoryPluginRegistry.load(context.task.task.repository.plugin)
+    if plugin.name != "choco":
+        return _check(
+            CheckStatus.PASS,
+            "judge environment",
+            f"{plugin.name} has no additional judge environment contract",
+        )
+    try:
+        image = client.images.get(reference)  # type: ignore[attr-defined]
+        environment = image.attrs.get("Config", {}).get("Env", []) or []
+    except Exception as error:
+        return _check(
+            CheckStatus.FAIL,
+            "judge environment",
+            f"could not inspect Choco judge environment: {error}",
+            "Use a local Choco judge image with its runtime environment available.",
+        )
+    if not any(item == "MAVEN_CONFIG=/tmp/choco-maven" for item in environment):
+        return _check(
+            CheckStatus.FAIL,
+            "judge environment",
+            "Choco judge image does not set MAVEN_CONFIG=/tmp/choco-maven",
+            "Use the corrected Choco judge image so Maven can run with a read-only "
+            "container root.",
+        )
+    return _check(
+        CheckStatus.PASS,
+        "judge environment",
+        "Choco Maven cache uses writable /tmp/choco-maven",
+    )
+
+
 def _docker_check(
     client_factory: Callable[[], docker.DockerClient] = docker.from_env,
 ) -> tuple[object | None, dict, DoctorCheck]:
@@ -573,6 +749,9 @@ def _image_checks(
                 if reference not in runtime_cache:
                     runtime_cache[reference] = _agent_runtime_check(reference, client)
                 checks.append(runtime_cache[reference])
+                checks.append(_agent_requirement_check(context, reference, client))
+            elif kind == "judge":
+                checks.append(_judge_environment_check(context, reference, client))
     ghcr = [ref for ref in references.values() if ref and ref.startswith("ghcr.io/")]
     return checks, ghcr, references_valid
 
@@ -1037,6 +1216,8 @@ def run_doctor(
     context, context_checks = _load_context(root, config_path, task_id)
     checks.extend(context_checks)
     checks.append(_private_assets_check(context))
+    checks.append(_seed_protocol_check(context))
+    checks.append(_reliability_plan_check(context))
     checks.append(_repository_source_check(context, {}))
     checks.append(_configuration_robustness_check(root, context.config))
     client, docker_info, docker_result = _docker_check(client_factory)
@@ -1077,6 +1258,8 @@ def evaluation_checks(
             context = _DoctorContext(repository_root, None, config, record)
             task_checks = [
                 _private_assets_check(context),
+                _seed_protocol_check(context),
+                _reliability_plan_check(context),
                 _repository_source_check(context, source_cache),
             ]
             task_checks.extend(_image_checks(context, client, runtime_cache)[0])

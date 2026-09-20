@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,9 +10,14 @@ from pitbench.cli.doctor import (
     CheckStatus,
     _agent_runtime_check,
     _configuration_robustness_check,
+    _reliability_plan_check,
     _repository_source_check,
 )
 from pitbench.cli.evaluate_config import EvaluationConfig, TaskResources
+from pitbench.cli.main import (
+    _configuration_dry_run_failures,
+    _run_configuration_robustness,
+)
 
 
 def doctor_context(
@@ -32,7 +38,13 @@ def doctor_context(
         repository_root=repository_root,
         config_path=None,
         config=config,
-        task=SimpleNamespace(task=task),
+        task=SimpleNamespace(
+            task=SimpleNamespace(
+                task_id=task.task_id,
+                repository=task.repository,
+                evaluation=SimpleNamespace(operational_reliability=True),
+            )
+        ),
     )
 
 
@@ -108,3 +120,66 @@ def test_configuration_robustness_passes_when_enabled_config_exists(
     check = _configuration_robustness_check(tmp_path, config)
 
     assert check.status is CheckStatus.PASS
+
+
+def test_configuration_collector_forwards_the_limited_panel_size(
+    tmp_path: Path,
+) -> None:
+    experiment = tmp_path / "configuration.yaml"
+    experiment.write_text("name: test\n")
+    config = EvaluationConfig()
+    config.configuration_robustness.experiment_config = experiment
+    config.configuration_robustness.cpus = [min(os.sched_getaffinity(0))]
+    commands = []
+
+    with (
+        patch("pitbench.cli.main.shutil.which", return_value="uv"),
+        patch(
+            "pitbench.cli.main.subprocess.run",
+            side_effect=lambda command, **kwargs: commands.append(command),
+        ),
+    ):
+        _run_configuration_robustness(
+            tmp_path,
+            config,
+            Path("runs/run"),
+            "dry-run",
+            instances_per_panel=1,
+        )
+
+    assert len(commands) == 2
+    assert commands[0][-2:] == ["--instances-per-panel", "1"]
+    assert commands[1][-2:] == [
+        "--output",
+        str(tmp_path / "runs/run/dry-run/configuration-robustness"),
+    ]
+
+
+def test_configuration_dry_run_rejects_incomplete_searches(tmp_path: Path) -> None:
+    (tmp_path / "experiment.json").write_text(
+        '{"searches": [{"id": "solver/budget-10"}]}'
+    )
+    (tmp_path / "configuration_report.json").write_text(
+        '{"searches": [{"id": "solver/budget-10", "status": "baseline_unavailable"}]}'
+    )
+
+    failures = _configuration_dry_run_failures(tmp_path)
+
+    assert failures == [
+        "configuration search solver/budget-10 is baseline_unavailable"
+    ]
+
+
+def test_reliability_plan_check_reports_materialized_cases(
+    tmp_path: Path,
+) -> None:
+    context = doctor_context(tmp_path)
+
+    with patch(
+        "pitbench.cli.doctor.prepare_boundary_cases",
+        return_value=[object(), object()],
+    ):
+        check = _reliability_plan_check(context)
+
+    assert check.status is CheckStatus.PASS
+    assert "2 boundary cases" in check.detail

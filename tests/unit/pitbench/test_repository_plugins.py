@@ -115,8 +115,16 @@ def test_choco_builds_official_source_and_generic_jvm_adapter() -> None:
     validation = plugin.build_commands(BuildKind.VALIDATION)
     performance = plugin.build_commands(BuildKind.PERFORMANCE)
 
-    assert validation[0] == performance[0] == CommandSpec(
+    assert validation[0] == CommandSpec(
         argv=["mkdir", "-p", "/tmp/choco-maven"]
+    )
+    assert performance[0] == CommandSpec(
+        argv=[
+            "sh",
+            "-lc",
+            "cd src && test -f structures/typedefs.h && exec make -j1 "
+            "CXXFLAGS+=-Isrc",
+        ]
     )
     assert validation[1] == performance[1] == CommandSpec(
         argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/choco-maven"]
@@ -152,6 +160,12 @@ def test_choco_driver_uses_python3() -> None:
     assert ChocoRepositoryPlugin().driver_python == "python3"
 
 
+def test_vroom_driver_uses_python3() -> None:
+    from pitbench.repositories.plugins import VroomRepositoryPlugin
+
+    assert VroomRepositoryPlugin().driver_python == "python3"
+
+
 def test_vroom_build_uses_its_source_makefile_without_replacing_flags() -> None:
     from pitbench.repositories.plugins import VroomRepositoryPlugin
 
@@ -160,11 +174,28 @@ def test_vroom_build_uses_its_source_makefile_without_replacing_flags() -> None:
 
     assert validation == [
         CommandSpec(
-            argv=["make", "-j1", "CXXFLAGS+=-O1 -g -fsanitize=address,undefined"],
-            cwd="src",
+            argv=[
+                "sh",
+                "-lc",
+                "cd src && test -f structures/typedefs.h && exec make -j1 "
+                '"CXXFLAGS=-MMD -MP -I. -Isrc -std=c++20 -Wextra -Wpedantic -Wall '
+                '-O3 -DASIO_STANDALONE -DUSE_ROUTING=true -DNDEBUG '
+                '-D USE_LIBGLPK=true -O1 -g -fsanitize=address,undefined" 2>&1',
+            ]
         )
     ]
-    assert performance == [CommandSpec(argv=["make", "-j1"], cwd="src")]
+    assert performance == [
+        CommandSpec(
+            argv=[
+                "sh",
+                "-lc",
+                "cd src && test -f structures/typedefs.h && exec make -j1 "
+                '"CXXFLAGS=-MMD -MP -I. -Isrc -std=c++20 -Wextra -Wpedantic -Wall '
+                '-O3 -DASIO_STANDALONE -DUSE_ROUTING=true -DNDEBUG '
+                '-D USE_LIBGLPK=true" 2>&1',
+            ]
+        )
+    ]
 
 
 def test_ortools_build_reuses_evaluator_owned_dependency_cache() -> None:

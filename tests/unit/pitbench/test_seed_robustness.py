@@ -11,6 +11,7 @@ from pitbench.metrics.seed_robustness_report import (
     BOOTSTRAP_SEED,
     SEED_BOOTSTRAP_METHOD,
     SeedSelectionMetadata,
+    compute_exact_seed_robustness_report,
     compute_seed_robustness_details,
     compute_seed_robustness_report,
     format_seed_robustness_report,
@@ -19,8 +20,13 @@ from pitbench.metrics.seed_robustness_validation import (
     analyze_real_seed_validation,
     generate_real_validation_seeds,
 )
-from pitbench.schema.observation import CodeState, RunObservation, RunStatus
-from pitbench.schema.task import PitBenchTask
+from pitbench.schema.observation import (
+    CodeState,
+    RunObservation,
+    RunStatus,
+    SolverTermination,
+)
+from pitbench.schema.task import ExactTimeBasis, PitBenchTask
 from scripts.validate_seed_robustness_real_solver import ROOT, _load_checkpoint, main
 
 # Tests consolidated from tests/unit/pitbench/test_seed_robustness_report.py
@@ -715,3 +721,51 @@ def test_runner_rejects_task_without_seed_configuration(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="task does not define Seed Robustness"):
         main()
     assert not (tmp_path / "validation_seeds.json").exists()
+
+
+def test_exact_seed_report_keeps_confidence_interval_models() -> None:
+    observations: list[RunObservation] = []
+    for instance_id in ("dev-1", "dev-2"):
+        for budget_sec in (1.0, 10.0):
+            for solver_seed in (0, 1):
+                for code_state in (CodeState.BASE, CodeState.AGENT):
+                    observations.append(
+                        RunObservation(
+                            task_id="exact-seed",
+                            code_state=code_state,
+                            instance_set="agent_dev",
+                            instance_set_kind="agent_dev",
+                            instance_id=instance_id,
+                            instance_seed=17,
+                            solver_seed=solver_seed,
+                            budget_sec=budget_sec,
+                            status=RunStatus.COMPLETED,
+                            valid=True,
+                            objective=100.0,
+                            reported_objective=100.0,
+                            optimal_or_bks=100.0,
+                            normalized_gap=0.0,
+                            cpu_time_sec=0.1
+                            + (0.01 if code_state is CodeState.AGENT else 0.0),
+                            solver_termination=SolverTermination.OPTIMAL,
+                        )
+                    )
+
+    report = compute_exact_seed_robustness_report(
+        observations,
+        task_id="exact-seed",
+        budgets_sec=(1.0, 10.0),
+        primary_budget_sec=10.0,
+        time_basis=ExactTimeBasis.CPU_TIME,
+        seed_selection=SeedSelectionMetadata(
+            seed_min=0,
+            seed_max=3,
+            seed_count=2,
+        ),
+        development_seeds=(0, 1),
+        evaluation_seeds=(2, 3),
+    )
+
+    interval = report.by_instance_set["agent_dev"].primary.change.capped_time_iqr_change_ci99
+    assert interval is not None
+    assert interval.lower <= interval.upper

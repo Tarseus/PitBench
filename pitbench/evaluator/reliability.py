@@ -28,6 +28,7 @@ def prepare_boundary_cases(
             task,
             resolver,
             public_root=public_root or repository_root,
+            generated_root=output_dir.resolve() / "generated-instance-sets",
         )
         source_cases = [
             case

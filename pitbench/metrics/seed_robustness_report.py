@@ -440,10 +440,10 @@ def compute_exact_seed_robustness_report(
                         else None
                     ),
                     capped_time_iqr_change_ci99=(
-                        time_change_ci[2] if time_change_ci is not None else None
+                        time_change_ci if time_change_ci is not None else None
                     ),
                     final_gap_iqr_change_ci99=(
-                        gap_change_ci[2] if gap_change_ci is not None else None
+                        gap_change_ci if gap_change_ci is not None else None
                     ),
                 ),
             )

@@ -6,6 +6,8 @@ ARG PYPI_INDEX_URL=https://pypi.org/simple
 ARG SOURCE_REPOSITORY=https://github.com/chocoteam/choco-solver.git
 ARG BASE_COMMIT
 
+ENV MAVEN_CONFIG=/tmp/choco-maven
+
 RUN sed -i \
        -e "s|http://archive.ubuntu.com/ubuntu/|$UBUNTU_MIRROR|g" \
        -e "s|http://security.ubuntu.com/ubuntu/|$UBUNTU_SECURITY_MIRROR|g" \

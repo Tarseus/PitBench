@@ -88,6 +88,7 @@ def prepare_cases(
     output_dir: Path,
     *,
     public_root: Path = ROOT,
+    instances_per_instance_set: int | None = None,
 ) -> tuple[list[InstanceCase], dict[str, dict]]:
     config = (
         task.evaluation.representation_robustness or RepresentationRobustnessConfig()
@@ -106,9 +107,15 @@ def prepare_cases(
         development_task,
         PrivateAssetResolver(private_root),
         public_root=public_root,
+        instances_per_instance_set=instances_per_instance_set,
     )
     originals = sorted(plan.cases, key=lambda item: item.instance_id)
-    expected_count = development_task.instance_sets[0].size
+    declared_count = development_task.instance_sets[0].size
+    expected_count = (
+        min(declared_count, instances_per_instance_set)
+        if instances_per_instance_set is not None
+        else declared_count
+    )
     if len(originals) != expected_count:
         raise ValueError(
             "representation instance count differs from the task configuration"
@@ -224,6 +231,7 @@ def run_with_representation(
         private_root,
         output_dir,
         public_root=judge.public_root,
+        instances_per_instance_set=judge.instances_per_instance_set,
     )
     details = {
         "task_id": task.task_id,
@@ -256,6 +264,7 @@ def run_with_representation(
             public_root=judge.public_root,
             generated_root=Path(temporary),
             evaluation_seeds=judge.evaluation_seeds,
+            instances_per_instance_set=judge.instances_per_instance_set,
         )
         with (output_dir / "results.jsonl").open("w") as handle:
 

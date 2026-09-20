@@ -167,6 +167,7 @@ class PitBenchEvaluator(Evaluator):
                 parallel_runs=parallel_runs,
                 progress_callback=progress_callback,
                 reliability_only=bool(config.get("reliability_only", False)),
+                instances_per_instance_set=config.get("instances_per_instance_set"),
             ).run()
 
         if cached_base is not None:

@@ -17,6 +17,7 @@ import yaml
 
 from adapters.pitbench.adapter import PitBenchAdapter
 from adapters.pitbench.git_snapshot import GitSnapshot
+from pitbench.cli.main import _limited_evaluation_failures
 from pitbench.evaluator.collection import AnchorCollection
 from pitbench.evaluator.evaluator import (
     PitBenchEvaluator,
@@ -44,7 +45,13 @@ from pitbench.problem_families.verification import (
 )
 from pitbench.repositories.base import CommandSpec, RepositoryPlugin
 from pitbench.schema.evaluation import ValidityCode
-from pitbench.schema.observation import CodeState, RunObservation, RunStatus
+from pitbench.schema.observation import (
+    CodeState,
+    ExpectedRun,
+    ExpectedRunGrid,
+    RunObservation,
+    RunStatus,
+)
 from pitbench.schema.task import (
     InstanceSetKind,
     InstanceSetSpec,
@@ -209,6 +216,112 @@ def test_fixture_plan_materializes_the_complete_expected_run_grid() -> None:
             for run in grid.runs
         }
     ) == len(grid.runs)
+
+
+def test_real_judge_plan_limits_instances_per_instance_set(tmp_path: Path) -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    plan = JudgePlan.from_instance_set_configs(
+        task,
+        PrivateAssetResolver(ROOT / "private"),
+        public_root=ROOT,
+        generated_root=tmp_path / "generated",
+        evaluation_seeds=(2147483647,),
+        instances_per_instance_set=1,
+    )
+
+    counts = {}
+    for case in plan.cases:
+        counts[case.instance_set.name] = counts.get(case.instance_set.name, 0) + 1
+    assert counts
+    assert all(count == 1 for count in counts.values())
+
+
+def test_limited_real_judge_plan_preserves_full_seed_and_budget_grid(
+    tmp_path: Path,
+) -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    evaluation_seeds = tuple(
+        yaml.safe_load(
+            (ROOT / "private/seed_robustness/pyvrp_v0_14_0.yaml").read_text()
+        )["evaluation_seeds"]
+    )
+    plan = JudgePlan.from_instance_set_configs(
+        task,
+        PrivateAssetResolver(ROOT / "private"),
+        public_root=ROOT,
+        generated_root=tmp_path / "generated",
+        evaluation_seeds=evaluation_seeds,
+        instances_per_instance_set=1,
+    )
+    grid = plan.expected_run_grid(evaluation_seeds=evaluation_seeds)
+    expected_runs_per_instance = (
+        len(task.evaluation.budgets_sec) * len(CodeState) * 30
+    )
+
+    assert len({(case.instance_set.name, case.instance_id) for case in plan.cases}) == 3
+    for instance_set in ("agent_dev", "judge_id", "judge_shift"):
+        runs = [run for run in grid.runs if run.instance_set == instance_set]
+        assert len(runs) == expected_runs_per_instance
+
+
+def test_limited_evaluation_preflight_rejects_grid_and_infrastructure_errors(
+    tmp_path: Path,
+) -> None:
+    expected_run = ExpectedRun(
+        task_id="dry-run",
+        code_state=CodeState.BASE,
+        instance_set="judge_id",
+        instance_set_kind="judge_id",
+        instance_id="instance",
+        solver_seed=0,
+        budget_sec=10,
+    )
+    missing_run = expected_run.model_copy(
+        update={"code_state": CodeState.AGENT}
+    )
+    (tmp_path / "expected-run-grid.json").write_text(
+        ExpectedRunGrid(task_id="dry-run", runs=[expected_run, missing_run]).model_dump_json()
+    )
+    ObservationStore.write_jsonl(
+        tmp_path / "judge-observations.jsonl",
+        [
+            RunObservation(
+                task_id="dry-run",
+                code_state=CodeState.BASE,
+                instance_set="judge_id",
+                instance_set_kind="judge_id",
+                instance_id="instance",
+                solver_seed=0,
+                budget_sec=10,
+                status=RunStatus.INFRASTRUCTURE_ERROR,
+                valid=False,
+                error="independent verifier is unavailable",
+            )
+        ],
+    )
+    task = SimpleNamespace(
+        evaluation=SimpleNamespace(
+            seed_robustness=None,
+            operational_reliability=False,
+            representation_robustness=None,
+        )
+    )
+
+    failures = _limited_evaluation_failures(
+        task,
+        tmp_path,
+        {
+            "summary": {
+                "performance": {"classification": "incomplete"},
+                "resource_usage": {},
+            },
+            "artifacts": {},
+        },
+    )
+
+    assert "1 expected solver runs are missing" in failures
+    assert any("infrastructure-error" in failure for failure in failures)
+    assert "performance report is incomplete" in failures
 
 
 def test_problem_family_plugins_register_and_reject_duplicate_names():
@@ -1688,6 +1801,33 @@ def test_exact_evaluator_uses_expected_grid_and_exact_report(tmp_path: Path) -> 
     expected_grid = envelope.payload["artifacts"]["expected_run_grid"]
     assert expected_grid["private"] is True
     assert (output_dir / expected_grid["path"]).is_file()
+
+
+def test_dry_run_config_does_not_skip_the_performance_report(tmp_path: Path) -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/highs_v1_15_1.yaml")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    candidate_patch = output_dir / "candidate.patch"
+    candidate_patch.write_text("")
+
+    envelope = PitBenchEvaluator().envelope(
+        EvaluationRequest(
+            task_id=task.task_id,
+            task_path=ROOT,
+            candidate_patch_path=candidate_patch,
+            output_dir=output_dir,
+            agent_name="fixture",
+            evaluator_config={
+                "task_config_path": str(ROOT / "configs/tasks/highs_v1_15_1.yaml"),
+                "fixture_mode": True,
+                "fixture_instances_per_instance_set": 1,
+                "dry_run": True,
+            },
+        )
+    )
+
+    assert envelope.completed is True
+    assert envelope.payload["summary"]["performance"] is not None
 
 
 def test_false_exact_optimality_claim_fails_evaluator_validity(

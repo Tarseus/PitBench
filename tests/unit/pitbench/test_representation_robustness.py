@@ -10,7 +10,12 @@ import pytest
 
 from pitbench.evaluator import runner
 from pitbench.evaluator.judge import InstanceCase, JudgePlan, LocalProcessJudge
-from pitbench.evaluator.representation import preserve_json, result_record, write_json
+from pitbench.evaluator.representation import (
+    prepare_cases,
+    preserve_json,
+    result_record,
+    write_json,
+)
 from pitbench.evaluator.representations import (
     CustomerRepresentation,
     LinearModelRepresentation,
@@ -277,6 +282,22 @@ def test_representation_configuration_rejects_unsupported_scope(change, message)
         )
     with pytest.raises(ValueError, match=message):
         PitBenchTask.model_validate(payload)
+
+
+def test_representation_preparation_limits_source_instances(tmp_path: Path):
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    config = task.evaluation.representation_robustness
+    assert config is not None
+
+    cases, transformations = prepare_cases(
+        task,
+        ROOT / "private",
+        tmp_path / "representation",
+        instances_per_instance_set=1,
+    )
+
+    assert len({case.equivalence_parent_id for case in cases}) == 1
+    assert len(cases) == len(transformations) == config.relabelings_per_instance
 
 
 def test_runner_collects_configured_relabelings_and_preserves_failures(

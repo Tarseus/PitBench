@@ -154,6 +154,7 @@ def prepare(
     solver_pythons: dict[str, str],
     cpus: list[int],
     search_seed: int,
+    instances_per_panel: int | None = None,
 ) -> dict:
     from pitbench.repositories.base import RepositoryPluginRegistry
     from pitbench.schema.task import PitBenchTask
@@ -169,6 +170,8 @@ def prepare(
         raise ValueError("cpus must be distinct CPUs available to this process")
     if config["max_configurations"] < 1:
         raise ValueError("max_configurations must be positive")
+    if instances_per_panel is not None and instances_per_panel < 1:
+        raise ValueError("instances_per_panel must be positive")
     output.mkdir(parents=True, exist_ok=True)
     searches = []
     for panel in config["panels"]:
@@ -235,6 +238,8 @@ def prepare(
             {item["id"] for item in instances}
         ) != len(instances):
             raise ValueError("instance panel size or uniqueness differs from protocol")
+        if instances_per_panel is not None:
+            instances = instances[:instances_per_panel]
         if set(panel.get("fixed_options", {})) & set(panel["parameters"]):
             raise ValueError("a searched parameter cannot also be fixed")
         for budget in task["evaluation"]["budgets_sec"]:
@@ -266,6 +271,7 @@ def prepare(
         "config": config,
         "searches": searches,
         "cpus": cpus,
+        "instances_per_panel": instances_per_panel,
         "created_unix": time.time(),
         "environment": {"python": sys.version, "platform": platform.platform()},
     }
@@ -569,6 +575,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     preparation.add_argument("--cpus", type=int, nargs="+", required=True)
     preparation.add_argument("--search-seed", type=int, required=True)
+    preparation.add_argument("--instances-per-panel", type=int)
     run = commands.add_parser("run")
     run.add_argument("--output", type=Path, required=True)
     run.add_argument(
@@ -601,6 +608,7 @@ def main(argv: list[str] | None = None) -> None:
             solver_pythons=pythons,
             cpus=args.cpus,
             search_seed=args.search_seed,
+            instances_per_panel=args.instances_per_panel,
         )
         print(
             f"Prepared {len(manifest['searches'])} searches; no solver runs executed."

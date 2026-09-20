@@ -29,6 +29,7 @@ class DockerJudge:
         parallel_runs: int = 1,
         progress_callback: Callable[[str], None] | None = None,
         reliability_only: bool = False,
+        instances_per_instance_set: int | None = None,
     ) -> None:
         digest_pinned = re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image)
         local_image_id = re.fullmatch(r"sha256:[0-9a-f]{64}", image)
@@ -47,6 +48,9 @@ class DockerJudge:
         self.parallel_runs = parallel_runs
         self.progress_callback = progress_callback
         self.reliability_only = reliability_only
+        if instances_per_instance_set is not None and instances_per_instance_set < 1:
+            raise ValueError("instances_per_instance_set must be positive")
+        self.instances_per_instance_set = instances_per_instance_set
 
     def run(self) -> list[RunObservation]:
         package_root = Path(__file__).resolve().parents[2]
@@ -107,6 +111,13 @@ class DockerJudge:
         command.extend(["--parallel-runs", str(self.parallel_runs)])
         if self.reliability_only:
             command.append("--reliability-only")
+        if self.instances_per_instance_set is not None:
+            command.extend(
+                [
+                    "--instances-per-instance-set",
+                    str(self.instances_per_instance_set),
+                ]
+            )
         for state in self.code_states:
             command.extend(["--code-state", state.value])
         process = subprocess.Popen(

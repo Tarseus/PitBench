@@ -231,7 +231,10 @@ class JudgePlan:
         public_root: Path,
         generated_root: Path | None = None,
         evaluation_seeds: tuple[int, ...] | None = None,
+        instances_per_instance_set: int | None = None,
     ) -> "JudgePlan":
+        if instances_per_instance_set is not None and instances_per_instance_set < 1:
+            raise ValueError("instances_per_instance_set must be positive")
         cases: list[InstanceCase] = []
         development_seeds = _development_seeds(task)
         trusted_records = {}
@@ -351,7 +354,7 @@ class JudgePlan:
                             f"instance set {instance_set.name} oracle support does not "
                             "match generated instances"
                         )
-                for path in paths:
+                for path in paths[:instances_per_instance_set]:
                     anchor = anchors.get(path.stem)
                     trusted_record = trusted_instance_records.get(path.stem)
                     if anchor is not None:
@@ -407,7 +410,7 @@ class JudgePlan:
                     f"instance set {instance_set.name} exact target support does not "
                     "match configured instances"
                 )
-            for item in payload["instances"]:
+            for item in payload["instances"][:instances_per_instance_set]:
                 exact_record = exact_instance_records.get(item["id"])
                 if public_instance_set:
                     path = verify_public_file(
@@ -566,6 +569,7 @@ class LocalProcessJudge:
         evaluation_seeds: tuple[int, ...] | None = None,
         family: ProblemFamilyPlugin | None = None,
         additional_cases: list[InstanceCase] | None = None,
+        instances_per_instance_set: int | None = None,
     ) -> None:
         self.task = task
         self.base_repository = base_repository
@@ -581,6 +585,9 @@ class LocalProcessJudge:
         self.run_validation_builds = run_validation_builds
         self.progress_callback = progress_callback
         self.additional_cases = additional_cases or []
+        if instances_per_instance_set is not None and instances_per_instance_set < 1:
+            raise ValueError("instances_per_instance_set must be positive")
+        self.instances_per_instance_set = instances_per_instance_set
         self.repository = RepositoryPluginRegistry.load(task.repository.plugin)
         self.family = family or ProblemFamilyRegistry.load(task.problem_family)
         if isinstance(
@@ -675,6 +682,7 @@ class LocalProcessJudge:
                     public_root=self.public_root,
                     generated_root=root / "generated-instance-sets",
                     evaluation_seeds=self.evaluation_seeds,
+                    instances_per_instance_set=self.instances_per_instance_set,
                 )
                 cases = plan.cases
             cases = [*cases, *self.additional_cases]

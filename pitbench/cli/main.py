@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -45,7 +46,12 @@ from pitbench.metrics.resource_report import (
     compute_resource_report,
     format_resource_report,
 )
-from pitbench.schema.observation import ExpectedRunGrid
+from pitbench.schema.observation import (
+    ExpectedRun,
+    ExpectedRunGrid,
+    RunObservation,
+    RunStatus,
+)
 from pitbench.schema.task import InstanceSetKind, PerformanceProtocol, PitBenchTask
 from pitbench.tasks import TaskCatalog, TaskNotFoundError
 
@@ -98,10 +104,12 @@ def _run_configuration_robustness(
     evaluation_config: EvaluationConfig,
     output_root: Path,
     run_id: str,
-) -> None:
+    *,
+    instances_per_panel: int | None = None,
+) -> Path | None:
     configuration = evaluation_config.configuration_robustness
     if not configuration.enabled:
-        return
+        return None
     uv = shutil.which("uv")
     if uv is None:
         raise RuntimeError(
@@ -134,6 +142,8 @@ def _run_configuration_robustness(
         "--search-seed",
         str(configuration.search_seed),
     ]
+    if instances_per_panel is not None:
+        prepare.extend(["--instances-per-panel", str(instances_per_panel)])
     subprocess.run(prepare, cwd=repository_root, check=True)
     run = [
         uv,
@@ -148,6 +158,125 @@ def _run_configuration_robustness(
         str(output),
     ]
     subprocess.run(run, cwd=repository_root, check=True)
+    return output
+
+
+def _run_identity(item: ExpectedRun | RunObservation) -> tuple:
+    return (
+        item.task_id,
+        item.code_state.value,
+        item.instance_set,
+        item.instance_set_kind,
+        item.instance_id,
+        item.solver_seed,
+        item.budget_sec,
+        item.equivalence_parent_id,
+        item.test_suite,
+    )
+
+
+def _limited_evaluation_failures(
+    task: PitBenchTask,
+    output_dir: Path,
+    payload: dict[str, Any],
+) -> list[str]:
+    failures: list[str] = []
+    expected_grid_path = output_dir / "expected-run-grid.json"
+    observations_path = output_dir / "judge-observations.jsonl"
+    if not expected_grid_path.is_file():
+        return ["expected run grid is missing"]
+    if not observations_path.is_file():
+        return ["judge observations are missing"]
+
+    expected_grid = ExpectedRunGrid.model_validate_json(
+        expected_grid_path.read_text()
+    )
+    observations = ObservationStore.read_jsonl(observations_path)
+    expected_runs = {_run_identity(item) for item in expected_grid.runs}
+    observed_runs: set[tuple] = set()
+    duplicate_runs = 0
+    for observation in observations:
+        identity = _run_identity(observation)
+        if identity in observed_runs:
+            duplicate_runs += 1
+        observed_runs.add(identity)
+    missing_runs = expected_runs - observed_runs
+    unexpected_runs = observed_runs - expected_runs
+    if missing_runs:
+        failures.append(f"{len(missing_runs)} expected solver runs are missing")
+    if unexpected_runs:
+        failures.append(f"{len(unexpected_runs)} unexpected solver runs were recorded")
+    if duplicate_runs:
+        failures.append(f"{duplicate_runs} duplicate solver runs were recorded")
+
+    infrastructure_errors = [
+        observation
+        for observation in observations
+        if observation.status is RunStatus.INFRASTRUCTURE_ERROR
+    ]
+    if infrastructure_errors:
+        failures.append(
+            f"{len(infrastructure_errors)} infrastructure-error observations: "
+            f"{infrastructure_errors[0].error or 'no detail'}"
+        )
+
+    summary = payload.get("summary", {})
+    performance = summary.get("performance")
+    if performance is None:
+        failures.append("performance report is missing")
+    elif performance.get("classification") == "incomplete":
+        failures.append("performance report is incomplete")
+    if summary.get("resource_usage") is None:
+        failures.append("resource report is missing")
+    if task.evaluation.seed_robustness is not None and summary.get(
+        "nuisance_robustness"
+    ) is None:
+        failures.append("seed robustness report is missing")
+    if task.evaluation.operational_reliability:
+        reliability = summary.get("operational_reliability")
+        if reliability is None:
+            failures.append("operational reliability report is missing")
+        elif not reliability.get("complete"):
+            failures.append("operational reliability report is incomplete")
+    if task.evaluation.representation_robustness is not None:
+        representation = payload.get("artifacts", {}).get(
+            "representation_robustness_details"
+        )
+        if representation is None:
+            failures.append("representation robustness report is missing")
+        else:
+            details_path = output_dir / representation["path"]
+            if not details_path.is_file():
+                failures.append("representation robustness details are missing")
+            else:
+                details = json.loads(details_path.read_text())
+                if details.get("completed_run_count") != details.get(
+                    "expected_run_count"
+                ):
+                    failures.append("representation robustness report is incomplete")
+    return failures
+
+
+def _configuration_dry_run_failures(output_dir: Path) -> list[str]:
+    manifest_path = output_dir / "experiment.json"
+    report_path = output_dir / "configuration_report.json"
+    if not manifest_path.is_file():
+        return ["configuration experiment manifest is missing"]
+    if not report_path.is_file():
+        return ["configuration report is missing"]
+    manifest = json.loads(manifest_path.read_text())
+    report = json.loads(report_path.read_text())
+    report_statuses = {
+        item["id"]: item.get("status") for item in report.get("searches", [])
+    }
+    failures = []
+    for search in manifest.get("searches", []):
+        status = report_statuses.get(search["id"])
+        if status != "completed":
+            failures.append(
+                f"configuration search {search['id']} is {status or 'missing'}"
+            )
+    return failures
 
 
 @images_app.command("build")
@@ -760,6 +889,197 @@ def judge_candidate(
     typer.echo(
         f"Report: pitbench report {resolved_output_dir} --task-config {record.task_config_path}"
     )
+
+
+@app.command("dry-run")
+def dry_run_tasks(
+    task_ids: Annotated[
+        list[str], typer.Argument(help="One or more PitBench task IDs")
+    ],
+    run_id: Annotated[
+        str, typer.Option(help="Unique dry-run identifier")
+    ],
+    instances_per_instance_set: Annotated[
+        int,
+        typer.Option(
+            "--instances-per-instance-set",
+            min=1,
+            help="Real instances to run from each declared instance set",
+        ),
+    ] = 1,
+    private_root: Annotated[
+        Path | None, typer.Option(help="Evaluator-only private storage")
+    ] = None,
+    judge_parallel_runs: Annotated[
+        int, typer.Option("--judge-parallel-runs", min=1)
+    ] = 1,
+    judge_cpus: Annotated[
+        float, typer.Option("--judge-cpus", min=0.1)
+    ] = 8.0,
+    judge_memory: Annotated[str, typer.Option("--judge-memory")] = "8g",
+    configuration_robustness: Annotated[
+        bool,
+        typer.Option(
+            "--configuration-robustness/--no-configuration-robustness",
+            help="Run the release-only configuration search on one instance per panel",
+        ),
+    ] = True,
+    config_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--config",
+            help=(
+                "Machine-local evaluation YAML; defaults to "
+                "config/evaluate.local.yaml when present"
+            ),
+        ),
+    ] = None,
+    root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
+) -> None:
+    """Run the full evaluator pipeline on a limited empty-patch panel without an agent."""
+    task_ids = _normalize_task_ids(task_ids)
+    if not task_ids:
+        raise typer.BadParameter("at least one task ID is required", param_hint="TASK_IDS")
+    if len(task_ids) != len(set(task_ids)):
+        raise typer.BadParameter("task IDs must be unique", param_hint="TASK_IDS")
+    if (
+        not run_id
+        or Path(run_id).name != run_id
+        or run_id in {".", ".."}
+    ):
+        raise typer.BadParameter("run ID must be a directory name", param_hint="--run-id")
+
+    repository_root = _root(root)
+    resolved_config_path = resolve_config_path(repository_root, config_path)
+    evaluation_config = (
+        EvaluationConfig.from_yaml(resolved_config_path)
+        if resolved_config_path is not None
+        else EvaluationConfig()
+    )
+    resolved_private_root = resolve_repository_path(
+        repository_root,
+        private_root or evaluation_config.paths.private_root,
+    )
+    workspace_root = resolve_repository_path(
+        repository_root,
+        evaluation_config.paths.workspace_path / f"dry-run-{run_id}",
+    )
+    output_root = resolve_repository_path(
+        repository_root,
+        evaluation_config.paths.output_path / run_id / "dry-run",
+    )
+    if workspace_root.exists() or output_root.exists():
+        raise typer.BadParameter("dry-run identifier already exists; choose another")
+
+    adapter = PitBenchAdapter(repository_root, resolved_private_root)
+    failures = 0
+    empty_patch_sha256 = hashlib.sha256(b"").hexdigest()
+    for task_id in task_ids:
+        resources = evaluation_config.resources_for(task_id)
+        if resources.repository_source is not None:
+            raise typer.BadParameter(
+                f"{task_id} configures a local repository_source; dry-run requires "
+                "GitHub materialization"
+            )
+        task_workspace = workspace_root / task_id
+        task_output = output_root / task_id
+        task_output.mkdir(parents=True, exist_ok=True)
+        patch_path = task_output / "candidate.patch"
+        patch_path.write_text("")
+        try:
+            adapter.materialize(
+                task_id,
+                task_workspace,
+                agent_image=resources.agent_image,
+                judge_image=resources.judge_image,
+                use_base_cache=False,
+            )
+            _prepare_task_image(task_workspace, rebuild=True)
+            record = TaskCatalog(repository_root).validate_one(task_id)
+            judge_image = (
+                resources.judge_image or record.task.repository.judge_image
+            )
+            if not judge_image:
+                raise ValueError("dry-run requires a pinned judge image")
+            envelope = PitBenchEvaluator().envelope(
+                EvaluationRequest(
+                    task_id=task_id,
+                    task_path=repository_root,
+                    candidate_patch_path=patch_path,
+                    candidate_patch_sha256=empty_patch_sha256,
+                    output_dir=task_output,
+                    agent_name="dry-run",
+                    model_name=None,
+                    evaluator_config={
+                        "task_config_path": str(record.task_config_path),
+                        "base_repository": str(task_workspace / "repo"),
+                        "private_root": str(resolved_private_root),
+                        "judge_image": judge_image,
+                        "judge_cpus": judge_cpus,
+                        "judge_memory": judge_memory,
+                        "judge_parallel_runs": judge_parallel_runs,
+                        "use_base_cache": False,
+                        "instances_per_instance_set": instances_per_instance_set,
+                    },
+                )
+            )
+            (task_output / "evaluation.json").write_text(
+                json.dumps(envelope.model_dump(mode="json"), indent=2) + "\n"
+            )
+            if envelope.completed:
+                preflight_failures = _limited_evaluation_failures(
+                    record.task,
+                    task_output,
+                    envelope.payload,
+                )
+                if preflight_failures:
+                    failures += 1
+                    typer.echo(
+                        f"FAIL {task_id}: " + "; ".join(preflight_failures),
+                        err=True,
+                    )
+                else:
+                    typer.echo(
+                        f"PASS {task_id}: empty-patch limited-panel evaluation completed"
+                    )
+            else:
+                failures += 1
+                typer.echo(
+                    f"FAIL {task_id}: {envelope.error or 'judge failed'}",
+                    err=True,
+                )
+        except Exception as error:
+            failures += 1
+            typer.echo(f"FAIL {task_id}: {type(error).__name__}: {error}", err=True)
+    if configuration_robustness:
+        try:
+            configuration_output = _run_configuration_robustness(
+                repository_root,
+                evaluation_config,
+                evaluation_config.paths.output_path / run_id,
+                "dry-run",
+                instances_per_panel=instances_per_instance_set,
+            )
+            if configuration_output is not None:
+                configuration_failures = _configuration_dry_run_failures(
+                    configuration_output
+                )
+                if configuration_failures:
+                    failures += 1
+                    typer.echo(
+                        "FAIL Configuration Robustness: "
+                        + "; ".join(configuration_failures),
+                        err=True,
+                    )
+        except Exception as error:
+            failures += 1
+            typer.echo(
+                f"FAIL Configuration Robustness: {type(error).__name__}: {error}",
+                err=True,
+            )
+    typer.echo(f"Dry-run artifacts: {output_root}")
+    if failures:
+        raise typer.Exit(code=1)
 
 
 @tasks_app.command("validate")

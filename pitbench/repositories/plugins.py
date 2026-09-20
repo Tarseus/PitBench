@@ -114,6 +114,7 @@ class VroomRepositoryPlugin(RepositoryPlugin):
         prebuild="RUN make -C /workspace/repo/src -j1\n",
     )
     agent_python = "python3"
+    driver_python = "python3"
     name = "vroom"
     agent_requirement = "file:bin/vroom"
     representations = {"customer_relabeling": ("judge",)}
@@ -123,14 +124,22 @@ class VroomRepositoryPlugin(RepositoryPlugin):
     driver_solver = "./bin/vroom"
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
-        extra_flags = ""
+        make_flags = (
+            "-MMD -MP -I. -Isrc -std=c++20 -Wextra -Wpedantic -Wall "
+            "-O3 -DASIO_STANDALONE -DUSE_ROUTING=true -DNDEBUG "
+            "-D USE_LIBGLPK=true"
+        )
         if kind == BuildKind.VALIDATION:
-            extra_flags = "CXXFLAGS+=-O1 -g -fsanitize=address,undefined"
+            make_flags += " -O1 -g -fsanitize=address,undefined"
         return [
             CommandSpec(
-                argv=["make", "-j1", *([extra_flags] if extra_flags else [])],
-                cwd="src",
-            )
+                argv=[
+                    "sh",
+                    "-lc",
+                    "cd src && test -f structures/typedefs.h && exec make -j1 "
+                    + f'\"CXXFLAGS={make_flags}\" 2>&1',
+                ]
+            ),
         ]
 
 

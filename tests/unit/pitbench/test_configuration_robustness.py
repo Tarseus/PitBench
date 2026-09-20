@@ -11,6 +11,7 @@ import pytest
 from pitbench.evaluator.configuration import (
     ConfigurationRunner,
     SmacSearch,
+    prepare,
     run_search,
     validate_search,
 )
@@ -262,6 +263,61 @@ def test_quality_feedback_requires_objective_sense_and_nonzero_anchor(search):
     search["instances"][0]["bks"] = 0
     with pytest.raises(ValueError, match="finite nonzero BKS"):
         validate_search(search)
+
+
+def test_configuration_preparation_limits_instances_without_truncating_seeds(
+    tmp_path, monkeypatch
+):
+    config = tmp_path / "configuration.json"
+    config.write_text(
+        json.dumps(
+            {
+                "searcher_version": "2.4.0",
+                "max_configurations": 1,
+                "instance_count": 10,
+                "solver_seed_count": 30,
+                "watchdog_grace_sec": 60,
+                "panels": [
+                    {
+                        "task_config": "configs/tasks/pyvrp_v0_14_0.yaml",
+                        "collector": "pyvrp",
+                        "feedback": "normalized_gap",
+                        "instance_source": "configs/instance_sets/pyvrp_cvrp_v1_dev.yaml",
+                        "seed_source": "configs/tasks/pyvrp_v0_14_0.yaml",
+                        "seed_key": "evaluation.seed_robustness.development_seeds",
+                        "seed_max": 4294967295,
+                        "parameters": {
+                            "ils.history_length": {
+                                "type": "integer",
+                                "bounds": [300, 500],
+                                "default": 300,
+                            }
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.setattr(
+        "pitbench.evaluator.configuration.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout='{"version": "0.14.0"}\n', returncode=0
+        ),
+    )
+
+    manifest = prepare(
+        config,
+        tmp_path / "output",
+        solver_pythons={},
+        cpus=[min(os.sched_getaffinity(0))],
+        search_seed=20260918,
+        instances_per_panel=1,
+    )
+
+    assert manifest["instances_per_panel"] == 1
+    assert len(manifest["searches"]) == 2
+    assert all(len(search["instances"]) == 1 for search in manifest["searches"])
+    assert all(len(search["solver_seeds"]) == 30 for search in manifest["searches"])
 
 
 def test_real_smac_accepts_negative_costs_and_retains_pending_trial(search, tmp_path):

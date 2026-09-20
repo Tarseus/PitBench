@@ -23,6 +23,7 @@ def main() -> None:
     parser.add_argument("--observations", type=Path, required=True)
     parser.add_argument("--parallel-runs", type=int, default=1)
     parser.add_argument("--reliability-only", action="store_true")
+    parser.add_argument("--instances-per-instance-set", type=int)
     parser.add_argument(
         "--code-state",
         action="append",
@@ -42,6 +43,10 @@ def main() -> None:
         if task.evaluation.operational_reliability
         else []
     )
+    if args.instances_per_instance_set is not None:
+        if args.instances_per_instance_set < 1:
+            parser.error("--instances-per-instance-set must be positive")
+        boundary_cases = boundary_cases[: args.instances_per_instance_set]
     judge = LocalProcessJudge(
         task=task,
         base_repository=args.base_repository,
@@ -55,6 +60,7 @@ def main() -> None:
         additional_cases=boundary_cases,
         evaluation_seeds=_development_seeds(task) if args.reliability_only else None,
         family=boundary_cases[0].verifier if args.reliability_only else None,
+        instances_per_instance_set=args.instances_per_instance_set,
     )
     if args.reliability_only:
         observations = judge.run([])
