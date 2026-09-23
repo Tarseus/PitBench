@@ -27,7 +27,6 @@ from pitbench.metrics.performance_report import (
     compute_exact_performance_report,
     compute_exact_run_outcome,
     compute_performance_report,
-    compute_task_performance_report,
     format_performance_report,
 )
 from pitbench.metrics.resource_report import (
@@ -43,7 +42,7 @@ from pitbench.schema.observation import (
     RunStatus,
     SolverTermination,
 )
-from pitbench.schema.task import ExactTimeBasis, PitBenchTask
+from pitbench.schema.task import ExactTimeBasis
 from pitbench.solver_drivers.common import process_resources, write_result
 from pitbench.solver_drivers.external_runner import execute as execute_external_runner
 from pitbench.solver_drivers.run import VroomDriver
@@ -861,10 +860,11 @@ def test_report_command_dispatches_exact_performance(tmp_path: Path) -> None:
     task_payload["task_id"] = "exact-performance"
     task_payload["evaluation"].update(
         {
-            "operational_reliability": False,
-            "budgets_sec": [10],
-            "primary_budget_sec": 10,
-            "solver_seeds": [0],
+                "operational_reliability": False,
+                "budgets_sec": [10],
+                "primary_budget_sec": 10,
+                "seed_robustness": None,
+                "solver_seeds": [0],
         }
     )
     task_config_path = tmp_path / "task-config.yaml"

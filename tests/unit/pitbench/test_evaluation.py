@@ -957,6 +957,8 @@ def test_static_exact_judge_case_uses_published_bks_verifier(
     task.oracle.source = "private://oracle.yaml"
     task.oracle.source_sha256 = hashlib.sha256(oracle_path.read_bytes()).hexdigest()
     task.evaluation.verifier = "exact_target"
+    task.evaluation.seed_robustness = None
+    task.evaluation.solver_seeds = [0]
     task.instance_sets = [
         InstanceSetSpec(
             name="agent_dev",

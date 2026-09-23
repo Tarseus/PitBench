@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Iterable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -708,6 +709,13 @@ def test_runner_accepts_new_task_identity_with_seed_configuration(
 
 def test_runner_rejects_task_without_seed_configuration(tmp_path, monkeypatch):
     monkeypatch.setattr(
+        PitBenchTask,
+        "from_yaml",
+        lambda _path: SimpleNamespace(
+            evaluation=SimpleNamespace(seed_robustness=None)
+        ),
+    )
+    monkeypatch.setattr(
         sys,
         "argv",
         [
@@ -715,7 +723,7 @@ def test_runner_rejects_task_without_seed_configuration(tmp_path, monkeypatch):
             "--output-dir",
             str(tmp_path),
             "--task-config",
-            str(ROOT / "configs/tasks/highs_v1_15_1.yaml"),
+            "task.yaml",
         ],
     )
     with pytest.raises(ValueError, match="task does not define Seed Robustness"):
