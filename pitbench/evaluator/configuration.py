@@ -72,7 +72,7 @@ def _docker_collector_command(
 
 
 class SmacSearch:
-    """One outer trial per complete panel, with signed costs and no racing."""
+    """One outer trial per lowest-fidelity panel with signed costs."""
 
     def __init__(self, search: dict, directory: Path):
         import importlib.metadata
@@ -131,9 +131,13 @@ class SmacSearch:
 
     def ask(self):
         import numpy as np
+        from smac.main.exceptions import ConfigurationSpaceExhaustedException
 
         running = self.facade.runhistory.get_running_trials()
-        info = running[0] if running else self.facade.ask()
+        try:
+            info = running[0] if running else self.facade.ask()
+        except ConfigurationSpaceExhaustedException as error:
+            raise SearchSpaceExhausted from error
         # Pin to the audited SMAC version; save before expensive external runs.
         self.facade._optimizer.save()
         return info, {
@@ -145,6 +149,77 @@ class SmacSearch:
         from smac.runhistory.dataclasses import TrialValue
 
         self.facade.tell(info, TrialValue(cost=-degradation))
+
+
+class SearchSpaceExhausted(Exception):
+    """All distinct configurations in a finite configured space were evaluated."""
+
+
+def materialize_fidelity_stages(search: dict) -> list[dict]:
+    """Choose and retain nested paired panels from the declared search seed."""
+    if search["search_mode"] != "multi_fidelity":
+        return []
+    stage_configs = search.get("fidelity_stage_config")
+    if not isinstance(stage_configs, list) or not stage_configs:
+        raise ValueError("multi-fidelity search requires declared fidelity stages")
+    instances = list(search["instances"])
+    solver_seeds = list(search["solver_seeds"])
+    instance_random = random.Random(search["search_seed"])
+    seed_random = random.Random(search["search_seed"])
+    instance_random.shuffle(instances)
+    seed_random.shuffle(solver_seeds)
+    stages = []
+    previous_instance_count = 0
+    previous_seed_count = 0
+    previous_configuration_count = None
+    names = set()
+    for config in stage_configs:
+        name = config.get("name")
+        instance_count = config.get("instance_count")
+        seed_count = config.get("solver_seed_count")
+        configuration_count = config.get("configuration_count")
+        if (
+            not isinstance(name, str)
+            or not name
+            or name in names
+            or not isinstance(instance_count, int)
+            or not isinstance(seed_count, int)
+            or not isinstance(configuration_count, int)
+            or not 1 <= seed_count <= len(solver_seeds)
+            or configuration_count < 1
+            or seed_count < previous_seed_count
+            or (
+                previous_configuration_count is not None
+                and configuration_count > previous_configuration_count
+            )
+        ):
+            raise ValueError("invalid nested fidelity stage declaration")
+        if instance_count > len(instances):
+            if search.get("instances_per_panel") is None:
+                raise ValueError("fidelity stage instance count exceeds the full panel")
+            instance_count = len(instances)
+        if instance_count < previous_instance_count:
+            raise ValueError("fidelity stage instances must be nested")
+        names.add(name)
+        stages.append(
+            {
+                "name": name,
+                "instances": instances[:instance_count],
+                "solver_seeds": solver_seeds[:seed_count],
+                "configuration_count": configuration_count,
+            }
+        )
+        previous_instance_count = instance_count
+        previous_seed_count = seed_count
+        previous_configuration_count = configuration_count
+    final_stage = stages[-1]
+    if (
+        len(final_stage["instances"]) != len(search["instances"])
+        or len(final_stage["solver_seeds"]) != len(search["solver_seeds"])
+        or stages[0]["configuration_count"] != search["max_configurations"]
+    ):
+        raise ValueError("fidelity stages must end at the full panel and begin at max configurations")
+    return stages
 
 
 def prepare(
@@ -264,7 +339,13 @@ def prepare(
                 "max_configurations": config["max_configurations"],
                 "watchdog_grace_sec": config["watchdog_grace_sec"],
                 "fixed_options": panel.get("fixed_options", {}),
+                "search_mode": panel.get("search_mode", "full_enumeration"),
+                "fidelity_stage_config": panel.get(
+                    "fidelity_stages", config.get("fidelity_stages")
+                ),
+                "instances_per_panel": instances_per_panel,
             }
+            search["fidelity_stages"] = materialize_fidelity_stages(search)
             validate_search(search)
             searches.append(search)
     manifest = {
@@ -284,6 +365,21 @@ def validate_search(search: dict) -> None:
         raise ValueError("configuration protocol requires positive solver threads")
     if search["feedback"] not in ("normalized_gap", "capped_optimal_time"):
         raise ValueError("unknown configuration feedback")
+    search_mode = search.get("search_mode", "full_enumeration")
+    if search_mode not in {"full_enumeration", "multi_fidelity"}:
+        raise ValueError("unknown configuration search mode")
+    if search_mode == "multi_fidelity":
+        stages = search.get("fidelity_stages")
+        if not isinstance(stages, list) or not stages:
+            raise ValueError("multi-fidelity search requires materialized stages")
+        if stages[0]["configuration_count"] != search["max_configurations"]:
+            raise ValueError("first fidelity stage must match max configurations")
+        if (
+            {item["id"] for item in stages[-1]["instances"]}
+            != {item["id"] for item in search["instances"]}
+            or set(stages[-1]["solver_seeds"]) != set(search["solver_seeds"])
+        ):
+            raise ValueError("final fidelity stage must be the complete search panel")
     seeds, retest = search["solver_seeds"], search["retest_seeds"]
     if not seeds or len(set(seeds)) != len(seeds) or len(retest) != len(seeds):
         raise ValueError(
@@ -328,10 +424,16 @@ class ConfigurationRunner:
             raise ValueError("requested CPUs are unavailable")
 
     def panel(
-        self, search: dict, name: str, parameters: dict, seeds: list[int]
+        self,
+        search: dict,
+        name: str,
+        parameters: dict,
+        instances: list[dict],
+        seeds: list[int],
+        fidelity_stage: str,
     ) -> list[dict]:
         directory = self.output / search["id"] / name
-        plan = directory / "panel.json"
+        plan = directory / f"{fidelity_stage}.panel.json"
         if plan.exists():
             jobs = json.loads(plan.read_text())
             if any(job["parameters"] != parameters for job in jobs) or {
@@ -362,7 +464,7 @@ class ConfigurationRunner:
                     "panel": name,
                     "search_seed": search["search_seed"],
                 }
-                for instance in search["instances"]
+                for instance in instances
                 for seed in seeds
             ]
             random.Random(search["search_seed"]).shuffle(jobs)
@@ -422,11 +524,11 @@ class ConfigurationRunner:
             return result
 
         records = run_collection_jobs(jobs, self.cpus, execute)
-        write_json(directory / "results.json", records)
+        write_json(directory / f"{fidelity_stage}.results.json", records)
         return records
 
 
-def run_search(
+def _run_full_enumeration_search(
     search: dict,
     directory: Path,
     evaluate,
@@ -455,21 +557,28 @@ def run_search(
     defaults = {
         name: domain["default"] for name, domain in search["parameters"].items()
     }
+    full_instances = search["instances"]
+    full_solver_seeds = search["solver_seeds"]
     kwargs = {
-        "instances": search["instances"],
         "budget": search["budget_sec"],
         "feedback": search["feedback"],
         "objective_sense": search.get("objective_sense"),
     }
 
-    def summary(baseline, candidate, seeds):
-        return paired_panel(baseline, candidate, seeds=seeds, **kwargs)
+    def summary(baseline, candidate, instances, seeds):
+        return paired_panel(
+            baseline, candidate, instances=instances, seeds=seeds, **kwargs
+        )
 
     def save():
         write_json(state_path, state)
 
-    baseline = evaluate("default", defaults, search["solver_seeds"])
-    baseline_summary = summary(baseline, baseline, search["solver_seeds"])
+    baseline = evaluate(
+        "default", defaults, full_instances, full_solver_seeds, "default_full"
+    )
+    baseline_summary = summary(
+        baseline, baseline, full_instances, full_solver_seeds
+    )
     state["default"] = baseline_summary
     if not baseline_summary["complete"]:
         state["status"] = (
@@ -487,7 +596,10 @@ def run_search(
         while len(state["candidates"]) < search["max_configurations"] or state.get(
             "pending"
         ):
-            info, parameters = engine.ask()
+            try:
+                info, parameters = engine.ask()
+            except SearchSpaceExhausted:
+                break
             if parameters == defaults:
                 engine.tell(info, 0.0)
                 continue
@@ -505,8 +617,12 @@ def run_search(
                 raise ValueError("SMAC pending trial differs from retained panel")
             state["pending"] = {"name": name, "parameters": parameters}
             save()
-            records = evaluate(name, parameters, search["solver_seeds"])
-            panel = summary(baseline, records, search["solver_seeds"])
+            records = evaluate(
+                name, parameters, full_instances, full_solver_seeds, "full"
+            )
+            panel = summary(
+                baseline, records, full_instances, full_solver_seeds
+            )
             entry = {"name": name, "parameters": parameters, "summary": panel}
             if not panel["complete"] and "collector_error" in panel["unavailable"]:
                 state["status"] = "collection_paused"
@@ -547,11 +663,23 @@ def run_search(
 
     state["status"] = "retesting"
     save()
-    reference = evaluate("retest-default", defaults, search["retest_seeds"])
-    candidate = evaluate(
-        "retest-selected", state["selected"]["parameters"], search["retest_seeds"]
+    reference = evaluate(
+        "retest-default",
+        defaults,
+        full_instances,
+        search["retest_seeds"],
+        "retest_full",
     )
-    state["retest"] = summary(reference, candidate, search["retest_seeds"])
+    candidate = evaluate(
+        "retest-selected",
+        state["selected"]["parameters"],
+        full_instances,
+        search["retest_seeds"],
+        "retest_full",
+    )
+    state["retest"] = summary(
+        reference, candidate, full_instances, search["retest_seeds"]
+    )
     if "collector_error" in state["retest"]["unavailable"]:
         state["status"] = "collection_paused"
     else:
@@ -562,6 +690,307 @@ def run_search(
         )
     save()
     return state
+
+
+def _rank_fidelity_candidates(
+    candidates: list[dict], fidelity_stage: str
+) -> list[dict]:
+    """Rank complete candidates stably by descending declared-stage degradation."""
+    ranked = [
+        candidate
+        for candidate in candidates
+        if candidate.get("fidelity", {})
+        .get(fidelity_stage, {})
+        .get("complete")
+    ]
+    return sorted(
+        ranked,
+        key=lambda candidate: candidate["fidelity"][fidelity_stage][
+            "mean_degradation"
+        ],
+        reverse=True,
+    )
+
+
+def _run_multi_fidelity_search(
+    search: dict,
+    directory: Path,
+    evaluate,
+    *,
+    engine_factory=SmacSearch,
+    retry_collection_errors: bool = False,
+) -> dict:
+    """Search on the lowest fidelity, then race declared nested panels."""
+    from pitbench.metrics.configuration_report import paired_panel
+
+    directory.mkdir(parents=True, exist_ok=True)
+    state_path = directory / "state.json"
+    state = (
+        json.loads(state_path.read_text())
+        if state_path.exists()
+        else {"status": "running", "candidates": [], "promotions": {}}
+    )
+    if state["status"] in (
+        "completed",
+        "baseline_unavailable",
+        "stopped_after_unavailable_feedback",
+        "no_candidate",
+    ):
+        return state
+    if state["status"] == "collection_paused" and not retry_collection_errors:
+        return state
+    defaults = {
+        name: domain["default"] for name, domain in search["parameters"].items()
+    }
+    full_instances = search["instances"]
+    full_solver_seeds = search["solver_seeds"]
+    stages = search["fidelity_stages"]
+    feedback_kwargs = {
+        "budget": search["budget_sec"],
+        "feedback": search["feedback"],
+        "objective_sense": search.get("objective_sense"),
+    }
+
+    def records_for_panel(records, instances, seeds):
+        expected = {(instance["id"], seed) for instance in instances for seed in seeds}
+        return [
+            record
+            for record in records
+            if (record["instance_id"], record["solver_seed"]) in expected
+        ]
+
+    def summary(baseline, candidate, instances, seeds):
+        return paired_panel(
+            records_for_panel(baseline, instances, seeds),
+            records_for_panel(candidate, instances, seeds),
+            instances=instances,
+            seeds=seeds,
+            **feedback_kwargs,
+        )
+
+    def save():
+        write_json(state_path, state)
+
+    def stop_for_unavailable(entry, stage_name, panel):
+        state.update(
+            selected=entry,
+            selection_reason="unavailable_feedback",
+            search_stopped=True,
+            unavailable_fidelity_stage=stage_name,
+        )
+        if "collector_error" in panel["unavailable"]:
+            state["status"] = "collection_paused"
+        save()
+
+    baseline = evaluate(
+        "default", defaults, full_instances, full_solver_seeds, "default_full"
+    )
+    baseline_summary = summary(
+        baseline, baseline, full_instances, full_solver_seeds
+    )
+    state["default"] = baseline_summary
+    if not baseline_summary["complete"]:
+        state["status"] = (
+            "collection_paused"
+            if "collector_error" in baseline_summary["unavailable"]
+            else "baseline_unavailable"
+        )
+        save()
+        return state
+
+    first_stage = stages[0]
+    pending_stage = (state.get("pending") or {}).get("fidelity_stage")
+    if not state.get("selected") and pending_stage in (None, first_stage["name"]):
+        engine = engine_factory(search, directory)
+        state["searcher"] = engine.metadata
+        save()
+        while len(state["candidates"]) < first_stage["configuration_count"] or state.get(
+            "pending"
+        ):
+            try:
+                info, parameters = engine.ask()
+            except SearchSpaceExhausted:
+                break
+            if parameters == defaults:
+                engine.tell(info, 0.0)
+                continue
+            previous = next(
+                (row for row in state["candidates"] if row["parameters"] == parameters),
+                None,
+            )
+            if previous and previous.get("fidelity", {}).get(first_stage["name"], {}).get(
+                "complete"
+            ):
+                engine.tell(
+                    info, previous["fidelity"][first_stage["name"]]["mean_degradation"]
+                )
+                continue
+            name = state.get("pending", {}).get(
+                "name", f"candidate-{len(state['candidates']) + 1:04d}"
+            )
+            if state.get("pending") and (
+                state["pending"]["parameters"] != parameters
+                or state["pending"]["fidelity_stage"] != first_stage["name"]
+            ):
+                raise ValueError("SMAC pending trial differs from retained fidelity panel")
+            state["pending"] = {
+                "name": name,
+                "parameters": parameters,
+                "fidelity_stage": first_stage["name"],
+            }
+            save()
+            records = evaluate(
+                name,
+                parameters,
+                first_stage["instances"],
+                first_stage["solver_seeds"],
+                first_stage["name"],
+            )
+            panel = summary(
+                baseline,
+                records,
+                first_stage["instances"],
+                first_stage["solver_seeds"],
+            )
+            entry = previous or {
+                "name": name,
+                "parameters": parameters,
+                "fidelity": {},
+            }
+            entry["fidelity"][first_stage["name"]] = panel
+            if not previous:
+                state["candidates"].append(entry)
+            state.pop("pending", None)
+            if not panel["complete"]:
+                stop_for_unavailable(entry, first_stage["name"], panel)
+                break
+            engine.tell(info, panel["mean_degradation"])
+            save()
+            print(
+                f"{search['id']} {name}/{first_stage['name']}: "
+                f"degradation={panel['mean_degradation']:.6g}",
+                flush=True,
+            )
+
+    if not state.get("selected"):
+        for stage_index, stage in enumerate(stages[1:], start=1):
+            previous_stage = stages[stage_index - 1]
+            promoted_names = state["promotions"].get(stage["name"])
+            if promoted_names is None:
+                ranked = _rank_fidelity_candidates(
+                    state["candidates"], previous_stage["name"]
+                )
+                promoted_names = [
+                    candidate["name"]
+                    for candidate in ranked[: stage["configuration_count"]]
+                ]
+                state["promotions"][stage["name"]] = promoted_names
+                save()
+            for candidate_name in promoted_names:
+                entry = next(
+                    candidate
+                    for candidate in state["candidates"]
+                    if candidate["name"] == candidate_name
+                )
+                if entry.get("fidelity", {}).get(stage["name"], {}).get("complete"):
+                    continue
+                state["pending"] = {
+                    "name": candidate_name,
+                    "parameters": entry["parameters"],
+                    "fidelity_stage": stage["name"],
+                }
+                save()
+                records = evaluate(
+                    candidate_name,
+                    entry["parameters"],
+                    stage["instances"],
+                    stage["solver_seeds"],
+                    stage["name"],
+                )
+                panel = summary(
+                    baseline, records, stage["instances"], stage["solver_seeds"]
+                )
+                entry["fidelity"][stage["name"]] = panel
+                state.pop("pending", None)
+                if not panel["complete"]:
+                    stop_for_unavailable(entry, stage["name"], panel)
+                    break
+                save()
+                print(
+                    f"{search['id']} {candidate_name}/{stage['name']}: "
+                    f"degradation={panel['mean_degradation']:.6g}",
+                    flush=True,
+                )
+            if state.get("selected"):
+                break
+
+    if not state.get("selected"):
+        finalists = _rank_fidelity_candidates(state["candidates"], stages[-1]["name"])
+        if not finalists:
+            state["status"] = "no_candidate"
+            save()
+            return state
+        state.update(
+            selected=finalists[0],
+            selection_reason="largest_full_fidelity_degradation",
+            search_stopped=False,
+        )
+        save()
+
+    state["status"] = "retesting"
+    save()
+    reference = evaluate(
+        "retest-default",
+        defaults,
+        full_instances,
+        search["retest_seeds"],
+        "retest_full",
+    )
+    candidate = evaluate(
+        "retest-selected",
+        state["selected"]["parameters"],
+        full_instances,
+        search["retest_seeds"],
+        "retest_full",
+    )
+    state["retest"] = summary(
+        reference, candidate, full_instances, search["retest_seeds"]
+    )
+    if "collector_error" in state["retest"]["unavailable"]:
+        state["status"] = "collection_paused"
+    else:
+        state["status"] = (
+            "stopped_after_unavailable_feedback"
+            if state["search_stopped"]
+            else "completed"
+        )
+    save()
+    return state
+
+
+def run_search(
+    search: dict,
+    directory: Path,
+    evaluate,
+    *,
+    engine_factory=SmacSearch,
+    retry_collection_errors: bool = False,
+) -> dict:
+    if search.get("search_mode", "full_enumeration") == "multi_fidelity":
+        return _run_multi_fidelity_search(
+            search,
+            directory,
+            evaluate,
+            engine_factory=engine_factory,
+            retry_collection_errors=retry_collection_errors,
+        )
+    return _run_full_enumeration_search(
+        search,
+        directory,
+        evaluate,
+        engine_factory=engine_factory,
+        retry_collection_errors=retry_collection_errors,
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -634,7 +1063,9 @@ def main(argv: list[str] | None = None) -> None:
             run_search(
                 search,
                 output / search["id"],
-                lambda name, params, seeds: runner.panel(search, name, params, seeds),
+                lambda name, params, instances, seeds, stage: runner.panel(
+                    search, name, params, instances, seeds, stage
+                ),
                 retry_collection_errors=args.retry_collection_errors,
             )
             write_configuration_report(output)

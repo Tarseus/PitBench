@@ -1,6 +1,23 @@
 # Approved M2 panel. Paths are relative to the PitBench repository root.
 searcher_version: "2.4.0"
 max_configurations: 16
+fidelity_stages:
+  - name: screen_15
+    instance_count: 3
+    solver_seed_count: 5
+    configuration_count: 16
+  - name: screen_30
+    instance_count: 3
+    solver_seed_count: 10
+    configuration_count: 8
+  - name: screen_60
+    instance_count: 5
+    solver_seed_count: 12
+    configuration_count: 4
+  - name: full_300
+    instance_count: 10
+    solver_seed_count: 30
+    configuration_count: 2
 instance_count: 10
 solver_seed_count: 30
 watchdog_grace_sec: 60
@@ -12,6 +29,7 @@ collector_images:
 panels:
   - task_config: configs/tasks/pyvrp_v0_14_0.yaml
     collector: pyvrp
+    search_mode: multi_fidelity
     feedback: normalized_gap
     instance_source: configs/instance_sets/pyvrp_cvrp_v1_dev.yaml
     seed_source: configs/tasks/pyvrp_v0_14_0.yaml
@@ -24,6 +42,7 @@ panels:
       penalty.penalty_decrease: {type: real, bounds: [0.85, 0.95], default: 0.90}
   - task_config: configs/tasks/highs_v1_15_1.yaml
     collector: highs
+    search_mode: multi_fidelity
     feedback: capped_optimal_time
     instance_source: private/highs_nuisance/20260909/experiment.json
     instance_path_template: "models/{name}/original.npz"
@@ -32,7 +51,7 @@ panels:
     seed_max: 2147483647
     fixed_options:
       parallel: "off"
-      mip_feasibility_tolerance: 0.000001
+      mip_feasibility_tolerance: 0.0001
       mip_rel_gap: 0.0001
       mip_abs_gap: 0.000001
     parameters:
@@ -42,6 +61,7 @@ panels:
       mip_heuristic_effort: {type: real, bounds: [0, 1], default: 0.05}
   - task_config: configs/tasks/choco_v6_0_1.yaml
     collector: choco
+    search_mode: full_enumeration
     instance_count: 5
     solver_seed_count: 30
     feedback: capped_optimal_time
@@ -56,6 +76,24 @@ panels:
         default: input_order_lb
   - task_config: configs/tasks/ortools_cp_sat_solve_v9_15.yaml
     collector: ortools_cp_sat
+    search_mode: multi_fidelity
+    fidelity_stages:
+      - name: screen_15
+        instance_count: 3
+        solver_seed_count: 5
+        configuration_count: 16
+      - name: screen_30
+        instance_count: 3
+        solver_seed_count: 10
+        configuration_count: 8
+      - name: screen_60
+        instance_count: 5
+        solver_seed_count: 12
+        configuration_count: 4
+      - name: full_150
+        instance_count: 5
+        solver_seed_count: 30
+        configuration_count: 2
     instance_count: 5
     solver_seed_count: 30
     feedback: capped_optimal_time
@@ -74,6 +112,7 @@ panels:
         default: automatic_search
   - task_config: configs/tasks/vroom_v1_15_0.yaml
     collector: vroom
+    search_mode: full_enumeration
     instance_count: 38
     solver_seed_count: 1
     feedback: normalized_gap

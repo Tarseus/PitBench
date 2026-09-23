@@ -9,8 +9,24 @@ changed here.
 The shared fixed conditions remain those in the existing Configuration
 Robustness protocol: fixed instances, input representation, budgets, threads,
 verification, numerical requirements, runtime environment, solver seed panels,
-complete default reference panels, complete candidate panels, and independent
-retest.
+complete default reference panels, complete candidate panels at each declared
+fidelity level, and independent retest.
+
+## Shared multi-fidelity search budget
+
+PyVRP, HiGHS, and OR-Tools CP-SAT retain 16 non-default SMAC proposals and
+promotion counts 16 → 8 → 4 → 2. PyVRP and HiGHS use the nested schedule
+15 → 30 → 60 → 300 paired positions: 3 instances × 5 seeds, 3 × 10, 5 × 12,
+and the complete 10 × 30 panel. OR-Tools CP-SAT retains its existing five
+instances and uses 15 → 30 → 60 → 150 positions, ending on the complete 5 × 30
+panel. A configuration must complete every position assigned to its current
+level before it can receive feedback or be promoted. The final selected
+configuration and default are independently retested on the respective complete
+panel.
+
+Choco and VROOM have only 3 and 5 legal non-default configurations in their
+first spaces. They are fully enumerated on their complete panels rather than
+being eliminated by the shared racing schedule.
 
 ## VROOM 1.15.0
 

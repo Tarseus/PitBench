@@ -10,7 +10,9 @@ import pytest
 
 from pitbench.evaluator.configuration import (
     ConfigurationRunner,
+    SearchSpaceExhausted,
     SmacSearch,
+    materialize_fidelity_stages,
     prepare,
     run_search,
     validate_search,
@@ -158,13 +160,186 @@ class SearchStub:
         self.feedback.append((info, degradation))
 
 
+class ExhaustingSearchStub:
+    metadata = {"version": "test"}
+
+    def __init__(self, search, directory):
+        self.proposals = iter([0, 1])
+        self.feedback = []
+
+    def ask(self):
+        try:
+            value = next(self.proposals)
+        except StopIteration as error:
+            raise SearchSpaceExhausted from error
+        return value, {"amount": value}
+
+    def tell(self, info, degradation):
+        self.feedback.append((info, degradation))
+
+
+class MultiFidelitySearchStub:
+    metadata = {"version": "test"}
+
+    def __init__(self, search, directory):
+        self.proposals = iter([0, 4, 1, 3, 2])
+        self.feedback = []
+
+    def ask(self):
+        value = next(self.proposals)
+        return value, {"amount": value}
+
+    def tell(self, info, degradation):
+        self.feedback.append((info, degradation))
+
+
+def test_materialized_fidelity_stages_are_nested_and_end_at_the_full_panel():
+    search = {
+        "search_mode": "multi_fidelity",
+        "search_seed": 15,
+        "instances": [{"id": name, "bks": 100} for name in ("a", "b", "c", "d")],
+        "solver_seeds": [1, 2, 3, 4],
+        "max_configurations": 4,
+        "fidelity_stage_config": [
+            {
+                "name": "screen",
+                "instance_count": 1,
+                "solver_seed_count": 1,
+                "configuration_count": 4,
+            },
+            {
+                "name": "middle",
+                "instance_count": 2,
+                "solver_seed_count": 2,
+                "configuration_count": 2,
+            },
+            {
+                "name": "full",
+                "instance_count": 4,
+                "solver_seed_count": 4,
+                "configuration_count": 1,
+            },
+        ],
+    }
+
+    stages = materialize_fidelity_stages(search)
+
+    assert [stage["configuration_count"] for stage in stages] == [4, 2, 1]
+    assert {
+        item["id"] for item in stages[0]["instances"]
+    } <= {item["id"] for item in stages[1]["instances"]}
+    assert {
+        item["id"] for item in stages[1]["instances"]
+    } <= {item["id"] for item in stages[2]["instances"]}
+    assert set(stages[0]["solver_seeds"]) <= set(stages[1]["solver_seeds"])
+    assert set(stages[1]["solver_seeds"]) <= set(stages[2]["solver_seeds"])
+
+
+def test_dry_run_materializes_one_instance_at_every_fidelity_level():
+    search = {
+        "search_mode": "multi_fidelity",
+        "search_seed": 15,
+        "instances_per_panel": 1,
+        "instances": [{"id": "a", "bks": 100}],
+        "solver_seeds": [1, 2, 3, 4],
+        "max_configurations": 4,
+        "fidelity_stage_config": [
+            {
+                "name": "screen",
+                "instance_count": 3,
+                "solver_seed_count": 1,
+                "configuration_count": 4,
+            },
+            {
+                "name": "full",
+                "instance_count": 10,
+                "solver_seed_count": 4,
+                "configuration_count": 1,
+            },
+        ],
+    }
+
+    stages = materialize_fidelity_stages(search)
+
+    assert [len(stage["instances"]) for stage in stages] == [1, 1]
+    assert [len(stage["solver_seeds"]) for stage in stages] == [1, 4]
+
+
+def test_multi_fidelity_search_promotes_only_declared_complete_candidates(
+    search, tmp_path
+):
+    search.update(
+        search_mode="multi_fidelity",
+        max_configurations=4,
+        instances=[{"id": name, "bks": 100} for name in ("a", "b", "c", "d")],
+        solver_seeds=[1, 2, 3, 4],
+        retest_seeds=[5, 6, 7, 8],
+        fidelity_stages=[
+            {
+                "name": "screen",
+                "instances": [{"id": "a", "bks": 100}],
+                "solver_seeds": [1],
+                "configuration_count": 4,
+            },
+            {
+                "name": "middle",
+                "instances": [{"id": name, "bks": 100} for name in ("a", "b")],
+                "solver_seeds": [1, 2],
+                "configuration_count": 2,
+            },
+            {
+                "name": "full",
+                "instances": [
+                    {"id": name, "bks": 100} for name in ("a", "b", "c", "d")
+                ],
+                "solver_seeds": [1, 2, 3, 4],
+                "configuration_count": 1,
+            },
+        ],
+    )
+    calls = []
+
+    def evaluate(name, parameters, instances, seeds, fidelity_stage):
+        calls.append((name, fidelity_stage, len(instances) * len(seeds)))
+        return [
+            record(instance=item["id"], seed=seed, objective=100 + parameters["amount"])
+            for item in instances
+            for seed in seeds
+        ]
+
+    state = run_search(
+        search,
+        tmp_path,
+        evaluate,
+        engine_factory=MultiFidelitySearchStub,
+    )
+
+    assert state["status"] == "completed"
+    assert state["promotions"] == {"middle": ["candidate-0001", "candidate-0003"], "full": ["candidate-0001"]}
+    assert state["selected"]["name"] == "candidate-0001"
+    assert state["selection_reason"] == "largest_full_fidelity_degradation"
+    assert calls == [
+        ("default", "default_full", 16),
+        ("candidate-0001", "screen", 1),
+        ("candidate-0002", "screen", 1),
+        ("candidate-0003", "screen", 1),
+        ("candidate-0004", "screen", 1),
+        ("candidate-0001", "middle", 4),
+        ("candidate-0003", "middle", 4),
+        ("candidate-0001", "full", 16),
+        ("retest-default", "retest_full", 16),
+        ("retest-selected", "retest_full", 16),
+    ]
+
+
 def test_fixed_search_count_full_panels_and_retest_without_reselection(
     search, tmp_path
 ):
     calls = []
     engine = SearchStub(search, tmp_path)
 
-    def evaluate(name, parameters, seeds):
+    def evaluate(name, parameters, instances, seeds, fidelity_stage):
+        del instances, fidelity_stage
         calls.append((name, parameters, seeds))
         # The search winner improves on retest: retain the negative result.
         objective = 100 + parameters["amount"] * (
@@ -190,13 +365,38 @@ def test_fixed_search_count_full_panels_and_retest_without_reselection(
     )
 
 
+def test_finite_parameter_space_exhaustion_selects_and_retests_best_candidate(
+    search, tmp_path
+):
+    search["max_configurations"] = 16
+    engine = ExhaustingSearchStub(search, tmp_path)
+    calls = []
+
+    def evaluate(name, parameters, instances, seeds, fidelity_stage):
+        del instances, fidelity_stage
+        calls.append(name)
+        return [
+            record(seed=seed, objective=100 + parameters["amount"])
+            for seed in seeds
+        ]
+
+    state = run_search(search, tmp_path, evaluate, engine_factory=lambda *args: engine)
+
+    assert state["status"] == "completed"
+    assert state["selection_reason"] == "largest_observed_degradation"
+    assert state["selected"]["parameters"] == {"amount": 1}
+    assert state["search_stopped"] is False
+    assert calls == ["default", "candidate-0001", "retest-default", "retest-selected"]
+
+
 def test_failed_configuration_stops_without_numeric_feedback_and_is_retested(
     search, tmp_path
 ):
     calls = []
     engine = SearchStub(search, tmp_path)
 
-    def evaluate(name, parameters, seeds):
+    def evaluate(name, parameters, instances, seeds, fidelity_stage):
+        del instances, fidelity_stage
         calls.append(name)
         return [
             record(
@@ -230,7 +430,8 @@ def test_collection_fault_pauses_without_claiming_a_parameter_weakness(
 ):
     engine = SearchStub(search, tmp_path)
 
-    def evaluate(name, parameters, seeds):
+    def evaluate(name, parameters, instances, seeds, fidelity_stage):
+        del instances, fidelity_stage
         return [
             record(
                 seed=seed,
@@ -378,12 +579,69 @@ def test_run_attempts_preserve_collection_failures_and_require_explicit_retry(
 
     monkeypatch.setattr("pitbench.evaluator.configuration.subprocess.run", execute)
     runner = ConfigurationRunner(tmp_path, [cpu])
-    runner.panel(search, "default", {"amount": 0}, [1, 2])
-    runner.panel(search, "default", {"amount": 0}, [1, 2])
+    runner.panel(search, "default", {"amount": 0}, search["instances"], [1, 2], "full")
+    runner.panel(search, "default", {"amount": 0}, search["instances"], [1, 2], "full")
     assert len(invocations) == 1  # The other planned slot is retained but not run.
     retry = ConfigurationRunner(tmp_path, [cpu], retry_collection_errors=True)
-    retry.panel(search, "default", {"amount": 0}, [1, 2])
+    retry.panel(
+        search, "default", {"amount": 0}, search["instances"], [1, 2], "full"
+    )
     assert len(invocations) == 2 and all(path.exists() for path in invocations)
+
+
+def test_promoted_panel_reuses_previously_completed_nested_positions(
+    search, tmp_path, monkeypatch
+):
+    cpu = min(os.sched_getaffinity(0))
+    search.update(
+        collector="example",
+        solver={},
+        fixed_options={},
+        solver_python=sys.executable,
+        watchdog_grace_sec=60,
+        task_configuration={
+            "release": {"base_commit": "fixture"},
+            "repository": {"plugin": "example:Plugin"},
+        },
+        instances=[{"id": "a", "bks": 100}, {"id": "b", "bks": 100}],
+    )
+    invocations = []
+
+    def execute(command, **kwargs):
+        job_path = Path(command[command.index("--job") + 1])
+        job = json.loads(job_path.read_text())
+        invocations.append(job)
+        job_path.with_name("result.json").write_text(
+            json.dumps({**job, "execution_status": "returned"})
+        )
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("pitbench.evaluator.configuration.subprocess.run", execute)
+    runner = ConfigurationRunner(tmp_path, [cpu])
+    runner.panel(
+        search,
+        "candidate-0001",
+        {"amount": 1},
+        search["instances"][:1],
+        [1],
+        "screen",
+    )
+    runner.panel(
+        search,
+        "candidate-0001",
+        {"amount": 1},
+        search["instances"],
+        [1, 2],
+        "middle",
+    )
+
+    assert len(invocations) == 4
+    assert {(item["instance_id"], item["solver_seed"]) for item in invocations} == {
+        ("a", 1),
+        ("a", 2),
+        ("b", 1),
+        ("b", 2),
+    }
 
 
 def test_resume_collection_fault_keeps_the_same_smac_candidate(search, tmp_path):
@@ -392,7 +650,8 @@ def test_resume_collection_fault_keeps_the_same_smac_candidate(search, tmp_path)
     healthy = False
     candidate_parameters = []
 
-    def evaluate(name, parameters, seeds):
+    def evaluate(name, parameters, instances, seeds, fidelity_stage):
+        del instances, fidelity_stage
         if name.startswith("candidate"):
             candidate_parameters.append(parameters)
         return [

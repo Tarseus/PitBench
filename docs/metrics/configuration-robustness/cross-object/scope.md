@@ -16,7 +16,8 @@ The shared search structure is:
   runtime environment;
 - paired solver seeds where the solver is stochastic;
 - a complete default reference panel;
-- complete candidate panels before feedback is sent to the searcher;
+- complete candidate panels at their declared fidelity level before feedback is
+  sent to the searcher, with only promoted candidates evaluated at later levels;
 - separate handling of solver failures, parameter rejection, infrastructure
   failure, and missing feedback;
 - a fixed search budget and an independent retest of the selected candidate; and
