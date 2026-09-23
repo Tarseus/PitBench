@@ -150,19 +150,19 @@ public final class OrToolsCpSatRunner {
 
   private static boolean booleanField(String input, String name, boolean defaultValue) {
     java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
-        "\\\"" + name + "\\\"\\s*:\\s*(true|false)").matcher(input);
+        "\\\"" + name + "\\\"\\\\s*:\\\\s*(true|false)").matcher(input);
     return matcher.find() ? Boolean.parseBoolean(matcher.group(1)) : defaultValue;
   }
 
   private static int integerField(String input, String name, int defaultValue) {
     java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
-        "\\\"" + name + "\\\"\\s*:\\s*(-?\\d+)").matcher(input);
+        "\\\"" + name + "\\\"\\\\s*:\\\\s*(-?\\\\d+)").matcher(input);
     return matcher.find() ? Integer.parseInt(matcher.group(1)) : defaultValue;
   }
 
   private static String stringField(String input, String name, String defaultValue) {
     java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
-        "\\\"" + name + "\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"").matcher(input);
+        "\\\"" + name + "\\\"\\\\s*:\\\\s*\\\"([^\\\"]+)\\\"").matcher(input);
     return matcher.find() ? matcher.group(1) : defaultValue;
   }
 
@@ -351,6 +351,100 @@ public final class OrToolsCpSatRunner {
 """
 
 
+_ORTOOLS_CP_SAT_ASSIGNMENT_VERIFIER_SOURCE = """\
+package org.pitbench.adapters;
+
+import com.google.ortools.Loader;
+import com.google.ortools.sat.ConstraintProto;
+import com.google.ortools.sat.CpModel;
+import com.google.ortools.sat.CpModelProto;
+import com.google.ortools.sat.CpSolver;
+import com.google.ortools.sat.CpSolverResponse;
+import com.google.ortools.sat.CpSolverStatus;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public final class CpSatAssignmentVerifier {
+  private CpSatAssignmentVerifier() {}
+
+  private static long[] readValues(Path solutionPath) throws IOException {
+    String payload = Files.readString(solutionPath);
+    Matcher matcher = Pattern.compile(
+        "\\\"values\\\"\\\\s*:\\\\s*\\\\[([^]]*)\\\\]", Pattern.DOTALL).matcher(payload);
+    if (!matcher.find()) {
+      throw new IllegalArgumentException("solution does not contain values");
+    }
+    String body = matcher.group(1).trim();
+    if (body.isEmpty()) {
+      return new long[0];
+    }
+    String[] tokens = body.split(",", -1);
+    long[] values = new long[tokens.length];
+    for (int index = 0; index < tokens.length; index++) {
+      String token = tokens[index].trim();
+      if (!token.matches("-?[0-9]+")) {
+        throw new IllegalArgumentException("solution value is not an integer");
+      }
+      values[index] = Long.parseLong(token);
+    }
+    return values;
+  }
+
+  private static String escape(String value) {
+    return value.replace("\\\\", "\\\\\\\\").replace("\\\"", "\\\\\\\"");
+  }
+
+  private static void emit(boolean feasible, Double objective, String detail) {
+    String objectiveJson = objective == null ? "null" : Double.toString(objective);
+    System.out.println(
+        "{\\\"feasible\\\":" + feasible
+            + ",\\\"objective\\\":" + objectiveJson
+            + ",\\\"detail\\\":\\\"" + escape(detail) + "\\\"}");
+  }
+
+  public static void main(String[] args) {
+    if (args.length != 2) {
+      emit(false, null, "expected instance and solution paths");
+      return;
+    }
+    try {
+      Loader.loadNativeLibraries();
+      CpModelProto modelProto = CpModelProto.parseFrom(Files.readAllBytes(Path.of(args[0])));
+      long[] values = readValues(Path.of(args[1]));
+      if (values.length != modelProto.getVariablesCount()) {
+        emit(false, null, "solution value count does not match model variables");
+        return;
+      }
+      CpModel model = new CpModel();
+      model.getBuilder().mergeFrom(modelProto);
+      for (int index = 0; index < values.length; index++) {
+        ConstraintProto.Builder constraint = model.getBuilder().addConstraintsBuilder();
+        constraint.getLinearBuilder()
+            .addVars(index)
+            .addCoeffs(1)
+            .addDomain(values[index])
+            .addDomain(values[index]);
+      }
+      CpSolver solver = new CpSolver();
+      solver.getParameters().setNumWorkers(1);
+      CpSolverStatus status = solver.solve(model);
+      if (status != CpSolverStatus.OPTIMAL && status != CpSolverStatus.FEASIBLE) {
+        emit(false, null, "assignment is infeasible in the fixed model");
+        return;
+      }
+      CpSolverResponse response = solver.response();
+      emit(true, response.getObjectiveValue(), "independent fixed-proto assignment verification passed");
+    } catch (Exception error) {
+      emit(false, null, error.getMessage() == null ? error.getClass().getName() : error.getMessage());
+    }
+  }
+}
+"""
+
+
 def compile_adapter(repository: Path, solver: str) -> None:
     source = Path(__file__).with_name("ExactSolverRunner.java")
     output = _adapter_output(repository, solver)
@@ -438,9 +532,11 @@ def run_ortools_cp_sat(repository: Path) -> None:
     if request.get("threads") != 8:
         raise ValueError("parallel CP-SAT runner requires eight threads")
     output = _adapter_output(repository, "ortools_cp_sat")
+    native_library_path = repository / "build" / "lib"
     completed = subprocess.run(
         [
             "java",
+            f"-Djava.library.path={native_library_path}",
             "-cp",
             _ortools_classpath(repository, output),
             "org.pitbench.adapters.OrToolsCpSatRunner",

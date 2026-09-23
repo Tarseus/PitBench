@@ -1053,6 +1053,7 @@ class PyVRPCollectionBackend(CollectionBackend):
         result.update(
             execution_status="returned",
             model_status=result.get("solver_status"),
+            termination=result.get("solver_termination"),
             solution_value_valid=result.get("has_solution", False),
         )
         result["error_stage"] = "verification"

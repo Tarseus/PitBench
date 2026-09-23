@@ -56,6 +56,8 @@ class InstanceCase:
     path: Path | None
     anchor: float | None
     problem_scale: float | None = None
+    condition_id: str | None = None
+    template_id: str | None = None
     equivalence_parent_id: str | None = None
     equivalence_transform: str | None = None
     solver_seeds: tuple[int, ...] | None = None
@@ -114,6 +116,17 @@ def _instance_generation_seeds(
         ),
         "demand_seed": randomness.demand_seed if randomness is not None else None,
     }
+
+
+def _controlled_transfer_condition_id(
+    task: PitBenchTask,
+    instance_set: InstanceSetSpec,
+) -> str | None:
+    config = task.evaluation.controlled_transfer
+    if config is None:
+        return None
+    condition = config.condition_for_instance_set(instance_set.name)
+    return condition.condition_id if condition is not None else None
 
 
 def _evaluation_seeds(
@@ -183,6 +196,8 @@ class JudgePlan:
                                 instance_id=case.instance_id,
                                 solver_seed=seed,
                                 budget_sec=budget,
+                                condition_id=case.condition_id,
+                                template_id=case.template_id,
                                 equivalence_parent_id=case.equivalence_parent_id,
                                 test_suite=case.test_suite,
                             )
@@ -204,9 +219,11 @@ class JudgePlan:
     ) -> "JudgePlan":
         cases = []
         for instance_set in task.instance_sets:
+            condition_id = _controlled_transfer_condition_id(task, instance_set)
             if (
                 instance_set.kind == InstanceSetKind.AGENT_DEV
                 and task.evaluation.seed_robustness is None
+                and condition_id is None
             ):
                 continue
             for index in range(min(instances_per_instance_set, instance_set.size)):
@@ -218,6 +235,7 @@ class JudgePlan:
                         path=None,
                         anchor=1000.0 if objective_scored else None,
                         problem_scale=float(index + 1),
+                        condition_id=condition_id,
                     )
                 )
         return cls(task, cases)
@@ -273,6 +291,7 @@ class JudgePlan:
                 for record in trusted_oracle.records
             }
         for instance_set in task.instance_sets:
+            condition_id = _controlled_transfer_condition_id(task, instance_set)
             public_instance_set = instance_set.kind == InstanceSetKind.AGENT_DEV
             solver_seeds = (
                 development_seeds if public_instance_set else evaluation_seeds
@@ -281,6 +300,7 @@ class JudgePlan:
                 public_instance_set
                 and task.evaluation.seed_robustness is None
                 and task.evaluation.representation_robustness is None
+                and condition_id is None
             ):
                 continue
             if public_instance_set:
@@ -382,6 +402,7 @@ class JudgePlan:
                                 else None
                             ),
                             problem_scale=_customer_count(path),
+                            condition_id=condition_id,
                             solver_seeds=solver_seeds,
                             verifier=trusted_verifier,
                         )
@@ -456,6 +477,8 @@ class JudgePlan:
                         path=path,
                         anchor=float(anchor) if anchor is not None else None,
                         problem_scale=_customer_count(path),
+                        condition_id=condition_id,
+                        template_id=item.get("template_id"),
                         solver_seeds=solver_seeds,
                         verifier=(
                             _exact_target_verifier(exact_record, resolver)
@@ -520,6 +543,8 @@ class FixtureJudge:
             valid=True,
             wall_time_sec=budget,
             problem_scale=case.problem_scale,
+            condition_id=case.condition_id,
+            template_id=case.template_id,
             equivalence_parent_id=case.equivalence_parent_id,
             equivalence_transform=case.equivalence_transform,
         )
@@ -590,6 +615,7 @@ class LocalProcessJudge:
         self.instances_per_instance_set = instances_per_instance_set
         self.repository = RepositoryPluginRegistry.load(task.repository.plugin)
         self.family = family or ProblemFamilyRegistry.load(task.problem_family)
+        self.prepared_verifier: ProblemFamilyPlugin | None = None
         if isinstance(
             self.family,
             ExternalVerifierFamily,
@@ -686,6 +712,9 @@ class LocalProcessJudge:
                 )
                 cases = plan.cases
             cases = [*cases, *self.additional_cases]
+            self.prepared_verifier = self.repository.prepare_independent_verifier(
+                root / "independent-verifier"
+            )
             expected_run_grid = JudgePlan(self.task, cases).expected_run_grid(
                 evaluation_seeds=self.evaluation_seeds,
             )
@@ -914,6 +943,17 @@ class LocalProcessJudge:
                         parsed.solver_termination if parsed else None
                     ),
                     "reported_objective": parsed.objective if parsed else None,
+                    "primal_bound": parsed.primal_bound if parsed else None,
+                    "dual_bound": parsed.dual_bound if parsed else None,
+                    "cpu_time_sec": parsed.cpu_time_sec if parsed else None,
+                    "iterations": parsed.iterations if parsed else None,
+                    "nodes": parsed.nodes if parsed else None,
+                    "model_variables": parsed.model_variables if parsed else None,
+                    "model_constraints": (
+                        parsed.model_constraints if parsed else None
+                    ),
+                    "peak_rss_bytes": parsed.peak_rss_bytes if parsed else None,
+                    "resource_scope": parsed.resource_scope if parsed else None,
                 }
             )
 
@@ -962,7 +1002,9 @@ class LocalProcessJudge:
             )
         solution = output.with_suffix(".solution.json")
         try:
-            verified = (case.verifier or self.family).verify(case.path, solution)
+            verified = (
+                case.verifier or self.prepared_verifier or self.family
+            ).verify(case.path, solution)
         except (
             ValueError,
             KeyError,
@@ -1020,6 +1062,8 @@ class LocalProcessJudge:
             test_suite=case.test_suite,
             process_exit_code=exit_code,
             problem_scale=case.problem_scale,
+            condition_id=case.condition_id,
+            template_id=case.template_id,
             equivalence_parent_id=case.equivalence_parent_id,
             equivalence_transform=case.equivalence_transform,
             trajectory_path=str(trajectory) if trajectory.exists() else None,
@@ -1052,6 +1096,8 @@ class LocalProcessJudge:
             valid=False,
             test_suite=case.test_suite,
             problem_scale=case.problem_scale,
+            condition_id=case.condition_id,
+            template_id=case.template_id,
             equivalence_parent_id=case.equivalence_parent_id,
             equivalence_transform=case.equivalence_transform,
             error=error,

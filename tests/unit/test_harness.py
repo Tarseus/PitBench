@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 from rich.console import Console
 
 from pitbench.harness.agents.antigravity_mcp_agent import AntigravityMCPAgent
@@ -18,11 +19,35 @@ from pitbench.harness.harness.candidate_evaluation import CandidateEvaluator
 from pitbench.harness.harness.harness import Harness
 from pitbench.harness.harness.models import BenchmarkResults, TrialResults
 from pitbench.harness.harness.run_artifacts import RunArtifactStore
+from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
 from pitbench.harness.utils.progress import AgentActivity, TaskProgressDisplay
 
 # Tests consolidated from tests/unit/harness/test_progress.py
 
 """Tests for TaskProgressDisplay and summary progress functionality."""
+
+
+def test_nested_sandbox_override_avoids_duplicate_security_options(tmp_path: Path):
+    compose_path = tmp_path / "docker-compose.yaml"
+    compose_path.write_text(
+        "services:\n"
+        "  client:\n"
+        "    security_opt:\n"
+        "      - no-new-privileges:true\n"
+    )
+    manager = DockerComposeManager.__new__(DockerComposeManager)
+    manager._nested_sandbox = True
+    manager._compose_override_path = None
+    manager._docker_compose_path = compose_path
+
+    override_path = manager._nested_sandbox_override()
+
+    assert override_path is not None
+    override = yaml.safe_load(override_path.read_text())
+    security_options = override["services"]["client"]["security_opt"]
+    assert "no-new-privileges:true" not in security_options
+    assert "seccomp=unconfined" in security_options
+    override_path.unlink()
 
 
 def test_task_progress_display_summary_row():

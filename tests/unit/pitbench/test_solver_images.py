@@ -75,3 +75,17 @@ def test_solver_image_build_uses_task_release_and_reports_local_image_id() -> No
     assert "BASE_COMMIT=551ad10d94835c99e5e1e684500d3db398c0e345" in commands[0]
     assert commands[0][commands[0].index("--network") + 1] == "host"
     assert "configured proxy" in progress[0]
+
+
+def test_ortools_image_compiles_the_configurable_cp_sat_runner() -> None:
+    dockerfile = DOCKERFILE.read_text()
+
+    assert "cmake --build /workspace/repo/build --target java_package -j6" in dockerfile
+    assert (
+        "cd /workspace/repo \\\n"
+        "    && python3 /opt/pitbench-jvm/runner.py compile --solver ortools_cp_sat"
+        in dockerfile
+    )
+    assert dockerfile.index("COPY adapters/jvm /opt/pitbench-jvm") > dockerfile.index(
+        "cmake --build /workspace/repo/build --target java_package -j6"
+    )

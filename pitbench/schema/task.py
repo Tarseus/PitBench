@@ -40,6 +40,13 @@ class InstanceSetKind(str, Enum):
     JUDGE_SHIFT = "judge_shift"
 
 
+class ControlledTransferView(str, Enum):
+    REFERENCE = "reference"
+    SCALE = "scale"
+    STRUCTURAL = "structural"
+    JOINT = "joint"
+
+
 class ReleaseSnapshot(BaseModel):
     repository: str
     version: str
@@ -161,6 +168,76 @@ class RepresentationRobustnessConfig(BaseModel):
     relabelings_per_instance: int = Field(default=30, gt=0)
 
 
+class ControlledTransferCondition(BaseModel):
+    condition_id: str = Field(min_length=1)
+    view: ControlledTransferView
+    instance_set: str = Field(min_length=1)
+    budget_sec: float | None = Field(default=None, gt=0)
+    reference_condition_id: str | None = None
+    scale_path_id: str | None = None
+    scale_vector: dict[str, float] = Field(default_factory=dict)
+    domain_id: str | None = None
+    generator_version: str | None = None
+
+
+class ControlledTransferConfig(BaseModel):
+    conditions: list[ControlledTransferCondition] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_conditions(self) -> Self:
+        condition_ids = [condition.condition_id for condition in self.conditions]
+        if len(condition_ids) != len(set(condition_ids)):
+            raise ValueError("controlled transfer condition IDs must be unique")
+        instance_sets = [condition.instance_set for condition in self.conditions]
+        if len(instance_sets) != len(set(instance_sets)):
+            raise ValueError("controlled transfer conditions require unique instance sets")
+        known_conditions = {condition.condition_id: condition for condition in self.conditions}
+        for condition in self.conditions:
+            if condition.view is ControlledTransferView.REFERENCE:
+                if condition.reference_condition_id is not None:
+                    raise ValueError(
+                        "controlled transfer reference condition cannot reference another condition"
+                    )
+                continue
+            reference_id = condition.reference_condition_id
+            if reference_id is None or reference_id not in known_conditions:
+                raise ValueError(
+                    "controlled transfer target condition requires a declared reference condition"
+                )
+            if known_conditions[reference_id].view is not ControlledTransferView.REFERENCE:
+                raise ValueError(
+                    "controlled transfer target must reference a reference condition"
+                )
+            if condition.view in {
+                ControlledTransferView.SCALE,
+                ControlledTransferView.JOINT,
+            } and (condition.scale_path_id is None or not condition.scale_vector):
+                raise ValueError(
+                    "controlled transfer scale condition requires scale_path_id and scale_vector"
+                )
+            if condition.view in {
+                ControlledTransferView.STRUCTURAL,
+                ControlledTransferView.JOINT,
+            } and condition.domain_id is None:
+                raise ValueError(
+                    "controlled transfer structural condition requires domain_id"
+                )
+        return self
+
+    def condition_for_instance_set(
+        self,
+        instance_set: str,
+    ) -> ControlledTransferCondition | None:
+        return next(
+            (
+                condition
+                for condition in self.conditions
+                if condition.instance_set == instance_set
+            ),
+            None,
+        )
+
+
 class EvaluationProtocol(BaseModel):
     performance_protocol: PerformanceProtocol
     budgets_sec: list[float]
@@ -168,6 +245,7 @@ class EvaluationProtocol(BaseModel):
     solver_seeds: list[int] | None = None
     seed_robustness: SeedRobustnessConfig | None = None
     representation_robustness: RepresentationRobustnessConfig | None = None
+    controlled_transfer: ControlledTransferConfig | None = None
     operational_reliability: bool = False
     threads: int = Field(default=1, gt=0)
     exact_time_basis: ExactTimeBasis = ExactTimeBasis.CPU_TIME
@@ -211,6 +289,8 @@ class PitBenchTask(BaseModel):
     release: ReleaseSnapshot
     task_type: TaskType
     problem_family: ProblemFamily
+    problem_variant: str | None = None
+    formulation_id: str | None = None
     optimization_scope: str
     instruction: str
     information_regime: InformationRegime
@@ -271,6 +351,31 @@ class PitBenchTask(BaseModel):
         names = [instance_set.name for instance_set in self.instance_sets]
         if len(names) != len(set(names)):
             raise ValueError("instance-set names must be unique")
+        controlled_transfer = self.evaluation.controlled_transfer
+        if controlled_transfer is not None:
+            if self.problem_variant is None or self.formulation_id is None:
+                raise ValueError(
+                    "controlled transfer requires problem_variant and formulation_id"
+                )
+            unknown_instance_sets = {
+                condition.instance_set for condition in controlled_transfer.conditions
+            } - set(names)
+            if unknown_instance_sets:
+                raise ValueError(
+                    "controlled transfer references undeclared instance sets: "
+                    f"{sorted(unknown_instance_sets)}"
+                )
+            invalid_budgets = {
+                condition.budget_sec
+                for condition in controlled_transfer.conditions
+                if condition.budget_sec is not None
+                and condition.budget_sec not in self.evaluation.budgets_sec
+            }
+            if invalid_budgets:
+                raise ValueError(
+                    "controlled transfer condition budgets must belong to evaluation budgets: "
+                    f"{sorted(invalid_budgets)}"
+                )
         representation = self.evaluation.representation_robustness
         if representation is not None:
             from pitbench.evaluator.representations import representation_type

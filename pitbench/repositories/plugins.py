@@ -1,5 +1,9 @@
 """Build and execution plugins for supported solver repositories."""
 
+import os
+import subprocess
+from pathlib import Path
+
 from pitbench.repositories.base import (
     AgentEnvironment,
     BuildKind,
@@ -286,6 +290,61 @@ class OrToolsCpSatExactRepositoryPlugin(OrToolsRepositoryPlugin):
     collection_backend = (
         "pitbench.evaluator.collection:OrToolsCpSatCollectionBackend"
     )
+
+    def prepare_independent_verifier(self, output_dir: Path):
+        """Compile a checker against the immutable OR-Tools judge runtime."""
+        from adapters.jvm.runner import _ORTOOLS_CP_SAT_ASSIGNMENT_VERIFIER_SOURCE
+        from pitbench.problem_families.verification import ProcessVerifierFamily
+
+        runtime_root = Path("/workspace/repo/build/java")
+        java_jar = runtime_root / "ortools-java/target/ortools-java-9.15.9999.jar"
+        native_jar = (
+            runtime_root
+            / "ortools-linux-x86-64/target/ortools-linux-x86-64-9.15.9999.jar"
+        )
+        if not java_jar.is_file() or not native_jar.is_file():
+            raise RuntimeError("immutable OR-Tools judge runtime is unavailable")
+
+        def maven_jar(*path_parts: str) -> Path:
+            artifacts = sorted(
+                Path("/root/.m2/repository").joinpath(*path_parts).glob("*/*.jar")
+            )
+            if len(artifacts) != 1:
+                raise RuntimeError(
+                    "immutable OR-Tools judge dependency is unavailable: "
+                    + "/".join(path_parts)
+                )
+            return artifacts[0]
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        source_path = output_dir / "CpSatAssignmentVerifier.java"
+        source_path.write_text(_ORTOOLS_CP_SAT_ASSIGNMENT_VERIFIER_SOURCE)
+        classpath = os.pathsep.join(
+            (
+                str(java_jar),
+                str(native_jar),
+                str(maven_jar("com", "google", "protobuf", "protobuf-java")),
+                str(maven_jar("net", "java", "dev", "jna", "jna")),
+                str(maven_jar("net", "java", "dev", "jna", "jna-platform")),
+            )
+        )
+        completed = subprocess.run(
+            ["javac", "-cp", classpath, "-d", str(output_dir), str(source_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            raise RuntimeError(f"CP-SAT assignment verifier compilation failed: {detail}")
+        return ProcessVerifierFamily(
+            [
+                "java",
+                "-cp",
+                os.pathsep.join((str(output_dir), classpath)),
+                "org.pitbench.adapters.CpSatAssignmentVerifier",
+            ]
+        )
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         return [

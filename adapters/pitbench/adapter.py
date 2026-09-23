@@ -374,7 +374,13 @@ RUN chmod 0755 /usr/local/bin/pitbench
             shlex.quote(f"/workspace/repo/{path}")
             for path in task.repository.editable_paths
         ]
-        writable_paths = [*editable_paths, "/logs", "/agent-logs"]
+        writable_paths = [
+            *editable_paths,
+            "/workspace/repo/.codex",
+            "/workspace/repo/.agents",
+            "/logs",
+            "/agent-logs",
+        ]
         if include_runs:
             writable_paths.append("/pitbench/runs")
         writable = " ".join(writable_paths)

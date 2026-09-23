@@ -1,3 +1,12 @@
+from pitbench.metrics.controlled_transfer_report import (
+    ControlledTransferConditionReport,
+    ControlledTransferConditionStatus,
+    ControlledTransferConfidenceInterval,
+    ControlledTransferReport,
+    ControlledTransferScalePathReport,
+    compute_controlled_transfer_report,
+    format_controlled_transfer_report,
+)
 from pitbench.metrics.nuisance_report import (
     RepresentationBudgetResult,
     RepresentationCodeStateResult,
@@ -51,6 +60,11 @@ from pitbench.metrics.seed_robustness_report import (
 __all__ = [
     "BudgetPerformance",
     "ConfidenceInterval",
+    "ControlledTransferConditionReport",
+    "ControlledTransferConditionStatus",
+    "ControlledTransferConfidenceInterval",
+    "ControlledTransferReport",
+    "ControlledTransferScalePathReport",
     "ExactBudgetPerformance",
     "ExactPerformanceReport",
     "ExactRunOutcome",
@@ -80,6 +94,7 @@ __all__ = [
     "compute_exact_run_outcome",
     "compute_exact_seed_robustness_report",
     "compute_performance_report",
+    "compute_controlled_transfer_report",
     "compute_task_performance_report",
     "compute_representation_robustness_report",
     "compute_resource_report",
@@ -87,6 +102,7 @@ __all__ = [
     "compute_seed_robustness_details",
     "compute_seed_robustness_report",
     "format_performance_report",
+    "format_controlled_transfer_report",
     "format_resource_report",
     "format_seed_robustness_report",
     "representation_iqr",

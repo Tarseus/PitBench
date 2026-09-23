@@ -52,9 +52,3 @@ instance_sets:
     instance_set_config: private://hidden_instances/highs_v1_15_1/judge_id.yaml
     size: 30
     randomness: {instance_seed: 115110}
-  - name: non_scheduling_mip
-    kind: judge_shift
-    instance_set_config: private://hidden_instances/highs_v1_15_1/non_scheduling_mip.yaml
-    size: 30
-    shift: non_scheduling_structure
-    randomness: {instance_seed: 115120}

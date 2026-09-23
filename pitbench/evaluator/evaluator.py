@@ -16,6 +16,9 @@ from pitbench.evaluator.private_assets import (
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest, Evaluator
+from pitbench.metrics.controlled_transfer_report import (
+    compute_controlled_transfer_report,
+)
 from pitbench.metrics.performance_report import (
     ExactPerformanceReport,
     ExactRunOutcomeKind,
@@ -35,7 +38,11 @@ from pitbench.schema.evaluation import (
     EvaluationSummary,
 )
 from pitbench.schema.observation import CodeState, ExpectedRunGrid, RunObservation
-from pitbench.schema.task import PerformanceProtocol, PitBenchTask
+from pitbench.schema.task import (
+    ControlledTransferConfig,
+    PerformanceProtocol,
+    PitBenchTask,
+)
 
 
 def _default_judge_parallel_runs(task: PitBenchTask) -> int:
@@ -55,6 +62,60 @@ def _default_judge_parallel_runs(task: PitBenchTask) -> int:
 def _default_judge_cpus(parallel_runs: int, task: PitBenchTask) -> float:
     threads = getattr(task.evaluation, "threads", 1) or 1
     return max(float(parallel_runs * threads), 8.0)
+
+
+def _base_cache_is_complete(
+    task: PitBenchTask,
+    observations: list[RunObservation],
+    private_root: Path,
+) -> bool:
+    """Reject reduced-panel BASE caches before they contaminate reports."""
+    if any(
+        item.code_state != CodeState.BASE
+        or item.test_suite is not None
+        or item.equivalence_parent_id is not None
+        for item in observations
+    ):
+        return False
+    seed_robustness = task.evaluation.seed_robustness
+    development_seeds = tuple(
+        seed_robustness.development_seeds
+        if seed_robustness is not None
+        else task.evaluation.solver_seeds or ()
+    )
+    if seed_robustness is not None:
+        evaluation_seeds = tuple(
+            load_private_seed_robustness_config(
+                PrivateAssetResolver(private_root),
+                task_id=task.task_id,
+                public_config=seed_robustness,
+            ).evaluation_seeds
+        )
+    else:
+        evaluation_seeds = development_seeds
+    expected_count = 0
+    for instance_set in task.instance_sets:
+        instance_set_kind = getattr(instance_set, "kind", "judge_id")
+        instance_set_kind = getattr(instance_set_kind, "value", instance_set_kind)
+        if (
+            instance_set_kind == "agent_dev"
+            and seed_robustness is None
+            and task.evaluation.representation_robustness is None
+        ):
+            continue
+        seeds = (
+            development_seeds
+            if instance_set_kind == "agent_dev"
+            else evaluation_seeds
+        )
+        expected_count += (
+            instance_set.size * len(seeds) * len(task.evaluation.budgets_sec)
+        )
+    keys = {
+        (item.instance_set, item.instance_id, item.solver_seed, item.budget_sec)
+        for item in observations
+    }
+    return len(observations) == expected_count == len(keys)
 
 
 class PitBenchEvaluator(Evaluator):
@@ -112,6 +173,11 @@ class PitBenchEvaluator(Evaluator):
                 raise ValueError("cached BASE observations belong to another task")
             if any(item.code_state != CodeState.BASE for item in cached_base):
                 raise ValueError("cached BASE artifact contains non-BASE observations")
+            if not _base_cache_is_complete(
+                task, cached_base, Path(config["private_root"])
+            ):
+                cached_base = None
+                base_observations_path = None
 
         if cached_base is not None and "code_states" not in config:
             judge_code_states = (CodeState.AGENT,)
@@ -373,6 +439,20 @@ class PitBenchEvaluator(Evaluator):
             )
             else None
         )
+        controlled_transfer = None
+        controlled_transfer_config = getattr(
+            task.evaluation,
+            "controlled_transfer",
+            None,
+        )
+        if isinstance(controlled_transfer_config, ControlledTransferConfig):
+            if expected_run_grid is None:
+                raise ValueError("controlled transfer requires an expected run grid")
+            controlled_transfer = compute_controlled_transfer_report(
+                original_observations,
+                task=task,
+                expected_run_grid=expected_run_grid,
+            )
         exact_qualification_failures = 0
         if isinstance(performance, ExactPerformanceReport):
             exact_qualification_failures = sum(
@@ -396,6 +476,7 @@ class PitBenchEvaluator(Evaluator):
                 valid_observation_count=sum(item.valid for item in observations),
                 counts_by_state=dict(counts),
                 performance=performance,
+                controlled_transfer=controlled_transfer,
                 nuisance_robustness=nuisance_robustness,
                 resource_usage=resource_usage,
                 operational_reliability=reliability,

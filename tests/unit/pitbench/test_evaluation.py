@@ -17,7 +17,11 @@ import yaml
 
 from adapters.pitbench.adapter import PitBenchAdapter
 from adapters.pitbench.git_snapshot import GitSnapshot
-from pitbench.cli.main import _limited_evaluation_failures
+from pitbench.cli.main import (
+    _evaluation_metric_failures,
+    _limited_evaluation_failures,
+    _normal_metric_coverage,
+)
 from pitbench.evaluator.collection import AnchorCollection
 from pitbench.evaluator.evaluator import (
     PitBenchEvaluator,
@@ -35,10 +39,17 @@ from pitbench.instances.generate import (
     prepare_cp_sat_job_shop_panel,
     prepare_trusted_optimum_oracle,
 )
-from pitbench.problem_families.base import ProblemFamilyPlugin, ProblemFamilyRegistry
+from pitbench.problem_families.base import (
+    ProblemFamilyPlugin,
+    ProblemFamilyRegistry,
+    VerificationResult,
+)
 from pitbench.problem_families.verification import (
+    CPFamily,
     CVRPFamily,
     ExternalVerifierFamily,
+    MIPFamily,
+    ProcessVerifierFamily,
     TrustedOptimumFamily,
     TrustedOptimumOracle,
     TrustedOptimumRecord,
@@ -153,6 +164,8 @@ def test_workspace_permissions_reuses_existing_agent_account() -> None:
     assert "id --user pitbench-agent >/dev/null 2>&1" in dockerfile
     assert "|| groupadd --non-unique" in dockerfile
     assert "|| useradd --non-unique" in dockerfile
+    assert "/workspace/repo/.codex" in dockerfile
+    assert "/workspace/repo/.agents" in dockerfile
 
 
 @pytest.mark.parametrize(
@@ -322,6 +335,76 @@ def test_limited_evaluation_preflight_rejects_grid_and_infrastructure_errors(
     assert "1 expected solver runs are missing" in failures
     assert any("infrastructure-error" in failure for failure in failures)
     assert "performance report is incomplete" in failures
+
+
+def test_normal_metric_coverage_requires_complete_declared_reports(tmp_path: Path):
+    task_id = "vroom_v1_15_0"
+    trial_name = "vroom-trial"
+    evaluation_dir = tmp_path / "run" / task_id / trial_name / "evaluation"
+    evaluation_dir.mkdir(parents=True)
+    expected = ExpectedRun(
+        task_id=task_id,
+        code_state=CodeState.BASE,
+        instance_set="judge_id",
+        instance_set_kind="judge_id",
+        instance_id="instance",
+        solver_seed=0,
+        budget_sec=1,
+    )
+    (evaluation_dir / "expected-run-grid.json").write_text(
+        ExpectedRunGrid(task_id=task_id, runs=[expected]).model_dump_json()
+    )
+    ObservationStore.write(
+        evaluation_dir / "trials.parquet",
+        [
+            RunObservation(
+                task_id=task_id,
+                code_state=CodeState.BASE,
+                instance_set="judge_id",
+                instance_set_kind="judge_id",
+                instance_id="instance",
+                solver_seed=0,
+                budget_sec=1,
+                status=RunStatus.COMPLETED,
+                valid=True,
+            )
+        ],
+    )
+    payload = {
+        "artifacts": {
+            "observations": {"path": "trials.parquet"},
+            "expected_run_grid": {"path": "expected-run-grid.json"},
+        },
+        "summary": {
+            "performance": {"classification": "inconclusive"},
+            "resource_usage": {},
+            "operational_reliability": {"complete": True},
+        },
+    }
+    (tmp_path / "run" / "results.json").write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "task_id": task_id,
+                        "trial_name": trial_name,
+                        "evaluation": {"completed": True, "payload": payload},
+                    }
+                ]
+            }
+        )
+    )
+
+    coverage = _normal_metric_coverage(
+        ROOT, tmp_path, "run", [task_id], None
+    )
+
+    assert coverage["complete"]
+    assert _evaluation_metric_failures(
+        PitBenchTask.from_yaml(ROOT / "configs/tasks/vroom_v1_15_0.yaml"),
+        evaluation_dir,
+        {**payload, "summary": {**payload["summary"], "resource_usage": None}},
+    ) == ["resource report is missing"]
 
 
 def test_problem_family_plugins_register_and_reject_duplicate_names():
@@ -529,6 +612,72 @@ def test_bin_packing_trusted_optimum_verifies_capacity_certificate(
     hash_mismatch = verifier.verify(instance_path, verifier.reference_solution_path)
     assert hash_mismatch.feasible is False
     assert hash_mismatch.infrastructure_error is True
+
+
+def test_cp_family_verifies_public_normalized_bin_packing_without_private_verifier(
+    tmp_path: Path,
+) -> None:
+    instance_path = tmp_path / "instance.json"
+    instance_path.write_text(json.dumps({"weights": [6, 4, 8], "capacity": 10}))
+    solution_path = tmp_path / "solution.json"
+    solution_path.write_text(json.dumps({"bins": [[0, 1], [2]]}))
+
+    verified = CPFamily().verify(instance_path, solution_path)
+
+    assert verified.feasible is True
+    assert verified.objective == 2
+    assert verified.infrastructure_error is False
+
+    solution_path.write_text(json.dumps({"bins": [[0, 2], [1]]}))
+    invalid = CPFamily().verify(instance_path, solution_path)
+    assert invalid.feasible is False
+    assert invalid.infrastructure_error is False
+
+    model_path = tmp_path / "model.pb"
+    model_path.write_bytes(b"fixed-cp-model-proto")
+    unsupported = CPFamily().verify(model_path, solution_path)
+    assert unsupported.feasible is False
+    assert unsupported.infrastructure_error is True
+
+
+def test_mip_family_verifies_public_scheduling_lp_without_private_verifier(
+    tmp_path: Path,
+) -> None:
+    instance_path = tmp_path / "instance.lp"
+    instance_path.write_text(
+        "Minimize\n"
+        " obj: s0 + s1\n"
+        "Subject To\n"
+        " c0: s0 - s1 + 7 z0_1 <= 4\n"
+        " c1: s1 - s0 - 7 z0_1 <= -4\n"
+        "Bounds\n"
+        " 0 <= s0 <= 7\n"
+        " 0 <= s1 <= 7\n"
+        "General\n s0\n s1\nBinary\n z0_1\nEnd\n"
+    )
+    solution_path = tmp_path / "solution.json"
+    solution_path.write_text(
+        json.dumps(
+            {
+                "raw_solution": "\n".join(
+                    [
+                        "Objective 3",
+                        "# Columns",
+                        "s0 0",
+                        "s1 3",
+                        "z0_1 1",
+                        "# End",
+                    ]
+                )
+            }
+        )
+    )
+
+    result = MIPFamily().verify(instance_path, solution_path)
+
+    assert result.feasible is True
+    assert result.objective == 3
+    assert result.infrastructure_error is False
 
 
 def test_job_shop_trusted_optimum_verifies_start_variables_and_makespan(
@@ -939,6 +1088,60 @@ def test_an_old_result_cannot_make_a_later_missing_output_pass(judge_case, tmp_p
         judge._run_case(tmp_path, case, CodeState.BASE, 0, 5).status
         == RunStatus.OUTPUT_ERROR
     )
+
+
+def test_failed_parsed_run_retains_resource_measurements(judge_case, tmp_path):
+    judge, case = judge_case
+    judge.repository = ScriptRepository(
+        "p.write_text(json.dumps({'valid': False, 'has_solution': False, "
+        "'solver_status': 'Time limit reached', 'cpu_time_sec': 2.5, "
+        "'peak_rss_bytes': 1234, 'resource_scope': 'single_native_child_lifetime'}))"
+    )
+
+    observation = judge._run_case(tmp_path, case, CodeState.BASE, 0, 5)
+
+    assert observation.status is RunStatus.NO_SOLUTION
+    assert observation.cpu_time_sec == 2.5
+    assert observation.peak_rss_bytes == 1234
+    assert observation.resource_scope == "single_native_child_lifetime"
+
+
+def test_prepared_repository_verifier_takes_precedence_over_family_verifier(
+    judge_case, tmp_path
+):
+    judge, case = judge_case
+    judge.repository = ScriptRepository(GOOD)
+    case = replace(case, verifier=None)
+
+    class PreparedVerifier(ProblemFamilyPlugin):
+        name = ""
+
+        def verify(self, instance_path, solution_path):
+            del instance_path, solution_path
+            return VerificationResult(feasible=True, objective=77)
+
+    judge.prepared_verifier = PreparedVerifier()
+
+    observation = judge._run_case(tmp_path, case, CodeState.BASE, 0, 5)
+
+    assert observation.status is RunStatus.COMPLETED
+    assert observation.objective == 77
+
+
+def test_process_verifier_parses_evaluator_owned_json_result(tmp_path) -> None:
+    verifier = ProcessVerifierFamily(
+        [
+            sys.executable,
+            "-c",
+            "import json; print(json.dumps({'feasible': True, 'objective': 4}))",
+        ]
+    )
+
+    result = verifier.verify(tmp_path / "instance", tmp_path / "solution")
+
+    assert result.feasible is True
+    assert result.objective == 4
+    assert result.infrastructure_error is False
 
 
 def test_watchdog_terminates_the_solver_process_group(judge_case, tmp_path):

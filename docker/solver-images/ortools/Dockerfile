@@ -11,7 +11,6 @@ RUN apt-get update \
 RUN python3 -m pip install --break-system-packages --no-cache-dir \
     --index-url "$PYPI_INDEX_URL" \
     pydantic==2.13.5 pyyaml==6.0.3
-COPY adapters/jvm /opt/pitbench-jvm
 RUN test -n "$BASE_COMMIT" \
     && git init --quiet /workspace/repo \
     && git -C /workspace/repo remote add origin "$SOURCE_REPOSITORY" \
@@ -30,6 +29,10 @@ RUN cmake -S /workspace/repo -B /workspace/repo/build -G Ninja \
       -DUSE_BOP=ON -DUSE_GUROBI=ON -DUSE_XPRESS=ON \
       -DUSE_COINOR=OFF -DUSE_HIGHS=OFF -DUSE_PDLP=OFF -DUSE_SCIP=OFF \
     && cmake --build /workspace/repo/build --target java_package -j6
+
+COPY adapters/jvm /opt/pitbench-jvm
+RUN cd /workspace/repo \
+    && python3 /opt/pitbench-jvm/runner.py compile --solver ortools_cp_sat
 
 ENV PITBENCH_ORTOOLS_CP_SAT_RUNNER="python3 /opt/pitbench-jvm/runner.py run --solver ortools_cp_sat"
 WORKDIR /workspace/repo

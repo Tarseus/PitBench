@@ -28,6 +28,7 @@ from pitbench.harness.agents.agent_factory import AgentFactory
 from pitbench.harness.agents.base_agent import AgentResult, BaseAgent
 from pitbench.harness.agents.codex_mcp_agent import CodexMCPAgent
 from pitbench.harness.agents.codex_relay import _RelayHandler
+from pitbench.harness.agents.codex_workspace import CodexWorkspaceRuntime
 from pitbench.harness.agents.containers import CodexContainerRunner
 from pitbench.harness.agents.host_mcp import LoopbackMCPServer, TaskTerminal
 from pitbench.harness.agents.mcp_agents.goose_mcp_agent import GooseMCPAgent
@@ -162,6 +163,42 @@ def test_shared_profile_and_container_runtime_validate_provider_contract(
     )
     with pytest.raises(ProfileError, match="unknown Codex profile fields"):
         CodexProfile.load(profile_root)
+
+
+def test_codex_workspace_runtime_stages_under_container_logs(tmp_path: Path):
+    runtime = CodexWorkspaceRuntime(
+        container=SimpleNamespace(),
+        codex_binary=tmp_path / "codex",
+        profile=None,
+    )
+
+    assert runtime.root.startswith("/logs/pitbench-codex-workspace-")
+    assert runtime.container_codex.startswith(f"{runtime.root}/bin/")
+    assert runtime.codex_home == f"{runtime.root}/home"
+
+
+def test_codex_workspace_profile_is_readable_by_the_task_user(tmp_path: Path):
+    archives = []
+    container = SimpleNamespace(
+        put_archive=lambda destination, archive: archives.append(
+            (destination, archive)
+        )
+        or True
+    )
+    runtime = CodexWorkspaceRuntime(
+        container=container,
+        codex_binary=tmp_path / "codex",
+        profile=None,
+    )
+
+    runtime._stage_enforcement_profile("172.19.0.3")
+
+    assert len(archives) == 1
+    destination, archive = archives[0]
+    assert destination == runtime.codex_home
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r") as bundle:
+        member = bundle.getmember(f"{runtime.config_profile_name}.config.toml")
+    assert member.mode == 0o644
 
 
 def test_managed_process_cancel_preserves_base_agent_cancellation():

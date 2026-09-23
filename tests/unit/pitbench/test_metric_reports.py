@@ -46,6 +46,7 @@ from pitbench.schema.observation import (
 from pitbench.schema.task import ExactTimeBasis, PitBenchTask
 from pitbench.solver_drivers.common import process_resources, write_result
 from pitbench.solver_drivers.external_runner import execute as execute_external_runner
+from pitbench.solver_drivers.run import VroomDriver
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -1450,6 +1451,103 @@ def test_native_driver_records_child_lifetime_peak(tmp_path):
     assert result["peak_rss_bytes"] >= 32 * 1024 * 1024
     assert result["cpu_time_sec"] > 0
     assert result["solver_status"] == "Optimal"
+
+
+def test_vroom_driver_records_child_lifetime_resources(tmp_path, monkeypatch):
+    instance = tmp_path / "instance.json"
+    instance.write_text(
+        json.dumps(
+            {
+                "depot": 0,
+                "coordinates": [[0, 0], [1, 0]],
+                "demands": [0, 1],
+                "capacity": 1,
+            }
+        )
+    )
+    output = tmp_path / "result.json"
+    trajectory = tmp_path / "trajectory.jsonl"
+    monkeypatch.setattr(
+        "pitbench.solver_drivers.run.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, json.dumps({"routes": [], "summary": {"cost": 0}}), ""
+        ),
+    )
+    monkeypatch.setattr(
+        "pitbench.solver_drivers.run.process_resources",
+        lambda **kwargs: {
+            "cpu_time_sec": 2.5,
+            "peak_rss_bytes": 1234,
+            "resource_scope": "single_native_child_lifetime",
+        },
+    )
+
+    VroomDriver.main(
+        [
+            "--solver",
+            "vroom",
+            "--instance",
+            str(instance),
+            "--output",
+            str(output),
+            "--trajectory",
+            str(trajectory),
+            "--seed",
+            "0",
+            "--budget",
+            "1",
+            "--threads",
+            "1",
+        ]
+    )
+
+    result = json.loads(output.read_text())
+    assert result["cpu_time_sec"] == 2.5
+    assert result["peak_rss_bytes"] == 1234
+    assert result["resource_scope"] == "single_native_child_lifetime"
+
+
+def test_vroom_driver_preserves_timeout_failure_reason(tmp_path, monkeypatch):
+    instance = tmp_path / "instance.json"
+    instance.write_text(
+        json.dumps(
+            {
+                "depot": 0,
+                "coordinates": [[0, 0], [1, 0]],
+                "demands": [0, 1],
+                "capacity": 1,
+            }
+        )
+    )
+    output = tmp_path / "result.json"
+    monkeypatch.setattr(
+        "pitbench.solver_drivers.run.subprocess.run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(args[0], 31)
+        ),
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        VroomDriver.main(
+            [
+                "--solver",
+                "vroom",
+                "--instance",
+                str(instance),
+                "--output",
+                str(output),
+                "--trajectory",
+                str(tmp_path / "trajectory.jsonl"),
+                "--seed",
+                "0",
+                "--budget",
+                "1",
+                "--threads",
+                "1",
+            ]
+        )
+
+    assert json.loads(output.read_text())["failure_reason"] == "timed_out"
 
 
 def test_snapshots_keep_single_process_peak_and_freeze_before_output(tmp_path):

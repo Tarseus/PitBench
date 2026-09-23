@@ -107,6 +107,11 @@ class RepositoryPlugin(ABC):
     def parse_output(self, path: Path) -> NormalizedSolverOutput:
         return NormalizedSolverOutput.model_validate(json.loads(path.read_text()))
 
+    def prepare_independent_verifier(self, output_dir: Path):
+        """Optionally prepare an evaluator-owned verifier for this repository."""
+        del output_dir
+        return None
+
     def agent_run_template(self) -> list[str]:
         """Use the same invocation contract for public development runs."""
         command = self.run_command(

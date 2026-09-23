@@ -38,6 +38,8 @@ class ExpectedRun(BaseModel):
     instance_id: str
     solver_seed: int
     budget_sec: float = Field(gt=0)
+    condition_id: str | None = None
+    template_id: str | None = None
     equivalence_parent_id: str | None = None
     test_suite: str | None = None
 
@@ -80,6 +82,8 @@ class RunObservation(BaseModel):
     test_suite: str | None = None
     process_exit_code: int | None = None
     problem_scale: float | None = Field(default=None, gt=0)
+    condition_id: str | None = None
+    template_id: str | None = None
     equivalence_parent_id: str | None = None
     equivalence_transform: str | None = None
     trajectory_path: str | None = None

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import subprocess
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -195,6 +196,44 @@ class ExternalVerifierFamily(ProblemFamilyPlugin):
             )
 
 
+class ProcessVerifierFamily(ProblemFamilyPlugin):
+    """Run an evaluator-owned verifier command with instance and solution inputs."""
+
+    name = ""
+
+    def __init__(self, command_prefix: list[str]) -> None:
+        self.command_prefix = command_prefix
+
+    def verify(self, instance_path: Path, solution_path: Path) -> VerificationResult:
+        try:
+            completed = subprocess.run(
+                [*self.command_prefix, str(instance_path), str(solution_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as error:
+            return VerificationResult(
+                feasible=False,
+                detail=str(error),
+                infrastructure_error=True,
+            )
+        if completed.returncode != 0:
+            return VerificationResult(
+                feasible=False,
+                detail=completed.stderr.strip() or "verifier failed",
+                infrastructure_error=True,
+            )
+        try:
+            return VerificationResult.model_validate(json.loads(completed.stdout))
+        except (json.JSONDecodeError, ValueError, TypeError) as error:
+            return VerificationResult(
+                feasible=False,
+                detail=f"invalid verifier output: {error}",
+                infrastructure_error=True,
+            )
+
+
 def _parse_highs_primal_solution(
     solution: dict,
 ) -> tuple[dict[str, Decimal], Decimal]:
@@ -289,6 +328,48 @@ def _check_scheduling_solution(
         objective=float(objective),
         detail="exact integer scheduling verification passed",
     )
+
+
+def _public_scheduling_processing_times(instance_path: Path) -> list[int] | None:
+    """Recover the declared processing times from PitBench's public LP form."""
+    try:
+        lines = instance_path.read_text().splitlines()
+    except OSError:
+        return None
+    processing: dict[int, int] = {}
+    horizon = None
+    first_pattern = re.compile(
+        r"^\s*c\d+:\s+s(\d+)\s+-\s+s\d+\s+\+\s+(\d+)\s+z\d+_\d+\s+<=\s+(-?\d+)"
+    )
+    second_pattern = re.compile(
+        r"^\s*c\d+:\s+s(\d+)\s+-\s+s\d+\s+-\s+(\d+)\s+z\d+_\d+\s+<=\s+(-?\d+)"
+    )
+    for line in lines:
+        match = first_pattern.match(line)
+        if match is None:
+            match = second_pattern.match(line)
+            if match is None:
+                continue
+            job, candidate_horizon, rhs = map(int, match.groups())
+            duration = -rhs
+        else:
+            job, candidate_horizon, rhs = map(int, match.groups())
+            duration = candidate_horizon - rhs
+        if horizon is None:
+            horizon = candidate_horizon
+        if candidate_horizon != horizon:
+            return None
+        if duration <= 0 or (job in processing and processing[job] != duration):
+            return None
+        processing[job] = duration
+    if horizon is None or not processing:
+        return None
+    job_count = max(processing) + 1
+    if set(processing) != set(range(job_count)):
+        return None
+    if sum(processing.values()) != horizon:
+        return None
+    return [processing[index] for index in range(job_count)]
 
 
 def _check_bin_packing_solution(
@@ -604,6 +685,18 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
 class MIPFamily(ExternalVerifierFamily):
     name = "mip"
 
+    def verify(self, instance_path: Path, solution_path: Path) -> VerificationResult:
+        if self.verifier is not None:
+            return super().verify(instance_path, solution_path)
+        processing_times = _public_scheduling_processing_times(instance_path)
+        if processing_times is not None:
+            try:
+                solution = json.loads(solution_path.read_text())
+            except (OSError, json.JSONDecodeError) as error:
+                return VerificationResult(feasible=False, detail=str(error))
+            return _check_scheduling_solution(solution, processing_times)
+        return super().verify(instance_path, solution_path)
+
 
 class NumericModelFamily(ProblemFamilyPlugin):
     """Independently verify preserved sparse models using the declared tolerance."""
@@ -734,3 +827,42 @@ class IntegerBoundaryFamily(ProblemFamilyPlugin):
 
 class CPFamily(ExternalVerifierFamily):
     name = "cp"
+
+    def verify(self, instance_path: Path, solution_path: Path) -> VerificationResult:
+        """Verify public normalized bin-packing CP instances without a private oracle.
+
+        Exact judge instances attach their hash-bound trusted-optimum verifier to
+        each case. Visible development instances have no private oracle record,
+        but use the same public normalized bin-packing format and can be
+        independently verified here. An explicitly configured external verifier
+        remains authoritative.
+        """
+        if self.verifier is not None:
+            return super().verify(instance_path, solution_path)
+        if instance_path.suffix.lower() != ".json":
+            return super().verify(instance_path, solution_path)
+        try:
+            instance = json.loads(instance_path.read_text())
+            solution = json.loads(solution_path.read_text())
+            weights = instance["weights"]
+            capacity = instance["capacity"]
+        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+            return VerificationResult(
+                feasible=False,
+                detail=f"unsupported normalized CP instance or solution: {error}",
+            )
+        if (
+            not isinstance(weights, list)
+            or any(type(weight) is not int or weight <= 0 for weight in weights)
+            or type(capacity) is not int
+            or capacity <= 0
+        ):
+            return VerificationResult(
+                feasible=False,
+                detail="invalid normalized bin packing instance",
+            )
+        return _check_bin_packing_solution(
+            solution,
+            weights=weights,
+            capacity=capacity,
+        )

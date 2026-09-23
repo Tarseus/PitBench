@@ -4,6 +4,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, computed_field
 
+from pitbench.metrics.controlled_transfer_report import ControlledTransferReport
 from pitbench.metrics.performance_report import (
     ExactPerformanceReport,
     PerformanceReport,
@@ -69,6 +70,7 @@ class EvaluationSummary(BaseModel):
     valid_observation_count: int = Field(ge=0)
     counts_by_state: dict[CodeState, int] = Field(default_factory=dict)
     performance: PerformanceReport | ExactPerformanceReport | None = None
+    controlled_transfer: ControlledTransferReport | None = None
     nuisance_robustness: SeedRobustnessReport | ExactSeedRobustnessReport | None = None
     resource_usage: ResourceReport | None = None
     operational_reliability: ReliabilityReport | None = None

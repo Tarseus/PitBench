@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -115,16 +117,8 @@ def test_choco_builds_official_source_and_generic_jvm_adapter() -> None:
     validation = plugin.build_commands(BuildKind.VALIDATION)
     performance = plugin.build_commands(BuildKind.PERFORMANCE)
 
-    assert validation[0] == CommandSpec(
+    assert validation[0] == performance[0] == CommandSpec(
         argv=["mkdir", "-p", "/tmp/choco-maven"]
-    )
-    assert performance[0] == CommandSpec(
-        argv=[
-            "sh",
-            "-lc",
-            "cd src && test -f structures/typedefs.h && exec make -j1 "
-            "CXXFLAGS+=-Isrc",
-        ]
     )
     assert validation[1] == performance[1] == CommandSpec(
         argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/choco-maven"]
@@ -259,6 +253,58 @@ def test_ortools_build_reuses_evaluator_owned_dependency_cache() -> None:
         "compile",
         "--solver",
         "ortools_cp_sat",
+    ]
+
+
+def test_ortools_assignment_checker_source_is_evaluator_owned() -> None:
+    from adapters.jvm.runner import _ORTOOLS_CP_SAT_ASSIGNMENT_VERIFIER_SOURCE
+
+    assert _ORTOOLS_CP_SAT_ASSIGNMENT_VERIFIER_SOURCE.startswith(
+        "package org.pitbench.adapters;"
+    )
+    assert "addConstraintsBuilder" in _ORTOOLS_CP_SAT_ASSIGNMENT_VERIFIER_SOURCE
+    assert "assignment is infeasible in the fixed model" in (
+        _ORTOOLS_CP_SAT_ASSIGNMENT_VERIFIER_SOURCE
+    )
+
+
+def test_ortools_runner_uses_the_built_native_library_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from adapters.jvm import runner
+
+    captured: dict[str, object] = {}
+
+    def run(command, **kwargs):
+        captured["command"] = command
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"valid": True}), stderr="")
+
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "instance_path": "/instances/model.pb",
+                    "solver_seed": 17,
+                    "budget_sec": 10.0,
+                    "threads": 8,
+                    "parameters": {"cp_model_presolve": True},
+                }
+            )
+        ),
+    )
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    monkeypatch.setattr(runner, "_adapter_output", lambda *args: tmp_path / "adapter")
+    monkeypatch.setattr(runner, "_ortools_classpath", lambda *args: "runner-classpath")
+
+    runner.run_ortools_cp_sat(tmp_path)
+
+    assert captured["command"][:4] == [
+        "java",
+        f"-Djava.library.path={tmp_path / 'build' / 'lib'}",
+        "-cp",
+        "runner-classpath",
     ]
 
 

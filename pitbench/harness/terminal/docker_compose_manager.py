@@ -161,6 +161,17 @@ class DockerComposeManager:
         existing = getattr(self, "_compose_override_path", None)
         if existing is not None:
             return existing
+        compose = yaml.safe_load(self._docker_compose_path.read_text())
+        service = compose.get("services", {}).get("client", {})
+        existing_security_options = service.get("security_opt", [])
+        if not isinstance(existing_security_options, list):
+            existing_security_options = []
+        options = self.nested_sandbox_options()
+        options["security_opt"] = [
+            option
+            for option in options["security_opt"]
+            if option not in existing_security_options
+        ]
         stream = tempfile.NamedTemporaryFile(
             mode="w",
             prefix="pitbench-nested-sandbox-",
@@ -169,7 +180,7 @@ class DockerComposeManager:
         )
         with stream:
             yaml.safe_dump(
-                {"services": {"client": self.nested_sandbox_options()}},
+                {"services": {"client": options}},
                 stream,
                 sort_keys=False,
             )

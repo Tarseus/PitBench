@@ -181,6 +181,7 @@ class PyVRPDriver(SolverDriver):
                     valid=False,
                     has_solution=False,
                     solver_status="Budget stop",
+                    solver_termination=SolverTermination.TIME_LIMIT,
                     solver_runtime_sec=result.runtime,
                     iterations=result.num_iterations,
                     **resources,
@@ -214,6 +215,7 @@ class PyVRPDriver(SolverDriver):
                 valid=True,
                 has_solution=True,
                 solver_status="Budget stop",
+                solver_termination=SolverTermination.TIME_LIMIT,
                 objective=objective,
                 iterations=result.num_iterations,
                 solver_runtime_sec=result.runtime,
@@ -309,6 +311,7 @@ class VroomDriver(SolverDriver):
                     text=True,
                     timeout=args.budget + 30,
                 )
+                resources = process_resources(child_process=True)
             if completed.returncode:
                 raise RuntimeError(completed.stderr.strip() or "vroom failed")
             response = json.loads(completed.stdout)
@@ -330,9 +333,16 @@ class VroomDriver(SolverDriver):
                 solver_status="Budget stop",
                 solver_termination=SolverTermination.TIME_LIMIT,
                 objective=objective,
+                **resources,
             )
         except Exception as exc:
-            write_result(args.output, started=started, valid=False, error=str(exc))
+            write_result(
+                args.output,
+                started=started,
+                valid=False,
+                error=str(exc),
+                failure_reason=failure_reason(exc),
+            )
             raise
 
 

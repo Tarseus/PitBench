@@ -38,6 +38,18 @@ performance:
       commit: c27bb273
       tests: test_performance_report_excludes_generalization_observations
 
+operational_reliability:
+  status: completed
+  stage: M5
+  scope: docs/metrics/operational-reliability/cross-object/scope.md
+  validation_results: docs/metrics/operational-reliability/cross-object/validation-results.md
+
+resource_efficiency:
+  status: completed
+  stage: M5
+  scope: docs/metrics/resource-efficiency/cross-object/scope.md
+  validation_results: docs/metrics/resource-efficiency/cross-object/validation-results.md
+
 nuisance_robustness:
   status: frozen
   stage: M7
@@ -130,3 +142,26 @@ representation_robustness:
       evidence: docs/metrics/nuisance-robustness/representation/freeze.md
   frozen_commit: 22d19065
   frozen_on: "2026-09-18"
+
+controlled_transfer:
+  stage: M6
+  scope: docs/metrics/controlled-transfer/scope.md
+  evidence: docs/metrics/controlled-transfer/evidence.md
+  spec: docs/metrics/controlled-transfer/spec.md
+  validation_plan: docs/metrics/controlled-transfer/validation-plan.md
+  implementation:
+    - pitbench/metrics/controlled_transfer_report.py
+    - pitbench/schema/task.py
+    - pitbench/schema/observation.py
+    - pitbench/evaluator/judge.py
+    - pitbench/evaluator/evaluator.py
+    - pitbench/schema/evaluation.py
+    - pitbench/cli/main.py
+  validation_results: docs/metrics/controlled-transfer/validation-results.md
+  audit: docs/metrics/controlled-transfer/audit.md
+  blockers:
+    - prospective_panel
+    - real_scale_and_joint_validation
+    - positive_reference_real_panel
+    - ontology_reconciliation
+    - exact_real_panel

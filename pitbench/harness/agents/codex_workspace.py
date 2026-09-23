@@ -31,7 +31,7 @@ class CodexWorkspaceRuntime(AbstractContextManager["CodexWorkspaceRuntime"]):
         self.bubblewrap = self.codex_binary.parent.parent / "codex-resources/bwrap"
         self.profile = profile
         suffix = uuid.uuid4().hex[:12]
-        self.root = f"/opt/pitbench/codex-workspace-{suffix}"
+        self.root = f"/logs/pitbench-codex-workspace-{suffix}"
         self.container_codex = f"{self.root}/bin/codex"
         self.codex_home = f"{self.root}/home"
         self.config_profile_name = f"pitbench_workspace_{suffix}"
@@ -73,7 +73,7 @@ class CodexWorkspaceRuntime(AbstractContextManager["CodexWorkspaceRuntime"]):
         archive = BytesIO()
         with tarfile.open(fileobj=archive, mode="w") as bundle:
             info = tarfile.TarInfo(f"{self.config_profile_name}.config.toml")
-            info.mode = 0o600
+            info.mode = 0o644
             info.size = len(content)
             bundle.addfile(info, BytesIO(content))
         archive.seek(0)

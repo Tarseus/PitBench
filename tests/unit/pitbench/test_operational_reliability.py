@@ -35,6 +35,24 @@ from pitbench.schema.task import PitBenchTask
 
 ROOT = Path(__file__).resolve().parents[3]
 
+CURRENT_CAPABILITY_TASK_IDS = (
+    "pyvrp_v0_14_0",
+    "vroom_v1_15_0",
+    "highs_v1_15_1",
+    "choco_v6_0_1",
+    "ortools_cp_sat_solve_v9_15",
+)
+
+SYNTHETIC_FAILURE_STATUSES = (
+    RunStatus.TIMED_OUT,
+    RunStatus.CRASHED,
+    RunStatus.OUT_OF_MEMORY,
+    RunStatus.SOLVER_ERROR,
+    RunStatus.INVALID,
+    RunStatus.OUTPUT_ERROR,
+    RunStatus.INFRASTRUCTURE_ERROR,
+)
+
 
 def test_boundary_suites_register_by_family_and_reject_duplicates():
     assert boundary_suite("cvrp") is RoutingBoundarySuite
@@ -67,6 +85,7 @@ def test_boundary_suites_register_by_family_and_reject_duplicates():
 @pytest.fixture
 def task():
     value = PitBenchTask.from_yaml(ROOT / "configs/tasks/highs_v1_15_1.yaml")
+    value.evaluation.seed_robustness = None
     value.evaluation.solver_seeds = [0, 1]
     value.evaluation.budgets_sec = [5.0, 10.0]
     value.evaluation.primary_budget_sec = 10.0
@@ -93,6 +112,33 @@ def grid(task):
         for case, seed, budget, state in itertools.product(
             LinearBoundarySuite.cases(),
             task.evaluation.solver_seeds,
+            task.evaluation.budgets_sec,
+            CodeState,
+        )
+    ]
+
+
+def reliability_grid(task, cases):
+    return [
+        RunObservation(
+            task_id=task.task_id,
+            code_state=state,
+            instance_set="boundary_cases",
+            instance_set_kind="agent_dev",
+            instance_id=case.instance_id,
+            test_suite="operational_reliability",
+            solver_seed=seed,
+            budget_sec=budget,
+            threads=task.evaluation.threads,
+            status=RunStatus.COMPLETED,
+            valid=True,
+            solver_status="Optimal",
+        )
+        for case, seed, budget, state in itertools.product(
+            cases,
+            task.evaluation.seed_robustness.development_seeds
+            if task.evaluation.seed_robustness is not None
+            else task.evaluation.solver_seeds,
             task.evaluation.budgets_sec,
             CodeState,
         )
@@ -237,6 +283,65 @@ def test_missing_runs_do_not_turn_into_a_perfect_pass_rate(task):
         compute_reliability_reports(
             [removed.model_copy(update={"solver_seed": 999})], task=task
         )
+
+
+@pytest.mark.parametrize("task_id", CURRENT_CAPABILITY_TASK_IDS)
+def test_cross_capability_reliability_statuses_and_missingness_are_retained(
+    task_id, tmp_path
+):
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks" / f"{task_id}.yaml")
+    cases = prepare_boundary_cases(
+        task,
+        tmp_path / task_id,
+        private_root=ROOT / "private",
+        public_root=ROOT,
+    )
+    assert cases and all(case.path is not None for case in cases)
+    observations = reliability_grid(task, cases)
+    agent_indices = [
+        index
+        for index, observation in enumerate(observations)
+        if observation.code_state is CodeState.AGENT
+    ]
+    assert len(agent_indices) >= len(SYNTHETIC_FAILURE_STATUSES)
+    for index, status in zip(
+        agent_indices[: len(SYNTHETIC_FAILURE_STATUSES)],
+        SYNTHETIC_FAILURE_STATUSES,
+        strict=True,
+    ):
+        observations[index] = observations[index].model_copy(
+            update={"status": status, "valid": False, "error": status.value}
+        )
+
+    report, details = compute_reliability_reports(observations, task=task)
+    repeated_report, repeated_details = compute_reliability_reports(
+        observations, task=task
+    )
+
+    assert report.complete
+    assert not report.qualification_passed
+    assert report.model_dump_json() == repeated_report.model_dump_json()
+    assert details.model_dump_json() == repeated_details.model_dump_json()
+    retained_statuses = {
+        status
+        for budget in report.by_budget.values()
+        for counts in budget.by_state.values()
+        for status in counts.status_counts
+    }
+    assert {status.value for status in SYNTHETIC_FAILURE_STATUSES} <= retained_statuses
+
+    missing_observations = observations.copy()
+    missing_observations.pop(agent_indices[-1])
+    missing_report, missing_details = compute_reliability_reports(
+        missing_observations, task=task
+    )
+    assert not missing_report.complete
+    assert any(
+        counts.pass_rate is None
+        for budget in missing_report.by_budget.values()
+        for counts in budget.by_state.values()
+    )
+    assert any(detail.missing_runs for detail in missing_details.cases)
 
 
 def test_boundary_cases_cannot_change_performance_or_resource_reports(task):

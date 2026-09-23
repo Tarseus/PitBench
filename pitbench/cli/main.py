@@ -34,6 +34,10 @@ from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.harness.handlers.trial_handler import TrialHandler
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
 from pitbench.instances import materialize_instance_set
+from pitbench.metrics.controlled_transfer_report import (
+    compute_controlled_transfer_report,
+    format_controlled_transfer_report,
+)
 from pitbench.metrics.performance_report import (
     compute_task_performance_report,
     format_performance_report,
@@ -277,6 +281,141 @@ def _configuration_dry_run_failures(output_dir: Path) -> list[str]:
                 f"configuration search {search['id']} is {status or 'missing'}"
             )
     return failures
+
+
+def _evaluation_metric_failures(
+    task: PitBenchTask,
+    output_dir: Path,
+    payload: dict[str, Any],
+) -> list[str]:
+    """Validate normal-evaluation metric coverage from final stored observations."""
+    artifacts = payload.get("artifacts", {})
+    observations_ref = artifacts.get("observations")
+    expected_grid_ref = artifacts.get("expected_run_grid")
+    if not isinstance(observations_ref, dict) or not observations_ref.get("path"):
+        return ["final observations artifact is missing"]
+    if not isinstance(expected_grid_ref, dict) or not expected_grid_ref.get("path"):
+        return ["expected run grid artifact is missing"]
+    observations_path = output_dir / observations_ref["path"]
+    expected_grid_path = output_dir / expected_grid_ref["path"]
+    if not observations_path.is_file():
+        return ["final observations artifact is missing"]
+    if not expected_grid_path.is_file():
+        return ["expected run grid artifact is missing"]
+
+    failures: list[str] = []
+    expected_grid = ExpectedRunGrid.model_validate_json(expected_grid_path.read_text())
+    observations = ObservationStore.read(observations_path)
+    expected_runs = {_run_identity(item) for item in expected_grid.runs}
+    observed_runs = {_run_identity(item) for item in observations}
+    if missing_runs := expected_runs - observed_runs:
+        failures.append(f"{len(missing_runs)} expected solver runs are missing")
+    if unexpected_runs := observed_runs - expected_runs:
+        failures.append(f"{len(unexpected_runs)} unexpected solver runs were recorded")
+    if len(observed_runs) != len(observations):
+        failures.append("duplicate solver runs were recorded")
+
+    summary = payload.get("summary", {})
+    performance = summary.get("performance")
+    if performance is None:
+        failures.append("performance report is missing")
+    elif performance.get("classification") == "incomplete":
+        failures.append("performance report is incomplete")
+    if summary.get("resource_usage") is None:
+        failures.append("resource report is missing")
+    if task.evaluation.seed_robustness is not None and summary.get(
+        "nuisance_robustness"
+    ) is None:
+        failures.append("seed robustness report is missing")
+    if task.evaluation.operational_reliability:
+        reliability = summary.get("operational_reliability")
+        if reliability is None:
+            failures.append("operational reliability report is missing")
+        elif not reliability.get("complete"):
+            failures.append("operational reliability report is incomplete")
+    if task.evaluation.representation_robustness is not None:
+        representation = artifacts.get("representation_robustness_details")
+        if not isinstance(representation, dict) or not representation.get("path"):
+            failures.append("representation robustness report is missing")
+        else:
+            details_path = output_dir / representation["path"]
+            if not details_path.is_file():
+                failures.append("representation robustness details are missing")
+            else:
+                details = json.loads(details_path.read_text())
+                if details.get("completed_run_count") != details.get(
+                    "expected_run_count"
+                ):
+                    failures.append("representation robustness report is incomplete")
+    return failures
+
+
+def _normal_metric_coverage(
+    repository_root: Path,
+    output_root: Path,
+    run_id: str,
+    task_ids: list[str],
+    configuration_output: Path | None,
+) -> dict[str, Any]:
+    """Return one auditable metric coverage record for a normal evaluate run."""
+    run_output = output_root / run_id
+    results_path = run_output / "results.json"
+    coverage: dict[str, Any] = {
+        "run_id": run_id,
+        "tasks": [],
+        "configuration_robustness": None,
+        "complete": False,
+    }
+    all_failures: list[str] = []
+    if not results_path.is_file():
+        all_failures.append("harness results are missing")
+    else:
+        result_records = json.loads(results_path.read_text()).get("results", [])
+        catalog = TaskCatalog(repository_root)
+        for task_id in task_ids:
+            task = catalog.validate_one(task_id).task
+            trials = [item for item in result_records if item.get("task_id") == task_id]
+            if not trials:
+                failures = ["task has no completed trial result"]
+                coverage["tasks"].append({"task_id": task_id, "failures": failures})
+                all_failures.extend(f"{task_id}: {failure}" for failure in failures)
+                continue
+            for trial in trials:
+                evaluation = trial.get("evaluation")
+                failures = []
+                if not isinstance(evaluation, dict) or not evaluation.get("completed"):
+                    failures.append(
+                        "evaluator did not complete: "
+                        + str((evaluation or {}).get("error", "missing evaluation"))
+                    )
+                else:
+                    trial_output = run_output / task_id / trial["trial_name"] / "evaluation"
+                    failures.extend(
+                        _evaluation_metric_failures(
+                            task, trial_output, evaluation.get("payload", {})
+                        )
+                    )
+                coverage["tasks"].append(
+                    {
+                        "task_id": task_id,
+                        "trial_name": trial.get("trial_name"),
+                        "failures": failures,
+                    }
+                )
+                all_failures.extend(f"{task_id}: {failure}" for failure in failures)
+    if configuration_output is not None:
+        configuration_failures = _configuration_dry_run_failures(configuration_output)
+        coverage["configuration_robustness"] = {
+            "output": str(configuration_output),
+            "failures": configuration_failures,
+        }
+        all_failures.extend(
+            f"Configuration Robustness: {failure}"
+            for failure in configuration_failures
+        )
+    coverage["complete"] = not all_failures
+    coverage["failures"] = all_failures
+    return coverage
 
 
 @images_app.command("build")
@@ -669,13 +808,28 @@ def evaluate_task(
         remote_build=False,
         history_limit=None,
     )
+    configuration_output = None
     if configuration_robustness:
-        _run_configuration_robustness(
+        configuration_output = _run_configuration_robustness(
             repository_root,
             effective_config,
             resolved_output_path,
             resolved_run_id,
         )
+    coverage = _normal_metric_coverage(
+        repository_root,
+        resolved_output_path,
+        resolved_run_id,
+        task_ids,
+        configuration_output,
+    )
+    coverage_path = resolved_output_path / resolved_run_id / "metric-coverage.json"
+    coverage_path.write_text(json.dumps(coverage, indent=2) + "\n")
+    typer.echo(f"Metric coverage: {coverage_path}")
+    if not coverage["complete"]:
+        for failure in coverage["failures"]:
+            typer.echo(f"FAIL metric coverage: {failure}", err=True)
+        raise typer.Exit(1)
 
 
 @app.command("judge")
@@ -1273,6 +1427,11 @@ def report_command(
             "exact performance requires sibling expected-run-grid.json",
             param_hint=str(target),
         )
+    if task.evaluation.controlled_transfer is not None and expected_run_grid is None:
+        raise typer.BadParameter(
+            "controlled transfer requires sibling expected-run-grid.json",
+            param_hint=str(target),
+        )
     performance_report = (
         compute_task_performance_report(
             standard,
@@ -1280,6 +1439,16 @@ def report_command(
             expected_run_grid=expected_run_grid,
         )
         if standard
+        else None
+    )
+    controlled_transfer_report = (
+        compute_controlled_transfer_report(
+            standard,
+            task=task,
+            expected_run_grid=expected_run_grid,
+        )
+        if task.evaluation.controlled_transfer is not None
+        and expected_run_grid is not None
         else None
     )
     resource_report = (
@@ -1308,6 +1477,9 @@ def report_command(
             "performance": performance_report.model_dump()
             if performance_report
             else None,
+            "controlled_transfer": controlled_transfer_report.model_dump()
+            if controlled_transfer_report
+            else None,
             "resource_usage": resource_report.model_dump() if resource_report else None,
             "operational_reliability": reliability_report.model_dump()
             if reliability_report
@@ -1323,6 +1495,8 @@ def report_command(
 
     if performance_report is not None:
         typer.echo(format_performance_report(performance_report))
+    if controlled_transfer_report is not None:
+        typer.echo("\n" + format_controlled_transfer_report(controlled_transfer_report))
     if resource_report is not None:
         typer.echo("\n" + format_resource_report(resource_report))
     if reliability_report is not None:
