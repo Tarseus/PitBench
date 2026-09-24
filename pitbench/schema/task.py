@@ -55,11 +55,17 @@ class ReleaseSnapshot(BaseModel):
 
 class RepositorySpec(BaseModel):
     clone_url: str
-    language: str
     plugin: str
     editable_paths: list[str] = Field(min_length=1)
     agent_image: str | None = None
     judge_image: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_repository_fields(cls, data: object) -> object:
+        if isinstance(data, dict) and "language" in data:
+            raise ValueError("repository.language has been removed")
+        return data
 
     @field_validator("editable_paths")
     @classmethod

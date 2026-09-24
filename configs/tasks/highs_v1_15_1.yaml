@@ -15,7 +15,6 @@ instruction: >-
   objective semantics. Use only the visible development instances.
 repository:
   clone_url: https://github.com/ERGO-Code/HiGHS.git
-  language: cpp
   plugin: pitbench.repositories.plugins:HighsRepositoryPlugin
   editable_paths: [highs, build]
   agent_image: sha256:cdac06326fc876dec1a1f689d18e8b3c9e9082c61707f2d8ead0a1efaa8432c7

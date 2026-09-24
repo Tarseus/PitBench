@@ -164,6 +164,15 @@ def test_removed_information_regime_is_rejected() -> None:
         PitBenchTask.model_validate(payload)
 
 
+def test_removed_repository_language_is_rejected() -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    payload = task.model_dump()
+    payload["repository"]["language"] = "cpp_python"
+
+    with pytest.raises(ValueError, match="repository.language has been removed"):
+        PitBenchTask.model_validate(payload)
+
+
 def test_workspace_permissions_reuses_existing_agent_account() -> None:
     task = PitBenchTask.from_yaml(ROOT / "configs/tasks/highs_v1_15_1.yaml")
 

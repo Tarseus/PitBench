@@ -15,7 +15,6 @@ instruction: >-
   semantics. Use only the visible development instances.
 repository:
   clone_url: https://github.com/chocoteam/choco-solver.git
-  language: java
   plugin: pitbench.repositories.plugins:ChocoRepositoryPlugin
   editable_paths: [solver]
   agent_image: sha256:11376547899ea6c9bcfe1dd5245f555417e192ae387d4c477b8b1419b4179181

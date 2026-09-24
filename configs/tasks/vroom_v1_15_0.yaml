@@ -15,7 +15,6 @@ instruction: >-
   semantics. Use only the visible development instances.
 repository:
   clone_url: https://github.com/VROOM-Project/vroom.git
-  language: cpp
   plugin: pitbench.repositories.plugins:VroomRepositoryPlugin
   editable_paths: [src, include, bin, obj]
   agent_image: sha256:c778639d3d18ef94faddd7b5b578ce837df9be9e86e6b4b4b76a1abbedb60955

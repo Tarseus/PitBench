@@ -17,7 +17,6 @@ instruction: >-
   change. Use only the visible development instances.
 repository:
   clone_url: https://github.com/PyVRP/PyVRP.git
-  language: cpp_python
   plugin: pitbench.repositories.plugins:PyVRPRepositoryPlugin
   editable_paths: [pyvrp]
   agent_image: ghcr.io/tarseus/pitbench-pyvrp@sha256:0df735ee4dac1476ab291969a56ad59518f990cb1cdc1888cedd49e57369ff6f

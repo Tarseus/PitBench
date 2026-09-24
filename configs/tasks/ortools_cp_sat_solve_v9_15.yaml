@@ -16,7 +16,6 @@ instruction: >-
   construction. Use only the visible development instances.
 repository:
   clone_url: https://github.com/google/or-tools.git
-  language: cpp_java
   plugin: pitbench.repositories.plugins:OrToolsCpSatExactRepositoryPlugin
   editable_paths: [ortools, build]
   agent_image: pitbench-ortools:cp-sat-task-v4
