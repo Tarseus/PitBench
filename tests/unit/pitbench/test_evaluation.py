@@ -183,6 +183,15 @@ def test_oracle_rejects_unsupported_kind(kind: str) -> None:
         PitBenchTask.model_validate(payload)
 
 
+def test_removed_instance_set_shift_is_rejected() -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    payload = task.model_dump()
+    payload["instance_sets"][0]["shift"] = "distributional"
+
+    with pytest.raises(ValueError, match="instance_set.shift has been removed"):
+        PitBenchTask.model_validate(payload)
+
+
 def test_workspace_permissions_reuses_existing_agent_account() -> None:
     task = PitBenchTask.from_yaml(ROOT / "configs/tasks/highs_v1_15_1.yaml")
 

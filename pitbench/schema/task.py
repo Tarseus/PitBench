@@ -112,7 +112,13 @@ class InstanceSetSpec(BaseModel):
     )
     size: int = Field(gt=0)
     randomness: RandomnessSpec | None = None
-    shift: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_instance_set_fields(cls, data: object) -> object:
+        if isinstance(data, dict) and "shift" in data:
+            raise ValueError("instance_set.shift has been removed")
+        return data
 
 
 class SeedSelectionConfig(BaseModel):
