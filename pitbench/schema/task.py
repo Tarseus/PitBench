@@ -87,8 +87,6 @@ class OracleReference(BaseModel):
     kind: Literal[
         "known_optimum",
         "best_known_solution",
-        "solver_certificate",
-        "independent_measurement",
     ]
     source: str
     source_sha256: str | None = Field(

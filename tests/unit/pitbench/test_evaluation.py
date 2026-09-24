@@ -173,6 +173,16 @@ def test_removed_repository_language_is_rejected() -> None:
         PitBenchTask.model_validate(payload)
 
 
+@pytest.mark.parametrize("kind", ["solver_certificate", "independent_measurement"])
+def test_oracle_rejects_unsupported_kind(kind: str) -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/highs_v1_15_1.yaml")
+    payload = task.model_dump()
+    payload["oracle"]["kind"] = kind
+
+    with pytest.raises(ValueError, match="known_optimum"):
+        PitBenchTask.model_validate(payload)
+
+
 def test_workspace_permissions_reuses_existing_agent_account() -> None:
     task = PitBenchTask.from_yaml(ROOT / "configs/tasks/highs_v1_15_1.yaml")
 
