@@ -14,7 +14,6 @@ instruction: >-
   Improve only CP-SAT solving performance while preserving the fixed model
   construction, feasibility, and objective semantics. Do not optimize model
   construction. Use only the visible development instances.
-information_regime: snapshot_only
 repository:
   clone_url: https://github.com/google/or-tools.git
   language: cpp_java

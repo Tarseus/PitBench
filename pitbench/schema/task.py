@@ -30,10 +30,6 @@ class ProblemFamily(str, Enum):
     CP = "cp"
 
 
-class InformationRegime(str, Enum):
-    SNAPSHOT_ONLY = "snapshot_only"
-
-
 class InstanceSetKind(str, Enum):
     AGENT_DEV = "agent_dev"
     JUDGE_ID = "judge_id"
@@ -293,11 +289,17 @@ class PitBenchTask(BaseModel):
     formulation_id: str | None = None
     optimization_scope: str
     instruction: str
-    information_regime: InformationRegime
     repository: RepositorySpec
     oracle: OracleReference
     evaluation: EvaluationProtocol
     instance_sets: list[InstanceSetSpec]
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_task_fields(cls, data: object) -> object:
+        if isinstance(data, dict) and "information_regime" in data:
+            raise ValueError("information_regime has been removed from task configuration")
+        return data
 
     @model_validator(mode="after")
     def validate_instance_set_roles(self) -> Self:

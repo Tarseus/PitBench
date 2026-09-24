@@ -13,7 +13,6 @@ optimization_scope: constraint_propagation_efficiency
 instruction: >-
   Improve constraint-solver performance while preserving feasibility and solution
   semantics. Use only the visible development instances.
-information_regime: snapshot_only
 repository:
   clone_url: https://github.com/chocoteam/choco-solver.git
   language: java
