@@ -9,6 +9,7 @@ from pathlib import Path
 from pitbench.evaluator.judge import InstanceCase, JudgePlan, _development_seeds
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.instances.boundary import boundary_suite
+from pitbench.problem_families.base import ProblemFamilyRegistry
 from pitbench.schema.task import InstanceSetKind, InstanceSetSpec, PitBenchTask
 
 SUITE_NAME = "operational_reliability"
@@ -21,7 +22,8 @@ def prepare_boundary_cases(
     private_root: Path | None = None,
     public_root: Path | None = None,
 ) -> list[InstanceCase]:
-    if task.problem_family.value == "cp":
+    family = ProblemFamilyRegistry.load(task.problem_family)
+    if family.reliability_uses_task_development_instances:
         repository_root = Path(__file__).resolve().parents[2]
         resolver = PrivateAssetResolver(private_root or repository_root / "private")
         plan = JudgePlan.from_instance_set_configs(

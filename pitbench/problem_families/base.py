@@ -17,6 +17,8 @@ class VerificationResult(BaseModel):
 
 class ProblemFamilyPlugin(ABC):
     name: str
+    fixture_reports_search_nodes = False
+    reliability_uses_task_development_instances = False
     _plugins: ClassVar[dict[str, type[ProblemFamilyPlugin]]] = {}
 
     def __init_subclass__(cls, **kwargs) -> None:

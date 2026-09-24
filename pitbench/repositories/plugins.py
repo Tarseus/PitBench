@@ -121,6 +121,7 @@ class VroomRepositoryPlugin(RepositoryPlugin):
     driver_python = "python3"
     name = "vroom"
     agent_requirement = "file:bin/vroom"
+    collector_environment = {"PITBENCH_VROOM_SOLVER": "/workspace/repo/bin/vroom"}
     representations = {"customer_relabeling": ("judge",)}
     collection_backend = "pitbench.evaluator.collection:VroomCollectionBackend"
     deterministic = True
@@ -193,6 +194,7 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
     name = "choco"
     driver_python = "python3"
     agent_requirement = "env:PITBENCH_CHOCO_RUNNER"
+    judge_environment_requirements = {"MAVEN_CONFIG": "/tmp/choco-maven"}
     collection_backend = "pitbench.evaluator.collection:ChocoCollectionBackend"
     driver_name = "choco"
 
@@ -233,7 +235,6 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
     agent_requirement = "env:PITBENCH_ORTOOLS_CP_SAT_RUNNER"
     deterministic = False
     driver_name = "ortools_cp_sat_exact"
-    driver_records_trajectory = False
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         del kind

@@ -505,6 +505,9 @@ class FixtureJudge:
     ) -> list[RunObservation]:
         observations: list[RunObservation] = []
         task = plan.task
+        fixture_reports_search_nodes = ProblemFamilyRegistry.load(
+            task.problem_family
+        ).fixture_reports_search_nodes
         for case in plan.cases:
             seeds = case.solver_seeds or _development_seeds(task)
             budgets = case.budgets_sec or tuple(task.evaluation.budgets_sec)
@@ -512,7 +515,14 @@ class FixtureJudge:
                 for budget in budgets:
                     for state in code_states:
                         observations.append(
-                            self._observation(task, case, state, seed, budget)
+                            self._observation(
+                                task,
+                                case,
+                                state,
+                                seed,
+                                budget,
+                                fixture_reports_search_nodes,
+                            )
                         )
         return observations
 
@@ -523,6 +533,7 @@ class FixtureJudge:
         state: CodeState,
         seed: int,
         budget: float,
+        fixture_reports_search_nodes: bool,
     ) -> RunObservation:
         digest = hashlib.sha256(
             f"{task.task_id}:{case.instance_id}:{seed}".encode()
@@ -570,7 +581,7 @@ class FixtureJudge:
             iterations=int(budget * 100 / factor),
             nodes=(
                 int(budget * 20 / factor)
-                if task.problem_family.value == "mip"
+                if fixture_reports_search_nodes
                 else None
             ),
         )

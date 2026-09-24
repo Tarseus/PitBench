@@ -65,13 +65,14 @@ class RepositoryPlugin(ABC):
     driver_name: str
     driver_python = "python"
     driver_solver: str | None = None
-    driver_records_trajectory = True
     deterministic = False
     agent_environment: AgentEnvironment | None = None
     agent_requirement: str | None = None
     agent_python: str | None = None
     collection_backend: str | None = None
     representations: dict[str, tuple[str, ...]] = {}
+    collector_environment: dict[str, str] = {}
+    judge_environment_requirements: dict[str, str] = {}
 
     @abstractmethod
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
@@ -79,6 +80,8 @@ class RepositoryPlugin(ABC):
 
     def run_command(self, run: SolverRunSpec) -> CommandSpec:
         """Return one normalized invocation through the shared driver entry."""
+        from pitbench.solver_drivers.run import driver_records_trajectory
+
         argv = [
             self.driver_python,
             "-m",
@@ -90,7 +93,7 @@ class RepositoryPlugin(ABC):
         argv.extend(
             ["--instance", str(run.instance_path), "--output", str(run.output_path)]
         )
-        if self.driver_records_trajectory:
+        if driver_records_trajectory(self.driver_name):
             argv.extend(["--trajectory", str(run.trajectory_path)])
         argv.extend(
             [

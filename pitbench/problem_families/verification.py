@@ -684,6 +684,7 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
 
 class MIPFamily(ExternalVerifierFamily):
     name = "mip"
+    fixture_reports_search_nodes = True
 
     def verify(self, instance_path: Path, solution_path: Path) -> VerificationResult:
         if self.verifier is not None:
@@ -827,6 +828,7 @@ class IntegerBoundaryFamily(ProblemFamilyPlugin):
 
 class CPFamily(ExternalVerifierFamily):
     name = "cp"
+    reliability_uses_task_development_instances = True
 
     def verify(self, instance_path: Path, solution_path: Path) -> VerificationResult:
         """Verify public normalized bin-packing CP instances without a private oracle.

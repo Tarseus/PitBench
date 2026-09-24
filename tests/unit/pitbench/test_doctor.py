@@ -6,10 +6,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
 from pitbench.cli.doctor import (
     CheckStatus,
     _agent_runtime_check,
     _configuration_robustness_check,
+    _judge_environment_check,
     _reliability_plan_check,
     _repository_source_check,
 )
@@ -96,6 +99,37 @@ def test_agent_runtime_reports_missing_asciinema() -> None:
 
     assert check.status is CheckStatus.FAIL
     assert "asciinema" in check.detail
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected_status"),
+    [
+        (["MAVEN_CONFIG=/tmp/choco-maven"], CheckStatus.PASS),
+        ([], CheckStatus.FAIL),
+    ],
+)
+def test_judge_environment_uses_repository_plugin_contract(
+    environment, expected_status
+) -> None:
+    context = SimpleNamespace(
+        task=SimpleNamespace(
+            task=SimpleNamespace(
+                repository=SimpleNamespace(
+                    plugin="pitbench.repositories.plugins:ChocoRepositoryPlugin"
+                )
+            )
+        )
+    )
+    client = SimpleNamespace(
+        images=SimpleNamespace(
+            get=Mock(return_value=SimpleNamespace(attrs={"Config": {"Env": environment}}))
+        )
+    )
+
+    check = _judge_environment_check(context, "pitbench-judge:test", client)
+
+    assert check.status is expected_status
+    assert "MAVEN_CONFIG=/tmp/choco-maven" in check.detail
 
 
 def test_configuration_robustness_requires_experiment_config(

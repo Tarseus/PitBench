@@ -30,6 +30,7 @@ from pitbench.solver_drivers.external_runner import execute
 
 class SolverDriver(ABC):
     name: str
+    records_trajectory = True
     _drivers: ClassVar[dict[str, type[SolverDriver]]] = {}
 
     def __init_subclass__(cls, **kwargs) -> None:
@@ -645,6 +646,7 @@ class OrToolsCpSatExactDriver(SolverDriver):
     """Invoke the fixed-proto parallel CP-SAT solving adapter."""
 
     name = "ortools_cp_sat_exact"
+    records_trajectory = False
 
     @staticmethod
     def main(argv: list[str] | None = None) -> None:
@@ -665,6 +667,13 @@ class OrToolsCpSatExactDriver(SolverDriver):
 
 
 DRIVERS = SolverDriver._drivers
+
+
+def driver_records_trajectory(driver_name: str) -> bool:
+    try:
+        return DRIVERS[driver_name].records_trajectory
+    except KeyError:
+        raise ValueError(f"unsupported solver driver: {driver_name}") from None
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -41,6 +41,7 @@ def _docker_collector_command(
     command: list[str],
     *,
     cpu: int | None = None,
+    environment: dict[str, str] | None = None,
 ) -> list[str]:
     """Run one collector action inside its pinned solver image."""
     result = [
@@ -54,8 +55,6 @@ def _docker_collector_command(
         "--tmpfs",
         "/tmp:rw,nosuid,nodev,size=1g,mode=1777",
         "--env",
-        "PITBENCH_VROOM_SOLVER=/workspace/repo/bin/vroom",
-        "--env",
         f"PYTHONPATH={ROOT}:/workspace/repo",
         "--volume",
         f"{ROOT}:{ROOT}:rw",
@@ -64,11 +63,24 @@ def _docker_collector_command(
         "--workdir",
         "/workspace/repo",
     ]
+    for name, value in sorted((environment or {}).items()):
+        result.extend(["--env", f"{name}={value}"])
     if cpu is not None:
         result.extend(["--cpuset-cpus", str(cpu)])
     result.extend([image, "python3", "-m", "scripts.collect_configuration_results"])
     result.extend(command)
     return result
+
+
+def _collector_environment(search: dict) -> dict[str, str]:
+    saved = search.get("collector_environment")
+    if saved is not None:
+        return saved
+    from pitbench.repositories.base import RepositoryPluginRegistry
+
+    return dict(
+        RepositoryPluginRegistry.load(search["repository_plugin"]).collector_environment
+    )
 
 
 class SmacSearch:
@@ -263,7 +275,11 @@ def prepare(
             repository_plugin,
         ]
         probe = subprocess.run(
-            _docker_collector_command(collector_image, probe_command)
+            _docker_collector_command(
+                collector_image,
+                probe_command,
+                environment=repository.collector_environment,
+            )
             if collector_image
             else [
                 python,
@@ -321,6 +337,7 @@ def prepare(
             search = {
                 **panel,
                 "repository_plugin": repository_plugin,
+                "collector_environment": dict(repository.collector_environment),
                 "task_id": task["task_id"],
                 "task_configuration": task,
                 "id": f"{task['task_id']}/budget-{budget:g}",
@@ -503,7 +520,10 @@ class ConfigurationRunner:
             ]
             command = (
                 _docker_collector_command(
-                    search["collector_image"], worker_command, cpu=cpu
+                    search["collector_image"],
+                    worker_command,
+                    cpu=cpu,
+                    environment=_collector_environment(search),
                 )
                 if search.get("collector_image")
                 else [

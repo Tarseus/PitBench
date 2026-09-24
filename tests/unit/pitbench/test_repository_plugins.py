@@ -21,7 +21,11 @@ from pitbench.repositories.plugins import (
     HighsRepositoryPlugin,
     PyVRPRepositoryPlugin,
 )
-from pitbench.solver_drivers.run import PyVRPDriver, SolverDriver
+from pitbench.solver_drivers.run import (
+    PyVRPDriver,
+    SolverDriver,
+    driver_records_trajectory,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -29,27 +33,29 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.mark.parametrize(
-    ("plugin_name", "driver_name", "class_name"),
+    ("plugin_name", "driver_name", "class_name", "records_trajectory"),
     [
-        ("pyvrp", "pyvrp", "PyVRPRepositoryPlugin"),
-        ("vroom", "vroom", "VroomRepositoryPlugin"),
-        ("highs", "highs", "HighsRepositoryPlugin"),
-        ("choco", "choco", "ChocoRepositoryPlugin"),
+        ("pyvrp", "pyvrp", "PyVRPRepositoryPlugin", True),
+        ("vroom", "vroom", "VroomRepositoryPlugin", True),
+        ("highs", "highs", "HighsRepositoryPlugin", True),
+        ("choco", "choco", "ChocoRepositoryPlugin", True),
         (
             "ortools",
             "ortools_cp_sat_exact",
             "OrToolsCpSatExactRepositoryPlugin",
+            False,
         ),
     ],
 )
 def test_repository_plugins_resolve_to_runnable_drivers(
-    plugin_name, driver_name, class_name, tmp_path
+    plugin_name, driver_name, class_name, records_trajectory, tmp_path
 ):
     plugin = RepositoryPluginRegistry.load(
         f"pitbench.repositories.plugins:{class_name}"
     )
     assert plugin.name == plugin_name
     assert plugin.driver_name == driver_name
+    assert driver_records_trajectory(driver_name) is records_trajectory
     run = SolverRunSpec(
         instance_path=tmp_path / "instance.json",
         output_path=tmp_path / "result.json",
@@ -59,6 +65,7 @@ def test_repository_plugins_resolve_to_runnable_drivers(
         threads=1,
     )
     command = plugin.run_command(run)
+    assert ("--trajectory" in command.argv) is records_trajectory
     completed = subprocess.run(
         [sys.executable, *command.argv[1:], "--help"],
         capture_output=True,

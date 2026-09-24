@@ -867,7 +867,7 @@ def _run_external_configuration(
         if solver_command is not None:
             arguments.extend(["--solver", solver_command])
         arguments.extend(["--instance", job["instance"]["path"]])
-        if driver.name in {"choco", "vroom"}:
+        if driver.records_trajectory:
             arguments.extend(["--trajectory", str(directory / "trajectory.jsonl")])
         arguments.extend(
             [

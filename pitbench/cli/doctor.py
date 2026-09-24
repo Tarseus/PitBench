@@ -568,7 +568,8 @@ def _judge_environment_check(
     client: object,
 ) -> DoctorCheck:
     plugin = RepositoryPluginRegistry.load(context.task.task.repository.plugin)
-    if plugin.name != "choco":
+    requirements = plugin.judge_environment_requirements
+    if not requirements:
         return _check(
             CheckStatus.PASS,
             "judge environment",
@@ -581,21 +582,26 @@ def _judge_environment_check(
         return _check(
             CheckStatus.FAIL,
             "judge environment",
-            f"could not inspect Choco judge environment: {error}",
-            "Use a local Choco judge image with its runtime environment available.",
+            f"could not inspect {plugin.name} judge environment: {error}",
+            "Use a local judge image with its required runtime environment available.",
         )
-    if not any(item == "MAVEN_CONFIG=/tmp/choco-maven" for item in environment):
+    missing = [
+        f"{name}={value}"
+        for name, value in requirements.items()
+        if f"{name}={value}" not in environment
+    ]
+    if missing:
         return _check(
             CheckStatus.FAIL,
             "judge environment",
-            "Choco judge image does not set MAVEN_CONFIG=/tmp/choco-maven",
-            "Use the corrected Choco judge image so Maven can run with a read-only "
-            "container root.",
+            f"{plugin.name} judge image does not set {', '.join(missing)}",
+            "Use the corrected judge image with the required environment contract.",
         )
     return _check(
         CheckStatus.PASS,
         "judge environment",
-        "Choco Maven cache uses writable /tmp/choco-maven",
+        f"{plugin.name} judge environment satisfies "
+        + ", ".join(f"{name}={value}" for name, value in requirements.items()),
     )
 
 

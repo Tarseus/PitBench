@@ -12,6 +12,7 @@ from pitbench.evaluator.configuration import (
     ConfigurationRunner,
     SearchSpaceExhausted,
     SmacSearch,
+    _docker_collector_command,
     materialize_fidelity_stages,
     prepare,
     run_search,
@@ -35,6 +36,18 @@ def record(instance="a", seed=1, objective=100, **fields):
         "verification": {"feasible": True, "objective": objective},
         **fields,
     }
+
+
+def test_docker_collector_command_uses_declared_repository_environment() -> None:
+    command = _docker_collector_command(
+        "pitbench-collector:test",
+        ["probe"],
+        environment={"PITBENCH_VROOM_SOLVER": "/workspace/repo/bin/vroom"},
+    )
+
+    assert "PITBENCH_VROOM_SOLVER=/workspace/repo/bin/vroom" in command
+    assert command.count("--env") == 2
+    assert "PYTHONPATH" in command[command.index("--env") + 1]
 
 
 def test_pairing_uses_keys_and_retains_negative_reference_gaps():
