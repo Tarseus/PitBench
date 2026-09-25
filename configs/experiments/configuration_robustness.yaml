@@ -51,7 +51,7 @@ panels:
     seed_max: 2147483647
     fixed_options:
       parallel: "off"
-      mip_feasibility_tolerance: 0.0001
+      mip_feasibility_tolerance: 0.00009999
       mip_rel_gap: 0.0001
       mip_abs_gap: 0.000001
     parameters:
