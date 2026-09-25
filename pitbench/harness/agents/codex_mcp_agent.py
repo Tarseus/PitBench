@@ -90,7 +90,7 @@ Task:
         proxy_url: str | None = None,
         reasoning_effort: str | None = None,
         relay_max_requests: int = 256,
-        relay_max_total_tokens: int = 10_000_000,
+        relay_max_total_tokens: int | None = None,
         relay_max_concurrent_requests: int = 1,
         relay_max_duration_sec: float | None = None,
         **kwargs,
@@ -140,7 +140,11 @@ Task:
             "relay_max_concurrent_requests": self._relay_max_concurrent_requests,
             "relay_max_duration_sec": self._relay_max_duration_sec,
         }
-        invalid = [name for name, value in budgets.items() if value <= 0]
+        invalid = [
+            name
+            for name, value in budgets.items()
+            if value is not None and value <= 0
+        ]
         if invalid:
             raise ValueError(f"relay budgets must be positive: {', '.join(invalid)}")
 

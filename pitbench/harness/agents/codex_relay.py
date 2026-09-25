@@ -33,7 +33,7 @@ class CodexRelayError(RuntimeError):
 @dataclass
 class _RelayBudget:
     max_requests: int
-    max_total_tokens: int
+    max_total_tokens: int | None
     max_concurrent_requests: int
     max_duration_sec: float
     started_at: float = field(default_factory=time.monotonic)
@@ -48,7 +48,10 @@ class _RelayBudget:
                 return "relay duration budget exhausted"
             if self.requests >= self.max_requests:
                 return "relay request budget exhausted"
-            if self.total_tokens >= self.max_total_tokens:
+            if (
+                self.max_total_tokens is not None
+                and self.total_tokens >= self.max_total_tokens
+            ):
                 return "relay token budget exhausted"
             if self.active_requests >= self.max_concurrent_requests:
                 return "relay concurrency budget exhausted"
@@ -543,7 +546,7 @@ class CodexModelRelay(AbstractContextManager["CodexModelRelay"]):
         upstream_url: str = "https://chatgpt.com/backend-api/codex",
         proxy_url: str | None = None,
         max_requests: int = 256,
-        max_total_tokens: int = 10_000_000,
+        max_total_tokens: int | None = None,
         max_concurrent_requests: int = 1,
         max_duration_sec: float = 3720.0,
         trace: AgentTrace | None = None,
@@ -574,7 +577,11 @@ class CodexModelRelay(AbstractContextManager["CodexModelRelay"]):
             "max_concurrent_requests": max_concurrent_requests,
             "max_duration_sec": max_duration_sec,
         }
-        invalid = [name for name, value in positive.items() if value <= 0]
+        invalid = [
+            name
+            for name, value in positive.items()
+            if value is not None and value <= 0
+        ]
         if invalid:
             raise ValueError(f"relay budgets must be positive: {', '.join(invalid)}")
 
@@ -848,7 +855,11 @@ def main() -> None:
     serve.add_argument("--bind", default="0.0.0.0")
     serve.add_argument("--port", type=int, required=True)
     serve.add_argument("--max-requests", type=int, required=True)
-    serve.add_argument("--max-total-tokens", type=int, required=True)
+    serve.add_argument(
+        "--max-total-tokens",
+        type=int,
+        help="Optional hard cap on relay token usage",
+    )
     serve.add_argument("--max-concurrent-requests", type=int, required=True)
     serve.add_argument("--max-duration-sec", type=float, required=True)
     bridge = subparsers.add_parser("bridge")

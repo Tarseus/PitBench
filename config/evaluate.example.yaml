@@ -45,7 +45,9 @@ agents:
     profile_path: null
     proxy_url: null
     relay_max_requests: 256
-    relay_max_total_tokens: 10000000
+    # No token cap by default. Set a positive value only for an intentional
+    # hard per-trial relay budget.
+    relay_max_total_tokens: null
     relay_max_concurrent_requests: 1
     relay_max_duration_sec: null
   antigravity:

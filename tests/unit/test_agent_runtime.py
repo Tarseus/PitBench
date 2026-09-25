@@ -27,7 +27,7 @@ from pitbench.cli.main import app
 from pitbench.harness.agents.agent_factory import AgentFactory
 from pitbench.harness.agents.base_agent import AgentResult, BaseAgent
 from pitbench.harness.agents.codex_mcp_agent import CodexMCPAgent
-from pitbench.harness.agents.codex_relay import _RelayHandler
+from pitbench.harness.agents.codex_relay import _RelayBudget, _RelayHandler
 from pitbench.harness.agents.codex_workspace import CodexWorkspaceRuntime
 from pitbench.harness.agents.containers import CodexContainerRunner
 from pitbench.harness.agents.host_mcp import LoopbackMCPServer, TaskTerminal
@@ -635,6 +635,19 @@ def test_relay_records_raw_and_delivered_stream_without_auth_headers(tmp_path):
         if row["event"] == "model.delivered_chunk"
     )
     assert delivered == payload
+
+
+def test_relay_without_token_cap_does_not_exhaust_token_budget():
+    budget = _RelayBudget(
+        max_requests=2,
+        max_total_tokens=None,
+        max_concurrent_requests=1,
+        max_duration_sec=60,
+    )
+
+    assert budget.reserve() is None
+    budget.finish(10_000_001)
+    assert budget.reserve() is None
 
 
 # Tests consolidated from tests/unit/utils/test_recording.py
