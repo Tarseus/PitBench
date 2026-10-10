@@ -42,24 +42,26 @@ def _docker_collector_command(
     *,
     cpu: int | None = None,
     environment: dict[str, str] | None = None,
+    pull_policy: str = "missing",
+    repository_root: Path = ROOT,
 ) -> list[str]:
     """Run one collector action inside its pinned solver image."""
     result = [
         "docker",
         "run",
         "--rm",
-        "--pull=missing",
+        f"--pull={pull_policy}",
         "--network",
         "none",
         "--read-only",
         "--tmpfs",
         "/tmp:rw,nosuid,nodev,size=1g,mode=1777",
         "--env",
-        f"PYTHONPATH={ROOT}:/workspace/repo",
+        f"PYTHONPATH={repository_root}:/workspace/repo",
         "--volume",
-        f"{ROOT}:{ROOT}:rw",
+        f"{repository_root}:{repository_root}:rw",
         "--volume",
-        f"{ROOT / 'adapters/jvm'}:/opt/pitbench-jvm:ro",
+        f"{repository_root / 'adapters/jvm'}:/opt/pitbench-jvm:ro",
         "--workdir",
         "/workspace/repo",
     ]
@@ -70,6 +72,56 @@ def _docker_collector_command(
     result.extend([image, "python3", "-m", "scripts.collect_configuration_results"])
     result.extend(command)
     return result
+
+
+def probe_collector(
+    repository_plugin: str,
+    collector_image: str | None,
+    solver_python: str,
+    *,
+    environment: dict[str, str],
+    repository_root: Path = ROOT,
+    pull_policy: str = "missing",
+) -> dict:
+    """Read the identity of the configured collector without solving an instance."""
+    probe = ["probe", "--repository-plugin", repository_plugin]
+    command = (
+        _docker_collector_command(
+            collector_image,
+            probe,
+            environment=environment,
+            pull_policy=pull_policy,
+            repository_root=repository_root,
+        )
+        if collector_image
+        else [
+            solver_python,
+            "-m",
+            "scripts.collect_configuration_results",
+            *probe,
+        ]
+    )
+    completed = subprocess.run(
+        command,
+        cwd=repository_root,
+        env={**os.environ, **environment},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if completed.returncode:
+        raise RuntimeError(
+            completed.stderr.strip()[-500:]
+            or f"collector probe exited {completed.returncode}"
+        )
+    lines = completed.stdout.strip().splitlines()
+    if not lines:
+        raise ValueError("collector probe returned no identity")
+    identity = json.loads(lines[-1])
+    if not isinstance(identity, dict) or not isinstance(identity.get("version"), str):
+        raise ValueError("collector probe returned invalid identity")
+    return identity
 
 
 def _collector_environment(search: dict) -> dict[str, str]:
@@ -242,6 +294,7 @@ def prepare(
     cpus: list[int],
     search_seed: int,
     instances_per_panel: int | None = None,
+    seeds_per_panel: int | None = None,
 ) -> dict:
     from pitbench.repositories.base import RepositoryPluginRegistry
     from pitbench.schema.task import PitBenchTask
@@ -259,6 +312,8 @@ def prepare(
         raise ValueError("max_configurations must be positive")
     if instances_per_panel is not None and instances_per_panel < 1:
         raise ValueError("instances_per_panel must be positive")
+    if seeds_per_panel is not None and seeds_per_panel < 1:
+        raise ValueError("seeds_per_panel must be positive")
     output.mkdir(parents=True, exist_ok=True)
     searches = []
     for panel in config["panels"]:
@@ -269,30 +324,12 @@ def prepare(
         repository = RepositoryPluginRegistry.load(repository_plugin)
         collector_image = config.get("collector_images", {}).get(panel["collector"])
         python = solver_pythons.get(panel["collector"], sys.executable)
-        probe_command = [
-            "probe",
-            "--repository-plugin",
+        identity = probe_collector(
             repository_plugin,
-        ]
-        probe = subprocess.run(
-            _docker_collector_command(
-                collector_image,
-                probe_command,
-                environment=repository.collector_environment,
-            )
-            if collector_image
-            else [
-                python,
-                "-m",
-                "scripts.collect_configuration_results",
-                *probe_command,
-            ],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
+            collector_image,
+            python,
+            environment=repository.collector_environment,
         )
-        identity = json.loads(probe.stdout.strip().splitlines()[-1])
         if identity["version"] != task["release"]["version"]:
             raise ValueError("installed solver version differs from task release")
         if identity.get("binding_git_hash") and not task["release"][
@@ -308,6 +345,8 @@ def prepare(
         upper = panel["seed_max"]
         if any(type(seed) is not int or not 0 <= seed <= upper for seed in seeds):
             raise ValueError("solver seed outside declared domain")
+        if seeds_per_panel is not None:
+            seeds = seeds[:seeds_per_panel]
         if repository.deterministic:
             retest_seeds = list(seeds)
         else:
@@ -370,6 +409,7 @@ def prepare(
         "searches": searches,
         "cpus": cpus,
         "instances_per_panel": instances_per_panel,
+        "seeds_per_panel": seeds_per_panel,
         "created_unix": time.time(),
         "environment": {"python": sys.version, "platform": platform.platform()},
     }
@@ -1025,6 +1065,7 @@ def main(argv: list[str] | None = None) -> None:
     preparation.add_argument("--cpus", type=int, nargs="+", required=True)
     preparation.add_argument("--search-seed", type=int, required=True)
     preparation.add_argument("--instances-per-panel", type=int)
+    preparation.add_argument("--seeds-per-panel", type=int)
     run = commands.add_parser("run")
     run.add_argument("--output", type=Path, required=True)
     run.add_argument(
@@ -1058,6 +1099,7 @@ def main(argv: list[str] | None = None) -> None:
             cpus=args.cpus,
             search_seed=args.search_seed,
             instances_per_panel=args.instances_per_panel,
+            seeds_per_panel=args.seeds_per_panel,
         )
         print(
             f"Prepared {len(manifest['searches'])} searches; no solver runs executed."

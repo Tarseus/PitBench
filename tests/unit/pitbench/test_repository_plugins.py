@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from adapters.jvm.runner import _adapter_source_sha256, _verify_compiled_adapter
 from pitbench.repositories.base import (
     BuildKind,
     CommandSpec,
@@ -116,6 +117,31 @@ def test_collection_backends_share_validated_interface():
 
     with pytest.raises(TypeError, match="is not a CollectionBackend"):
         InvalidRepository().load_collection_backend()
+
+
+@pytest.mark.parametrize(
+    ("solver", "output", "class_name"),
+    [
+        ("choco", "solver/target/pitbench-adapter", "ExactSolverRunner"),
+        ("ortools_cp_sat", "build/pitbench-adapter", "OrToolsCpSatRunner"),
+    ],
+)
+def test_jvm_probe_rejects_missing_or_stale_compiled_adapter(
+    tmp_path, solver, output, class_name
+):
+    compiled = tmp_path / output / "org/pitbench/adapters" / f"{class_name}.class"
+    compiled.parent.mkdir(parents=True)
+    with pytest.raises(RuntimeError, match="adapter is unavailable"):
+        _verify_compiled_adapter(tmp_path, solver)
+
+    compiled.write_bytes(b"compiled bytecode")
+    fingerprint = tmp_path / output / "adapter-source.sha256"
+    fingerprint.write_text("stale\n")
+    with pytest.raises(RuntimeError, match="differs from source"):
+        _verify_compiled_adapter(tmp_path, solver)
+
+    fingerprint.write_text(_adapter_source_sha256(solver) + "\n")
+    _verify_compiled_adapter(tmp_path, solver)
 
 
 def test_choco_builds_official_source_and_generic_jvm_adapter() -> None:

@@ -8,6 +8,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from enum import Enum
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 import docker.errors
+import yaml
 
 import docker
 from pitbench.cli.evaluate_config import (
@@ -34,6 +36,7 @@ from pitbench.harness.agents.containers import (
 )
 from pitbench.harness.agents.profiles import CodexProfile
 from pitbench.repositories.base import RepositoryPluginRegistry
+from pitbench.schema.task import PitBenchTask
 from pitbench.tasks import TaskCatalog, TaskRecord
 
 _GIB = 1024**3
@@ -104,7 +107,7 @@ def _platform_check() -> DoctorCheck:
     return _check(
         CheckStatus.FAIL,
         "platform",
-        f"published PyVRP images require Linux x86_64; found {system} {machine}",
+        f"published solver images require Linux x86_64; found {system} {machine}",
         "Run PitBench on a Linux x86_64 host.",
     )
 
@@ -452,6 +455,82 @@ def _configuration_robustness_check(
         "Configuration Robustness",
         "enabled; release-only collector scheduled after candidate evaluation",
     )
+
+
+def _configuration_collector_checks(
+    repository_root: Path, config: EvaluationConfig
+) -> list[DoctorCheck]:
+    if not config.configuration_robustness.enabled:
+        return []
+    experiment_path = resolve_repository_path(
+        repository_root, config.configuration_robustness.experiment_config
+    )
+    if not experiment_path.is_file():
+        return []
+    from pitbench.evaluator.configuration import probe_collector, read_data
+
+    try:
+        experiment = read_data(experiment_path)
+        panels = experiment["panels"]
+        if not isinstance(panels, list):
+            raise ValueError("panels must be a list")
+        collector_images = experiment.get("collector_images") or {}
+        if not isinstance(collector_images, dict):
+            raise ValueError("collector_images must be a mapping")
+    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as error:
+        return [
+            _check(
+                CheckStatus.FAIL,
+                "Configuration Robustness collectors",
+                f"invalid experiment config: {error}",
+            )
+        ]
+
+    checks = []
+    for panel in panels:
+        panel_name = panel.get("collector", "unknown") if isinstance(panel, dict) else "unknown"
+        try:
+            task = PitBenchTask.from_yaml(
+                resolve_repository_path(repository_root, Path(panel["task_config"]))
+            )
+            repository = RepositoryPluginRegistry.load(task.repository.plugin)
+            image = collector_images.get(panel["collector"])
+            identity = probe_collector(
+                task.repository.plugin,
+                image,
+                sys.executable,
+                environment=repository.collector_environment,
+                repository_root=repository_root,
+                pull_policy="never",
+            )
+            if identity.get("version") != task.release.version:
+                raise ValueError("collector solver version differs from task release")
+            source_commit = identity.get("source_commit")
+            if source_commit is not None and source_commit != task.release.base_commit:
+                raise ValueError("collector source commit differs from task release")
+            binding_git_hash = identity.get("binding_git_hash")
+            if binding_git_hash and not task.release.base_commit.startswith(
+                binding_git_hash
+            ):
+                raise ValueError("collector binding revision differs from task release")
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.TimeoutExpired) as error:
+            checks.append(
+                _check(
+                    CheckStatus.FAIL,
+                    f"Configuration collector {panel_name}",
+                    f"{type(error).__name__}: {error}",
+                    "Repair or rebuild the collector image before starting agents.",
+                )
+            )
+        else:
+            checks.append(
+                _check(
+                    CheckStatus.PASS,
+                    f"Configuration collector {panel_name}",
+                    f"{task.task_id} {identity['version']} adapter probe passed",
+                )
+            )
+    return checks
 
 
 def _agent_runtime_check(reference: str, client: object) -> DoctorCheck:
@@ -1226,6 +1305,7 @@ def run_doctor(
     checks.append(_reliability_plan_check(context))
     checks.append(_repository_source_check(context, {}))
     checks.append(_configuration_robustness_check(root, context.config))
+    checks.extend(_configuration_collector_checks(root, context.config))
     client, docker_info, docker_result = _docker_check(client_factory)
     checks.append(docker_result)
     image_checks, ghcr_references, _ = _image_checks(context, client)
@@ -1248,7 +1328,10 @@ def evaluation_checks(
     client_factory: Callable[[], docker.DockerClient] = docker.from_env,
 ) -> list[DoctorCheck]:
     """Check every task before spending agent time; reuse the doctor's checks."""
-    checks: list[DoctorCheck] = []
+    checks: list[DoctorCheck] = [
+        _platform_check(),
+        *_resource_checks(repository_root),
+    ]
     catalog = TaskCatalog(repository_root)
     source_cache: dict[str, DoctorCheck] = {}
     runtime_cache: dict[str, DoctorCheck] = {}
@@ -1287,6 +1370,7 @@ def evaluation_checks(
                 )
                 for item in task_checks
             )
+        checks.extend(_configuration_collector_checks(repository_root, config))
         if agent in {"codex", "antigravity"}:
             if not agent_kwargs.get("model_name"):
                 checks.append(

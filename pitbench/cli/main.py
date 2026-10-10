@@ -110,6 +110,7 @@ def _run_configuration_robustness(
     run_id: str,
     *,
     instances_per_panel: int | None = None,
+    seeds_per_panel: int | None = None,
 ) -> Path | None:
     configuration = evaluation_config.configuration_robustness
     if not configuration.enabled:
@@ -148,6 +149,8 @@ def _run_configuration_robustness(
     ]
     if instances_per_panel is not None:
         prepare.extend(["--instances-per-panel", str(instances_per_panel)])
+    if seeds_per_panel is not None:
+        prepare.extend(["--seeds-per-panel", str(seeds_per_panel)])
     subprocess.run(prepare, cwd=repository_root, check=True)
     run = [
         uv,
@@ -283,10 +286,34 @@ def _configuration_dry_run_failures(output_dir: Path) -> list[str]:
     return failures
 
 
+def _configuration_smoke_failures(output_dir: Path) -> list[str]:
+    """Check that every small search reached a terminal state."""
+    manifest_path = output_dir / "experiment.json"
+    report_path = output_dir / "configuration_report.json"
+    if not manifest_path.is_file() or not report_path.is_file():
+        return ["configuration smoke artifacts are missing"]
+    manifest = json.loads(manifest_path.read_text())
+    report = json.loads(report_path.read_text())
+    statuses = {item["id"]: item.get("status") for item in report.get("searches", [])}
+    terminal = {
+        "completed",
+        "baseline_unavailable",
+        "stopped_after_unavailable_feedback",
+        "no_candidate",
+    }
+    return [
+        f"configuration search {item['id']} is {statuses.get(item['id']) or 'missing'}"
+        for item in manifest.get("searches", [])
+        if statuses.get(item["id"]) not in terminal
+    ]
+
+
 def _evaluation_metric_failures(
     task: PitBenchTask,
     output_dir: Path,
     payload: dict[str, Any],
+    *,
+    smoke_test: bool = False,
 ) -> list[str]:
     """Validate normal-evaluation metric coverage from final stored observations."""
     artifacts = payload.get("artifacts", {})
@@ -314,6 +341,18 @@ def _evaluation_metric_failures(
         failures.append(f"{len(unexpected_runs)} unexpected solver runs were recorded")
     if len(observed_runs) != len(observations):
         failures.append("duplicate solver runs were recorded")
+
+    if smoke_test:
+        infrastructure_errors = sum(
+            item.status is RunStatus.INFRASTRUCTURE_ERROR for item in observations
+        )
+        if infrastructure_errors:
+            failures.append(
+                f"{infrastructure_errors} infrastructure-error observations"
+            )
+        if payload.get("summary", {}).get("observation_count") != len(observations):
+            failures.append("observation summary count differs from stored results")
+        return failures
 
     summary = payload.get("summary", {})
     performance = summary.get("performance")
@@ -356,6 +395,9 @@ def _normal_metric_coverage(
     run_id: str,
     task_ids: list[str],
     configuration_output: Path | None,
+    configuration_error: str | None = None,
+    *,
+    smoke_test: bool = False,
 ) -> dict[str, Any]:
     """Return one auditable metric coverage record for a normal evaluate run."""
     run_output = output_root / run_id
@@ -365,6 +407,7 @@ def _normal_metric_coverage(
         "tasks": [],
         "configuration_robustness": None,
         "complete": False,
+        "smoke_test": smoke_test,
     }
     all_failures: list[str] = []
     if not results_path.is_file():
@@ -392,7 +435,10 @@ def _normal_metric_coverage(
                     trial_output = run_output / task_id / trial["trial_name"] / "evaluation"
                     failures.extend(
                         _evaluation_metric_failures(
-                            task, trial_output, evaluation.get("payload", {})
+                            task,
+                            trial_output,
+                            evaluation.get("payload", {}),
+                            smoke_test=smoke_test,
                         )
                     )
                 coverage["tasks"].append(
@@ -403,10 +449,23 @@ def _normal_metric_coverage(
                     }
                 )
                 all_failures.extend(f"{task_id}: {failure}" for failure in failures)
-    if configuration_output is not None:
-        configuration_failures = _configuration_dry_run_failures(configuration_output)
+    if configuration_output is not None or configuration_error is not None:
+        configuration_failures = []
+        if configuration_output is not None:
+            try:
+                configuration_failures = (
+                    _configuration_smoke_failures(configuration_output)
+                    if smoke_test
+                    else _configuration_dry_run_failures(configuration_output)
+                )
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                configuration_failures = [
+                    f"configuration artifacts could not be read: {type(error).__name__}: {error}"
+                ]
+        if configuration_error is not None:
+            configuration_failures.append(configuration_error)
         coverage["configuration_robustness"] = {
-            "output": str(configuration_output),
+            "output": str(configuration_output) if configuration_output else None,
             "failures": configuration_failures,
         }
         all_failures.extend(
@@ -615,6 +674,16 @@ def evaluate_task(
             help="Run the default release-only configuration search",
         ),
     ] = True,
+    smoke_test: Annotated[
+        bool,
+        typer.Option(
+            "--smoke-test",
+            help=(
+                "Run one instance per set and at most two seeds per case, with a "
+                "five-minute Agent limit; results are not formal metric evidence"
+            ),
+        ),
+    ] = False,
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
 ) -> None:
     """Check, materialize, and evaluate tasks together in one harness run."""
@@ -698,6 +767,8 @@ def evaluate_task(
 
     effective_config = evaluation_config.model_copy(deep=True)
     effective_config.paths.private_root = resolved_private_root
+    if not configuration_robustness:
+        effective_config.configuration_robustness.enabled = False
     for task_id in task_ids:
         resources = effective_config.resources_for(task_id).model_copy()
         for key, override in (
@@ -771,8 +842,10 @@ def evaluate_task(
         active_base_cache = (
             base_cache if base_cache is not None else effective_config.base_cache
         )
-        if not active_base_cache:
+        if not active_base_cache or smoke_test:
             materialize_kwargs["use_base_cache"] = False
+        if smoke_test:
+            materialize_kwargs["smoke_test"] = True
 
         adapter.materialize(
             task_id,
@@ -809,19 +882,35 @@ def evaluate_task(
         history_limit=None,
     )
     configuration_output = None
-    if configuration_robustness:
-        configuration_output = _run_configuration_robustness(
+    configuration_error = None
+    if configuration_robustness and effective_config.configuration_robustness.enabled:
+        configuration_output = resolve_repository_path(
             repository_root,
-            effective_config,
-            resolved_output_path,
-            resolved_run_id,
+            resolved_output_path
+            / resolved_run_id
+            / effective_config.configuration_robustness.output_path,
         )
+        try:
+            _run_configuration_robustness(
+                repository_root,
+                effective_config,
+                resolved_output_path,
+                resolved_run_id,
+                instances_per_panel=1 if smoke_test else None,
+                seeds_per_panel=2 if smoke_test else None,
+            )
+        except Exception as error:
+            configuration_error = (
+                f"configuration collection failed: {type(error).__name__}: {error}"
+            )
     coverage = _normal_metric_coverage(
         repository_root,
         resolved_output_path,
         resolved_run_id,
         task_ids,
         configuration_output,
+        configuration_error,
+        smoke_test=smoke_test,
     )
     coverage_path = resolved_output_path / resolved_run_id / "metric-coverage.json"
     coverage_path.write_text(json.dumps(coverage, indent=2) + "\n")

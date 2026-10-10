@@ -21,6 +21,8 @@ def prepare_boundary_cases(
     *,
     private_root: Path | None = None,
     public_root: Path | None = None,
+    instances_per_instance_set: int | None = None,
+    solver_seed_limit: int | None = None,
 ) -> list[InstanceCase]:
     family = ProblemFamilyRegistry.load(task.problem_family)
     if family.reliability_uses_task_development_instances:
@@ -31,6 +33,7 @@ def prepare_boundary_cases(
             resolver,
             public_root=public_root or repository_root,
             generated_root=output_dir.resolve() / "generated-instance-sets",
+            instances_per_instance_set=instances_per_instance_set,
         )
         source_cases = [
             case
@@ -39,7 +42,7 @@ def prepare_boundary_cases(
         ]
         if not source_cases:
             raise ValueError("CP reliability requires visible agent_dev instances")
-        seeds = _development_seeds(task)
+        seeds = _development_seeds(task)[:solver_seed_limit]
         instance_set = InstanceSetSpec(
             name="boundary_cases",
             kind=InstanceSetKind.AGENT_DEV,
@@ -82,10 +85,10 @@ def prepare_boundary_cases(
         ]
 
     suite = boundary_suite(task.problem_family)
-    examples = suite.cases()
+    examples = suite.cases()[:instances_per_instance_set]
     directory = output_dir.resolve() / "reliability" / "inputs"
     directory.mkdir(parents=True, exist_ok=True)
-    seeds = _development_seeds(task)
+    seeds = _development_seeds(task)[:solver_seed_limit]
     instance_set = InstanceSetSpec(
         name="boundary_cases",
         kind=InstanceSetKind.AGENT_DEV,

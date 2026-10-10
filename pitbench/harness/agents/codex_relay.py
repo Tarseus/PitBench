@@ -103,7 +103,7 @@ class _RelayServer(ThreadingHTTPServer):
 
     def record(self, payload: dict[str, object]) -> None:
         if self.trace is not None:
-            self.trace.record("relay.status", **payload)
+            self.trace.record_if_open("relay.status", **payload)
             return
         if self.log_path is None:
             return
@@ -137,18 +137,21 @@ class _RelayHandler(BaseHTTPRequestHandler):
     def _error(self, status: int, message: str) -> None:
         body = json.dumps({"error": {"message": message}}).encode()
         if self.server.trace is not None:
-            self.server.trace.record(
+            self.server.trace.record_if_open(
                 "model.rejected",
                 call_id=getattr(self, "_trace_request_id", None),
                 status=status,
                 message=message,
             )
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self.close_connection = True
 
     def _authorized(self) -> bool:
         if (
@@ -307,7 +310,7 @@ class _RelayHandler(BaseHTTPRequestHandler):
         trace = self.server.trace
         call_id = getattr(self, "_trace_request_id", None)
         if trace is not None:
-            trace.record(
+            trace.record_if_open(
                 "model.response_started",
                 call_id=call_id,
                 status=status,
@@ -319,10 +322,10 @@ class _RelayHandler(BaseHTTPRequestHandler):
         total_tokens = 0
         while chunk := source.read(64 * 1024):
             if trace is not None:
-                trace.record(
+                trace.record_if_open(
                     "model.response_chunk",
                     call_id=call_id,
-                    content=trace.content(chunk),
+                    raw_content=chunk,
                     visibility="received_by_relay",
                 )
             pending += chunk
@@ -335,10 +338,10 @@ class _RelayHandler(BaseHTTPRequestHandler):
                 self.wfile.write(line + b"\n")
                 self.wfile.flush()
                 if trace is not None:
-                    trace.record(
+                    trace.record_if_open(
                         "model.delivered_chunk",
                         call_id=call_id,
-                        content=trace.content(line + b"\n"),
+                        raw_content=line + b"\n",
                         visibility="written_to_agent_connection",
                     )
         if pending:
@@ -349,10 +352,10 @@ class _RelayHandler(BaseHTTPRequestHandler):
             self.wfile.write(pending)
             self.wfile.flush()
             if trace is not None:
-                trace.record(
+                trace.record_if_open(
                     "model.delivered_chunk",
                     call_id=call_id,
-                    content=trace.content(pending),
+                    raw_content=pending,
                     visibility="written_to_agent_connection",
                 )
         self.close_connection = True
@@ -391,10 +394,10 @@ class _RelayHandler(BaseHTTPRequestHandler):
             return
         body = self.rfile.read(length)
         if self.server.trace is not None:
-            self.server.trace.record(
+            self.server.trace.record_if_open(
                 "model.request",
                 call_id=self._trace_request_id,
-                content=self.server.trace.content(body),
+                raw_content=body,
                 visibility="received_by_relay",
             )
         try:
@@ -424,10 +427,10 @@ class _RelayHandler(BaseHTTPRequestHandler):
             body = json.dumps(payload, separators=(",", ":")).encode()
         forwarded_length = len(body)
         if self.server.trace is not None:
-            self.server.trace.record(
+            self.server.trace.record_if_open(
                 "model.forwarded_request",
                 call_id=self._trace_request_id,
-                content=self.server.trace.content(body),
+                raw_content=body,
                 shell_permission_fields_restricted=restricted_shell_fields,
             )
 
@@ -494,6 +497,15 @@ class _RelayHandler(BaseHTTPRequestHandler):
                 }
             )
             _, response_tokens = self._copy_response(error, error.headers, error.code)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self.server.record(
+                {
+                    "client_ip": self._client_id(),
+                    "model": payload.get("model"),
+                    "path": self.path,
+                    "status": "client_disconnected",
+                }
+            )
         except (CodexRelayError, OSError) as error:
             self.server.record(
                 {
@@ -510,7 +522,7 @@ class _RelayHandler(BaseHTTPRequestHandler):
         finally:
             self.server.budget.finish(response_tokens)
             if self.server.trace is not None:
-                self.server.trace.record(
+                self.server.trace.record_if_open(
                     "model.finished",
                     call_id=self._trace_request_id,
                     response_tokens=response_tokens,

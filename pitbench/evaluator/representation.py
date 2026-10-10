@@ -283,6 +283,17 @@ def run_with_representation(
 
             observations = judge.run([*plan.cases, *cases], save_observation=save)
     write_json(output_dir / "details.json", details)
+    declared_instance_count = next(
+        instance_set.size
+        for instance_set in task.instance_sets
+        if instance_set.name == config.instance_set
+        and instance_set.kind == InstanceSetKind.AGENT_DEV
+    )
+    if (
+        judge.instances_per_instance_set is not None
+        and judge.instances_per_instance_set < declared_instance_count
+    ):
+        return observations
     from pitbench.metrics.nuisance_report import report_nuisance_results
 
     representation_summary = report_nuisance_results(

@@ -23,8 +23,8 @@ solver_seed_count: 30
 watchdog_grace_sec: 60
 collector_images:
   pyvrp: ghcr.io/tarseus/pitbench-pyvrp:0.14.0
-  choco: pitbench-choco:final
-  ortools_cp_sat: pitbench-ortools:cp-sat-task-v4
+  choco: pitbench-choco:adapter-20261009
+  ortools_cp_sat: pitbench-ortools:cp-sat-task-v5
   vroom: pitbench-vroom:final
 panels:
   - task_config: configs/tasks/pyvrp_v0_14_0.yaml

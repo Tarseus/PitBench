@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from collections import Counter
 from pathlib import Path
@@ -37,7 +38,12 @@ from pitbench.schema.evaluation import (
     EvaluationResult,
     EvaluationSummary,
 )
-from pitbench.schema.observation import CodeState, ExpectedRunGrid, RunObservation
+from pitbench.schema.observation import (
+    CodeState,
+    ExpectedRun,
+    ExpectedRunGrid,
+    RunObservation,
+)
 from pitbench.schema.task import (
     ControlledTransferConfig,
     PerformanceProtocol,
@@ -104,9 +110,7 @@ def _base_cache_is_complete(
         ):
             continue
         seeds = (
-            development_seeds
-            if instance_set_kind == "agent_dev"
-            else evaluation_seeds
+            development_seeds if instance_set_kind == "agent_dev" else evaluation_seeds
         )
         expected_count += (
             instance_set.size * len(seeds) * len(task.evaluation.budgets_sec)
@@ -116,6 +120,68 @@ def _base_cache_is_complete(
         for item in observations
     }
     return len(observations) == expected_count == len(keys)
+
+
+def _checkpoint_observations_if_complete(
+    output_dir: Path,
+    task_id: str,
+    identity: dict[str, object],
+) -> list[RunObservation] | None:
+    """Return a completed Judge checkpoint, without accepting partial data.
+
+    The isolated Judge writes observations incrementally so a host-side
+    interruption can leave a useful checkpoint.  A checkpoint is reusable only
+    when its identity set exactly matches the expected run grid; otherwise the
+    caller must start a fresh Judge and let it replace the partial file.
+    """
+    observations_path = output_dir / "judge-observations.jsonl"
+    grid_path = output_dir / "expected-run-grid.json"
+    marker_path = output_dir / "judge-checkpoint.json"
+    if not all(path.is_file() for path in (observations_path, grid_path, marker_path)):
+        return None
+    try:
+        marker = json.loads(marker_path.read_text())
+        if marker.get("identity") != identity:
+            return None
+        if (
+            marker.get("observations_sha256")
+            != hashlib.sha256(observations_path.read_bytes()).hexdigest()
+            or marker.get("expected_grid_sha256")
+            != hashlib.sha256(grid_path.read_bytes()).hexdigest()
+        ):
+            return None
+        observations = ObservationStore.read_jsonl(observations_path)
+        expected = ExpectedRunGrid.model_validate_json(grid_path.read_text())
+    except (OSError, ValueError):
+        return None
+    if expected.task_id != task_id:
+        return None
+
+    def run_identity(item: ExpectedRun | RunObservation) -> tuple[object, ...]:
+        return (
+            item.code_state,
+            item.instance_set,
+            item.instance_set_kind,
+            item.instance_id,
+            item.solver_seed,
+            item.budget_sec,
+            item.condition_id,
+            item.template_id,
+            item.equivalence_parent_id,
+            item.test_suite,
+        )
+
+    expected_keys = {run_identity(item) for item in expected.runs}
+    observed_keys = {run_identity(item) for item in observations}
+    if (
+        marker.get("observation_count") != len(observations)
+        or len(observations) != len(expected.runs)
+        or len(observed_keys) != len(observations)
+        or observed_keys != expected_keys
+        or any(item.task_id != task_id for item in observations)
+    ):
+        return None
+    return observations
 
 
 class PitBenchEvaluator(Evaluator):
@@ -219,7 +285,7 @@ class PitBenchEvaluator(Evaluator):
             cpus = float(
                 config.get("judge_cpus") or _default_judge_cpus(parallel_runs, task)
             )
-            observations = DockerJudge(
+            judge = DockerJudge(
                 image=image,
                 task_config_path=task_config_path,
                 base_repository=Path(config["base_repository"]),
@@ -234,7 +300,22 @@ class PitBenchEvaluator(Evaluator):
                 progress_callback=progress_callback,
                 reliability_only=bool(config.get("reliability_only", False)),
                 instances_per_instance_set=config.get("instances_per_instance_set"),
-            ).run()
+                solver_seed_limit=config.get("solver_seed_limit"),
+            )
+            observations = None
+            if not config.get("reliability_only", False):
+                observations = _checkpoint_observations_if_complete(
+                    request.output_dir,
+                    task.task_id,
+                    judge.checkpoint_identity(),
+                )
+                if observations is not None and progress_callback is not None:
+                    progress_callback(
+                        "Judge checkpoint complete; resuming report aggregation "
+                        f"from {len(observations)} observations"
+                    )
+            if observations is None:
+                observations = judge.run()
 
         if cached_base is not None:
             existing_states = {item.code_state for item in observations}
@@ -286,7 +367,10 @@ class PitBenchEvaluator(Evaluator):
                 "development_seeds": seed_robustness.development_seeds,
                 "evaluation_seeds": private_seed_config.evaluation_seeds,
             }
-            if task.evaluation.performance_protocol is PerformanceProtocol.EXACT_VERIFIED_SOLVE:
+            if (
+                task.evaluation.performance_protocol
+                is PerformanceProtocol.EXACT_VERIFIED_SOLVE
+            ):
                 nuisance_robustness = compute_exact_seed_robustness_report(
                     original_observations,
                     time_basis=task.evaluation.exact_time_basis,

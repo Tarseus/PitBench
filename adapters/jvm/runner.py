@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -68,6 +69,26 @@ def _adapter_output(repository: Path, solver: str) -> Path:
     if solver == "ortools_cp_sat":
         return repository / "build" / "pitbench-adapter"
     return repository / "solver" / "target" / "pitbench-adapter"
+
+
+def _adapter_source_sha256(solver: str) -> str:
+    source = Path(__file__).read_bytes()
+    if solver == "choco":
+        source += Path(__file__).with_name("ExactSolverRunner.java").read_bytes()
+    elif solver != "ortools_cp_sat":
+        raise ValueError(f"unsupported JVM adapter: {solver}")
+    return hashlib.sha256(source).hexdigest()
+
+
+def _verify_compiled_adapter(repository: Path, solver: str) -> None:
+    output = _adapter_output(repository, solver)
+    class_name = "ExactSolverRunner" if solver == "choco" else "OrToolsCpSatRunner"
+    class_file = output / "org" / "pitbench" / "adapters" / f"{class_name}.class"
+    if not class_file.is_file():
+        raise RuntimeError(f"compiled {solver} adapter is unavailable; rebuild the image")
+    fingerprint = output / "adapter-source.sha256"
+    if not fingerprint.is_file() or fingerprint.read_text().strip() != _adapter_source_sha256(solver):
+        raise RuntimeError(f"compiled {solver} adapter differs from source; rebuild the image")
 
 
 def _repository_commit(repository: Path) -> str | None:
@@ -464,6 +485,7 @@ def compile_adapter(repository: Path, solver: str) -> None:
             cwd=repository,
             check=True,
         )
+        (output / "adapter-source.sha256").write_text(_adapter_source_sha256(solver) + "\n")
         return
     subprocess.run(
         [
@@ -477,11 +499,13 @@ def compile_adapter(repository: Path, solver: str) -> None:
         cwd=repository,
         check=True,
     )
+    (output / "adapter-source.sha256").write_text(_adapter_source_sha256(solver) + "\n")
 
 
 def run_choco(repository: Path) -> None:
     request = json.load(sys.stdin)
     if request.get("probe"):
+        _verify_compiled_adapter(repository, "choco")
         print(json.dumps(_solver_identity(repository, "choco")))
         return
     if request.get("threads") != 1:
@@ -527,6 +551,7 @@ def run_choco(repository: Path) -> None:
 def run_ortools_cp_sat(repository: Path) -> None:
     request = json.load(sys.stdin)
     if request.get("probe"):
+        _verify_compiled_adapter(repository, "ortools_cp_sat")
         print(json.dumps(_solver_identity(repository, "ortools_cp_sat")))
         return
     if request.get("threads") != 8:

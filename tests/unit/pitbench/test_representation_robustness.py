@@ -4,6 +4,7 @@ import hashlib
 import json
 import random
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -14,6 +15,7 @@ from pitbench.evaluator.representation import (
     prepare_cases,
     preserve_json,
     result_record,
+    run_with_representation,
     write_json,
 )
 from pitbench.evaluator.representations import (
@@ -298,6 +300,74 @@ def test_representation_preparation_limits_source_instances(tmp_path: Path):
 
     assert len({case.equivalence_parent_id for case in cases}) == 1
     assert len(cases) == len(transformations) == config.relabelings_per_instance
+
+
+def test_limited_representation_run_retains_records_without_formal_report(
+    tmp_path, monkeypatch
+):
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    case = InstanceCase(
+        instance_set=task.instance_sets[0],
+        instance_id="original__customer_relabeling_00",
+        path=tmp_path / "transformed.json",
+        anchor=10,
+        equivalence_parent_id="original",
+        equivalence_transform="customer_relabeling_00",
+    )
+    observation = RunObservation(
+        task_id=task.task_id,
+        code_state=CodeState.BASE,
+        instance_set=case.instance_set.name,
+        instance_id=case.instance_id,
+        solver_seed=0,
+        budget_sec=5,
+        status=RunStatus.CRASHED,
+        valid=False,
+        equivalence_parent_id="original",
+        equivalence_transform="customer_relabeling_00",
+    )
+    observations = [observation, observation.model_copy(update={"budget_sec": 10})]
+    monkeypatch.setattr(
+        "pitbench.evaluator.representation.prepare_cases",
+        lambda *args, **kwargs: (
+            [case],
+            {case.instance_id: {"representation": "customer_relabeling"}},
+        ),
+    )
+    monkeypatch.setattr(
+        JudgePlan,
+        "from_instance_set_configs",
+        classmethod(lambda cls, *args, **kwargs: JudgePlan(task, [])),
+    )
+    monkeypatch.setattr(
+        "pitbench.metrics.nuisance_report.report_nuisance_results",
+        lambda *args: pytest.fail("limited panel must not compute formal report"),
+    )
+
+    def run(cases, *, save_observation):
+        assert cases == [case]
+        for item in observations:
+            save_observation(item)
+        return observations
+
+    judge = SimpleNamespace(
+        task=task,
+        output_dir=tmp_path / "judge",
+        public_root=ROOT,
+        resolver=None,
+        evaluation_seeds=(0,),
+        candidate_patch=None,
+        code_states=(CodeState.BASE,),
+        instances_per_instance_set=1,
+        run=run,
+    )
+
+    assert run_with_representation(judge, tmp_path) == observations
+    details = json.loads(
+        (judge.output_dir / "representation" / "details.json").read_text()
+    )
+    assert details["completed_run_count"] == details["expected_run_count"] == 2
+    assert "representation_robustness" not in details
 
 
 def test_runner_collects_configured_relabelings_and_preserves_failures(

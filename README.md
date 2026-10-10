@@ -200,6 +200,8 @@ command checks every task and the selected agent before starting any agent work.
 Add `--check-only` to inspect prerequisites and collection coverage without
 materializing tasks or running agents. Tasks share one run directory and run
 serially by default; `--n-concurrent` controls trial concurrency.
+When Configuration Robustness is enabled, the check also probes each configured
+collector image and rejects stale compiled JVM adapters before agent work.
 
 The normal candidate judge collects Performance and Resource Efficiency data,
 plus the reliability, seed, and representation runs enabled by each task config.

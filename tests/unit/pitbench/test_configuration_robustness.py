@@ -8,6 +8,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from pitbench.evaluator.collection import (
+    OrToolsCpSatCollectionBackend,
+    _run_external_configuration,
+    _verify_bin_packing_solution,
+)
 from pitbench.evaluator.configuration import (
     ConfigurationRunner,
     SearchSpaceExhausted,
@@ -19,6 +24,7 @@ from pitbench.evaluator.configuration import (
     validate_search,
 )
 from pitbench.metrics.configuration_report import paired_panel, run_feedback
+from pitbench.problem_families.base import VerificationResult
 
 # Tests consolidated from tests/unit/pitbench/test_configuration.py
 
@@ -48,6 +54,113 @@ def test_docker_collector_command_uses_declared_repository_environment() -> None
     assert "PITBENCH_VROOM_SOLVER=/workspace/repo/bin/vroom" in command
     assert command.count("--env") == 2
     assert "PYTHONPATH" in command[command.index("--env") + 1]
+
+
+def test_cp_sat_collector_uses_independent_assignment_verifier(
+    tmp_path, monkeypatch
+) -> None:
+    class IndependentVerifier:
+        def verify(self, instance_path, solution_path):
+            assert instance_path == tmp_path / "instance.pb"
+            assert solution_path == tmp_path / "solution.json"
+            return VerificationResult(
+                feasible=False, detail="assignment violates the fixed model"
+            )
+
+    class Repository:
+        def prepare_independent_verifier(self, output_dir):
+            assert output_dir.name.startswith("pitbench-cp-sat-verifier-")
+            return IndependentVerifier()
+
+    monkeypatch.setattr(
+        "pitbench.repositories.base.RepositoryPluginRegistry.load",
+        lambda path: Repository(),
+    )
+
+    def run_external(driver, job, directory, result, parameters, verifier):
+        del driver, job, directory, parameters
+        solution_path = tmp_path / "solution.json"
+        solution_path.write_text('{"values":[1,2]}')
+        result["verification"] = verifier(tmp_path / "instance.pb", solution_path)
+
+    monkeypatch.setattr(
+        "pitbench.evaluator.collection._run_external_configuration", run_external
+    )
+    job = {
+        "repository_plugin": "pitbench.repositories.plugins:OrToolsCpSatExactRepositoryPlugin",
+        "parameters": {
+            "cp_model_presolve": True,
+            "cp_model_probing_level": 2,
+            "linearization_level": 1,
+            "symmetry_level": 2,
+            "search_branching": "automatic_search",
+        },
+    }
+    result = {}
+
+    OrToolsCpSatCollectionBackend.run(job, tmp_path, result)
+
+    assert result["verification"]["feasible"] is False
+    assert result["verification"]["detail"] == "assignment violates the fixed model"
+
+
+def test_configuration_bin_packing_uses_shared_independent_verifier(
+    tmp_path: Path,
+) -> None:
+    instance = tmp_path / "instance.json"
+    solution = tmp_path / "solution.json"
+    instance.write_text(json.dumps({"weights": [2, 3, 1], "capacity": 4}))
+    solution.write_text(json.dumps({"bins": [[0, 2], [1]]}))
+
+    valid = _verify_bin_packing_solution(instance, solution)
+    assert valid["feasible"] is True
+    assert valid["objective"] == 2.0
+
+    solution.write_text(json.dumps({"bins": [[0, 1], [2]]}))
+    invalid = _verify_bin_packing_solution(instance, solution)
+    assert invalid["feasible"] is False
+
+
+def test_external_configuration_verifier_infrastructure_failure_stops_collection(
+    tmp_path: Path,
+) -> None:
+    class Driver:
+        records_trajectory = False
+
+        @staticmethod
+        def main(arguments):
+            output = Path(arguments[arguments.index("--output") + 1])
+            output.write_text(
+                json.dumps(
+                    {"valid": True, "has_solution": True, "solver_status": "OPTIMAL"}
+                )
+            )
+            output.with_suffix(".solution.json").write_text('{"values":[0]}')
+
+    job = {
+        "instance": {"path": str(tmp_path / "instance.pb")},
+        "solver_seed": 0,
+        "budget_sec": 10,
+        "threads": 8,
+    }
+    result = {}
+
+    with pytest.raises(RuntimeError, match="independent verifier infrastructure error"):
+        _run_external_configuration(
+            Driver,
+            job,
+            tmp_path,
+            result,
+            {},
+            lambda instance, solution: {
+                "feasible": False,
+                "infrastructure_error": True,
+                "detail": "JNI unavailable",
+            },
+        )
+
+    assert result["error_stage"] == "verification"
+    assert result["verification"]["infrastructure_error"] is True
 
 
 def test_pairing_uses_keys_and_retains_negative_reference_gaps():

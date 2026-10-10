@@ -11,6 +11,7 @@ import pytest
 from pitbench.cli.doctor import (
     CheckStatus,
     _agent_runtime_check,
+    _configuration_collector_checks,
     _configuration_robustness_check,
     _judge_environment_check,
     _reliability_plan_check,
@@ -154,6 +155,41 @@ def test_configuration_robustness_passes_when_enabled_config_exists(
     check = _configuration_robustness_check(tmp_path, config)
 
     assert check.status is CheckStatus.PASS
+
+
+def test_configuration_preflight_rejects_stale_collector_before_agent_work(
+    tmp_path: Path, monkeypatch
+) -> None:
+    experiment = tmp_path / "configuration.yaml"
+    experiment.write_text(
+        "collector_images:\n"
+        "  ortools_cp_sat: pitbench-ortools:stale\n"
+        "panels:\n"
+        "  - task_config: configs/tasks/ortools_cp_sat_solve_v9_15.yaml\n"
+        "    collector: ortools_cp_sat\n"
+    )
+    config = EvaluationConfig()
+    config.configuration_robustness.experiment_config = experiment
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            "",
+            "compiled ortools_cp_sat adapter differs from source; rebuild the image",
+        )
+
+    monkeypatch.setattr("pitbench.cli.doctor.subprocess.run", run)
+    root = Path(__file__).resolve().parents[3]
+
+    checks = _configuration_collector_checks(root, config)
+
+    assert len(checks) == 1
+    assert checks[0].status is CheckStatus.FAIL
+    assert "differs from source" in checks[0].detail
+    assert "--pull=never" in commands[0]
 
 
 def test_configuration_collector_forwards_the_limited_panel_size(

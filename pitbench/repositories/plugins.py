@@ -341,6 +341,7 @@ class OrToolsCpSatExactRepositoryPlugin(OrToolsRepositoryPlugin):
         return ProcessVerifierFamily(
             [
                 "java",
+                f"-Djava.library.path={runtime_root.parent / 'lib'}",
                 "-cp",
                 os.pathsep.join((str(output_dir), classpath)),
                 "org.pitbench.adapters.CpSatAssignmentVerifier",

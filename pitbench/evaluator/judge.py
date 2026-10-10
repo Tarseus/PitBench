@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from queue import Queue
 from typing import Callable
@@ -606,6 +606,8 @@ class LocalProcessJudge:
         family: ProblemFamilyPlugin | None = None,
         additional_cases: list[InstanceCase] | None = None,
         instances_per_instance_set: int | None = None,
+        solver_seed_limit: int | None = None,
+        observations_path: Path | None = None,
     ) -> None:
         self.task = task
         self.base_repository = base_repository
@@ -621,9 +623,15 @@ class LocalProcessJudge:
         self.run_validation_builds = run_validation_builds
         self.progress_callback = progress_callback
         self.additional_cases = additional_cases or []
+        self.observations_path = observations_path
         if instances_per_instance_set is not None and instances_per_instance_set < 1:
             raise ValueError("instances_per_instance_set must be positive")
         self.instances_per_instance_set = instances_per_instance_set
+        if solver_seed_limit is not None and solver_seed_limit < 1:
+            raise ValueError("solver_seed_limit must be positive")
+        self.solver_seed_limit = solver_seed_limit
+        if solver_seed_limit is not None:
+            self.evaluation_seeds = self.evaluation_seeds[:solver_seed_limit]
         self.repository = RepositoryPluginRegistry.load(task.repository.plugin)
         self.family = family or ProblemFamilyRegistry.load(task.problem_family)
         self.prepared_verifier: ProblemFamilyPlugin | None = None
@@ -709,6 +717,9 @@ class LocalProcessJudge:
         save_observation: Callable[[RunObservation], None] | None = None,
     ) -> list[RunObservation]:
         observations: list[RunObservation] = []
+        if self.observations_path is not None:
+            self.observations_path.parent.mkdir(parents=True, exist_ok=True)
+            self.observations_path.write_text("")
         with tempfile.TemporaryDirectory(prefix="pitbench-judge-") as temporary:
             root = Path(temporary)
             completed_runs = completed_runs or set()
@@ -723,6 +734,13 @@ class LocalProcessJudge:
                 )
                 cases = plan.cases
             cases = [*cases, *self.additional_cases]
+            if self.solver_seed_limit is not None:
+                cases = [
+                    replace(case, solver_seeds=case.solver_seeds[: self.solver_seed_limit])
+                    if case.solver_seeds
+                    else case
+                    for case in cases
+                ]
             self.prepared_verifier = self.repository.prepare_independent_verifier(
                 root / "independent-verifier"
             )
@@ -841,6 +859,9 @@ class LocalProcessJudge:
                 for future in as_completed(future_to_job):
                     observation = future.result()
                     observations.append(observation)
+                    if self.observations_path is not None:
+                        with self.observations_path.open("a") as checkpoint:
+                            checkpoint.write(observation.model_dump_json() + "\n")
                     if save_observation is not None:
                         save_observation(observation)
                     case, state, _, seed, _ = future_to_job[future]
@@ -911,11 +932,18 @@ class LocalProcessJudge:
             cpu_ids,
         )
         started = time.monotonic()
+        launch_error = None
+        timed_out = False
         try:
             completed = self._run(command, workspace)
         except subprocess.TimeoutExpired as error:
             completed = None
+            timed_out = True
             stdout, stderr = error.stdout or "", error.stderr or ""
+        except OSError as error:
+            completed = None
+            launch_error = error
+            stdout, stderr = "", str(error)
         else:
             stdout, stderr = completed.stdout, completed.stderr
         elapsed = time.monotonic() - started
@@ -933,7 +961,7 @@ class LocalProcessJudge:
                 {
                     "argv": command.argv,
                     "returncode": exit_code,
-                    "timed_out": completed is None,
+                    "timed_out": timed_out,
                     "elapsed_sec": elapsed,
                 },
                 indent=2,
@@ -968,6 +996,11 @@ class LocalProcessJudge:
                 }
             )
 
+        if launch_error is not None:
+            return failure(
+                RunStatus.INFRASTRUCTURE_ERROR,
+                f"solver process launch failed: {launch_error}",
+            )
         if completed is None:
             return failure(RunStatus.TIMED_OUT, "external process deadline exceeded")
         parsed = None

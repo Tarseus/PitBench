@@ -13,6 +13,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 from abc import ABC, abstractmethod
@@ -21,6 +22,7 @@ from pathlib import Path
 from queue import Queue
 
 from pitbench.evaluator.artifacts import write_json
+from pitbench.problem_families.verification import _check_bin_packing_solution
 from pitbench.solver_drivers.common import ParameterRejected
 from pitbench.solver_drivers.run import HighsDriver
 
@@ -787,24 +789,9 @@ def _verify_bin_packing_solution(instance_path: Path, solution_path: Path) -> di
     try:
         instance = json.loads(instance_path.read_text())
         solution = json.loads(solution_path.read_text())
-        weights = instance["weights"]
-        capacity = instance["capacity"]
-        bins = solution["bins"]
-        items = [item for bin_items in bins for item in bin_items]
-        if (
-            not isinstance(bins, list)
-            or any(not isinstance(bin_items, list) or not bin_items for bin_items in bins)
-            or any(type(item) is not int for item in items)
-            or len(items) != len(weights)
-            or set(items) != set(range(len(weights)))
-            or any(sum(weights[item] for item in bin_items) > capacity for bin_items in bins)
-        ):
-            return {"feasible": False, "detail": "invalid bin packing solution"}
-        return {
-            "feasible": True,
-            "objective": float(len(bins)),
-            "detail": "independent bin packing verification passed",
-        }
+        return _check_bin_packing_solution(
+            solution, weights=instance["weights"], capacity=instance["capacity"]
+        ).model_dump(mode="json")
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
         return {"feasible": False, "detail": f"solution verification failed: {error}"}
 
@@ -900,6 +887,11 @@ def _run_external_configuration(
     result["verification"] = verifier(
         Path(job["instance"]["path"]), solution
     ) if solution.exists() else None
+    if (result["verification"] or {}).get("infrastructure_error"):
+        raise RuntimeError(
+            "independent verifier infrastructure error: "
+            + str(result["verification"].get("detail") or "no detail")
+        )
     result["verified_feasible"] = bool(
         (result["verification"] or {}).get("feasible")
     )
@@ -970,24 +962,20 @@ class OrToolsCpSatCollectionBackend(CollectionBackend):
 
     @staticmethod
     def run(job: dict, directory: Path, result: dict) -> None:
+        from pitbench.repositories.base import RepositoryPluginRegistry
         from pitbench.solver_drivers.run import OrToolsCpSatExactDriver
 
         _validate_cp_sat_parameters(job["parameters"])
 
         def verify_cp_sat(instance_path: Path, solution_path: Path) -> dict:
-            del instance_path
-            try:
-                solution = json.loads(solution_path.read_text())
-                values = solution["values"]
-                if not isinstance(values, list) or any(type(value) is not int for value in values):
-                    raise ValueError("CP-SAT response values are not integral")
-                return {
-                    "feasible": True,
-                    "objective": result.get("objective"),
-                    "detail": "CP-SAT adapter returned an integral model assignment",
-                }
-            except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
-                return {"feasible": False, "detail": f"solution verification failed: {error}"}
+            repository = RepositoryPluginRegistry.load(job["repository_plugin"])
+            with tempfile.TemporaryDirectory(prefix="pitbench-cp-sat-verifier-") as temporary:
+                verifier = repository.prepare_independent_verifier(Path(temporary))
+                if verifier is None:
+                    raise RuntimeError("CP-SAT independent verifier is unavailable")
+                return verifier.verify(instance_path, solution_path).model_dump(
+                    mode="json"
+                )
 
         _run_external_configuration(
             OrToolsCpSatExactDriver,

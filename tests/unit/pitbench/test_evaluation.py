@@ -23,8 +23,10 @@ from pitbench.cli.main import (
     _normal_metric_coverage,
 )
 from pitbench.evaluator.collection import AnchorCollection
+from pitbench.evaluator.docker_judge import DockerJudge
 from pitbench.evaluator.evaluator import (
     PitBenchEvaluator,
+    _checkpoint_observations_if_complete,
     _default_judge_cpus,
     _default_judge_parallel_runs,
 )
@@ -74,6 +76,136 @@ from pitbench.schema.task import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_completed_judge_checkpoint_requires_matching_identity_and_hashes(tmp_path):
+    observation = RunObservation(
+        task_id="task",
+        code_state=CodeState.AGENT,
+        instance_set="judge_id",
+        instance_set_kind="judge_id",
+        instance_id="one",
+        solver_seed=7,
+        budget_sec=5.0,
+        status=RunStatus.COMPLETED,
+        valid=True,
+    )
+    observations_path = tmp_path / "judge-observations.jsonl"
+    ObservationStore.write_jsonl(observations_path, [observation])
+    grid_path = tmp_path / "expected-run-grid.json"
+    grid_path.write_text(
+        ExpectedRunGrid(
+            task_id="task",
+            runs=[
+                ExpectedRun(
+                    task_id="task",
+                    code_state=CodeState.AGENT,
+                    instance_set="judge_id",
+                    instance_set_kind="judge_id",
+                    instance_id="one",
+                    solver_seed=7,
+                    budget_sec=5.0,
+                )
+            ],
+        ).model_dump_json()
+    )
+    identity = {"candidate_patch_sha256": "first"}
+    marker = {
+        "identity": identity,
+        "observation_count": 1,
+        "observations_sha256": hashlib.sha256(
+            observations_path.read_bytes()
+        ).hexdigest(),
+        "expected_grid_sha256": hashlib.sha256(grid_path.read_bytes()).hexdigest(),
+    }
+    (tmp_path / "judge-checkpoint.json").write_text(json.dumps(marker))
+
+    assert _checkpoint_observations_if_complete(tmp_path, "task", identity) == [
+        observation
+    ]
+    assert (
+        _checkpoint_observations_if_complete(
+            tmp_path, "task", {"candidate_patch_sha256": "different"}
+        )
+        is None
+    )
+    observations_path.write_text(observations_path.read_text() + "\n")
+    assert _checkpoint_observations_if_complete(tmp_path, "task", identity) is None
+
+
+def test_judge_runner_marks_complete_checkpoint_only_after_final_write(
+    tmp_path, monkeypatch
+):
+    from pitbench.evaluator import runner
+
+    observation = RunObservation(
+        task_id="vroom_v1_15_0",
+        code_state=CodeState.BASE,
+        instance_set="judge_id",
+        instance_set_kind="judge_id",
+        instance_id="one",
+        solver_seed=0,
+        budget_sec=1.0,
+        status=RunStatus.COMPLETED,
+        valid=True,
+    )
+
+    class FakeJudge:
+        def __init__(self, **kwargs):
+            self.output_dir = kwargs["output_dir"]
+
+        def run(self):
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            grid = ExpectedRunGrid(
+                task_id=observation.task_id,
+                runs=[
+                    ExpectedRun(
+                        task_id=observation.task_id,
+                        code_state=observation.code_state,
+                        instance_set=observation.instance_set,
+                        instance_set_kind="judge_id",
+                        instance_id=observation.instance_id,
+                        solver_seed=observation.solver_seed,
+                        budget_sec=observation.budget_sec,
+                    )
+                ],
+            )
+            (self.output_dir / "expected-run-grid.json").write_text(
+                grid.model_dump_json()
+            )
+            return [observation]
+
+    monkeypatch.setattr(runner, "LocalProcessJudge", FakeJudge)
+    monkeypatch.setattr(runner, "prepare_boundary_cases", lambda *args, **kwargs: [])
+    output = tmp_path / "output"
+    identity = {"candidate_patch_sha256": "first"}
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pitbench.evaluator.runner",
+            "--task-config",
+            str(ROOT / "configs/tasks/vroom_v1_15_0.yaml"),
+            "--base-repository",
+            str(tmp_path),
+            "--public-root",
+            str(ROOT),
+            "--private-root",
+            str(tmp_path),
+            "--candidate-patch",
+            str(tmp_path / "candidate.patch"),
+            "--output-dir",
+            str(output),
+            "--observations",
+            str(output / "judge-observations.jsonl"),
+            "--checkpoint-identity",
+            json.dumps(identity),
+        ],
+    )
+    runner.main()
+    assert _checkpoint_observations_if_complete(
+        output, observation.task_id, identity
+    ) == [observation]
 
 
 def git(repository: Path, *arguments: str) -> str:
@@ -203,6 +335,7 @@ def test_workspace_permissions_reuses_existing_agent_account() -> None:
     assert "|| useradd --non-unique" in dockerfile
     assert "/workspace/repo/.codex" in dockerfile
     assert "/workspace/repo/.agents" in dockerfile
+    assert "/workspace/repo/.aws" in dockerfile
 
 
 @pytest.mark.parametrize(
@@ -304,9 +437,7 @@ def test_limited_real_judge_plan_preserves_full_seed_and_budget_grid(
         instances_per_instance_set=1,
     )
     grid = plan.expected_run_grid(evaluation_seeds=evaluation_seeds)
-    expected_runs_per_instance = (
-        len(task.evaluation.budgets_sec) * len(CodeState) * 30
-    )
+    expected_runs_per_instance = len(task.evaluation.budgets_sec) * len(CodeState) * 30
 
     assert len({(case.instance_set.name, case.instance_id) for case in plan.cases}) == 3
     for instance_set in ("agent_dev", "judge_id", "judge_shift"):
@@ -326,11 +457,11 @@ def test_limited_evaluation_preflight_rejects_grid_and_infrastructure_errors(
         solver_seed=0,
         budget_sec=10,
     )
-    missing_run = expected_run.model_copy(
-        update={"code_state": CodeState.AGENT}
-    )
+    missing_run = expected_run.model_copy(update={"code_state": CodeState.AGENT})
     (tmp_path / "expected-run-grid.json").write_text(
-        ExpectedRunGrid(task_id="dry-run", runs=[expected_run, missing_run]).model_dump_json()
+        ExpectedRunGrid(
+            task_id="dry-run", runs=[expected_run, missing_run]
+        ).model_dump_json()
     )
     ObservationStore.write_jsonl(
         tmp_path / "judge-observations.jsonl",
@@ -432,9 +563,7 @@ def test_normal_metric_coverage_requires_complete_declared_reports(tmp_path: Pat
         )
     )
 
-    coverage = _normal_metric_coverage(
-        ROOT, tmp_path, "run", [task_id], None
-    )
+    coverage = _normal_metric_coverage(ROOT, tmp_path, "run", [task_id], None)
 
     assert coverage["complete"]
     assert _evaluation_metric_failures(
@@ -442,6 +571,32 @@ def test_normal_metric_coverage_requires_complete_declared_reports(tmp_path: Pat
         evaluation_dir,
         {**payload, "summary": {**payload["summary"], "resource_usage": None}},
     ) == ["resource report is missing"]
+
+
+def test_normal_metric_coverage_retains_configuration_collection_failure(
+    tmp_path: Path,
+):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "results.json").write_text('{"results": []}')
+
+    coverage = _normal_metric_coverage(
+        ROOT,
+        tmp_path,
+        "run",
+        [],
+        run_dir / "configuration-robustness",
+        "configuration collection failed: collector image unavailable",
+    )
+
+    assert coverage["complete"] is False
+    assert (
+        "configuration collection failed: collector image unavailable"
+        in coverage["failures"][-1]
+    )
+    assert coverage["configuration_robustness"]["output"] == str(
+        run_dir / "configuration-robustness"
+    )
 
 
 def test_problem_family_plugins_register_and_reject_duplicate_names():
@@ -1118,6 +1273,29 @@ def test_real_subprocess_failures_remain_distinct(
         assert Path(observation.stdout_path).read_text() == "native stdout\n"
 
 
+def test_solver_process_launch_failure_is_retained_as_infrastructure_error(
+    judge_case, tmp_path, monkeypatch
+):
+    judge, case = judge_case
+
+    def fail_to_start(command, workspace):
+        del command, workspace
+        raise FileNotFoundError("solver command is unavailable")
+
+    monkeypatch.setattr(judge, "_run", fail_to_start)
+    observation = judge._run_case(tmp_path, case, CodeState.BASE, 0, 5)
+
+    assert observation.status is RunStatus.INFRASTRUCTURE_ERROR
+    assert observation.valid is False
+    assert "solver process launch failed" in observation.error
+    assert Path(observation.stderr_path).is_file()
+    process_path = Path(
+        str(observation.stderr_path).removesuffix(".stderr.log") + ".process.json"
+    )
+    process = json.loads(process_path.read_text())
+    assert process["timed_out"] is False
+
+
 def test_an_old_result_cannot_make_a_later_missing_output_pass(judge_case, tmp_path):
     judge, case = judge_case
     judge.repository = ScriptRepository(GOOD)
@@ -1223,6 +1401,123 @@ def test_failed_case_does_not_abort_remaining_cases(judge_case, tmp_path, monkey
     }
 
 
+def test_judge_keeps_completed_observations_when_a_later_run_aborts(
+    judge_case, tmp_path, monkeypatch
+):
+    judge, first = judge_case
+    judge.observations_path = tmp_path / "judge-observations.jsonl"
+    cases = [
+        replace(first, instance_id=name, solver_seeds=(0,), budgets_sec=(5,))
+        for name in ("completed", "aborted")
+    ]
+    monkeypatch.setattr(judge, "_workspace", lambda *args: tmp_path)
+
+    def run_case(workspace, case, state, seed, budget, *, cpu_ids):
+        del workspace, cpu_ids
+        if case.instance_id == "aborted":
+            time.sleep(0.1)
+            raise RuntimeError("later run aborted")
+        return judge._failure(case, state, seed, budget, RunStatus.CRASHED)
+
+    monkeypatch.setattr(judge, "_run_case", run_case)
+    with pytest.raises(RuntimeError, match="later run aborted"):
+        judge.run(cases)
+
+    retained = ObservationStore.read_jsonl(judge.observations_path)
+    assert len(retained) == 1
+    assert retained[0].instance_id == "completed"
+    assert retained[0].status is RunStatus.CRASHED
+
+
+def test_docker_judge_failure_reports_last_progress_and_retained_observations(
+    tmp_path, monkeypatch
+):
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    (tmp_path / "candidate.patch").write_bytes(b"")
+    (tmp_path / "task.yaml").write_text("task_id: test\n")
+    observations = output_dir / "judge-observations.jsonl"
+    observations.write_text('{"completed":true}\n')
+
+    class FailedProcess:
+        stdout = [
+            *(
+                f"PITBENCH_PROGRESS Judge progress: {index}/100\n"
+                for index in range(50)
+            ),
+            "docker connection closed\n",
+        ]
+
+        def wait(self):
+            return 1
+
+    monkeypatch.setattr(
+        "pitbench.evaluator.docker_judge.subprocess.Popen",
+        lambda *args, **kwargs: FailedProcess(),
+    )
+    judge = DockerJudge(
+        image="sha256:" + "a" * 64,
+        task_config_path=tmp_path / "task.yaml",
+        base_repository=tmp_path,
+        private_root=tmp_path,
+        candidate_patch=tmp_path / "candidate.patch",
+        output_dir=output_dir,
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        judge.run()
+
+    message = str(error.value)
+    assert "Judge progress: 49/100" in message
+    assert "Judge progress: 48/100" not in message
+    assert "docker connection closed" in message
+    assert str(observations) in message
+
+
+def test_limited_judge_run_keeps_the_complete_reliability_suite(tmp_path, monkeypatch):
+    from pitbench.evaluator import runner
+
+    received = {}
+
+    class FakeJudge:
+        def __init__(self, **kwargs):
+            received.update(kwargs)
+
+        def run(self):
+            return []
+
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(runner, "LocalProcessJudge", FakeJudge)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pitbench.evaluator.runner",
+            "--task-config",
+            str(ROOT / "configs/tasks/vroom_v1_15_0.yaml"),
+            "--base-repository",
+            str(tmp_path),
+            "--public-root",
+            str(ROOT),
+            "--private-root",
+            str(tmp_path),
+            "--candidate-patch",
+            str(tmp_path / "candidate.patch"),
+            "--output-dir",
+            str(output_dir),
+            "--observations",
+            str(output_dir / "judge-observations.jsonl"),
+            "--instances-per-instance-set",
+            "1",
+        ],
+    )
+
+    runner.main()
+
+    assert received["instances_per_instance_set"] == 1
+    assert len(received["additional_cases"]) == 4
+
+
 def test_driver_preserves_inner_timeout_reason(tmp_path, monkeypatch):
     from pitbench.solver_drivers.run import HighsDriver
 
@@ -1298,9 +1593,7 @@ def test_native_status_and_objective_can_be_read_from_solution_file(
     assert "native diagnostic" in capsys.readouterr().err
 
 
-def test_highs_time_limit_does_not_export_fractional_relaxation(
-    tmp_path, monkeypatch
-):
+def test_highs_time_limit_does_not_export_fractional_relaxation(tmp_path, monkeypatch):
     from pitbench.solver_drivers.run import HighsDriver
 
     raw = "Model status\nTime limit reached\n\n# Columns 1\nx0 0.5\n"

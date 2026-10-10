@@ -26,7 +26,7 @@ from pitbench.tasks import TaskCatalog
 
 # Increment when the generated task image or bundled public tooling becomes
 # incompatible with an image produced by an earlier PitBench checkout.
-IMAGE_REVISION = "6"
+IMAGE_REVISION = "7"
 IMAGE_REVISION_LABEL = "org.pitbench.image-revision"
 IMAGE_SOURCE_LABEL = "org.pitbench.image-source"
 IMAGE_TOOLS_LABEL = "org.pitbench.agent-tools"
@@ -54,6 +54,7 @@ class PitBenchAdapter:
         base_observations_path: Path | None = None,
         base_cache_path: Path | None = None,
         use_base_cache: bool = True,
+        smoke_test: bool = False,
         agent_tools: Iterable[AgentTool | str] = (),
     ) -> Path:
         record = self.catalog.validate_one(task_id)
@@ -98,6 +99,7 @@ class PitBenchAdapter:
             base_observations_path=base_observations_path,
             base_cache_path=base_cache_path,
             use_base_cache=use_base_cache,
+            smoke_test=smoke_test,
             agent_tools=tools,
         )
         if tools:
@@ -241,6 +243,7 @@ class PitBenchAdapter:
         base_observations_path: Path | None = None,
         base_cache_path: Path | None = None,
         use_base_cache: bool = True,
+        smoke_test: bool = False,
         agent_tools: frozenset[AgentTool] = frozenset(),
     ) -> None:
         instruction = self._format_instruction(task, agent_tools=agent_tools)
@@ -258,7 +261,7 @@ class PitBenchAdapter:
                 "private_root": str(self.private_root),
                 "use_base_cache": use_base_cache,
             },
-            "max_agent_timeout_sec": 3600,
+            "max_agent_timeout_sec": 300 if smoke_test else 3600,
             "max_setup_timeout_sec": 1800,
         }
         if judge_image is not None:
@@ -275,6 +278,12 @@ class PitBenchAdapter:
             )
         if base_cache_path is not None:
             payload["evaluator_config"]["base_cache_path"] = str(base_cache_path)
+        if smoke_test:
+            payload["evaluator_config"].update(
+                smoke_test=True,
+                instances_per_instance_set=1,
+                solver_seed_limit=2,
+            )
         (task_dir / "task.yaml").write_text(yaml.safe_dump(payload, sort_keys=False))
 
     @staticmethod
@@ -394,7 +403,7 @@ RUN (getent group pitbench-agent >/dev/null \
            --gid ${{PITBENCH_AGENT_GID}} --create-home --shell /bin/bash pitbench-agent) \
     && chown -R root:root /workspace/repo \
     && chmod -R a=rX /workspace/repo \
-    && mkdir -p {writable} \
+    && mkdir -p {writable} /workspace/repo/.aws \
     && chown -R ${{PITBENCH_AGENT_UID}}:${{PITBENCH_AGENT_GID}} \
        {writable} \
     && chmod -R u+rwX {writable} \

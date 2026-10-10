@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -24,6 +26,8 @@ def main() -> None:
     parser.add_argument("--parallel-runs", type=int, default=1)
     parser.add_argument("--reliability-only", action="store_true")
     parser.add_argument("--instances-per-instance-set", type=int)
+    parser.add_argument("--solver-seed-limit", type=int)
+    parser.add_argument("--checkpoint-identity")
     parser.add_argument(
         "--code-state",
         action="append",
@@ -39,14 +43,23 @@ def main() -> None:
             args.output_dir,
             private_root=args.private_root,
             public_root=args.public_root,
+            instances_per_instance_set=(
+                args.instances_per_instance_set
+                if args.solver_seed_limit is not None
+                else None
+            ),
+            solver_seed_limit=args.solver_seed_limit,
         )
         if task.evaluation.operational_reliability
         else []
     )
-    if args.instances_per_instance_set is not None:
-        if args.instances_per_instance_set < 1:
-            parser.error("--instances-per-instance-set must be positive")
-        boundary_cases = boundary_cases[: args.instances_per_instance_set]
+    if (
+        args.instances_per_instance_set is not None
+        and args.instances_per_instance_set < 1
+    ):
+        parser.error("--instances-per-instance-set must be positive")
+    if args.solver_seed_limit is not None and args.solver_seed_limit < 1:
+        parser.error("--solver-seed-limit must be positive")
     judge = LocalProcessJudge(
         task=task,
         base_repository=args.base_repository,
@@ -61,6 +74,8 @@ def main() -> None:
         evaluation_seeds=_development_seeds(task) if args.reliability_only else None,
         family=boundary_cases[0].verifier if args.reliability_only else None,
         instances_per_instance_set=args.instances_per_instance_set,
+        solver_seed_limit=args.solver_seed_limit,
+        observations_path=args.observations,
     )
     if args.reliability_only:
         observations = judge.run([])
@@ -69,6 +84,20 @@ def main() -> None:
     else:
         observations = judge.run()
     ObservationStore.write_jsonl(args.observations, observations)
+    if args.checkpoint_identity is not None:
+        grid_path = args.output_dir / "expected-run-grid.json"
+        checkpoint = {
+            "identity": json.loads(args.checkpoint_identity),
+            "observation_count": len(observations),
+            "observations_sha256": hashlib.sha256(
+                args.observations.read_bytes()
+            ).hexdigest(),
+            "expected_grid_sha256": hashlib.sha256(grid_path.read_bytes()).hexdigest(),
+        }
+        marker = args.output_dir / "judge-checkpoint.json"
+        temporary = marker.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(checkpoint, sort_keys=True) + "\n")
+        temporary.replace(marker)
     for root_dir, dirs, files in os.walk(args.output_dir):
         try:
             os.chmod(root_dir, 0o777)

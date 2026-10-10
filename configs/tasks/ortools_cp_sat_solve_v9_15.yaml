@@ -18,7 +18,7 @@ repository:
   clone_url: https://github.com/google/or-tools.git
   plugin: pitbench.repositories.plugins:OrToolsCpSatExactRepositoryPlugin
   editable_paths: [ortools, build]
-  agent_image: pitbench-ortools:cp-sat-task-v4
+  agent_image: pitbench-ortools:cp-sat-task-v5
   judge_image: sha256:0880a07ed9535cccb43e60af252763b450c0ed4969f2bf11c111a0ee29a2718b
 oracle:
   kind: best_known_solution

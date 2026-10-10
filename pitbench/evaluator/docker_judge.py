@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import subprocess
 from collections import deque
@@ -30,6 +32,7 @@ class DockerJudge:
         progress_callback: Callable[[str], None] | None = None,
         reliability_only: bool = False,
         instances_per_instance_set: int | None = None,
+        solver_seed_limit: int | None = None,
     ) -> None:
         digest_pinned = re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image)
         local_image_id = re.fullmatch(r"sha256:[0-9a-f]{64}", image)
@@ -51,6 +54,28 @@ class DockerJudge:
         if instances_per_instance_set is not None and instances_per_instance_set < 1:
             raise ValueError("instances_per_instance_set must be positive")
         self.instances_per_instance_set = instances_per_instance_set
+        if solver_seed_limit is not None and solver_seed_limit < 1:
+            raise ValueError("solver_seed_limit must be positive")
+        self.solver_seed_limit = solver_seed_limit
+
+    def checkpoint_identity(self) -> dict[str, object]:
+        return {
+            "candidate_patch_sha256": hashlib.sha256(
+                self.candidate_patch.read_bytes()
+            ).hexdigest(),
+            "task_config_sha256": hashlib.sha256(
+                self.task_config_path.read_bytes()
+            ).hexdigest(),
+            "judge_image": self.image,
+            "cpus": self.cpus,
+            "memory": self.memory,
+            "cpuset_cpus": self.cpuset_cpus,
+            "code_states": [state.value for state in self.code_states],
+            "parallel_runs": self.parallel_runs,
+            "reliability_only": self.reliability_only,
+            "instances_per_instance_set": self.instances_per_instance_set,
+            "solver_seed_limit": self.solver_seed_limit,
+        }
 
     def run(self) -> list[RunObservation]:
         package_root = Path(__file__).resolve().parents[2]
@@ -109,6 +134,9 @@ class DockerJudge:
                 self.cpuset_cpus,
             ]
         command.extend(["--parallel-runs", str(self.parallel_runs)])
+        command.extend(
+            ["--checkpoint-identity", json.dumps(self.checkpoint_identity())]
+        )
         if self.reliability_only:
             command.append("--reliability-only")
         if self.instances_per_instance_set is not None:
@@ -118,6 +146,8 @@ class DockerJudge:
                     str(self.instances_per_instance_set),
                 ]
             )
+        if self.solver_seed_limit is not None:
+            command.extend(["--solver-seed-limit", str(self.solver_seed_limit)])
         for state in self.code_states:
             command.extend(["--code-state", state.value])
         process = subprocess.Popen(
@@ -127,18 +157,27 @@ class DockerJudge:
             text=True,
             bufsize=1,
         )
-        recent_output: deque[str] = deque(maxlen=100)
+        recent_output: deque[str] = deque(maxlen=20)
+        last_progress: str | None = None
         if process.stdout is not None:
             for raw_line in process.stdout:
                 line = raw_line.rstrip()
                 if line:
-                    recent_output.append(line)
                     prefix = "PITBENCH_PROGRESS "
-                    if line.startswith(prefix) and self.progress_callback is not None:
-                        self.progress_callback(line.removeprefix(prefix))
+                    if line.startswith(prefix):
+                        last_progress = line.removeprefix(prefix)
+                        if self.progress_callback is not None:
+                            self.progress_callback(last_progress)
+                    else:
+                        recent_output.append(line)
         returncode = process.wait()
         if returncode:
-            detail = "\n".join(recent_output) or "no diagnostic was emitted"
+            details = ([last_progress] if last_progress is not None else []) + list(
+                recent_output
+            )
+            if observations.is_file() and observations.stat().st_size:
+                details.append(f"completed observations retained at {observations}")
+            detail = "\n".join(details) or "no diagnostic was emitted"
             raise RuntimeError(f"isolated judge failed: {detail}")
         if not observations.is_file():
             raise RuntimeError("isolated judge produced no observations")

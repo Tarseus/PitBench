@@ -637,6 +637,83 @@ def test_relay_records_raw_and_delivered_stream_without_auth_headers(tmp_path):
     assert delivered == payload
 
 
+def test_relay_finishes_late_response_after_agent_trace_closes(tmp_path):
+    trace = AgentTrace(tmp_path / "trace", context={})
+    handler = object.__new__(_RelayHandler)
+    handler.server = SimpleNamespace(trace=trace)
+    handler._trace_request_id = "request-1"
+    handler.send_response = Mock()
+    handler.send_header = Mock()
+    handler.end_headers = Mock()
+    handler.wfile = io.BytesIO()
+
+    class LateResponse(io.BytesIO):
+        def read(self, size=-1):
+            trace.close()
+            return super().read(size)
+
+    payload = b'data: {"type":"response.completed"}\n\n'
+    copied, _ = handler._copy_response(LateResponse(payload), {}, 200)
+    assert copied
+    assert handler.wfile.getvalue() == payload
+    assert [row["event"] for row in events(trace.root)] == ["model.response_started"]
+
+
+def test_relay_error_ignores_disconnected_agent_socket():
+    handler = object.__new__(_RelayHandler)
+    handler.server = SimpleNamespace(trace=None)
+    handler.send_response = Mock()
+    handler.send_header = Mock()
+    handler.end_headers = Mock(side_effect=BrokenPipeError)
+    handler._error(502, "upstream failed")
+    assert handler.close_connection
+
+
+def test_relay_treats_broken_pipe_as_agent_disconnect(monkeypatch):
+    from pitbench.harness.agents import codex_relay
+
+    handler = object.__new__(_RelayHandler)
+    handler.path = "/responses"
+    handler.client_address = ("127.0.0.1", 0)
+    handler.headers = {"Content-Length": "17"}
+    handler.rfile = io.BytesIO(b'{"model":"model"}')
+    handler._load_auth = Mock(return_value=("token", "account"))
+    handler._copy_response = Mock(side_effect=BrokenPipeError)
+    handler._error = Mock()
+    budget = SimpleNamespace(reserve=lambda: None, finish=Mock(), snapshot=lambda: {})
+    record = Mock()
+    handler.server = SimpleNamespace(
+        trace=None,
+        budget=budget,
+        model="model",
+        upstream_url="https://example.invalid/responses",
+        proxy_url=None,
+        allowed_client_ip=None,
+        record=record,
+    )
+    class Response:
+        status = 200
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    response = Response()
+    monkeypatch.setattr(
+        codex_relay.urllib.request,
+        "build_opener",
+        lambda *_args: SimpleNamespace(open=lambda *_args, **_kwargs: response),
+    )
+
+    handler.do_POST()
+    handler._error.assert_not_called()
+    assert any(call.args[0]["status"] == "client_disconnected" for call in record.call_args_list)
+    budget.finish.assert_called_once_with(0)
+
+
 def test_relay_without_token_cap_does_not_exhaust_token_budget():
     budget = _RelayBudget(
         max_requests=2,

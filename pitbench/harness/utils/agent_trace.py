@@ -173,6 +173,22 @@ class AgentTrace:
             os.fsync(self._stream.fileno())
             return event_id
 
+    def record_if_open(
+        self,
+        event: str,
+        *,
+        call_id: str | None = None,
+        raw_content: bytes | None = None,
+        **data,
+    ) -> str | None:
+        """Record a late asynchronous event only while collection is active."""
+        with self._lock:
+            if self._closed:
+                return None
+            if raw_content is not None:
+                data["content"] = self.content(raw_content)
+            return self.record(event, call_id=call_id, **data)
+
     @contextmanager
     def call(self, kind: str, *, name: str, inputs: Any, checkpoint=False):
         call_id = uuid.uuid4().hex
