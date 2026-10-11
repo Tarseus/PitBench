@@ -6,8 +6,16 @@ import math
 import resource
 import subprocess
 import time
+from enum import Enum
 from pathlib import Path
 from typing import Any
+
+
+class SolverTermination(str, Enum):
+    OPTIMAL = "optimal"
+    TIME_LIMIT = "time_limit"
+    ERROR = "solver_error"
+    OTHER = "other"
 
 
 def process_resources(*, child_process: bool = False) -> dict[str, Any]:

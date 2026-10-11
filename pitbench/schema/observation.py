@@ -4,6 +4,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from pitbench.solver_drivers.common import SolverTermination
+
 
 class CodeState(str, Enum):
     BASE = "base"
@@ -21,13 +23,6 @@ class RunStatus(str, Enum):
     SOLVER_ERROR = "solver_error"
     OUT_OF_MEMORY = "out_of_memory"
     INFRASTRUCTURE_ERROR = "infrastructure_error"
-
-
-class SolverTermination(str, Enum):
-    OPTIMAL = "optimal"
-    TIME_LIMIT = "time_limit"
-    ERROR = "solver_error"
-    OTHER = "other"
 
 
 class ExpectedRun(BaseModel):

@@ -203,6 +203,20 @@ serially by default; `--n-concurrent` controls trial concurrency.
 When Configuration Robustness is enabled, the check also probes each configured
 collector image and rejects stale compiled JVM adapters before agent work.
 
+By default, the task image includes visible development instances and the
+`pitbench inspect`, `pitbench workspace`, and `pitbench bench` commands. Inside
+the agent task, `pitbench inspect` shows the protocol, primary budget, seeds,
+runner, build commands, and public targets. Run `pitbench bench --label base`
+before editing, then run `pitbench bench --label agent --build` on the
+same instances. The bench command defaults to the task's primary budget and
+first development seed. It writes per-run results and paired development
+feedback under `/pitbench/runs`; `--build` refreshes the current solver and the
+evaluator still judges independently. `--instance` selects a public ID/name or
+any readable custom instance file; `--seed`, `--budget`, and `--threads` control
+each development run. Feedback records the input hash and runner artifact hash
+so Base/Agent comparisons expose stale builds. Set `agent_tools: []` explicitly
+in the local config to omit these tools and instances.
+
 The normal candidate judge collects Performance and Resource Efficiency data,
 plus the reliability, seed, and representation runs enabled by each task config.
 Configuration Robustness still uses the separate release collector and is not

@@ -23,9 +23,9 @@ configuration_robustness:
 # judge_cpus: 10.0
 # base_cache: true
 
-# Default: agents receive only the repository snapshot and their native tools.
-# To run a tool-assisted condition, list commands such as [inspect, bench, validate].
-agent_tools: []
+# Development instances and inspection/benchmark commands are enabled by default.
+# Set [] explicitly for a repository-only condition; add validate when desired.
+agent_tools: [inspect, workspace, bench]
 
 tasks:
   pyvrp_v0_14_0:

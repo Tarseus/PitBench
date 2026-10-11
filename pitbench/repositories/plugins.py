@@ -21,6 +21,7 @@ class PyVRPRepositoryPlugin(RepositoryPlugin):
     )
     name = "pyvrp"
     agent_requirement = "import:pyvrp"
+    agent_artifact_globs = ("pyvrp/**/*.so",)
     agent_python = "python3"
     collection_backend = "pitbench.evaluator.collection:PyVRPCollectionBackend"
     representations = {"customer_relabeling": ("judge", "isolated")}
@@ -32,6 +33,18 @@ class PyVRPRepositoryPlugin(RepositoryPlugin):
     _TRAJECTORY_REGRESSION_TESTS = (
         "tests/search/test_LocalSearch.py::test_debug_operator_logs",
     )
+
+    def agent_build_commands(self) -> list[CommandSpec]:
+        return [
+            CommandSpec(
+                argv=[
+                    "python3",
+                    "buildtools/build_extensions.py",
+                    "--build_dir",
+                    "/tmp/pitbench-pyvrp-build",
+                ]
+            )
+        ]
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         create_environment = CommandSpec(
@@ -121,6 +134,8 @@ class VroomRepositoryPlugin(RepositoryPlugin):
     driver_python = "python3"
     name = "vroom"
     agent_requirement = "file:bin/vroom"
+    agent_artifact_globs = ("bin/vroom",)
+    agent_build_paths = ("lib",)
     collector_environment = {"PITBENCH_VROOM_SOLVER": "/workspace/repo/bin/vroom"}
     representations = {"customer_relabeling": ("judge",)}
     collection_backend = "pitbench.evaluator.collection:VroomCollectionBackend"
@@ -142,7 +157,7 @@ class VroomRepositoryPlugin(RepositoryPlugin):
                     "sh",
                     "-lc",
                     "cd src && test -f structures/typedefs.h && exec make -j1 "
-                    + f'\"CXXFLAGS={make_flags}\" 2>&1',
+                    + f'"CXXFLAGS={make_flags}" 2>&1',
                 ]
             ),
         ]
@@ -194,6 +209,8 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
     name = "choco"
     driver_python = "python3"
     agent_requirement = "env:PITBENCH_CHOCO_RUNNER"
+    agent_artifact_globs = ("solver/target/*-jar-with-dependencies.jar",)
+    agent_build_paths = ("target", "parsers/target", "examples/target")
     judge_environment_requirements = {"MAVEN_CONFIG": "/tmp/choco-maven"}
     collection_backend = "pitbench.evaluator.collection:ChocoCollectionBackend"
     driver_name = "choco"
@@ -233,8 +250,26 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
     name = "ortools"
     driver_python = "python3"
     agent_requirement = "env:PITBENCH_ORTOOLS_CP_SAT_RUNNER"
+    agent_artifact_globs = (
+        "build/java/ortools-java/target/ortools-java-*.jar",
+        "build/java/ortools-linux-x86-64/target/ortools-linux-x86-64-*.jar",
+    )
     deterministic = False
     driver_name = "ortools_cp_sat_exact"
+
+    def agent_build_commands(self) -> list[CommandSpec]:
+        # The prepared task image has a configured Ninja build. Reconfiguring
+        # it would write to root-owned dependency directories under /opt.
+        return [
+            CommandSpec(argv=["mkdir", "-p", "/tmp/ortools-maven"]),
+            CommandSpec(
+                argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/ortools-maven"]
+            ),
+            CommandSpec(
+                argv=["cmake", "--build", "build", "--target", "java_package", "-j6"],
+                env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/ortools-maven"},
+            ),
+        ]
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         del kind
@@ -288,9 +323,21 @@ class OrToolsCpSatExactRepositoryPlugin(OrToolsRepositoryPlugin):
     """Build the OR-Tools Java runtime and fixed-proto CP-SAT solve adapter."""
 
     driver_name = "ortools_cp_sat_exact"
-    collection_backend = (
-        "pitbench.evaluator.collection:OrToolsCpSatCollectionBackend"
-    )
+    collection_backend = "pitbench.evaluator.collection:OrToolsCpSatCollectionBackend"
+
+    def agent_build_commands(self) -> list[CommandSpec]:
+        return [
+            *super().agent_build_commands(),
+            CommandSpec(
+                argv=[
+                    "python3",
+                    "/opt/pitbench-jvm/runner.py",
+                    "compile",
+                    "--solver",
+                    "ortools_cp_sat",
+                ]
+            ),
+        ]
 
     def prepare_independent_verifier(self, output_dir: Path):
         """Compile a checker against the immutable OR-Tools judge runtime."""
@@ -337,7 +384,9 @@ class OrToolsCpSatExactRepositoryPlugin(OrToolsRepositoryPlugin):
         )
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip()
-            raise RuntimeError(f"CP-SAT assignment verifier compilation failed: {detail}")
+            raise RuntimeError(
+                f"CP-SAT assignment verifier compilation failed: {detail}"
+            )
         return ProcessVerifierFamily(
             [
                 "java",

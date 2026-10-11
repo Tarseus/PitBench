@@ -21,12 +21,12 @@ from pitbench.agent_tools import (
 )
 from pitbench.instances import materialize_instance_set
 from pitbench.repositories.base import RepositoryPluginRegistry
-from pitbench.schema.task import InstanceSetKind, PitBenchTask
+from pitbench.schema.task import InstanceSetKind, PerformanceProtocol, PitBenchTask
 from pitbench.tasks import TaskCatalog
 
 # Increment when the generated task image or bundled public tooling becomes
 # incompatible with an image produced by an earlier PitBench checkout.
-IMAGE_REVISION = "7"
+IMAGE_REVISION = "13"
 IMAGE_REVISION_LABEL = "org.pitbench.image-revision"
 IMAGE_SOURCE_LABEL = "org.pitbench.image-source"
 IMAGE_TOOLS_LABEL = "org.pitbench.agent-tools"
@@ -193,32 +193,102 @@ class PitBenchAdapter:
         agent_tools: frozenset[AgentTool] = frozenset(),
     ) -> str:
         editable_paths = ", ".join(task.repository.editable_paths)
+        repository_plugin = RepositoryPluginRegistry.load(task.repository.plugin)
+        build_paths = ", ".join(repository_plugin.agent_build_paths)
+        source_scope = (
+            f"Only change implementation source in these editable paths: {editable_paths}. "
+            + (
+                f"Generated build outputs may be written to: {build_paths}."
+                if build_paths
+                else "Keep all implementation changes inside them."
+            )
+        )
         scope = getattr(task, "optimization_scope", None) or "solver performance"
         primary_budget = getattr(task.evaluation, "primary_budget_sec", None)
         budget_info = (
             f"{primary_budget:.1f}s" if primary_budget else "the evaluation budget"
         )
 
+        protocol = task.evaluation.performance_protocol
+        if protocol is PerformanceProtocol.HEURISTIC_FIXED_BUDGET:
+            metric = (
+                "- Primary Performance Metric: paired reduction in normalized gap "
+                "to the fixed optimum/BKS anchor at the primary fixed time budget; "
+                "lower gap is better."
+            )
+            comparison = (
+                "Compare independently checked objectives at the same budget, "
+                "instance, and seed; compare normalized gaps only where a public "
+                "anchor exists."
+            )
+        elif protocol is PerformanceProtocol.EXACT_VERIFIED_SOLVE:
+            metric = (
+                "- Primary Performance Metric: independently verified solved "
+                "coverage at the primary budget. When coverage ties, compare "
+                f"paired PAR-2 runtime using {task.evaluation.exact_time_basis.value}."
+            )
+            comparison = (
+                "Track termination, objective, and public target where available. "
+                "The formal evaluator compares verified solved coverage first, "
+                "then paired PAR-2 runtime."
+            )
+        else:
+            raise ValueError(f"unsupported performance protocol: {protocol}")
+
+        has_instances = needs_development_instances(agent_tools)
+        development = (
+            "1. Baseline: Before editing, run `pitbench inspect` and "
+            "`pitbench bench --label base` on visible instances at "
+            "`/pitbench/dev_instances`. `pitbench bench` accepts `--instance` "
+            "(visible ID/name or a readable custom file), `--seed`, `--budget`, "
+            "and `--threads`; use matching values for Base and Agent.\n"
+            if AgentTool.INSPECT in agent_tools and AgentTool.BENCH in agent_tools
+            else "1. Baseline: Record the clean repository's behavior on public "
+            "development cases before editing.\n"
+        )
+        if not has_instances:
+            development = (
+                "1. Baseline: Use repository tests or examples to record the "
+                "clean repository's behavior before editing. No PitBench "
+                "development instances are mounted in this task.\n"
+            )
+        rerun = (
+            "4. Differential Verification: Run "
+            "`pitbench bench --label agent --build` "
+            "on the same development instances, seeds, and budget. "
+            f"{comparison} Public bench output is development feedback; "
+            "the evaluator independently verifies submitted solutions. "
+            "Without `--build`, bench executes the current artifact. Check its "
+            "fingerprint and build warning before trusting a comparison.\n"
+            if AgentTool.BENCH in agent_tools
+            else "4. Differential Verification: Rebuild the changed solver and "
+            "repeat the baseline cases under the same seed and budget. "
+            f"{comparison}\n"
+        )
+        validation = (
+            " and `pitbench validate`" if AgentTool.VALIDATE in agent_tools else ""
+        )
         sections = [
-            f"{task.instruction}\n\n"
-            f"The repository is read-only outside these editable paths: {editable_paths}. "
-            "Keep all implementation changes inside them.",
+            f"{task.instruction}\n\n" + source_scope,
             "### Task Context\n"
             f"- Target Solver: {task.release.repository} v{task.release.version}\n"
             f"- Problem Family: {task.problem_family.value.upper()}\n"
             f"- Optimization Scope: {scope}\n"
+            f"- Performance Protocol: {protocol.value}\n"
             f"- Primary Evaluation Budget: {budget_info} per instance",
             "### Evaluation & Correctness Requirements\n"
             "- Feasibility & Validity: 100% solution validity, constraint satisfaction, and format compatibility are mandatory. Confirmed semantic invalidity disqualifies the candidate.\n"
             "- Operational Failures: Crashes, timeouts, out-of-memory failures, numerical failures, and missing targets are retained and reported under Operational Reliability; they do not by themselves fail the correctness qualification.\n"
-            "- Evaluation Metric: Solution quality (normalized gap to optimal/BKS) within the fixed time budget.\n"
+            f"{metric}\n"
             "- Robustness: The candidate will be evaluated across unseen test instances, multiple random seeds, and perturbed representations. Do not overfit hyperparameters or hardcode behaviors for specific instances.",
             "### Recommended Performance Engineering SOP\n"
-            "1. Baseline: Run visible development instances (located in `agent_dev`) on the clean repository to establish reference runtime, objective values, and feasibility.\n"
-            f"2. Profile: Run profiling tools on development instances to pinpoint computational bottlenecks in `{scope}`. Formulate concrete hypotheses before making edits.\n"
+            + development
+            + f"2. Profile: Run profiling tools on available cases to pinpoint computational bottlenecks in `{scope}`. Formulate concrete hypotheses before making edits.\n"
             "3. Targeted Optimization: Implement minimal, high-impact, semantics-preserving improvements focused on the identified hot paths (e.g., caching redundant calculations, pruning invalid search neighborhoods early, reducing inner-loop allocations). Avoid blind parameter guessing or disruptive rewrites.\n"
-            "4. Differential Verification: Re-run the development instances under the same budget. Confirm that solution validity is 100% maintained and that performance/objective is genuinely improved.\n"
-            "5. Regression & Cleanup: Run existing repository unit/integration tests and `pitbench validate` (if available) to ensure no regressions. Remove any scratch scripts, profiling traces, or generated output files so that `git status` contains only intentional source changes.",
+            + rerun
+            + "5. Regression & Cleanup: Run existing repository unit/integration tests"
+            f"{validation} to check for regressions. Remove scratch scripts, "
+            "profiling traces, and generated files from the submitted source changes.",
         ]
 
         if agent_tools:
@@ -368,23 +438,33 @@ CMD ["sh", "-c", "sleep infinity"]
 COPY agent_tooling /opt/pitbench-tooling
 COPY agent_bin/pitbench /usr/local/bin/pitbench
 COPY agent_config.json /pitbench/config.json
-RUN chmod 0755 /usr/local/bin/pitbench
+RUN chmod 0755 /usr/local/bin/pitbench \
+    && chmod -R a+rX /opt/pitbench-tooling /pitbench/config.json
 """
 
     @staticmethod
     def _development_copy(agent_tools: frozenset[AgentTool]) -> str:
         if not needs_development_instances(agent_tools):
             return ""
-        return "COPY dev_instances /pitbench/dev_instances\n"
+        return (
+            "COPY dev_instances /pitbench/dev_instances\n"
+            "RUN chmod -R a+rX /pitbench/dev_instances\n"
+        )
 
     @staticmethod
     def _workspace_permissions(task: PitBenchTask, *, include_runs: bool) -> str:
+        repository = RepositoryPluginRegistry.load(task.repository.plugin)
         editable_paths = [
             shlex.quote(f"/workspace/repo/{path}")
             for path in task.repository.editable_paths
         ]
+        build_paths = [
+            shlex.quote(f"/workspace/repo/{path}")
+            for path in repository.agent_build_paths
+        ]
         writable_paths = [
             *editable_paths,
+            *build_paths,
             "/workspace/repo/.codex",
             "/workspace/repo/.agents",
             "/logs",
@@ -401,6 +481,13 @@ RUN (getent group pitbench-agent >/dev/null \
     && (id --user pitbench-agent >/dev/null 2>&1 \
         || useradd --non-unique --uid ${{PITBENCH_AGENT_UID}} \
            --gid ${{PITBENCH_AGENT_GID}} --create-home --shell /bin/bash pitbench-agent) \
+    && (if [ -d /root/.m2/repository ]; then \
+          chmod o+x /root && chmod -R a+rX /root/.m2/repository \
+          && mkdir -p /home/pitbench-agent/.m2 \
+          && ln -s /root/.m2/repository /home/pitbench-agent/.m2/repository \
+          && chown ${{PITBENCH_AGENT_UID}}:${{PITBENCH_AGENT_GID}} \
+             /home/pitbench-agent/.m2; \
+        fi) \
     && chown -R root:root /workspace/repo \
     && chmod -R a=rX /workspace/repo \
     && mkdir -p {writable} /workspace/repo/.aws \

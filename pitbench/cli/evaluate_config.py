@@ -66,7 +66,13 @@ class EvaluationConfig(BaseModel):
     configuration_robustness: ConfigurationRobustnessConfig = Field(
         default_factory=ConfigurationRobustnessConfig
     )
-    agent_tools: list[AgentTool] = Field(default_factory=list)
+    agent_tools: list[AgentTool] = Field(
+        default_factory=lambda: [
+            AgentTool.INSPECT,
+            AgentTool.WORKSPACE,
+            AgentTool.BENCH,
+        ]
+    )
     tasks: dict[str, TaskResources] = Field(default_factory=dict)
     agents: dict[str, dict[str, ConfigValue]] = Field(default_factory=dict)
     judge_cpus: float | None = None

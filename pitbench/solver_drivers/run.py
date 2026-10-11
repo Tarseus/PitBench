@@ -14,9 +14,9 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import ClassVar
 
-from pitbench.schema.observation import SolverTermination
 from pitbench.solver_drivers.common import (
     ParameterRejected,
+    SolverTermination,
     append_trajectory,
     failure_reason,
     finite,

@@ -723,7 +723,7 @@ def evaluate_task(
     if private_root is None and "private_root" not in configured_paths.model_fields_set:
         _warning("private_root is not configured; using default private")
     if "agent_tools" not in evaluation_config.model_fields_set:
-        _warning("agent_tools is not configured; using default []")
+        _warning("agent_tools is not configured; using default [inspect, workspace, bench]")
     resolved_output_path = resolve_repository_path(
         repository_root, output_path or configured_paths.output_path
     )

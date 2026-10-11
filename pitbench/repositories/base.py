@@ -68,6 +68,8 @@ class RepositoryPlugin(ABC):
     deterministic = False
     agent_environment: AgentEnvironment | None = None
     agent_requirement: str | None = None
+    agent_artifact_globs: tuple[str, ...] = ()
+    agent_build_paths: tuple[str, ...] = ()
     agent_python: str | None = None
     collection_backend: str | None = None
     representations: dict[str, tuple[str, ...]] = {}
@@ -77,6 +79,10 @@ class RepositoryPlugin(ABC):
     @abstractmethod
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         """Commands executed in a fresh code-state workspace."""
+
+    def agent_build_commands(self) -> list[CommandSpec]:
+        """Commands that refresh the solver used by public development runs."""
+        return self.build_commands(BuildKind.PERFORMANCE)
 
     def run_command(self, run: SolverRunSpec) -> CommandSpec:
         """Return one normalized invocation through the shared driver entry."""

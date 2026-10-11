@@ -15,6 +15,13 @@ import yaml
 from pydantic import BaseModel, Field, model_validator
 
 from pitbench.problem_families.base import ProblemFamilyPlugin, VerificationResult
+from pitbench.problem_families.public_verification import (
+    check_bin_packing,
+    check_cvrp,
+    edge_cost,
+)
+
+_edge_cost = edge_cost
 
 
 class TrustedOptimumRecord(BaseModel):
@@ -92,22 +99,6 @@ class TrustedOptimumOracle(BaseModel):
         return cls.model_validate(yaml.safe_load(path.read_text()))
 
 
-def _edge_cost(
-    coordinates: list[list[float]],
-    first: int,
-    second: int,
-    distance_metric: str | None,
-) -> float:
-    x1, y1 = coordinates[first]
-    x2, y2 = coordinates[second]
-    distance = math.hypot(x2 - x1, y2 - y1)
-    if distance_metric is None or distance_metric == "EXACT_2D":
-        return distance
-    if distance_metric == "EUC_2D":
-        return float(math.floor(distance + 0.5))
-    raise ValueError(f"unsupported CVRP distance metric: {distance_metric}")
-
-
 class CVRPFamily(ProblemFamilyPlugin):
     """Independent verifier for PitBench's normalized CVRP JSON format."""
 
@@ -116,40 +107,7 @@ class CVRPFamily(ProblemFamilyPlugin):
     def verify(self, instance_path: Path, solution_path: Path) -> VerificationResult:
         instance = json.loads(instance_path.read_text())
         solution = json.loads(solution_path.read_text())
-        coordinates = instance["coordinates"]
-        demands = instance["demands"]
-        capacity = instance["capacity"]
-        depot = int(instance.get("depot", 0))
-        distance_metric = instance.get("distance_metric")
-        expected = set(range(len(coordinates))) - {depot}
-        visited: list[int] = []
-        objective = 0.0
-
-        for route in solution["routes"]:
-            if any(type(node) is not int or node not in expected for node in route):
-                return VerificationResult(
-                    feasible=False, detail="invalid customer index"
-                )
-            load = sum(demands[node] for node in route)
-            if load > capacity:
-                return VerificationResult(
-                    feasible=False,
-                    detail=f"route capacity {load} exceeds {capacity}",
-                )
-            path = [depot, *route, depot]
-            for first, second in zip(path, path[1:]):
-                objective += _edge_cost(coordinates, first, second, distance_metric)
-            visited.extend(route)
-
-        if len(visited) != len(set(visited)):
-            return VerificationResult(feasible=False, detail="duplicate customer")
-        if set(visited) != expected:
-            return VerificationResult(feasible=False, detail="customer set mismatch")
-        return VerificationResult(
-            feasible=True,
-            objective=objective,
-            detail="independent CVRP verification passed",
-        )
+        return VerificationResult.model_validate(check_cvrp(instance, solution))
 
 
 class ExternalVerifierFamily(ProblemFamilyPlugin):
@@ -378,38 +336,8 @@ def _check_bin_packing_solution(
     weights: list[int],
     capacity: int,
 ) -> VerificationResult:
-    bins = solution.get("bins")
-    if not isinstance(bins, list) or any(
-        not isinstance(bin_items, list) or not bin_items for bin_items in bins
-    ):
-        return VerificationResult(
-            feasible=False,
-            detail="bin packing solution requires nonempty bins",
-        )
-    item_indices = [item for bin_items in bins for item in bin_items]
-    if any(type(item) is not int for item in item_indices):
-        return VerificationResult(
-            feasible=False,
-            detail="bin packing item index is not an integer",
-        )
-    if len(item_indices) != len(weights) or set(item_indices) != set(
-        range(len(weights))
-    ):
-        return VerificationResult(
-            feasible=False,
-            detail="bin packing items must appear exactly once",
-        )
-    for bin_index, bin_items in enumerate(bins):
-        load = sum(weights[item] for item in bin_items)
-        if load > capacity:
-            return VerificationResult(
-                feasible=False,
-                detail=f"bin {bin_index} exceeds capacity",
-            )
-    return VerificationResult(
-        feasible=True,
-        objective=float(len(bins)),
-        detail="exact integer bin packing verification passed",
+    return VerificationResult.model_validate(
+        check_bin_packing(solution, weights=weights, capacity=capacity)
     )
 
 
@@ -848,7 +776,13 @@ class CPFamily(ExternalVerifierFamily):
             solution = json.loads(solution_path.read_text())
             weights = instance["weights"]
             capacity = instance["capacity"]
-        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+        except (
+            KeyError,
+            OSError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as error:
             return VerificationResult(
                 feasible=False,
                 detail=f"unsupported normalized CP instance or solution: {error}",

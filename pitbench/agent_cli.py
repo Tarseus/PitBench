@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -28,17 +30,72 @@ def _config() -> dict[str, Any]:
     )
 
 
-def _instances(selected: str | None) -> list[Path]:
+def _instances(
+    selected: str | None, config: dict[str, Any] | None = None
+) -> list[Path]:
     root = _path("PITBENCH_DEV_INSTANCES", "/pitbench/dev_instances")
     paths = sorted(
         path for path in root.glob("dev_*.*") if path.name != "instance_set_config.yaml"
     )
     if selected is None:
         return paths
-    matches = [path for path in paths if path.stem == selected or path.name == selected]
+    targets = (config or {}).get("development_targets", {})
+    matches = [
+        path
+        for path in paths
+        if path.stem == selected
+        or path.name == selected
+        or targets.get(path.name, {}).get("id") == selected
+    ]
     if not matches:
-        raise SystemExit(f"unknown development instance: {selected}")
+        custom = Path(selected).expanduser()
+        if custom.is_file():
+            return [custom.resolve()]
+    if not matches:
+        raise SystemExit(f"development instance or file does not exist: {selected}")
     return matches
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _artifact_identity(config: dict[str, Any]) -> dict[str, Any]:
+    repository = _repository()
+    files: dict[str, str] = {}
+    missing: list[str] = []
+    for pattern in config.get("artifact_globs", []):
+        matches = sorted(
+            path
+            for path in repository.glob(pattern)
+            if path.is_file()
+            and not path.name.endswith(("-sources.jar", "-javadoc.jar"))
+        )
+        if not matches:
+            missing.append(pattern)
+        for path in matches:
+            files[str(path.relative_to(repository))] = _sha256(path)
+    fingerprint = (
+        hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
+        if files
+        else None
+    )
+    return {"files": files, "fingerprint": fingerprint, "missing": missing}
+
+
+def _target_for(config: dict[str, Any], instance: Path, digest: str) -> dict[str, Any]:
+    targets = config.get("development_targets", {})
+    direct = targets.get(instance.name)
+    if direct is not None and direct.get("sha256") == digest:
+        return direct
+    return next(
+        (item for item in targets.values() if item.get("sha256") == digest),
+        {"id": instance.stem, "target": None},
+    )
 
 
 def _runner_available(config: dict[str, Any]) -> tuple[bool, str]:
@@ -69,12 +126,23 @@ def inspect_command(_: argparse.Namespace) -> int:
         "task_type": config["task_type"],
         "problem_family": config["problem_family"],
         "budgets_sec": config["budgets_sec"],
+        "primary_budget_sec": config["primary_budget_sec"],
+        "performance_protocol": config["performance_protocol"],
+        "exact_time_basis": config["exact_time_basis"],
         "development_seeds": config["development_seeds"],
         "threads": config["threads"],
         "development_instances": [path.name for path in _instances(None)],
+        "development_targets": config.get("development_targets", {}),
+        "development_instance_directory": str(
+            _path("PITBENCH_DEV_INSTANCES", "/pitbench/dev_instances")
+        ),
         "runner_available": available,
         "runner_detail": detail,
+        "runner_command_template": config["runner"],
+        "runner_artifacts": _artifact_identity(config),
+        "build_commands": config.get("build_commands", []),
         "editable_paths": config.get("editable_paths", []),
+        "build_output_paths": config.get("build_output_paths", []),
         "workspace": workspace,
         "validation_available": bool(config.get("validation_commands")),
     }
@@ -83,7 +151,12 @@ def inspect_command(_: argparse.Namespace) -> int:
 
 
 def _command(
-    config: dict[str, Any], instance: Path, output: Path, seed: int, budget: float
+    config: dict[str, Any],
+    instance: Path,
+    output: Path,
+    seed: int,
+    budget: float,
+    threads: int,
 ) -> list[str]:
     values = {
         "instance": str(instance),
@@ -91,25 +164,272 @@ def _command(
         "trajectory": str(output.with_suffix(".trajectory.jsonl")),
         "seed": str(seed),
         "budget": str(budget),
-        "threads": str(config["threads"]),
+        "threads": str(threads),
     }
     return [part.format_map(values) for part in config["runner"]]
 
 
+def _finite_number(value: object) -> float | None:
+    if type(value) not in {int, float}:
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _public_verification(
+    config: dict[str, Any], instance: Path, output: Path
+) -> dict[str, Any]:
+    solution_path = output.with_suffix(".solution.json")
+    if not solution_path.is_file():
+        return {"verification": "no_solution", "verified_valid": False}
+    family = config["problem_family"]
+    if family not in {"cvrp", "cp"} or instance.suffix.lower() != ".json":
+        return {"verification": "unavailable", "verified_valid": None}
+    from pitbench.problem_families.public_verification import (
+        check_bin_packing,
+        check_cvrp,
+    )
+
+    try:
+        instance_data = json.loads(instance.read_text())
+        solution_data = json.loads(solution_path.read_text())
+        if family == "cvrp":
+            checked = check_cvrp(instance_data, solution_data)
+        else:
+            checked = check_bin_packing(
+                solution_data,
+                weights=instance_data["weights"],
+                capacity=instance_data["capacity"],
+            )
+    except (
+        KeyError,
+        OSError,
+        TypeError,
+        ValueError,
+        IndexError,
+        json.JSONDecodeError,
+    ) as error:
+        checked = {"feasible": False, "detail": str(error)}
+    return {
+        "verification": "independent_public",
+        "verified_valid": checked["feasible"],
+        "verified_objective": _finite_number(checked.get("objective")),
+        "verification_detail": checked.get("detail"),
+    }
+
+
+def _feedback(
+    config: dict[str, Any],
+    result: dict[str, Any],
+    target: object,
+    budget: float,
+    instance: Path,
+    output: Path,
+) -> dict[str, Any]:
+    reported_objective = _finite_number(result.get("objective"))
+    anchor = _finite_number(target)
+    reported_valid = result.get("valid") is True
+    checked = _public_verification(config, instance, output)
+    verified_valid = checked.get("verified_valid")
+    objective = checked.get("verified_objective", reported_objective)
+    valid = verified_valid if verified_valid is not None else reported_valid
+    feedback: dict[str, Any] = {
+        "reported_valid": reported_valid,
+        "reported_objective": reported_objective,
+        "reported_termination": result.get("solver_termination"),
+        "reported_cpu_time_sec": _finite_number(result.get("cpu_time_sec")),
+        "reported_wall_time_sec": _finite_number(result.get("wall_time_sec")),
+        "public_target": anchor,
+        **checked,
+    }
+    protocol = config["performance_protocol"]
+    if protocol == "heuristic_fixed_budget":
+        feedback["preview_normalized_gap"] = (
+            (objective - anchor)
+            / abs(anchor)
+            * (1 if config["objective_sense"] == "minimize" else -1)
+            if valid and objective is not None and anchor not in (None, 0)
+            else None
+        )
+    elif protocol == "exact_verified_solve":
+        solved = (
+            valid
+            and result.get("solver_termination") == "optimal"
+            and objective == anchor
+            and reported_objective == objective
+            if anchor is not None
+            else None
+        )
+        time_basis = config["exact_time_basis"]
+        runtime = feedback[
+            "reported_cpu_time_sec"
+            if time_basis == "cpu_time"
+            else "reported_wall_time_sec"
+        ]
+        feedback["preview_solved"] = solved
+        feedback["preview_par2_sec"] = (
+            runtime
+            if solved and runtime is not None
+            else 2 * budget
+            if solved is False
+            else None
+        )
+    return feedback
+
+
+def _paired_feedback(current: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
+    if current["performance_protocol"] == "heuristic_fixed_budget":
+        before = base.get("preview_normalized_gap")
+        after = current.get("preview_normalized_gap")
+        return {
+            "verified_objective_reduction": (
+                base["verified_objective"] - current["verified_objective"]
+                if base.get("verified_valid") is True
+                and current.get("verified_valid") is True
+                else None
+            ),
+            "preview_gap_reduction": before - after
+            if before is not None and after is not None
+            else None,
+        }
+    before_solved = base.get("preview_solved")
+    after_solved = current.get("preview_solved")
+    before_runtime = base.get("preview_par2_sec")
+    after_runtime = current.get("preview_par2_sec")
+    return {
+        "verified_objective_reduction": (
+            base["verified_objective"] - current["verified_objective"]
+            if base.get("verified_valid") is True
+            and current.get("verified_valid") is True
+            else None
+        ),
+        "preview_solved_change": int(after_solved) - int(before_solved)
+        if before_solved is not None and after_solved is not None
+        else None,
+        "preview_par2_reduction_sec": before_runtime - after_runtime
+        if before_runtime is not None and after_runtime is not None
+        else None,
+    }
+
+
+def _matching_base_feedback(
+    run_root: Path, current: dict[str, Any]
+) -> tuple[Path, dict[str, Any]] | None:
+    base_root = run_root.parent / "base"
+    fields = (
+        "instance_sha256",
+        "seed",
+        "budget_sec",
+        "threads",
+        "performance_protocol",
+    )
+    for path in sorted(base_root.glob("*.feedback.json")):
+        try:
+            base = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if all(base.get(field) == current.get(field) for field in fields):
+            return path, base
+    return None
+
+
+def _run_build_steps(config: dict[str, Any], *, dry_run: bool) -> bool:
+    commands = config.get("build_commands", [])
+    if not commands:
+        print("public build commands are unavailable", file=sys.stderr)
+        return False
+    log_root = _path("PITBENCH_RUNS", "/pitbench/runs") / "build"
+    log_root.mkdir(parents=True, exist_ok=True)
+    for index, step in enumerate(commands, start=1):
+        argv = list(map(str, step["argv"]))
+        cwd = _repository() / str(step.get("cwd", "."))
+        payload: dict[str, Any] = {
+            "build_step": index,
+            "command": argv,
+            "cwd": str(cwd),
+        }
+        if dry_run:
+            print(json.dumps(payload))
+            continue
+        environment = os.environ.copy()
+        environment.update(
+            {str(key): str(value) for key, value in step.get("env", {}).items()}
+        )
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=cwd,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=float(step.get("timeout_sec", 1800)),
+            )
+        except subprocess.TimeoutExpired:
+            payload["error"] = "build step timed out"
+            print(json.dumps(payload))
+            return False
+        stdout_path = log_root / f"step-{index}.stdout.log"
+        stderr_path = log_root / f"step-{index}.stderr.log"
+        stdout_path.write_text(completed.stdout)
+        stderr_path.write_text(completed.stderr)
+        payload.update(
+            returncode=completed.returncode,
+            stdout_log=str(stdout_path),
+            stderr_log=str(stderr_path),
+        )
+        print(json.dumps(payload), flush=True)
+        if completed.returncode:
+            return False
+    return True
+
+
 def _run_one(
-    config: dict[str, Any], instance: Path, seed: int, budget: float, dry_run: bool
+    config: dict[str, Any],
+    instance: Path,
+    seed: int,
+    budget: float,
+    dry_run: bool,
+    label: str,
+    patch_sha256: str | None,
+    threads: int | None = None,
+    artifacts: dict[str, Any] | None = None,
 ) -> bool:
+    threads = threads if threads is not None else config["threads"]
+    instance_sha256 = _sha256(instance)
+    target_info = _target_for(config, instance, instance_sha256)
+    artifacts = artifacts if artifacts is not None else _artifact_identity(config)
     run_root = _path("PITBENCH_RUNS", "/pitbench/runs")
+    run_root = run_root / label
     run_root.mkdir(parents=True, exist_ok=True)
-    output = run_root / f"{instance.stem}.seed-{seed}.budget-{budget:g}.json"
-    command = _command(config, instance, output, seed, budget)
+    output = run_root / (
+        f"{instance.stem}-{instance_sha256[:12]}.seed-{seed}."
+        f"budget-{budget:g}.threads-{threads}.json"
+    )
+    command = _command(config, instance, output, seed, budget, threads)
     if dry_run:
-        print(json.dumps({"instance": instance.name, "command": command}))
+        print(
+            json.dumps(
+                {
+                    "instance": str(instance),
+                    "instance_id": target_info["id"],
+                    "instance_sha256": instance_sha256,
+                    "label": label,
+                    "command": command,
+                }
+            )
+        )
         return True
     available, detail = _runner_available(config)
     if not available:
         print(f"runner unavailable: {detail}", file=sys.stderr)
         return False
+    for old_path in (
+        output,
+        output.with_suffix(".solution.json"),
+        output.with_suffix(".feedback.json"),
+    ):
+        old_path.unlink(missing_ok=True)
     started = time.perf_counter()
     timeout = budget + 60
     try:
@@ -130,24 +450,106 @@ def _run_one(
     output.with_suffix(".stdout.log").write_text(completed.stdout)
     output.with_suffix(".stderr.log").write_text(completed.stderr)
     payload = {
-        "instance": instance.name,
+        "instance": str(instance),
+        "instance_id": target_info["id"],
+        "instance_sha256": instance_sha256,
+        "label": label,
+        "seed": seed,
+        "budget_sec": budget,
+        "threads": threads,
+        "declared_budget": budget in config["budgets_sec"],
+        "performance_protocol": config["performance_protocol"],
+        "patch_sha256": patch_sha256,
+        "artifact_fingerprint": artifacts["fingerprint"],
+        "artifact_files": artifacts["files"],
+        "artifact_missing": artifacts["missing"],
         "returncode": completed.returncode,
         "wall_time_sec": time.perf_counter() - started,
         "result": str(output),
     }
+    if output.is_file():
+        try:
+            result = json.loads(output.read_text())
+            target = target_info.get("target")
+            payload.update(_feedback(config, result, target, budget, instance, output))
+        except (
+            json.JSONDecodeError,
+            OSError,
+            TypeError,
+            ValueError,
+            AttributeError,
+        ) as error:
+            payload["result_error"] = str(error)
+    else:
+        payload["result_error"] = "solver did not write a result"
+    if label == "agent":
+        match = _matching_base_feedback(run_root, payload)
+        if match is not None:
+            base_path, base = match
+            payload["paired_base"] = str(base_path)
+            payload.update(_paired_feedback(payload, base))
+            if (
+                patch_sha256 != base.get("patch_sha256")
+                and artifacts["fingerprint"] is not None
+                and not artifacts["missing"]
+                and artifacts["fingerprint"] == base.get("artifact_fingerprint")
+            ):
+                payload["build_warning"] = (
+                    "compiled runner artifacts are byte-identical to Base; "
+                    "confirm the changed code affects the executed build"
+                )
+        else:
+            payload["paired_base"] = None
+    output.with_suffix(".feedback.json").write_text(
+        json.dumps(payload, indent=2) + "\n"
+    )
     print(json.dumps(payload))
-    return completed.returncode == 0 and output.is_file()
+    return (
+        completed.returncode == 0
+        and "result_error" not in payload
+        and not (
+            payload.get("verification") == "independent_public"
+            and payload.get("verified_valid") is False
+        )
+    )
 
 
 def bench_command(args: argparse.Namespace) -> int:
     if args.split != "dev":
         raise SystemExit("only the agent-visible dev split is available")
     config = _config()
+    patch = _candidate_patch(_repository()) if not args.dry_run else b""
+    if args.label == "base" and patch:
+        print("base benchmark requires a clean repository", file=sys.stderr)
+        return 2
+    patch_sha256 = hashlib.sha256(patch).hexdigest() if not args.dry_run else None
     seed = args.seed if args.seed is not None else config["development_seeds"][0]
-    budget = args.budget if args.budget is not None else config["budgets_sec"][0]
+    budget = args.budget if args.budget is not None else config["primary_budget_sec"]
+    threads = args.threads if args.threads is not None else config["threads"]
+    if not math.isfinite(budget) or budget <= 0:
+        raise SystemExit("budget must be a positive finite number")
+    if threads < 1:
+        raise SystemExit("threads must be positive")
+    instances = _instances(args.instance, config)
+    if not instances:
+        print("no visible development instances are mounted", file=sys.stderr)
+        return 2
+    if args.build and not _run_build_steps(config, dry_run=args.dry_run):
+        return 1
+    artifacts = _artifact_identity(config)
     succeeded = [
-        _run_one(config, instance, seed, budget, args.dry_run)
-        for instance in _instances(args.instance)
+        _run_one(
+            config,
+            instance,
+            seed,
+            budget,
+            args.dry_run,
+            args.label,
+            patch_sha256,
+            threads,
+            artifacts,
+        )
+        for instance in instances
     ]
     return 0 if all(succeeded) else 1
 
@@ -305,9 +707,22 @@ def validate_command(_: argparse.Namespace) -> int:
 
 
 def _run_options(parser: argparse.ArgumentParser, *, instance_required: bool) -> None:
-    parser.add_argument("--instance", required=instance_required)
-    parser.add_argument("--seed", type=int)
-    parser.add_argument("--budget", type=float)
+    parser.add_argument(
+        "--instance",
+        required=instance_required,
+        help="visible instance name/ID or any readable instance file; omit for all visible instances",
+    )
+    parser.add_argument(
+        "--seed", type=int, help="solver seed; defaults to first development seed"
+    )
+    parser.add_argument(
+        "--budget",
+        type=float,
+        help="positive time budget in seconds; defaults to primary budget",
+    )
+    parser.add_argument(
+        "--threads", type=int, help="solver threads; defaults to task setting"
+    )
     parser.add_argument("--dry-run", action="store_true")
 
 
@@ -324,6 +739,12 @@ def parser() -> argparse.ArgumentParser:
     if "bench" in tools:
         bench = commands.add_parser("bench")
         bench.add_argument("--split", default="dev")
+        bench.add_argument("--label", choices=("base", "agent"), default="agent")
+        bench.add_argument(
+            "--build",
+            action="store_true",
+            help="rebuild the current source before solving",
+        )
         _run_options(bench, instance_required=False)
         bench.set_defaults(handler=bench_command)
     if "validate" in tools:
