@@ -1,0 +1,9 @@
+*
+!docker/
+!docker/solver-images/
+!docker/solver-images/**
+!docker/judge-images/
+!docker/judge-images/**
+!adapters/
+!adapters/jvm/
+!adapters/jvm/**

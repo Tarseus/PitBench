@@ -19,6 +19,7 @@ import docker.errors
 import yaml
 
 import docker
+from adapters.pitbench.adapter import PitBenchAdapter
 from pitbench.cli.evaluate_config import (
     EvaluationConfig,
     resolve_config_path,
@@ -390,7 +391,7 @@ def _github_source_access_check(clone_url: str) -> DoctorCheck:
     )
 
 
-def _repository_source_check(
+def _pinned_source_check(
     context: _DoctorContext,
     access_cache: dict[str, DoctorCheck],
 ) -> DoctorCheck:
@@ -400,20 +401,40 @@ def _repository_source_check(
             "repository source",
             "not checked because the task config is invalid",
         )
-    task_id = context.task.task.task_id
-    resources = context.config.resources_for(task_id)
-    if resources.repository_source is not None:
-        source = resolve_repository_path(
-            context.repository_root, resources.repository_source
-        )
+    source = PitBenchAdapter.source_cache_path(
+        context.repository_root, context.task.task
+    )
+    recovery = (
+        "Remove the invalid generated source cache so PitBench can fetch "
+        "the pinned release again."
+    )
+    if source.exists() or source.is_symlink():
+        if not source.is_dir():
+            return _check(
+                CheckStatus.FAIL,
+                "repository source",
+                f"local repository snapshot does not exist: {source}",
+                recovery,
+            )
+        try:
+            head = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=source, text=True
+            ).strip()
+            expected = context.task.task.release.base_commit
+            if head != expected:
+                raise ValueError(f"snapshot HEAD {head} != pinned release {expected}")
+            PitBenchAdapter.validate_repository(context.task.task, source)
+        except (OSError, subprocess.CalledProcessError, ValueError) as error:
+            return _check(
+                CheckStatus.FAIL,
+                "repository source",
+                f"local snapshot failed release and censorship validation: {error}",
+                recovery,
+            )
         return _check(
-            CheckStatus.FAIL,
+            CheckStatus.PASS,
             "repository source",
-            f"local repository snapshot override is configured: {source}",
-            "Remove tasks."
-            + task_id
-            + ".repository_source so the release is fetched from its GitHub "
-            "commit.",
+            f"validated time-censored local snapshot at pinned release: {source}",
         )
     clone_url = context.task.task.repository.clone_url
     if not clone_url.startswith("https://github.com/"):
@@ -488,7 +509,9 @@ def _configuration_collector_checks(
 
     checks = []
     for panel in panels:
-        panel_name = panel.get("collector", "unknown") if isinstance(panel, dict) else "unknown"
+        panel_name = (
+            panel.get("collector", "unknown") if isinstance(panel, dict) else "unknown"
+        )
         try:
             task = PitBenchTask.from_yaml(
                 resolve_repository_path(repository_root, Path(panel["task_config"]))
@@ -513,7 +536,14 @@ def _configuration_collector_checks(
                 binding_git_hash
             ):
                 raise ValueError("collector binding revision differs from task release")
-        except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.TimeoutExpired) as error:
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+            RuntimeError,
+            subprocess.TimeoutExpired,
+        ) as error:
             checks.append(
                 _check(
                     CheckStatus.FAIL,
@@ -552,9 +582,7 @@ def _agent_runtime_check(reference: str, client: object) -> DoctorCheck:
             if isinstance(output, bytes)
             else str(output)
         )
-        found = {
-            line.strip() for line in rendered.splitlines() if line.strip()
-        }
+        found = {line.strip() for line in rendered.splitlines() if line.strip()}
         missing = [
             tool
             for tool in _REQUIRED_AGENT_RUNTIME_TOOLS
@@ -578,8 +606,7 @@ def _agent_runtime_check(reference: str, client: object) -> DoctorCheck:
             CheckStatus.FAIL,
             "agent runtime",
             f"could not inspect tmux/asciinema: {error}",
-            "Verify the configured agent image can start /bin/sh, then rerun "
-            "doctor.",
+            "Verify the configured agent image can start /bin/sh, then rerun doctor.",
         )
 
 
@@ -1303,7 +1330,7 @@ def run_doctor(
     checks.append(_private_assets_check(context))
     checks.append(_seed_protocol_check(context))
     checks.append(_reliability_plan_check(context))
-    checks.append(_repository_source_check(context, {}))
+    checks.append(_pinned_source_check(context, {}))
     checks.append(_configuration_robustness_check(root, context.config))
     checks.extend(_configuration_collector_checks(root, context.config))
     client, docker_info, docker_result = _docker_check(client_factory)
@@ -1349,7 +1376,7 @@ def evaluation_checks(
                 _private_assets_check(context),
                 _seed_protocol_check(context),
                 _reliability_plan_check(context),
-                _repository_source_check(context, source_cache),
+                _pinned_source_check(context, source_cache),
             ]
             task_checks.extend(_image_checks(context, client, runtime_cache)[0])
             protocol = record.task.evaluation

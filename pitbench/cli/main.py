@@ -13,6 +13,7 @@ from typing import Annotated, Any
 import typer
 
 from adapters.pitbench.adapter import PitBenchAdapter
+from adapters.pitbench.git_snapshot import GitSnapshotError
 from pitbench.agent_tools import AgentTool
 from pitbench.cli.auth import auth_app
 from pitbench.cli.doctor import CheckStatus, evaluation_checks, run_doctor
@@ -195,9 +196,7 @@ def _limited_evaluation_failures(
     if not observations_path.is_file():
         return ["judge observations are missing"]
 
-    expected_grid = ExpectedRunGrid.model_validate_json(
-        expected_grid_path.read_text()
-    )
+    expected_grid = ExpectedRunGrid.model_validate_json(expected_grid_path.read_text())
     observations = ObservationStore.read_jsonl(observations_path)
     expected_runs = {_run_identity(item) for item in expected_grid.runs}
     observed_runs: set[tuple] = set()
@@ -235,9 +234,10 @@ def _limited_evaluation_failures(
         failures.append("performance report is incomplete")
     if summary.get("resource_usage") is None:
         failures.append("resource report is missing")
-    if task.evaluation.seed_robustness is not None and summary.get(
-        "nuisance_robustness"
-    ) is None:
+    if (
+        task.evaluation.seed_robustness is not None
+        and summary.get("nuisance_robustness") is None
+    ):
         failures.append("seed robustness report is missing")
     if task.evaluation.operational_reliability:
         reliability = summary.get("operational_reliability")
@@ -362,9 +362,10 @@ def _evaluation_metric_failures(
         failures.append("performance report is incomplete")
     if summary.get("resource_usage") is None:
         failures.append("resource report is missing")
-    if task.evaluation.seed_robustness is not None and summary.get(
-        "nuisance_robustness"
-    ) is None:
+    if (
+        task.evaluation.seed_robustness is not None
+        and summary.get("nuisance_robustness") is None
+    ):
         failures.append("seed robustness report is missing")
     if task.evaluation.operational_reliability:
         reliability = summary.get("operational_reliability")
@@ -432,7 +433,9 @@ def _normal_metric_coverage(
                         + str((evaluation or {}).get("error", "missing evaluation"))
                     )
                 else:
-                    trial_output = run_output / task_id / trial["trial_name"] / "evaluation"
+                    trial_output = (
+                        run_output / task_id / trial["trial_name"] / "evaluation"
+                    )
                     failures.extend(
                         _evaluation_metric_failures(
                             task,
@@ -469,8 +472,7 @@ def _normal_metric_coverage(
             "failures": configuration_failures,
         }
         all_failures.extend(
-            f"Configuration Robustness: {failure}"
-            for failure in configuration_failures
+            f"Configuration Robustness: {failure}" for failure in configuration_failures
         )
     coverage["complete"] = not all_failures
     coverage["failures"] = all_failures
@@ -593,10 +595,6 @@ def evaluate_task(
     private_root: Annotated[
         Path | None, typer.Option(help="Evaluator-only private storage")
     ] = None,
-    repository_source: Annotated[
-        Path | None,
-        typer.Option(help="Pre-censored local repository snapshot"),
-    ] = None,
     agent_image: Annotated[
         str | None,
         typer.Option(help="Prepared solver image override"),
@@ -695,10 +693,10 @@ def evaluate_task(
     if len(task_ids) != len(set(task_ids)):
         raise typer.BadParameter("task IDs must be unique", param_hint="TASK_IDS")
     if len(task_ids) > 1 and any(
-        value is not None for value in (repository_source, agent_image, judge_image)
+        value is not None for value in (agent_image, judge_image)
     ):
         raise typer.BadParameter(
-            "For multiple tasks, configure per-task sources and images in --config."
+            "For multiple tasks, configure per-task images in --config."
         )
     repository_root = _root(root)
     resolved_config_path = resolve_config_path(repository_root, config_path)
@@ -723,7 +721,9 @@ def evaluate_task(
     if private_root is None and "private_root" not in configured_paths.model_fields_set:
         _warning("private_root is not configured; using default private")
     if "agent_tools" not in evaluation_config.model_fields_set:
-        _warning("agent_tools is not configured; using default [inspect, workspace, bench]")
+        _warning(
+            "agent_tools is not configured; using default [inspect, workspace, bench]"
+        )
     resolved_output_path = resolve_repository_path(
         repository_root, output_path or configured_paths.output_path
     )
@@ -772,7 +772,6 @@ def evaluate_task(
     for task_id in task_ids:
         resources = effective_config.resources_for(task_id).model_copy()
         for key, override in (
-            ("repository_source", repository_source),
             ("agent_image", agent_image),
             ("judge_image", judge_image),
             ("judge_cpus", judge_cpus),
@@ -782,17 +781,12 @@ def evaluate_task(
             if override is not None:
                 setattr(resources, key, override)
             elif getattr(resources, key) is None and key in (
-                "repository_source",
                 "agent_image",
                 "judge_image",
             ):
                 _warning(
                     f"{key} for {task_id} is not configured; using the task config default"
                 )
-        if resources.repository_source is not None:
-            resources.repository_source = resolve_repository_path(
-                repository_root, resources.repository_source
-            )
         effective_config.tasks[task_id] = resources
 
     checks = evaluation_checks(
@@ -815,7 +809,6 @@ def evaluate_task(
         resources = effective_config.resources_for(task_id)
         task_path = dataset_path / task_id
         materialize_kwargs: dict[str, Any] = {
-            "repository_source": resources.repository_source,
             "agent_image": resources.agent_image,
             "judge_image": resources.judge_image,
             "agent_tools": evaluation_config.agent_tools,
@@ -853,9 +846,7 @@ def evaluate_task(
             **materialize_kwargs,
         )
         typer.echo(f"Materialized {task_id} at {task_path}")
-        _prepare_task_image(
-            task_path, rebuild=rebuild or resources.agent_image is not None
-        )
+        _prepare_task_image(task_path, rebuild=rebuild)
     typer.echo(f"Starting evaluation run {resolved_run_id}")
     run_harness(
         dataset_path=dataset_path,
@@ -943,10 +934,6 @@ def judge_candidate(
     ] = None,
     private_root: Annotated[
         Path | None, typer.Option(help="Evaluator-only private storage")
-    ] = None,
-    repository_source: Annotated[
-        Path | None,
-        typer.Option(help="Pre-censored base repository snapshot"),
     ] = None,
     judge_image: Annotated[
         str | None,
@@ -1037,20 +1024,15 @@ def judge_candidate(
     resolved_private_root = resolve_repository_path(
         repository_root, private_root or configured_paths.private_root
     )
-    configured_repository_source = configured_resources.repository_source
-    selected_repository_source = repository_source or configured_repository_source
-    if selected_repository_source is None:
+    try:
+        cached_repository = PitBenchAdapter(
+            repository_root, resolved_private_root
+        ).ensure_source_cache(record.task)
+    except (GitSnapshotError, OSError, ValueError) as error:
         raise typer.BadParameter(
-            "Judge requires --repository-source or tasks.<task_id>.repository_source "
-            "in the evaluation config"
-        )
-    resolved_repository_source = resolve_repository_path(
-        repository_root, selected_repository_source
-    ).resolve()
-    if not resolved_repository_source.is_dir():
-        raise typer.BadParameter(
-            f"Repository snapshot does not exist: {resolved_repository_source}"
-        )
+            f"Could not prepare the pinned repository source: {error}",
+            param_hint="TASK_ID",
+        ) from error
 
     resolved_judge_image = (
         judge_image
@@ -1084,7 +1066,7 @@ def judge_candidate(
     )
     judge_evaluator_config: dict[str, Any] = {
         "task_config_path": str(record.task_config_path),
-        "base_repository": str(resolved_repository_source),
+        "base_repository": str(cached_repository),
         "private_root": str(resolved_private_root),
         "judge_image": resolved_judge_image,
         "judge_cpus": judge_cpus,
@@ -1139,9 +1121,7 @@ def dry_run_tasks(
     task_ids: Annotated[
         list[str], typer.Argument(help="One or more PitBench task IDs")
     ],
-    run_id: Annotated[
-        str, typer.Option(help="Unique dry-run identifier")
-    ],
+    run_id: Annotated[str, typer.Option(help="Unique dry-run identifier")],
     instances_per_instance_set: Annotated[
         int,
         typer.Option(
@@ -1156,9 +1136,7 @@ def dry_run_tasks(
     judge_parallel_runs: Annotated[
         int, typer.Option("--judge-parallel-runs", min=1)
     ] = 1,
-    judge_cpus: Annotated[
-        float, typer.Option("--judge-cpus", min=0.1)
-    ] = 8.0,
+    judge_cpus: Annotated[float, typer.Option("--judge-cpus", min=0.1)] = 8.0,
     judge_memory: Annotated[str, typer.Option("--judge-memory")] = "8g",
     configuration_robustness: Annotated[
         bool,
@@ -1182,15 +1160,15 @@ def dry_run_tasks(
     """Run the full evaluator pipeline on a limited empty-patch panel without an agent."""
     task_ids = _normalize_task_ids(task_ids)
     if not task_ids:
-        raise typer.BadParameter("at least one task ID is required", param_hint="TASK_IDS")
+        raise typer.BadParameter(
+            "at least one task ID is required", param_hint="TASK_IDS"
+        )
     if len(task_ids) != len(set(task_ids)):
         raise typer.BadParameter("task IDs must be unique", param_hint="TASK_IDS")
-    if (
-        not run_id
-        or Path(run_id).name != run_id
-        or run_id in {".", ".."}
-    ):
-        raise typer.BadParameter("run ID must be a directory name", param_hint="--run-id")
+    if not run_id or Path(run_id).name != run_id or run_id in {".", ".."}:
+        raise typer.BadParameter(
+            "run ID must be a directory name", param_hint="--run-id"
+        )
 
     repository_root = _root(root)
     resolved_config_path = resolve_config_path(repository_root, config_path)
@@ -1219,11 +1197,6 @@ def dry_run_tasks(
     empty_patch_sha256 = hashlib.sha256(b"").hexdigest()
     for task_id in task_ids:
         resources = evaluation_config.resources_for(task_id)
-        if resources.repository_source is not None:
-            raise typer.BadParameter(
-                f"{task_id} configures a local repository_source; dry-run requires "
-                "GitHub materialization"
-            )
         task_workspace = workspace_root / task_id
         task_output = output_root / task_id
         task_output.mkdir(parents=True, exist_ok=True)
@@ -1239,9 +1212,7 @@ def dry_run_tasks(
             )
             _prepare_task_image(task_workspace, rebuild=True)
             record = TaskCatalog(repository_root).validate_one(task_id)
-            judge_image = (
-                resources.judge_image or record.task.repository.judge_image
-            )
+            judge_image = resources.judge_image or record.task.repository.judge_image
             if not judge_image:
                 raise ValueError("dry-run requires a pinned judge image")
             envelope = PitBenchEvaluator().envelope(
@@ -1408,10 +1379,6 @@ def materialize_task(
     private_root: Annotated[
         Path, typer.Option(help="Evaluator-only private storage")
     ] = Path("private"),
-    repository_source: Annotated[
-        Path | None,
-        typer.Option(help="Pre-censored local repository snapshot"),
-    ] = None,
     agent_image: Annotated[
         str | None,
         typer.Option(help="Prepared solver image override"),
@@ -1436,7 +1403,6 @@ def materialize_task(
     ).materialize(
         task_id,
         output,
-        repository_source=repository_source,
         agent_image=agent_image,
         judge_image=judge_image,
         agent_tools=agent_tools,

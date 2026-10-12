@@ -264,6 +264,12 @@ def test_git_snapshot_materializes_and_censors_pinned_submodules(
         destination,
         expected_commit=repository_commit,
     )
+    git(destination, "submodule", "update", "--init", "--recursive", "--no-fetch")
+    assert (
+        git(destination, "submodule", "status", "--recursive")
+        .lstrip()
+        .startswith(submodule_commit)
+    )
 
 
 def test_primary_budget_must_belong_to_evaluation_budgets() -> None:

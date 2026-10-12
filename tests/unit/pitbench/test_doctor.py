@@ -8,16 +8,17 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from adapters.pitbench.adapter import PitBenchAdapter
 from pitbench.cli.doctor import (
     CheckStatus,
     _agent_runtime_check,
     _configuration_collector_checks,
     _configuration_robustness_check,
     _judge_environment_check,
+    _pinned_source_check,
     _reliability_plan_check,
-    _repository_source_check,
 )
-from pitbench.cli.evaluate_config import EvaluationConfig, TaskResources
+from pitbench.cli.evaluate_config import EvaluationConfig
 from pitbench.cli.main import (
     _configuration_dry_run_failures,
     _run_configuration_robustness,
@@ -27,13 +28,9 @@ from pitbench.cli.main import (
 def doctor_context(
     repository_root: Path,
     *,
-    repository_source: Path | None = None,
     clone_url: str = "https://github.com/PyVRP/PyVRP.git",
 ) -> SimpleNamespace:
     config = EvaluationConfig()
-    config.tasks["pyvrp_v0_14_0"] = TaskResources(
-        repository_source=repository_source,
-    )
     task = SimpleNamespace(
         task_id="pyvrp_v0_14_0",
         repository=SimpleNamespace(clone_url=clone_url),
@@ -46,22 +43,61 @@ def doctor_context(
             task=SimpleNamespace(
                 task_id=task.task_id,
                 repository=task.repository,
+                release=SimpleNamespace(base_commit="pinned"),
                 evaluation=SimpleNamespace(operational_reliability=True),
             )
         ),
     )
 
 
-def test_repository_source_rejects_local_snapshot_override(tmp_path: Path) -> None:
-    context = doctor_context(tmp_path, repository_source=Path("snapshot"))
+def test_pinned_source_rejects_broken_generated_cache(tmp_path: Path) -> None:
+    context = doctor_context(tmp_path)
+    source = PitBenchAdapter.source_cache_path(tmp_path, context.task.task)
+    source.parent.mkdir(parents=True)
+    source.symlink_to(tmp_path / "missing", target_is_directory=True)
 
-    check = _repository_source_check(context, {})
+    check = _pinned_source_check(context, {})
 
     assert check.status is CheckStatus.FAIL
-    assert "local repository snapshot override" in check.detail
+    assert "does not exist" in check.detail
 
 
-def test_repository_source_checks_github_with_global_transport(
+def test_pinned_source_rejects_modified_local_snapshot(tmp_path: Path) -> None:
+    context = doctor_context(tmp_path)
+    source = PitBenchAdapter.source_cache_path(tmp_path, context.task.task)
+    source.mkdir(parents=True)
+    with (
+        patch("pitbench.cli.doctor.subprocess.check_output", return_value="pinned\n"),
+        patch(
+            "pitbench.cli.doctor.PitBenchAdapter.validate_repository",
+            side_effect=ValueError("local modifications"),
+        ),
+    ):
+        check = _pinned_source_check(context, {})
+
+    assert check.status is CheckStatus.FAIL
+    assert "local modifications" in check.detail
+
+
+def test_pinned_source_reuses_generated_cache_without_remote_check(
+    tmp_path: Path,
+) -> None:
+    context = doctor_context(tmp_path)
+    source = PitBenchAdapter.source_cache_path(tmp_path, context.task.task)
+    source.mkdir(parents=True)
+    with (
+        patch("pitbench.cli.doctor.subprocess.check_output", return_value="pinned\n"),
+        patch("pitbench.cli.doctor.PitBenchAdapter.validate_repository") as validate,
+        patch("pitbench.cli.doctor._github_source_access_check") as remote,
+    ):
+        check = _pinned_source_check(context, {})
+
+    assert check.status is CheckStatus.PASS
+    validate.assert_called_once_with(context.task.task, source)
+    remote.assert_not_called()
+
+
+def test_pinned_source_checks_github_with_global_transport(
     tmp_path: Path,
 ) -> None:
     context = doctor_context(tmp_path)
@@ -72,7 +108,7 @@ def test_repository_source_checks_github_with_global_transport(
         return subprocess.CompletedProcess(command, 0, "refs/heads/main\n", "")
 
     with patch("pitbench.cli.doctor.subprocess.run", side_effect=fake_run):
-        check = _repository_source_check(context, {})
+        check = _pinned_source_check(context, {})
 
     assert check.status is CheckStatus.PASS
     assert "reachable (direct)" in check.detail
@@ -123,7 +159,9 @@ def test_judge_environment_uses_repository_plugin_contract(
     )
     client = SimpleNamespace(
         images=SimpleNamespace(
-            get=Mock(return_value=SimpleNamespace(attrs={"Config": {"Env": environment}}))
+            get=Mock(
+                return_value=SimpleNamespace(attrs={"Config": {"Env": environment}})
+            )
         )
     )
 
@@ -235,9 +273,7 @@ def test_configuration_dry_run_rejects_incomplete_searches(tmp_path: Path) -> No
 
     failures = _configuration_dry_run_failures(tmp_path)
 
-    assert failures == [
-        "configuration search solver/budget-10 is baseline_unavailable"
-    ]
+    assert failures == ["configuration search solver/budget-10 is baseline_unavailable"]
 
 
 def test_reliability_plan_check_reports_materialized_cases(

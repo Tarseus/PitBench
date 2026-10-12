@@ -35,6 +35,9 @@ RUN test -n "$BASE_COMMIT" \
        fi; \
        done \
     && git -C /workspace/repo checkout --detach FETCH_HEAD \
+    && git -C /workspace/repo submodule update --init --recursive --depth=1 \
+    && git -C /workspace/repo submodule foreach --recursive \
+       'git remote remove origin || true; git for-each-ref --format="%(refname)" | xargs -r -n1 git update-ref -d; git reflog expire --expire=now --all; git gc --prune=now --quiet' \
     && git -C /workspace/repo remote remove origin \
     && git -C /workspace/repo reflog expire --expire=now --all \
     && git -C /workspace/repo gc --prune=now

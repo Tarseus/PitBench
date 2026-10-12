@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import shlex
 import shutil
+import subprocess
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -26,10 +30,40 @@ from pitbench.tasks import TaskCatalog
 
 # Increment when the generated task image or bundled public tooling becomes
 # incompatible with an image produced by an earlier PitBench checkout.
-IMAGE_REVISION = "13"
+IMAGE_REVISION = "15"
 IMAGE_REVISION_LABEL = "org.pitbench.image-revision"
 IMAGE_SOURCE_LABEL = "org.pitbench.image-source"
 IMAGE_TOOLS_LABEL = "org.pitbench.agent-tools"
+IMAGE_CONTEXT_LABEL = "org.pitbench.image-context-sha256"
+
+
+def image_context_digest(task_dir: Path) -> str:
+    """Hash files copied into a prepared task image, excluding the hash label."""
+    files = [task_dir / "Dockerfile", task_dir / ".dockerignore"]
+    for name in ("agent_config.json",):
+        path = task_dir / name
+        if path.is_file():
+            files.append(path)
+    for name in ("agent_bin", "agent_tooling", "dev_instances"):
+        directory = task_dir / name
+        if directory.is_dir():
+            files.extend(path for path in directory.rglob("*") if path.is_file())
+    digest = hashlib.sha256()
+    for path in sorted(files):
+        content = path.read_bytes()
+        if path.name == "Dockerfile":
+            content = (
+                b"\n".join(
+                    line
+                    for line in content.splitlines()
+                    if not line.startswith(f"LABEL {IMAGE_CONTEXT_LABEL}=".encode())
+                )
+                + b"\n"
+            )
+        digest.update(str(path.relative_to(task_dir)).encode() + b"\0")
+        digest.update(content)
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 class PitBenchAdapter:
@@ -45,7 +79,6 @@ class PitBenchAdapter:
         task_id: str,
         destination: Path,
         *,
-        repository_source: Path | None = None,
         agent_image: str | None = None,
         judge_image: str | None = None,
         judge_cpus: float | None = None,
@@ -65,14 +98,9 @@ class PitBenchAdapter:
             raise FileExistsError(task_dir)
         task_dir.mkdir(parents=True)
         repository = task_dir / "repo"
-        if repository_source is None:
-            GitSnapshot(
-                clone_url=task.repository.clone_url,
-                base_commit=task.release.base_commit,
-            ).create(repository, task_dir / "agent_repo.bundle")
-        else:
-            shutil.copytree(repository_source, repository)
-            self.validate_repository(task, repository)
+        self._materialize_cached_repository(
+            task, repository, task_dir / "agent_repo.bundle"
+        )
 
         if needs_development_instances(tools):
             development = next(
@@ -110,13 +138,73 @@ class PitBenchAdapter:
                 agent_tools=tools,
             )
         prepared_image = agent_image or task.repository.agent_image
+        submodule_paths = self._submodule_paths(repository) if prepared_image else ()
+        module_metadata = (repository / ".git/modules").is_dir()
         (task_dir / "Dockerfile").write_text(
-            self._dockerfile(task, image_override=agent_image, agent_tools=tools)
+            self._dockerfile(
+                task,
+                image_override=agent_image,
+                agent_tools=tools,
+                submodule_paths=submodule_paths,
+                module_metadata=module_metadata,
+            )
         )
         if prepared_image is not None:
-            (task_dir / ".dockerignore").write_text(self._dockerignore(tools))
+            (task_dir / ".dockerignore").write_text(
+                self._dockerignore(tools, submodule_paths, module_metadata)
+            )
         (task_dir / "docker-compose.yaml").write_text(self._compose(tools))
+        if prepared_image is not None:
+            digest = image_context_digest(task_dir)
+            with (task_dir / "Dockerfile").open("a") as dockerfile:
+                dockerfile.write(f'LABEL {IMAGE_CONTEXT_LABEL}="{digest}"\n')
         return task_dir
+
+    def _materialize_cached_repository(
+        self, task: PitBenchTask, destination: Path, bundle_path: Path
+    ) -> None:
+        cached_repository = self.ensure_source_cache(task)
+        shutil.copytree(cached_repository, destination)
+        self.validate_repository(task, destination)
+        GitSnapshot._run(
+            ["git", "bundle", "create", str(bundle_path.resolve()), "HEAD"],
+            destination,
+        )
+
+    def ensure_source_cache(self, task: PitBenchTask) -> Path:
+        cached_repository = self.source_cache_path(self.repository_root, task)
+        cache_root = cached_repository.parent
+        cache_root.mkdir(parents=True, exist_ok=True)
+        cache_name = cached_repository.name
+        lock_path = cache_root / f"{cache_name}.lock"
+        with lock_path.open("a+b") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            if not cached_repository.exists():
+                with tempfile.TemporaryDirectory(
+                    prefix=f"{cache_name}.tmp-", dir=cache_root
+                ) as temporary:
+                    prepared = Path(temporary) / "repo"
+                    GitSnapshot(
+                        clone_url=task.repository.clone_url,
+                        base_commit=task.release.base_commit,
+                    ).create(prepared)
+                    self.validate_repository(task, prepared)
+                    prepared.rename(cached_repository)
+            self.validate_repository(task, cached_repository)
+            head = GitSnapshot._run(
+                ["git", "rev-parse", "HEAD"], cached_repository
+            ).stdout.strip()
+            if head != task.release.base_commit:
+                raise ValueError(
+                    f"cached source HEAD {head} != {task.release.base_commit}"
+                )
+        return cached_repository
+
+    @staticmethod
+    def source_cache_path(repository_root: Path, task: PitBenchTask) -> Path:
+        url_hash = hashlib.sha256(task.repository.clone_url.encode()).hexdigest()[:12]
+        name = f"{task.task_id}-{task.release.base_commit[:12]}-{url_hash}"
+        return repository_root / ".pitbench/cache/source-snapshots" / name
 
     @staticmethod
     def validate_repository(task: PitBenchTask, repository: Path) -> None:
@@ -362,13 +450,19 @@ class PitBenchAdapter:
         *,
         image_override: str | None = None,
         agent_tools: Iterable[AgentTool | str] = (),
+        submodule_paths: tuple[str, ...] = (),
+        module_metadata: bool = False,
     ) -> str:
         repository = RepositoryPluginRegistry.load(task.repository.plugin)
         tools = normalize_agent_tools(agent_tools)
         prepared_image = image_override or task.repository.agent_image
         if prepared_image is not None:
             return PitBenchAdapter._prepared_dockerfile(
-                prepared_image, task, agent_tools=tools
+                prepared_image,
+                task,
+                agent_tools=tools,
+                submodule_paths=submodule_paths,
+                module_metadata=module_metadata,
             )
 
         environment = repository.agent_environment
@@ -412,7 +506,12 @@ CMD ["sh", "-c", "sleep infinity"]
 
     @staticmethod
     def _prepared_dockerfile(
-        image: str, task: PitBenchTask, *, agent_tools: frozenset[AgentTool]
+        image: str,
+        task: PitBenchTask,
+        *,
+        agent_tools: frozenset[AgentTool],
+        submodule_paths: tuple[str, ...] = (),
+        module_metadata: bool = False,
     ) -> str:
         tooling_layers = PitBenchAdapter._tooling_layers(agent_tools)
         development_copy = PitBenchAdapter._development_copy(agent_tools)
@@ -420,10 +519,38 @@ CMD ["sh", "-c", "sleep infinity"]
             task, include_runs=needs_run_directory(agent_tools)
         )
         pythonpath = "ENV PYTHONPATH=/opt/pitbench-tooling\n" if agent_tools else ""
+        submodule_copy = ""
+        if submodule_paths:
+            quoted_paths = " ".join(
+                shlex.quote(f"/workspace/repo/{path}") for path in submodule_paths
+            )
+            submodule_copy = f"RUN rm -rf {quoted_paths}\n"
+            if module_metadata:
+                submodule_copy += (
+                    "COPY repo/.git/modules /workspace/repo/.git/modules\n"
+                )
+            for path in submodule_paths:
+                submodule_copy += (
+                    "COPY "
+                    + json.dumps([f"repo/{path}", f"/workspace/repo/{path}"])
+                    + "\n"
+                )
+            submodule_copy += (
+                "RUN git -C /workspace/repo submodule update "
+                "--init --recursive --no-fetch\n"
+            )
+        submodule_copy += (
+            'RUN test "$(git -C /workspace/repo rev-parse HEAD)" = '
+            + shlex.quote(task.release.base_commit)
+            + " \\\n"
+            + "    && git -C /workspace/repo submodule status --recursive > /tmp/pitbench-submodules \\\n"
+            + "    && ! grep -Eq '^[+U-]' /tmp/pitbench-submodules \\\n"
+            + "    && rm /tmp/pitbench-submodules\n"
+        )
         return f"""FROM {image}
 USER root
 RUN mkdir -p /logs /agent-logs
-{tooling_layers}{development_copy}{workspace_permissions}LABEL {IMAGE_REVISION_LABEL}="{IMAGE_REVISION}" \
+{submodule_copy}{tooling_layers}{development_copy}{workspace_permissions}LABEL {IMAGE_REVISION_LABEL}="{IMAGE_REVISION}" \
       {IMAGE_SOURCE_LABEL}="{image}" \
       {IMAGE_TOOLS_LABEL}="{agent_tools_label(agent_tools)}"
 {pythonpath}WORKDIR /workspace/repo
@@ -500,9 +627,37 @@ USER pitbench-agent
 """
 
     @staticmethod
-    def _dockerignore(agent_tools: Iterable[AgentTool | str] = ()) -> str:
+    def _submodule_paths(repository: Path) -> tuple[str, ...]:
+        entries = subprocess.check_output(
+            ["git", "ls-files", "--stage", "-z"], cwd=repository
+        ).split(b"\0")
+        return tuple(
+            entry.split(b"\t", 1)[1].decode()
+            for entry in entries
+            if entry.startswith(b"160000 ")
+        )
+
+    @staticmethod
+    def _dockerignore(
+        agent_tools: Iterable[AgentTool | str] = (),
+        submodule_paths: tuple[str, ...] = (),
+        module_metadata: bool = False,
+    ) -> str:
         tools = normalize_agent_tools(agent_tools)
         paths = ["*", "!Dockerfile"]
+        if submodule_paths:
+            paths.append("!repo/")
+            if module_metadata:
+                paths.extend(
+                    ["!repo/.git/", "!repo/.git/modules/", "!repo/.git/modules/**"]
+                )
+            for submodule in submodule_paths:
+                parts = Path(submodule).parts
+                paths.extend(
+                    "!repo/" + "/".join(parts[:index]) + "/"
+                    for index in range(1, len(parts) + 1)
+                )
+                paths.append(f"!repo/{submodule}/**")
         if tools:
             paths.extend(
                 [

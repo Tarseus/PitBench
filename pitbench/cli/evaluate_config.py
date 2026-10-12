@@ -23,7 +23,6 @@ class EvaluationPaths(BaseModel):
 class TaskResources(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    repository_source: Path | None = None
     agent_image: str | None = None
     judge_image: str | None = None
     judge_cpus: float | None = None

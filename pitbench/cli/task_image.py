@@ -1,18 +1,25 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Callable
 
 from adapters.pitbench.adapter import (
+    IMAGE_CONTEXT_LABEL,
     IMAGE_REVISION,
     IMAGE_REVISION_LABEL,
     IMAGE_SOURCE_LABEL,
     IMAGE_TOOLS_LABEL,
+    image_context_digest,
 )
 from pitbench.agent_tools import AGENT_TOOLS_METADATA, agent_tools_label
 from pitbench.harness.handlers.trial_handler import TrialHandler
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
+
+
+def _source_is_immutable(reference: str) -> bool:
+    return re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", reference) is not None
 
 
 def prepare_task_image(
@@ -37,6 +44,17 @@ def prepare_task_image(
     expected_source = (
         (task_path / "Dockerfile").read_text().splitlines()[0].removeprefix("FROM ")
     )
+    context_match = re.search(
+        rf'^LABEL {re.escape(IMAGE_CONTEXT_LABEL)}="([0-9a-f]{{64}})"$',
+        (task_path / "Dockerfile").read_text(),
+        re.MULTILINE,
+    )
+    expected_context = context_match.group(1) if context_match else None
+    if (
+        expected_context is not None
+        and image_context_digest(task_path) != expected_context
+    ):
+        raise ValueError("task image context changed after materialization")
     tools_metadata = task_path / AGENT_TOOLS_METADATA
     expected_tools = agent_tools_label(
         json.loads(tools_metadata.read_text()).get("agent_tools", [])
@@ -46,11 +64,15 @@ def prepare_task_image(
     cached_revision = manager.image_label(IMAGE_REVISION_LABEL)
     cached_source = manager.image_label(IMAGE_SOURCE_LABEL)
     cached_tools = manager.image_label(IMAGE_TOOLS_LABEL)
+    cached_context = manager.image_label(IMAGE_CONTEXT_LABEL)
     if (
         rebuild
+        or not _source_is_immutable(expected_source)
         or cached_revision != IMAGE_REVISION
         or cached_source != expected_source
         or cached_tools != expected_tools
+        or expected_context is None
+        or cached_context != expected_context
     ):
         progress(f"Building task image {trial.client_image_name}")
         manager.build()

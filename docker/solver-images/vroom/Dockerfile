@@ -17,7 +17,7 @@ RUN test -n "$BASE_COMMIT" \
     && git -C /workspace/repo remote add origin "$SOURCE_REPOSITORY" \
     && git -C /workspace/repo fetch --depth=1 --no-tags origin "$BASE_COMMIT" \
     && git -C /workspace/repo checkout --quiet --detach FETCH_HEAD \
-    && git -C /workspace/repo submodule update --init --depth=1 \
+    && git -C /workspace/repo submodule update --init --recursive --depth=1 \
     && git -C /workspace/repo submodule foreach --recursive \
        'git remote remove origin || true; git for-each-ref --format="%(refname)" | xargs -r -n1 git update-ref -d; git reflog expire --expire=now --all; git gc --prune=now --quiet' \
     && git -C /workspace/repo remote remove origin \

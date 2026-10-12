@@ -195,13 +195,26 @@ to the same command (replace `MODEL_ID` with an ID from `agy models`):
 uv run pitbench evaluate pyvrp_v0_14_0 highs_v1_15_1 --agent antigravity --model MODEL_ID
 ```
 
-Configure each task's source and images under `tasks` in the local YAML. The
+Configure each task's images under `tasks` in the local YAML. The
 command checks every task and the selected agent before starting any agent work.
 Add `--check-only` to inspect prerequisites and collection coverage without
 materializing tasks or running agents. Tasks share one run directory and run
 serially by default; `--n-concurrent` controls trial concurrency.
 When Configuration Robustness is enabled, the check also probes each configured
 collector image and rejects stale compiled JVM adapters before agent work.
+
+PitBench fetches each pinned source release once into
+`.pitbench/cache/source-snapshots` and reuses the validated snapshot for later
+runs. No manually downloaded solver repository or local source path is required.
+The first run requires access to the declared Git source when the cache is
+empty. Generated task images copy pinned submodules from that validated cache,
+initialize them without network access, and check the full recursive submodule
+state before starting an agent. This also repairs older prepared solver images
+that omitted submodules.
+Prepared task images are reused when their source is pinned by
+digest and their revision, tooling, and copied development data match; mutable
+image tags are rebuilt. BASE solver observations use the separate cache under
+`.pitbench/cache/base`.
 
 By default, the task image includes visible development instances and the
 `pitbench inspect`, `pitbench workspace`, and `pitbench bench` commands. Inside
