@@ -27,6 +27,7 @@ __pycache__/
 /docs/local/
 /docs/main-review-components.md
 /papers/
+/report/
 
 # LaTeX build products
 *.aux

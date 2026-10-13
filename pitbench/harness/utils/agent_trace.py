@@ -13,10 +13,12 @@ import io
 import json
 import os
 import shlex
+import shutil
 import tarfile
 import threading
 import time
 import uuid
+from collections import Counter
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -28,10 +30,7 @@ from pydantic import BaseModel
 
 from pitbench.harness.utils import recording
 from pitbench.harness.utils.pipeline_trace import _json_safe
-from pitbench.harness.utils.repository import (
-    archive_repository_head,
-    capture_repository_patch,
-)
+from pitbench.harness.utils.repository import capture_repository_patch
 
 _CURRENT: ContextVar[AgentTrace | None] = ContextVar("agent_trace", default=None)
 _CALL: ContextVar[str | None] = ContextVar("agent_trace_call", default=None)
@@ -84,24 +83,21 @@ class AgentTrace:
         self._container = None
         self._workdir: str | None = None
         self._state_lock = threading.Lock()
-        self._bases: dict[str, dict] = {}
         self._last_state: str | None = None
         self._stop = threading.Event()
         self._collector: threading.Thread | None = None
         self._sources: dict[str, Path] = {}
-        self._files: dict[str, tuple[int, int, int, str, int]] = {}
         self._collection_errors: set[str] = set()
         self._remote_sources: tuple[str, ...] = ()
         self._remote_hashes: dict[str, str] = {}
-        self._workspace_state: str | None = None
         self._recorder_spool = f"/tmp/pitbench-recording-{self.execution_id}"
         self._native_spool = f"/tmp/pitbench-native-recording-{self.execution_id}"
         self._recorder_after: dict[str, int] = {}
         self._harvest_lock = threading.RLock()
         self._native_calls: dict[tuple[str, str, str], dict] = {}
         self._native_events: set[str] = set()
+        self._filesystem_operations: Counter[str] = Counter()
         self._active_calls: set[str] = set()
-        self._workspace_events: dict[str, str | None] = {}
         self._call_states: dict[str, dict] = {}
         self._call_results: dict[str, Any] = {}
         self._watcher: threading.Thread | None = None
@@ -187,6 +183,21 @@ class AgentTrace:
                 return None
             if raw_content is not None:
                 data["content"] = self.content(raw_content)
+            return self.record(event, call_id=call_id, **data)
+
+    def record_contents_if_open(
+        self,
+        event: str,
+        *,
+        call_id: str | None = None,
+        contents: dict[str, bytes],
+        **data,
+    ) -> str | None:
+        """Record several raw values atomically while the trace remains open."""
+        with self._lock:
+            if self._closed:
+                return None
+            data.update({name: self.content(value) for name, value in contents.items()})
             return self.record(event, call_id=call_id, **data)
 
     @contextmanager
@@ -281,26 +292,6 @@ class AgentTrace:
             config_path=config_path,
         )
 
-    def _capture_workspace(self, reason: str, call_id: str | None) -> str | None:
-        try:
-            result = self._container.exec_run(
-                self.recorder_command(
-                    "snapshot",
-                    root=self._workdir or ".",
-                    reason=reason,
-                    call_id=call_id,
-                ),
-                workdir=self._workdir,
-            )
-            if result.exit_code != 0:
-                raise RuntimeError(f"workspace capture failed: {result.output!r}")
-            expected = json.loads(result.output)["id"]
-            self.harvest_recorder(native=False)
-            return self._workspace_events.get(expected)
-        except Exception as error:
-            self._gap("workspace", error)
-            return None
-
     def harvest_recorder(self, *, native=True) -> dict[str, str | None]:
         if self._container is None:
             return {}
@@ -331,10 +322,7 @@ class AgentTrace:
             for event in sorted(pending, key=lambda value: value["completed_ns"]):
                 self.ingest_hook(event)
                 self._recorder_after[spool] = event["completed_ns"]
-            return {
-                event["id"]: (event.get("workspace") or {}).get("state_id")
-                for event in pending
-            }
+            return {event["id"]: self.latest_state_id for event in pending}
 
     def ingest_hook(self, event: dict) -> None:
         with self._harvest_lock:
@@ -346,7 +334,8 @@ class AgentTrace:
         payload = event["payload"]
         provider = event["provider"]
         if provider == "filesystem":
-            self.record("filesystem.mutation", native=event)
+            operation = str(payload.get("operation", "unknown"))
+            self._filesystem_operations[operation] += 1
             if event.get("capture_error") or payload.get("operation") in {
                 "overflow",
                 "watch_gap",
@@ -357,36 +346,9 @@ class AgentTrace:
                 )
             self._native_events.add(event["id"])
             return
-        workspace = event.get("workspace")
-        state_id = None
-        targets = event.get("tool_targets")
-        if targets:
-            self.record("tool.target_snapshot", producer=provider, **targets)
-            state_id = targets["state_id"]
-        if workspace is not None:
-            for item in workspace["entries"].values():
-                if (
-                    item.get("kind") == "file"
-                    and not (self.root / "objects" / item["sha256"]).is_file()
-                ):
-                    raise ValueError(
-                        "workspace manifest refers to a missing content object"
-                    )
-            state_id = workspace["state_id"]
-            self.record(
-                "workspace.snapshot",
-                call_id=payload.get("call_id"),
-                producer=provider,
-                reason=payload.get("reason") or payload.get("hook_event_name"),
-                **workspace,
-            )
-            for error in workspace["errors"]:
-                self._gap("workspace.file", RuntimeError(str(error)))
-            if provider == "pitbench":
-                self._workspace_state = state_id
-                self._workspace_events[event["id"]] = state_id
+        state_id = self.latest_state_id
         if event.get("capture_error"):
-            self._gap("native.workspace", RuntimeError(event["capture_error"]))
+            self._gap("native.hook", RuntimeError(event["capture_error"]))
         if provider != "pitbench":
             self.record("native.hook", producer=provider, native=event)
             event_name = (
@@ -466,6 +428,7 @@ class AgentTrace:
                         response.get("_meta", {}).get("pitbench", {}) or {}
                     ).get("call_id") or backend_id
                 backend_states = self._call_states.get(backend_id, {})
+                state_id = self.checkpoint("native_tool", call_id=call_id)
                 self.record(
                     "tool.result",
                     call_id=call_id,
@@ -659,14 +622,6 @@ class AgentTrace:
             started = time.monotonic()
             try:
                 head = self._git("rev-parse", "HEAD").decode().strip()
-                if head not in self._bases:
-                    self._bases[head] = self.content(
-                        archive_repository_head(
-                            self._container,
-                            workdir=self._workdir,
-                            head=head,
-                        )
-                    )
                 patch_ref = self.content(
                     capture_repository_patch(
                         self._container,
@@ -677,112 +632,75 @@ class AgentTrace:
                 state_id = hashlib.sha256(
                     f"{head}:{patch_ref['sha256']}".encode()
                 ).hexdigest()
-                self.record(
-                    "repository.checkpoint",
-                    call_id=call_id,
-                    reason=reason,
-                    state_id=state_id,
-                    previous_state_id=self._last_state,
-                    head=head,
-                    base_archive=self._bases[head],
-                    patch=patch_ref,
-                    consistency="non_atomic_observation",
-                    scope="tracked and non-ignored untracked files; excludes .pitbench",
-                    capture_elapsed_sec=time.monotonic() - started,
-                )
+                if state_id != self._last_state:
+                    self.record(
+                        "repository.checkpoint",
+                        call_id=call_id,
+                        reason=reason,
+                        state_id=state_id,
+                        previous_state_id=self._last_state,
+                        head=head,
+                        patch=patch_ref,
+                        consistency="non_atomic_observation",
+                        scope="tracked and non-ignored untracked files; excludes .pitbench",
+                        capture_elapsed_sec=time.monotonic() - started,
+                    )
                 self._last_state = state_id
             except Exception as error:
                 self._gap("repository", error)
-            if reason != "sampled":
-                return self._capture_workspace(reason, call_id)
-        return None
+                return None
+            return state_id
 
     def collect_files(self) -> None:
         with self._source_lock:
             self._collect_files()
 
     def _collect_files(self) -> None:
-        for label, root in self._sources.items():
-            if label == "native-hooks":
-                for path in (root / "objects").glob("*"):
-                    if path.is_symlink() or not path.is_file() or len(path.name) != 64:
-                        continue
-                    if not (self.root / "objects" / path.name).exists():
-                        reference = self.content(path.read_bytes())
-                        if reference["sha256"] != path.name:
-                            raise ValueError("native hook object failed its checksum")
+        """Ingest native hook events without copying provider logs into the trace.
+
+        Agent logs and terminal recordings already live beside the trace in the trial
+        artifacts. Copying each growing log in 64 KiB chunks duplicates those files
+        and turns a complete action record into a repository-sized archive.
+        """
+        for path in sorted(self.native_inbox.glob("event-*.json")):
+            try:
+                self.ingest_hook(json.loads(path.read_text()))
+            except (OSError, json.JSONDecodeError) as error:
+                self._gap(f"native-hooks/{path.name}", error)
+
+    def _record_local_artifacts(self) -> None:
+        """Index retained provider logs without storing a second copy."""
+        for source, root in self._sources.items():
             for path in sorted(root.rglob("*")) if root.is_dir() else []:
                 if path.is_symlink() or not path.is_file():
                     continue
-                name = f"{label}/{path.relative_to(root)}"
                 try:
-                    stat = path.stat()
-                    previous = self._files.get(name)
-                    if (
-                        previous
-                        and (stat.st_ino, stat.st_mtime_ns, stat.st_size)
-                        == previous[:3]
-                    ):
-                        continue
-                    offset, generation = (
-                        (previous[2], previous[4]) if previous else (0, 0)
-                    )
+                    digest = hashlib.sha256()
                     with path.open("rb") as stream:
-                        # Detect replacement, truncation and rewrites, including
-                        # rewritten JSON documents which happen to grow in size.
-                        digest = hashlib.sha256()
-                        remaining = offset
-                        while remaining > 0:
-                            chunk = stream.read(min(remaining, 64 * 1024))
-                            if not chunk:
-                                break
+                        while chunk := stream.read(1024 * 1024):
                             digest.update(chunk)
-                            remaining -= len(chunk)
-                        prefix_hash = digest.hexdigest()
-                        reset = previous and (
-                            stat.st_ino != previous[0]
-                            or stat.st_size <= offset
-                            or prefix_hash != previous[3]
-                        )
-                        if reset:
-                            offset, generation = 0, generation + 1
-                            digest = hashlib.sha256()
-                            self.record(
-                                "source.reset", source=name, generation=generation
-                            )
-                        stream.seek(offset)
-                        while chunk := stream.read(64 * 1024):
-                            self.record(
-                                "source.chunk",
-                                source=name,
-                                generation=generation,
-                                offset=offset,
-                                content=self.content(chunk),
-                                visibility="provider_artifact; model_visibility_unspecified",
-                            )
-                            offset += len(chunk)
-                            digest.update(chunk)
-                        prefix_hash = digest.hexdigest()
-                    if (
-                        label == "native-hooks"
-                        and path.name.startswith("event-")
-                        and path.suffix == ".json"
-                    ):
-                        self.ingest_hook(json.loads(path.read_text()))
-                    self._files[name] = (
-                        stat.st_ino,
-                        stat.st_mtime_ns,
-                        offset,
-                        prefix_hash,
-                        generation,
+                    self.record(
+                        "source.artifact",
+                        source=source,
+                        path=str(path.relative_to(root)),
+                        bytes=path.stat().st_size,
+                        sha256=digest.hexdigest(),
+                        retained_at=str(path),
                     )
                 except OSError as error:
-                    self._gap(name, error)
+                    self._gap(f"{source}/{path.name}", error)
+
+    def _record_filesystem_activity(self) -> None:
+        if self._filesystem_operations:
+            self.record(
+                "filesystem.activity",
+                events_observed=sum(self._filesystem_operations.values()),
+                by_operation=dict(sorted(self._filesystem_operations.items())),
+            )
 
     def collect_remote_files(self) -> None:
-        # Remote Docker logs are copied to the host only at container teardown.
-        # Preserve their archives during execution as well, without extracting
-        # any provider-controlled paths onto the host.
+        # Remote Docker logs are unavailable on the host, so retain one final
+        # archive. Local logs are indexed by _record_local_artifacts instead.
         for source in self._remote_sources:
             try:
                 chunks, _ = self._container.get_archive(source)
@@ -805,8 +723,7 @@ class AgentTrace:
         remote_sources=(),
     ):
         self._container, self._workdir = container, workdir
-        self._sources = sources
-        self._sources["native-hooks"] = self.native_inbox
+        self._sources = dict(sources)
         self._remote_sources = remote_sources
         self.checkpoint("initial")
         self.start_filesystem_journal()
@@ -819,7 +736,6 @@ class AgentTrace:
                     if time.monotonic() >= next_snapshot:
                         self.harvest_recorder()
                         self.harvest_recorder(native=False)
-                        self.collect_remote_files()
                         self.checkpoint("sampled")
                         next_snapshot = time.monotonic() + snapshot_interval
                 except Exception as error:
@@ -897,11 +813,14 @@ class AgentTrace:
             if self._watcher.is_alive():
                 self._gap("filesystem.watcher", RuntimeError("watcher did not stop"))
         self.collect_files()
-        self.collect_remote_files()
         self.harvest_recorder()
         self.harvest_recorder(native=False)
         self.checkpoint("final")
         self.close_bound_native_calls()
+        self.collect_remote_files()
+        self._record_local_artifacts()
+        self._record_filesystem_activity()
+        shutil.rmtree(self.native_inbox, ignore_errors=True)
 
     def close(self) -> None:
         with self._lock:

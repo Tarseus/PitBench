@@ -14,7 +14,6 @@ import json
 import os
 import select
 import shlex
-import stat
 import struct
 import sys
 import tarfile
@@ -38,161 +37,6 @@ def durable_json(path: Path, value) -> None:
         os.close(descriptor)
 
 
-def capture_workspace(root: Path, spool: Path) -> dict:
-    """Capture actual files, including ignored builds and initialized submodules.
-
-    Every recorded regular file is opened once and checked for concurrent
-    modification. A changed file is reported as unstable, never as an exact
-    version. Git administration directories and the recorder spool are excluded.
-    """
-    objects = spool / "objects"
-    objects.mkdir(parents=True, exist_ok=True)
-    entries = {}
-    errors = []
-    new_objects = []
-    cache_path = spool / "files.json"
-    cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
-    started = time.monotonic()
-    root = root.resolve()
-    spool_root = spool.resolve()
-    if not root.is_dir():
-        raise ValueError(f"workspace is not a directory: {root}")
-    for directory, directories, filenames in os.walk(
-        root,
-        followlinks=False,
-        onerror=lambda error: errors.append(
-            {"path": str(error.filename), "error": str(error)}
-        ),
-    ):
-        directories[:] = sorted(name for name in directories if name != ".git")
-        for name in sorted([*directories, *filenames]):
-            path = Path(directory) / name
-            if name == ".git" or path == spool_root or spool_root in path.parents:
-                if name in directories:
-                    directories.remove(name)
-                continue
-            relative = str(path.relative_to(root))
-            try:
-                before = path.lstat()
-                item = {"mode": stat.S_IMODE(before.st_mode)}
-                if stat.S_ISLNK(before.st_mode):
-                    item.update(kind="symlink", target=os.readlink(path))
-                elif stat.S_ISDIR(before.st_mode):
-                    item.update(kind="directory")
-                elif stat.S_ISREG(before.st_mode):
-                    previous = cache.get(relative, {})
-                    signature = [
-                        before.st_dev,
-                        before.st_ino,
-                        before.st_size,
-                        before.st_mtime_ns,
-                        before.st_ctime_ns,
-                    ]
-                    if (
-                        previous.get("signature") == signature
-                        and (objects / previous["sha256"]).is_file()
-                    ):
-                        entries[relative] = {**previous, "mode": item["mode"]}
-                        continue
-                    temporary = objects / f".blob-{uuid.uuid4().hex}"
-                    digest = hashlib.sha256()
-                    size = 0
-                    try:
-                        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-                        with (
-                            os.fdopen(fd, "rb") as source,
-                            temporary.open("xb") as target,
-                        ):
-                            opened = os.fstat(source.fileno())
-                            while chunk := source.read(1024 * 1024):
-                                digest.update(chunk)
-                                target.write(chunk)
-                                size += len(chunk)
-                            after = os.fstat(source.fileno())
-                            target.flush()
-                            os.fsync(target.fileno())
-                        object_id = digest.hexdigest()
-                        destination = objects / object_id
-                        if destination.exists():
-                            temporary.unlink()
-                        else:
-                            os.replace(temporary, destination)
-                            new_objects.append(object_id)
-                        stable = (
-                            before.st_dev,
-                            before.st_ino,
-                            before.st_size,
-                            before.st_mtime_ns,
-                            before.st_ctime_ns,
-                        ) == (
-                            opened.st_dev,
-                            opened.st_ino,
-                            opened.st_size,
-                            opened.st_mtime_ns,
-                            opened.st_ctime_ns,
-                        ) == (
-                            after.st_dev,
-                            after.st_ino,
-                            after.st_size,
-                            after.st_mtime_ns,
-                            after.st_ctime_ns,
-                        ) and size == after.st_size
-                        item.update(
-                            kind="file",
-                            sha256=object_id,
-                            bytes=size,
-                            stable=stable,
-                            inode=after.st_ino,
-                            device=after.st_dev,
-                            mtime_ns=after.st_mtime_ns,
-                            ctime_ns=after.st_ctime_ns,
-                            signature=signature if stable else None,
-                        )
-                        if not stable:
-                            errors.append(
-                                {"path": relative, "error": "changed_during_capture"}
-                            )
-                    finally:
-                        temporary.unlink(missing_ok=True)
-                else:
-                    item.update(kind="special", stable=False)
-                    errors.append(
-                        {"path": relative, "error": "special_file_not_captured"}
-                    )
-                entries[relative] = item
-            except OSError as error:
-                errors.append(
-                    {"path": relative, "error": f"{type(error).__name__}: {error}"}
-                )
-    # Identity describes content/mode, not sampling timestamps or inode numbers.
-    identity = {
-        path: {
-            key: value
-            for key, value in item.items()
-            if key not in {"inode", "device", "mtime_ns", "ctime_ns", "signature"}
-        }
-        for path, item in entries.items()
-    }
-    state_id = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-    descriptor = os.open(objects, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    durable_json(cache_path, entries)
-    return {
-        "state_id": state_id,
-        "root": str(root),
-        "entries": entries,
-        "errors": errors,
-        "capture_elapsed_sec": time.monotonic() - started,
-        "consistency": "file_versions_checked; directory_walk_not_atomic",
-        "includes_ignored_files": True,
-        "excludes": [".git", "recorder spool"],
-        "new_objects": new_objects,
-    }
-
-
 def record_hook(
     spool: Path,
     provider: str,
@@ -201,6 +45,10 @@ def record_hook(
     *,
     hook_event: str | None = None,
 ) -> dict:
+    # The canonical trace keeps the tool payload. Repository changes are captured
+    # as Git patches by AgentTrace, so copying target files and the full workspace
+    # here only stores duplicate source and build artifacts.
+    del root
     spool.mkdir(parents=True, exist_ok=True)
     with (spool / ".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -214,70 +62,6 @@ def record_hook(
             "payload": payload,
             "hook_event": hook_event,
         }
-        event_name = (
-            hook_event or payload.get("hook_event_name") or payload.get("event") or ""
-        )
-        targets = {}
-        tool_input = (
-            payload.get("tool_input")
-            or (payload.get("toolCall") or {}).get("args")
-            or {}
-        )
-        for key, value in tool_input.items() if isinstance(tool_input, dict) else []:
-            if key.lower() not in {
-                "path",
-                "file_path",
-                "filepath",
-                "absolutepath",
-                "targetfile",
-            } or not isinstance(value, str):
-                continue
-            path = Path(value)
-            if not path.is_absolute() and payload.get("cwd"):
-                path = Path(payload["cwd"]) / path
-            if not path.is_absolute():
-                continue
-            if path.is_file() and not path.is_symlink():
-                content = path.read_bytes()
-                digest = hashlib.sha256(content).hexdigest()
-                objects = spool / "objects"
-                objects.mkdir(exist_ok=True)
-                destination = objects / digest
-                if not destination.exists():
-                    with destination.open("xb") as stream:
-                        stream.write(content)
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                targets[str(path)] = {
-                    "sha256": digest,
-                    "bytes": len(content),
-                    "exists": True,
-                }
-            elif not path.exists():
-                targets[str(path)] = {"exists": False}
-        if targets:
-            event["tool_targets"] = {
-                "entries": targets,
-                "state_id": hashlib.sha256(
-                    json.dumps(targets, sort_keys=True).encode()
-                ).hexdigest(),
-                "scope": "explicit native tool file targets; not the entire task repository",
-            }
-        if root is not None and event_name in {
-            "PreToolUse",
-            "PostToolUse",
-            "PostToolUseFailure",
-            "BeforeTool",
-            "AfterTool",
-            "preToolUse",
-            "postToolUse",
-            "postToolUseFailure",
-            "WorkspaceSnapshot",
-        }:
-            try:
-                event["workspace"] = capture_workspace(root, spool)
-            except Exception as error:
-                event["capture_error"] = f"{type(error).__name__}: {error}"
         transcript = payload.get("transcriptPath") or payload.get("transcript_path")
         if transcript and Path(transcript).is_file():
             content = Path(transcript).read_bytes()
@@ -295,36 +79,6 @@ def record_hook(
                 "bytes": len(content),
                 "source": transcript,
             }
-        if provider == "filesystem" and payload.get("operation") == "close_write":
-            path = Path(payload["absolute_path"])
-            try:
-                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-                with os.fdopen(fd, "rb") as stream:
-                    before = os.fstat(stream.fileno())
-                    if not stat.S_ISREG(before.st_mode):
-                        raise OSError(
-                            "file notification does not refer to a regular file"
-                        )
-                    content = stream.read()
-                    after = os.fstat(stream.fileno())
-                digest = hashlib.sha256(content).hexdigest()
-                objects = spool / "objects"
-                objects.mkdir(exist_ok=True)
-                destination = objects / digest
-                if not destination.exists():
-                    with destination.open("xb") as stream:
-                        stream.write(content)
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                event["file_version"] = {
-                    "sha256": digest,
-                    "bytes": len(content),
-                    "stable": (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
-                    == (after.st_size, after.st_mtime_ns, after.st_ctime_ns),
-                    "association": "read_after_kernel_notification",
-                }
-            except OSError as error:
-                event["capture_error"] = f"file version unavailable: {error}"
         event["completed_ns"] = time.time_ns()
         durable_json(spool / f"event-{event['timestamp_ns']}-{event['id']}.json", event)
         return event
@@ -340,22 +94,9 @@ def export_events(spool: Path, after: int) -> None:
         selected = []
         for path in sorted(spool.glob("event-*.json")):
             event = json.loads(path.read_text())
-            digests = {
-                item["sha256"]
-                for item in (event.get("workspace") or {}).get("entries", {}).values()
-                if item.get("kind") == "file"
-            }
+            digests = set()
             if event.get("transcript"):
                 digests.add(event["transcript"]["sha256"])
-            if event.get("file_version"):
-                digests.add(event["file_version"]["sha256"])
-            digests.update(
-                item["sha256"]
-                for item in (event.get("tool_targets") or {})
-                .get("entries", {})
-                .values()
-                if item.get("sha256")
-            )
             if event["completed_ns"] <= after:
                 included.update(digests)
             else:
@@ -604,7 +345,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "action",
-        choices=["hook", "snapshot", "install", "export", "watch", "stop-watch"],
+        choices=["hook", "install", "export", "watch", "stop-watch"],
     )
     parser.add_argument("--spool", type=Path, required=True)
     parser.add_argument("--root", type=Path)
@@ -618,18 +359,6 @@ def main() -> int:
     args = parser.parse_args()
     if args.action == "install":
         install_hooks(args.config, args.provider, args.command)
-    elif args.action == "snapshot":
-        event = record_hook(
-            args.spool,
-            "pitbench",
-            {
-                "hook_event_name": "WorkspaceSnapshot",
-                "reason": args.reason,
-                "call_id": args.call_id,
-            },
-            args.root,
-        )
-        print(json.dumps({"id": event["id"], "completed_ns": event["completed_ns"]}))
     elif args.action == "export":
         export_events(args.spool, args.after)
     elif args.action == "watch":

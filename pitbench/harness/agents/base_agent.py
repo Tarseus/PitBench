@@ -97,11 +97,11 @@ class BaseAgent(ABC):
                     coverage={
                         "lifecycle": "harness",
                         "tools": "instrumented boundaries and provider artifacts",
-                        "repository": "boundary file manifests, native hooks where available, and source sampling",
-                        "native_artifacts": "250ms sampling; short-lived files may be missed",
+                        "repository": "Git revision and non-ignored working-tree patches when code state changes",
+                        "native_artifacts": "provider hook payloads and retained provider logs",
                         "model_context": "captured at available model boundaries only",
                         "hidden_reasoning": "unavailable",
-                        "ignored_files_and_build_artifacts": "included in workspace snapshots",
+                        "ignored_files_and_build_artifacts": "not retained in agent traces",
                     },
                 )
                 profile = getattr(self, "_profile", None)

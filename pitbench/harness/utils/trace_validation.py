@@ -18,7 +18,7 @@ def inspect_trace(path: Path) -> dict:
         kind = event["event"]
         counts[kind] += 1
         data = event["data"]
-        if kind in {"workspace.snapshot", "tool.target_snapshot"}:
+        if kind == "repository.checkpoint":
             states.add(data["state_id"])
         if kind == "execution.finished":
             execution_finished = True

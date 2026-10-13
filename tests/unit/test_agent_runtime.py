@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import io
 import json
-import os
 import subprocess
 import sys
 import tarfile
@@ -180,10 +179,9 @@ def test_codex_workspace_runtime_stages_under_container_logs(tmp_path: Path):
 def test_codex_workspace_profile_is_readable_by_the_task_user(tmp_path: Path):
     archives = []
     container = SimpleNamespace(
-        put_archive=lambda destination, archive: archives.append(
-            (destination, archive)
+        put_archive=lambda destination, archive: (
+            archives.append((destination, archive)) or True
         )
-        or True
     )
     runtime = CodexWorkspaceRuntime(
         container=container,
@@ -382,54 +380,32 @@ def test_tool_feedback_patch_failure_async_and_state_reconstruction(
     )
     assert raw_async["call_id"] == async_start["call_id"]
     assert after_patch != final_state
-    for state, expected in ((after_patch, "after\n"), (final_state, "before\n")):
-        checkpoint = next(
-            row["data"]
-            for row in rows
-            if row["event"] == "repository.checkpoint"
-            and row["data"]["state_id"] == state
-        )
-        restored = tmp_path / state
-        restored.mkdir()
-        archive = trace.root / checkpoint["base_archive"]["path"]
-        with tarfile.open(archive) as source:
-            source.extractall(restored, filter="data")
-        subprocess.run(["git", "init", "-q", str(restored)], check=True)
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(restored),
-                "apply",
-                "--binary",
-                str(trace.root / checkpoint["patch"]["path"]),
-            ],
-            check=True,
-        )
-        assert (restored / "code.txt").read_text() == expected
-        assert (restored / "subst.txt").read_text() == "$Format:%H$\n"
-        assert (restored / "binary.dat").read_bytes() == b"\0\xff\x01"
-        assert (restored / "link.txt").is_symlink()
-        if state == after_patch:
-            assert (restored / "deleted.txt").read_text() == "delete me\n"
-        if state == final_state:
-            assert not (restored / "deleted.txt").exists()
-            assert (restored / "new.txt").read_text() == "new"
+    checkpoints = {
+        row["data"]["state_id"]: row["data"]
+        for row in rows
+        if row["event"] == "repository.checkpoint"
+    }
+    after_patch_diff = (
+        trace.root / checkpoints[after_patch]["patch"]["path"]
+    ).read_text()
+    final_diff = (trace.root / checkpoints[final_state]["patch"]["path"]).read_text()
+    assert "-before\n+after" in after_patch_diff
+    assert "deleted file mode" in final_diff
+    assert "new file mode" in final_diff and "+new" in final_diff
+    assert all("base_archive" not in checkpoint for checkpoint in checkpoints.values())
+    assert not any(row["event"] == "workspace.snapshot" for row in rows)
 
 
-def test_source_rewrite_append_and_remote_archives(tmp_path):
+def test_local_logs_are_indexed_without_copying_them_and_remote_logs_are_archived(
+    tmp_path,
+):
     logs = tmp_path / "logs"
     logs.mkdir()
     path = logs / "native.jsonl"
     trace = AgentTrace(tmp_path / "trace", context={})
     trace._sources = {"native": logs}
     path.write_bytes(b"A" * 5000)
-    trace.collect_files()
-    path.write_bytes(b"A" * 4999 + b"B" + b"C" * 20)
-    trace.collect_files()
-    with path.open("ab") as stream:
-        stream.write(b"tail")
-    trace.collect_files()
+    trace._record_local_artifacts()
     trace._remote_sources = ("/agent-logs",)
     trace._container = SimpleNamespace(
         get_archive=lambda path: ([b"remote tar bytes"], {})
@@ -438,13 +414,11 @@ def test_source_rewrite_append_and_remote_archives(tmp_path):
     trace.collect_remote_files()
     trace.close()
     rows = events(trace.root)
-    assert len([row for row in rows if row["event"] == "source.reset"]) == 1
-    rebuilt = bytearray()
-    for row in rows:
-        if row["event"] == "source.chunk" and row["data"]["generation"] == 1:
-            assert row["data"]["offset"] == len(rebuilt)
-            rebuilt.extend((trace.root / row["data"]["content"]["path"]).read_bytes())
-    assert rebuilt == path.read_bytes()
+    artifact = next(row["data"] for row in rows if row["event"] == "source.artifact")
+    assert artifact["source"] == "native"
+    assert artifact["path"] == "native.jsonl"
+    assert artifact["bytes"] == 5000
+    assert not any(row["event"] == "source.chunk" for row in rows)
     assert len([row for row in rows if row["event"] == "source.archive"]) == 1
 
 
@@ -608,7 +582,7 @@ def test_container_adapter_forwards_live_output_to_common_trace(tmp_path):
     assert events(trace.root)[-1]["data"]["exit_code"] == 0
 
 
-def test_relay_records_raw_and_delivered_stream_without_auth_headers(tmp_path):
+def test_relay_records_one_complete_response_without_auth_headers(tmp_path):
     trace = AgentTrace(tmp_path / "trace", context={})
     handler = object.__new__(_RelayHandler)
     handler.server = SimpleNamespace(trace=trace)
@@ -628,13 +602,14 @@ def test_relay_records_raw_and_delivered_stream_without_auth_headers(tmp_path):
     rows = events(trace.root)
     assert all(row["call_id"] == "request-1" for row in rows)
     assert "do-not-store" not in json.dumps(rows)
-    assert any(row["event"] == "model.response_chunk" for row in rows)
-    delivered = b"".join(
-        (trace.root / row["data"]["content"]["path"]).read_bytes()
+    response = next(row["data"] for row in rows if row["event"] == "model.response")
+    assert not response["blocked"]
+    assert (trace.root / response["received"]["path"]).read_bytes() == payload
+    assert (trace.root / response["delivered"]["path"]).read_bytes() == payload
+    assert not any(
+        row["event"] in {"model.response_chunk", "model.delivered_chunk"}
         for row in rows
-        if row["event"] == "model.delivered_chunk"
     )
-    assert delivered == payload
 
 
 def test_relay_finishes_late_response_after_agent_trace_closes(tmp_path):
@@ -657,6 +632,7 @@ def test_relay_finishes_late_response_after_agent_trace_closes(tmp_path):
     assert copied
     assert handler.wfile.getvalue() == payload
     assert [row["event"] for row in events(trace.root)] == ["model.response_started"]
+    assert len(list((trace.root / "objects").iterdir())) == 1
 
 
 def test_relay_error_ignores_disconnected_agent_socket():
@@ -691,6 +667,7 @@ def test_relay_treats_broken_pipe_as_agent_disconnect(monkeypatch):
         allowed_client_ip=None,
         record=record,
     )
+
     class Response:
         status = 200
         headers = {}
@@ -710,7 +687,10 @@ def test_relay_treats_broken_pipe_as_agent_disconnect(monkeypatch):
 
     handler.do_POST()
     handler._error.assert_not_called()
-    assert any(call.args[0]["status"] == "client_disconnected" for call in record.call_args_list)
+    assert any(
+        call.args[0]["status"] == "client_disconnected"
+        for call in record.call_args_list
+    )
     budget.finish.assert_called_once_with(0)
 
 
@@ -730,32 +710,29 @@ def test_relay_without_token_cap_does_not_exhaust_token_budget():
 # Tests consolidated from tests/unit/utils/test_recording.py
 
 
-def test_workspace_includes_builds_submodules_and_detects_same_size_rewrite(tmp_path):
+def test_native_hooks_keep_tool_payloads_without_copying_workspace_files(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()
     (root / ".gitignore").write_text("build/\n")
     (root / "build").mkdir()
     binary = root / "build/program"
     binary.write_bytes(b"binary-1")
-    (root / "submodule").mkdir()
-    (root / "submodule/.git").write_text("gitdir: ../.git/modules/submodule")
-    (root / "submodule/code.c").write_text("int answer = 1;")
     spool = tmp_path / "spool"
-    first = recording.capture_workspace(root, spool)
-    old_time = binary.stat().st_mtime_ns
-    binary.write_bytes(b"binary-2")
-    os.utime(binary, ns=(old_time, old_time))
-    second = recording.capture_workspace(root, spool)
-    assert not first["errors"] and not second["errors"]
-    assert (
-        first["entries"]["build/program"]["sha256"]
-        != second["entries"]["build/program"]["sha256"]
+    event = recording.record_hook(
+        spool,
+        "codex",
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "make"},
+        },
+        root,
     )
-    assert "submodule/code.c" in first["entries"]
-    assert "submodule/.git" not in first["entries"]
-    assert (
-        spool / "objects" / first["entries"]["build/program"]["sha256"]
-    ).read_bytes() == b"binary-1"
+    assert event["payload"]["tool_input"] == {"command": "make"}
+    assert "workspace" not in event
+    assert "tool_targets" not in event
+    assert "file_version" not in event
+    assert not (spool / "objects").exists()
 
 
 def test_hook_install_preserves_user_hooks_and_has_passive_provider_output(tmp_path):

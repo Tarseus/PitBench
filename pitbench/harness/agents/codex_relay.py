@@ -319,45 +319,47 @@ class _RelayHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
         pending = b""
+        received = bytearray()
+        delivered = bytearray()
         total_tokens = 0
-        while chunk := source.read(64 * 1024):
+
+        def record_response(*, blocked: bool) -> None:
             if trace is not None:
-                trace.record_if_open(
-                    "model.response_chunk",
+                trace.record_contents_if_open(
+                    "model.response",
                     call_id=call_id,
-                    raw_content=chunk,
-                    visibility="received_by_relay",
+                    contents={
+                        "received": bytes(received),
+                        "delivered": bytes(delivered),
+                    },
+                    blocked=blocked,
+                    visibility="relay response after shell-escalation filtering",
                 )
+
+        while chunk := source.read(64 * 1024):
+            received.extend(chunk)
             pending += chunk
             while b"\n" in pending:
                 line, pending = pending.split(b"\n", 1)
                 if self._event_requests_shell_escalation(line):
+                    record_response(blocked=True)
                     self.close_connection = True
                     return False, total_tokens
                 total_tokens = max(total_tokens, self._event_total_tokens(line))
-                self.wfile.write(line + b"\n")
+                output = line + b"\n"
+                self.wfile.write(output)
                 self.wfile.flush()
-                if trace is not None:
-                    trace.record_if_open(
-                        "model.delivered_chunk",
-                        call_id=call_id,
-                        raw_content=line + b"\n",
-                        visibility="written_to_agent_connection",
-                    )
+                delivered.extend(output)
         if pending:
             if self._event_requests_shell_escalation(pending):
+                record_response(blocked=True)
                 self.close_connection = True
                 return False, total_tokens
             total_tokens = max(total_tokens, self._event_total_tokens(pending))
             self.wfile.write(pending)
             self.wfile.flush()
-            if trace is not None:
-                trace.record_if_open(
-                    "model.delivered_chunk",
-                    call_id=call_id,
-                    raw_content=pending,
-                    visibility="written_to_agent_connection",
-                )
+            delivered.extend(pending)
+        record_response(blocked=False)
         self.close_connection = True
         return True, total_tokens
 
@@ -590,9 +592,7 @@ class CodexModelRelay(AbstractContextManager["CodexModelRelay"]):
             "max_duration_sec": max_duration_sec,
         }
         invalid = [
-            name
-            for name, value in positive.items()
-            if value is not None and value <= 0
+            name for name, value in positive.items() if value is not None and value <= 0
         ]
         if invalid:
             raise ValueError(f"relay budgets must be positive: {', '.join(invalid)}")
