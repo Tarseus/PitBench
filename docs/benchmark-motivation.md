@@ -161,3 +161,24 @@ question remains open: compare both methods on a larger set of identical
 patches and test whether their disagreements exceed calibrated no-change and
 repeat-run variation. The current claim and counter-evidence are summarized in
 the [distinct-value claim audit](benchmark-distinct-value-audit.md).
+
+## Harness response to the observed Agent behavior
+
+The shared discussion prioritizes diagnosing failed patches before proposing a
+new Agent method. The historical trace audit found two actionable patterns:
+most patches focused on local execution cost rather than an explicit search
+mechanism, and several Agents had to work around an unwritable public benchmark
+directory before they could compare Base and candidate behavior.
+
+PitBench now preserves common solver-work and trajectory summaries in public
+development feedback, automatically recovers to a writable task-specific run
+directory, and provides `pitbench diagnose`. The diagnosis groups observations
+by independent instance, keeps solver outcomes separate from runtime and work,
+identifies concentrated or mixed effects, checks the declared development grid,
+and recommends a bounded next experiment. The protocol and its claim boundary
+are documented in [trace-guided development feedback](trace-guided-development-feedback.md).
+
+This is an implementation of the proposed feedback mechanism, not evidence of
+its effectiveness. The next research experiment must compare Agents with and
+without that structured diagnosis under the same model and development budget,
+then evaluate their final patches on untouched instances.

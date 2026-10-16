@@ -227,7 +227,8 @@ image tags are rebuilt. BASE solver observations use the separate cache under
 so replacing an instance panel cannot reuse observations from the old panel.
 
 By default, the task image includes visible development instances and the
-`pitbench inspect`, `pitbench workspace`, and `pitbench bench` commands. Inside
+`pitbench inspect`, `pitbench workspace`, `pitbench bench`, and
+`pitbench diagnose` commands. Inside
 the agent task, `pitbench inspect` shows the protocol, primary budget, seeds,
 runner, build commands, and public targets. Run `pitbench bench --label base`
 before editing, then run `pitbench bench --label agent --build` on the
@@ -242,6 +243,13 @@ timeouts and start failures also leave per-run feedback and available logs.
 If the configured results directory is read-only, `pitbench bench` automatically
 uses a task-specific directory under the container's temporary directory and
 prints the selected path.
+After paired Base and Agent runs, `pitbench diagnose` aggregates results by
+independent development instance. It reports better/equal/worse instance
+counts, whether an apparent gain is concentrated in one instance, runtime and
+available solver-work changes, trajectory coverage, missing grid cells, and a
+bounded next experiment. `pitbench diagnose --all-budgets` includes every
+declared development budget. The generated diagnosis is development evidence;
+it does not claim hidden-instance generalization or promote a patch by itself.
 For HiGHS, independent development verification applies to the hash-bound
 provided LP instances; custom LP files still run but are marked unverified.
 Feedback records the input hash and runner artifact hash

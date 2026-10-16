@@ -13,7 +13,7 @@ import pytest
 
 from adapters.pitbench.adapter import PitBenchAdapter
 from adapters.pitbench.agent_tooling import write_agent_tooling
-from pitbench import agent_cli
+from pitbench import agent_cli, agent_diagnostics
 from pitbench.agent_tools import AgentTool
 from pitbench.cli.evaluate_config import EvaluationConfig
 from pitbench.instances import materialize_instance_set
@@ -48,6 +48,8 @@ def test_instruction_matches_protocol_and_visible_files(
     assert "/pitbench/dev_instances" in instruction
     assert "pitbench bench --label base" in instruction
     assert "pitbench bench --label agent --build" in instruction
+    assert "pitbench diagnose" in instruction
+    assert "incumbent or bound progress" in instruction
     if task.task_type.value == "exact_solver":
         assert "paired PAR-2 runtime" in instruction
         assert "normalized gap" not in instruction
@@ -107,6 +109,7 @@ def test_public_tooling_has_task_protocol_and_instances(
     assert (
         task_dir / "agent_tooling/pitbench/problem_families/public_verification.py"
     ).is_file()
+    assert (task_dir / "agent_tooling/pitbench/agent_diagnostics.py").is_file()
     dockerfile = PitBenchAdapter._prepared_dockerfile(
         "local-agent-image", task, agent_tools=DEFAULT_TOOLS
     )
@@ -330,6 +333,316 @@ def test_runs_root_falls_back_when_configured_directory_is_read_only(
     assert "using" in capsys.readouterr().err
 
 
+def test_trajectory_summary_retains_search_progress(tmp_path: Path) -> None:
+    trajectory = tmp_path / "run.trajectory.jsonl"
+    trajectory.write_text(
+        "\n".join(
+            [
+                json.dumps({"time_sec": 1.0, "objective": 10, "nodes": 2}),
+                "not json",
+                json.dumps({"time_sec": 2.0, "objective": 8, "nodes": 5}),
+                json.dumps({"time_sec": 3.0, "objective": 8, "nodes": 7}),
+            ]
+        )
+    )
+
+    summary = agent_diagnostics.trajectory_summary(trajectory, "minimize")
+
+    assert summary["available"] is True
+    assert summary["points"] == 3
+    assert summary["best_objective"] == 8
+    assert summary["best_updates"] == 2
+    assert summary["time_to_first_solution_sec"] == 1
+    assert summary["time_to_best_sec"] == 2
+    assert summary["final_nodes"] == 7
+
+
+def test_pairing_does_not_treat_final_only_trajectory_as_search_progress() -> None:
+    base = {
+        "solver_behavior": {
+            "work": {},
+            "trajectory": {
+                "available": True,
+                "points": 1,
+                "best_updates": 1,
+                "time_to_best_sec": 1.0,
+            },
+        }
+    }
+    agent = {
+        "solver_behavior": {
+            "work": {},
+            "trajectory": {
+                "available": True,
+                "points": 1,
+                "best_updates": 1,
+                "time_to_best_sec": 0.5,
+            },
+        }
+    }
+
+    comparison = agent_diagnostics.paired_behavior(agent, base)
+
+    assert comparison["trajectory_artifact_available_for_both"] is True
+    assert comparison["progress_trace_available_for_both"] is False
+    assert comparison["time_to_best_reduction_sec"] is None
+
+
+def _feedback_record(
+    *,
+    instance_id: str,
+    instance_sha256: str,
+    gap: float | None = None,
+    solved: bool | None = None,
+    par2: float | None = None,
+    wall_time: float = 1.0,
+) -> dict[str, object]:
+    return {
+        "instance_id": instance_id,
+        "instance_sha256": instance_sha256,
+        "seed": 0,
+        "budget_sec": 10.0,
+        "threads": 1,
+        "performance_protocol": (
+            "heuristic_fixed_budget" if gap is not None else "exact_verified_solve"
+        ),
+        "verified_valid": True,
+        "verified_objective": 0.0,
+        "preview_normalized_gap": gap,
+        "preview_solved": solved,
+        "preview_par2_sec": par2,
+        "reported_wall_time_sec": wall_time,
+        "reported_cpu_time_sec": wall_time,
+        "solver_behavior": {
+            "work": {"nodes": 10},
+            "trajectory": {
+                "available": True,
+                "best_updates": 2,
+                "time_to_first_solution_sec": 0.2,
+                "time_to_best_sec": 0.8,
+            },
+        },
+    }
+
+
+def test_development_diagnosis_exposes_concentrated_heuristic_gain(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "runs"
+    (run_root / "base").mkdir(parents=True)
+    (run_root / "agent").mkdir()
+    for index, (before, after) in enumerate(((0.10, 0.05), (0.20, 0.20))):
+        digest = f"sha-{index}"
+        base = _feedback_record(
+            instance_id=f"dev_{index:04d}",
+            instance_sha256=digest,
+            gap=before,
+        )
+        agent = _feedback_record(
+            instance_id=f"dev_{index:04d}",
+            instance_sha256=digest,
+            gap=after,
+            wall_time=0.9,
+        )
+        agent["patch_sha256"] = "candidate"
+        (run_root / "base" / f"{index}.feedback.json").write_text(json.dumps(base))
+        (run_root / "agent" / f"{index}.feedback.json").write_text(json.dumps(agent))
+
+    diagnosis = agent_cli._development_diagnosis(
+        {
+            "task_id": "heuristic",
+            "performance_protocol": "heuristic_fixed_budget",
+            "development_targets": {
+                f"dev_{index:04d}.json": {"sha256": f"sha-{index}"}
+                for index in range(2)
+            },
+            "development_seeds": [0],
+            "threads": 1,
+        },
+        run_root,
+        [10.0],
+    )
+
+    assert diagnosis["paired_runs"] == 2
+    assert diagnosis["missing_declared_runs"] == 0
+    assert diagnosis["instance_direction_counts"] == {
+        "better": 1,
+        "equal_or_unresolved": 1,
+        "worse": 0,
+    }
+    assert (
+        diagnosis["observed_pattern"]
+        == "favorable_effect_concentrated_in_one_instance"
+    )
+    assert diagnosis["runtime"]["mean_wall_time_reduction_sec"] == pytest.approx(
+        0.1
+    )
+
+
+def test_behavior_summary_weights_independent_instances_equally() -> None:
+    pairs: list[tuple[dict[str, object], dict[str, object]]] = []
+    for seed in (0, 1):
+        base = _feedback_record(
+            instance_id="many-seeds", instance_sha256="many", gap=0.1, wall_time=2
+        )
+        agent = _feedback_record(
+            instance_id="many-seeds", instance_sha256="many", gap=0.1, wall_time=1
+        )
+        base["seed"] = seed
+        agent["seed"] = seed
+        pairs.append((base, agent))
+    base = _feedback_record(
+        instance_id="one-seed", instance_sha256="one", gap=0.1, wall_time=1
+    )
+    agent = _feedback_record(
+        instance_id="one-seed", instance_sha256="one", gap=0.1, wall_time=2
+    )
+    pairs.append((base, agent))
+
+    summary = agent_diagnostics.paired_behavior_summary(pairs)
+
+    assert summary["mean_wall_time_reduction_sec"] == 0
+
+
+def test_diagnosis_expands_the_grid_only_for_a_broad_shortlist(tmp_path: Path) -> None:
+    run_root = tmp_path / "runs"
+    (run_root / "base").mkdir(parents=True)
+    (run_root / "agent").mkdir()
+    for index in range(2):
+        digest = f"broad-{index}"
+        base = _feedback_record(
+            instance_id=f"dev_{index:04d}",
+            instance_sha256=digest,
+            gap=0.2,
+        )
+        agent = _feedback_record(
+            instance_id=f"dev_{index:04d}",
+            instance_sha256=digest,
+            gap=0.1,
+        )
+        (run_root / "base" / f"{index}.feedback.json").write_text(json.dumps(base))
+        (run_root / "agent" / f"{index}.feedback.json").write_text(json.dumps(agent))
+    config = {
+        "task_id": "adaptive",
+        "performance_protocol": "heuristic_fixed_budget",
+        "development_targets": {
+            f"dev_{index:04d}.json": {"sha256": f"broad-{index}"}
+            for index in range(2)
+        },
+        "development_seeds": [0, 1],
+        "threads": 1,
+    }
+
+    diagnosis = agent_cli._development_diagnosis(config, run_root, [10.0])
+
+    assert diagnosis["observed_pattern"] == "favorable_effect_across_multiple_instances"
+    assert diagnosis["missing_declared_runs"] == 2
+    assert any(
+        "--all-seeds" in action
+        for action in diagnosis["recommended_next_actions"]
+    )
+
+    for path in (run_root / "agent").glob("*.feedback.json"):
+        unchanged = json.loads(path.read_text())
+        unchanged["preview_normalized_gap"] = 0.2
+        path.write_text(json.dumps(unchanged))
+    no_signal = agent_cli._development_diagnosis(config, run_root, [10.0])
+    assert no_signal["observed_pattern"] == "no_detected_solver_outcome_change"
+    assert not any(
+        "--all-seeds" in action
+        for action in no_signal["recommended_next_actions"]
+    )
+
+
+def test_development_diagnosis_uses_exact_coverage_before_par2(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "runs"
+    (run_root / "base").mkdir(parents=True)
+    (run_root / "agent").mkdir()
+    pairs = ((False, True, 20.0, 1.0), (True, True, 1.0, 2.0))
+    for index, (base_solved, agent_solved, base_par2, agent_par2) in enumerate(pairs):
+        digest = f"exact-{index}"
+        base = _feedback_record(
+            instance_id=f"dev_{index:04d}",
+            instance_sha256=digest,
+            solved=base_solved,
+            par2=base_par2,
+        )
+        agent = _feedback_record(
+            instance_id=f"dev_{index:04d}",
+            instance_sha256=digest,
+            solved=agent_solved,
+            par2=agent_par2,
+        )
+        (run_root / "base" / f"{index}.feedback.json").write_text(json.dumps(base))
+        (run_root / "agent" / f"{index}.feedback.json").write_text(json.dumps(agent))
+
+    diagnosis = agent_cli._development_diagnosis(
+        {
+            "task_id": "exact",
+            "performance_protocol": "exact_verified_solve",
+            "development_targets": {
+                f"dev_{index:04d}.json": {"sha256": f"exact-{index}"}
+                for index in range(2)
+            },
+            "development_seeds": [0],
+            "threads": 1,
+        },
+        run_root,
+        [10.0],
+    )
+
+    assert diagnosis["instance_direction_counts"] == {
+        "better": 1,
+        "equal_or_unresolved": 0,
+        "worse": 1,
+    }
+    assert diagnosis["observed_pattern"] == "mixed_instance_effect"
+
+
+def test_diagnose_command_saves_the_printed_report(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_root = tmp_path / "runs"
+    (run_root / "base").mkdir(parents=True)
+    (run_root / "agent").mkdir()
+    base = _feedback_record(
+        instance_id="dev_0000", instance_sha256="one", gap=0.2
+    )
+    agent = _feedback_record(
+        instance_id="dev_0000", instance_sha256="one", gap=0.1
+    )
+    (run_root / "base" / "one.feedback.json").write_text(json.dumps(base))
+    (run_root / "agent" / "one.feedback.json").write_text(json.dumps(agent))
+    monkeypatch.setenv("PITBENCH_RUNS", str(run_root))
+    monkeypatch.setattr(
+        agent_cli,
+        "_config",
+        lambda: {
+            "task_id": "diagnose-test",
+            "performance_protocol": "heuristic_fixed_budget",
+            "primary_budget_sec": 10.0,
+            "budgets_sec": [5.0, 10.0],
+            "development_targets": {"dev_0000.json": {"sha256": "one"}},
+            "development_seeds": [0],
+            "threads": 1,
+        },
+    )
+
+    assert (
+        agent_cli.diagnose_command(argparse.Namespace(budget=None, all_budgets=False))
+        == 0
+    )
+    printed = json.loads(capsys.readouterr().out)
+    saved = json.loads((run_root / "diagnosis.json").read_text())
+    assert saved == printed
+    assert saved["budgets_sec"] == [10.0]
+    assert saved["saved_to"] == str(run_root / "diagnosis.json")
+
+
 def test_bench_full_grid_flags_exclude_single_value_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -342,6 +655,8 @@ def test_bench_full_grid_flags_exclude_single_value_flags(
         command_line.parse_args(["bench", "--seed", "7", "--all-seeds"])
     with pytest.raises(SystemExit):
         command_line.parse_args(["bench", "--budget", "5", "--all-budgets"])
+    diagnosis = command_line.parse_args(["diagnose", "--all-budgets"])
+    assert diagnosis.all_budgets is True
 
 
 @pytest.mark.parametrize("failure", ["timeout", "start_error", "unavailable"])

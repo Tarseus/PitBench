@@ -307,6 +307,26 @@ def test_current_task_catalog_rejects_multithreaded_solver_runs() -> None:
         )
 
 
+def test_current_catalog_has_one_release_per_solver_and_seven_problem_tasks() -> None:
+    records = TaskCatalog(ROOT).validate_all()
+
+    assert {record.task.task_id for record in records} == {
+        "choco_graph_coloring_v6_0_1",
+        "choco_v6_0_1",
+        "highs_multidimensional_knapsack_v1_15_1",
+        "highs_v1_15_1",
+        "ortools_cp_sat_solve_v9_15",
+        "pyvrp_v0_14_0",
+        "vroom_v1_15_0",
+    }
+    releases_by_repository: dict[str, set[str]] = {}
+    for record in records:
+        releases_by_repository.setdefault(record.task.release.repository, set()).add(
+            record.task.release.version
+        )
+    assert all(len(versions) == 1 for versions in releases_by_repository.values())
+
+
 def test_removed_performance_decision_is_rejected() -> None:
     task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
     payload = task.model_dump()

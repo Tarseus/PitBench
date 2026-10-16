@@ -27,7 +27,7 @@ def write_agent_tooling(
 
     tooling = task_dir / "agent_tooling" / "pitbench"
     tooling.mkdir(parents=True)
-    for filename in ("__init__.py", "agent_cli.py"):
+    for filename in ("__init__.py", "agent_cli.py", "agent_diagnostics.py"):
         shutil.copy2(repository_root / "pitbench" / filename, tooling)
     if AgentTool.BENCH in tools:
         shutil.copytree(

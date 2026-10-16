@@ -348,7 +348,10 @@ class PitBenchAdapter:
             f"{comparison} Public bench output is development feedback; "
             "the evaluator independently verifies submitted solutions. "
             "Without `--build`, bench executes the current artifact. Check its "
-            "fingerprint and build warning before trusting a comparison.\n"
+            "fingerprint and build warning before trusting a comparison. Run "
+            "`pitbench diagnose` after paired runs to see per-instance effects, "
+            "search-progress evidence, missing grid cells, and the next decisive "
+            "development experiment.\n"
             if AgentTool.BENCH in agent_tools
             else "4. Differential Verification: Rebuild the changed solver and "
             "repeat the baseline cases under the same seed and budget. "
@@ -372,8 +375,8 @@ class PitBenchAdapter:
             "- Robustness: The candidate will be evaluated across unseen test instances, multiple random seeds, and perturbed representations. Do not overfit hyperparameters or hardcode behaviors for specific instances.",
             "### Recommended Performance Engineering SOP\n"
             + development
-            + f"2. Profile: Run profiling tools on available cases to pinpoint computational bottlenecks in `{scope}`. Formulate concrete hypotheses before making edits.\n"
-            "3. Targeted Optimization: Implement minimal, high-impact, semantics-preserving improvements focused on the identified hot paths (e.g., caching redundant calculations, pruning invalid search neighborhoods early, reducing inner-loop allocations). Avoid blind parameter guessing or disruptive rewrites.\n"
+            + f"2. Diagnose: Inspect both computational cost and solver behavior in `{scope}`: incumbent or bound progress, search work, time to useful solutions, and the instance structures that stall or regress. State a falsifiable optimization hypothesis before editing.\n"
+            "3. Targeted Optimization: Make a bounded, semantics-preserving change that addresses the diagnosed mechanism. Distinguish implementation throughput from search-policy changes, and do not treat more iterations or lower runtime alone as a solver improvement. Avoid blind parameter guessing or disruptive rewrites.\n"
             + rerun
             + "5. Regression & Cleanup: Run existing repository unit/integration tests"
             f"{validation} to check for regressions. Remove scratch scripts, "

@@ -13,6 +13,22 @@ import time
 from pathlib import Path
 from typing import Any
 
+from pitbench.agent_diagnostics import (
+    development_diagnosis as _development_diagnosis,
+)
+from pitbench.agent_diagnostics import (
+    finite_number as _finite_number,
+)
+from pitbench.agent_diagnostics import (
+    matching_base_feedback as _matching_base_feedback,
+)
+from pitbench.agent_diagnostics import (
+    paired_feedback as _paired_feedback,
+)
+from pitbench.agent_diagnostics import (
+    solver_behavior as _solver_behavior,
+)
+
 _CANDIDATE_PATHS = (
     ".",
     ":(exclude).pitbench",
@@ -202,13 +218,6 @@ def _command(
     return [part.format_map(values) for part in config["runner"]]
 
 
-def _finite_number(value: object) -> float | None:
-    if type(value) not in {int, float}:
-        return None
-    number = float(value)
-    return number if math.isfinite(number) else None
-
-
 def _public_verification(
     config: dict[str, Any], instance: Path, output: Path
 ) -> dict[str, Any]:
@@ -301,6 +310,7 @@ def _feedback(
         "reported_cpu_time_sec": _finite_number(result.get("cpu_time_sec")),
         "reported_wall_time_sec": _finite_number(result.get("wall_time_sec")),
         "public_target": anchor,
+        "solver_behavior": _solver_behavior(config, result, output),
         **checked,
     }
     protocol = config["performance_protocol"]
@@ -336,62 +346,6 @@ def _feedback(
             else None
         )
     return feedback
-
-
-def _paired_feedback(current: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
-    if current["performance_protocol"] == "heuristic_fixed_budget":
-        before = base.get("preview_normalized_gap")
-        after = current.get("preview_normalized_gap")
-        return {
-            "verified_objective_reduction": (
-                base["verified_objective"] - current["verified_objective"]
-                if base.get("verified_valid") is True
-                and current.get("verified_valid") is True
-                else None
-            ),
-            "preview_gap_reduction": before - after
-            if before is not None and after is not None
-            else None,
-        }
-    before_solved = base.get("preview_solved")
-    after_solved = current.get("preview_solved")
-    before_runtime = base.get("preview_par2_sec")
-    after_runtime = current.get("preview_par2_sec")
-    return {
-        "verified_objective_reduction": (
-            base["verified_objective"] - current["verified_objective"]
-            if base.get("verified_valid") is True
-            and current.get("verified_valid") is True
-            else None
-        ),
-        "preview_solved_change": int(after_solved) - int(before_solved)
-        if before_solved is not None and after_solved is not None
-        else None,
-        "preview_par2_reduction_sec": before_runtime - after_runtime
-        if before_runtime is not None and after_runtime is not None
-        else None,
-    }
-
-
-def _matching_base_feedback(
-    run_root: Path, current: dict[str, Any]
-) -> tuple[Path, dict[str, Any]] | None:
-    base_root = run_root.parent / "base"
-    fields = (
-        "instance_sha256",
-        "seed",
-        "budget_sec",
-        "threads",
-        "performance_protocol",
-    )
-    for path in sorted(base_root.glob("*.feedback.json")):
-        try:
-            base = json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
-        if all(base.get(field) == current.get(field) for field in fields):
-            return path, base
-    return None
 
 
 def _run_build_steps(
@@ -491,6 +445,9 @@ def _run_one(
         output,
         output.with_suffix(".solution.json"),
         output.with_suffix(".feedback.json"),
+        output.with_suffix(".trajectory.jsonl"),
+        output.with_suffix(".stdout.log"),
+        output.with_suffix(".stderr.log"),
     ):
         old_path.unlink(missing_ok=True)
     started = time.perf_counter()
@@ -649,6 +606,28 @@ def bench_command(args: argparse.Namespace) -> int:
         for budget in budgets
     ]
     return 0 if all(succeeded) else 1
+
+
+def diagnose_command(args: argparse.Namespace) -> int:
+    config = _config()
+    budgets = (
+        list(config["budgets_sec"])
+        if args.all_budgets
+        else [
+            args.budget
+            if args.budget is not None
+            else config["primary_budget_sec"]
+        ]
+    )
+    if any(not math.isfinite(budget) or budget <= 0 for budget in budgets):
+        raise SystemExit("budget must be a positive finite number")
+    run_root = _runs_root(config)
+    diagnosis = _development_diagnosis(config, run_root, budgets)
+    output = run_root / "diagnosis.json"
+    diagnosis["saved_to"] = str(output)
+    output.write_text(json.dumps(diagnosis, indent=2) + "\n")
+    print(json.dumps(diagnosis, indent=2))
+    return 0 if diagnosis["paired_runs"] else 1
 
 
 def _repository() -> Path:
@@ -852,6 +831,19 @@ def parser() -> argparse.ArgumentParser:
         )
         _run_options(bench, instance_required=False)
         bench.set_defaults(handler=bench_command)
+        diagnose = commands.add_parser("diagnose")
+        budget_selection = diagnose.add_mutually_exclusive_group()
+        budget_selection.add_argument(
+            "--budget",
+            type=float,
+            help="diagnose one budget; defaults to the primary budget",
+        )
+        budget_selection.add_argument(
+            "--all-budgets",
+            action="store_true",
+            help="diagnose every declared development budget",
+        )
+        diagnose.set_defaults(handler=diagnose_command)
     if "validate" in tools:
         validate = commands.add_parser("validate")
         validate.set_defaults(handler=validate_command)

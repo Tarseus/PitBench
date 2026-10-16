@@ -656,13 +656,10 @@ def test_checkpoint_rejects_duplicate_runner_observations(tmp_path: Path) -> Non
         _load_checkpoint(checkpoint_path)
 
 
-@pytest.mark.parametrize(
-    "task_id",
-    ["pyvrp_v0_12_2", "pyvrp_v0_13_0", "pyvrp_v0_13_4", "pyvrp_v0_14_0"],
-)
 def test_runner_accepts_existing_seed_validation_tasks(
-    task_id: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    task_id = "pyvrp_v0_14_0"
     monkeypatch.setattr(
         sys,
         "argv",
