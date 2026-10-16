@@ -403,7 +403,17 @@ def test_controlled_transfer_stops_continuous_scale_and_uses_shared_bounds() -> 
     assert report.scale_paths["customers"].largest_continuously_supported_condition_id == "scale-1"
 
 
-def test_controlled_transfer_exact_coverage_precedes_time() -> None:
+@pytest.mark.parametrize(
+    ("lost_instances", "expected_classification"),
+    [
+        (("two",), PerformanceClassification.INCONCLUSIVE),
+        (("one", "two"), PerformanceClassification.REGRESSED),
+    ],
+)
+def test_controlled_transfer_exact_coverage_precedes_time(
+    lost_instances: tuple[str, ...],
+    expected_classification: PerformanceClassification,
+) -> None:
     task = _exact_task()
     expected = _expected_grid(task)
     expected.runs = [
@@ -421,7 +431,7 @@ def test_controlled_transfer_exact_coverage_precedes_time() -> None:
         agent_is_unsolved = (
             run.condition_id == "scale-1"
             and run.code_state is CodeState.AGENT
-            and run.instance_id == "two"
+            and run.instance_id in lost_instances
         )
         observations.append(
             RunObservation(
@@ -457,9 +467,11 @@ def test_controlled_transfer_exact_coverage_precedes_time() -> None:
     assert report is not None
     target = report.condition_reports["scale-1"]
     assert target.status is ControlledTransferConditionStatus.COMPLETE
-    assert target.agent_solved_coverage == pytest.approx(0.5)
+    assert target.agent_solved_coverage == pytest.approx(
+        1 - len(lost_instances) / 2
+    )
     assert target.base_solved_coverage == pytest.approx(1.0)
-    assert target.native_classification is PerformanceClassification.REGRESSED
+    assert target.native_classification is expected_classification
     assert not target.supports_retention
 
 

@@ -18,8 +18,8 @@ repository:
   clone_url: https://github.com/google/or-tools.git
   plugin: pitbench.repositories.plugins:OrToolsCpSatExactRepositoryPlugin
   editable_paths: [ortools, build]
-  agent_image: pitbench-ortools:cp-sat-task-v5
-  judge_image: sha256:0880a07ed9535cccb43e60af252763b450c0ed4969f2bf11c111a0ee29a2718b
+  agent_image: pitbench-ortools:single-worker
+  judge_image: sha256:da8bbadfc64615cdab145bc542d3365aa6ae3866c658ced6958cabcde0379b59
 oracle:
   kind: best_known_solution
   source: private://oracles/ortools_cp_sat_solve_v9_15.yaml
@@ -27,7 +27,7 @@ oracle:
   objective_sense: minimize
 evaluation:
   performance_protocol: exact_verified_solve
-  operational_reliability: true
+  operational_reliability: false
   budgets_sec: [10.0, 30.0]
   primary_budget_sec: 30.0
   seed_robustness:
@@ -38,7 +38,7 @@ evaluation:
       seed_min: 0
       seed_max: 2147483647
       seed_count: 30
-  threads: 8
+  threads: 1
   exact_time_basis: solve_wall_time
   verifier: exact_target
 instance_sets:

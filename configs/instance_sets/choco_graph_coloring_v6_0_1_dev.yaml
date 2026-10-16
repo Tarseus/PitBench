@@ -1,0 +1,53 @@
+schema_version: '1.0'
+visibility: agent
+format: json
+instances:
+- id: dev_0000
+  instance_file: choco_graph_coloring_v6_0_1_dev/instances/dev_0000.json
+  instance_file_sha256: 1a87c19bc9f9912ab85ea66df39a4cd99e81041cdb312acbd9e8e107a6b4b087
+  bks: 6
+  bks_solution_file: choco_graph_coloring_v6_0_1_dev/bks_solutions/dev_0000.solution.json
+  bks_solution_file_sha256: 226ac065e59b87c1c4cc85ee4a27f46f1cabe88cf304ed600ff0a94ed934ea17
+  proven_optimal: true
+- id: dev_0001
+  instance_file: choco_graph_coloring_v6_0_1_dev/instances/dev_0001.json
+  instance_file_sha256: 2e4242a85af77ea439749ab555f6d874020e75e6f9ffae4662ccd8831a1264b3
+  bks: 6
+  bks_solution_file: choco_graph_coloring_v6_0_1_dev/bks_solutions/dev_0001.solution.json
+  bks_solution_file_sha256: 50deaee9090ca80f9adad9161742a60fb9672b1e5fd3e5795372252fc4940fd9
+  proven_optimal: true
+- id: dev_0002
+  instance_file: choco_graph_coloring_v6_0_1_dev/instances/dev_0002.json
+  instance_file_sha256: 27d892aa399e620abfbe709415f3eb4719c07ea7a9b0b4926902441bf54799ba
+  bks: 6
+  bks_solution_file: choco_graph_coloring_v6_0_1_dev/bks_solutions/dev_0002.solution.json
+  bks_solution_file_sha256: 2ae3dcc9b5272719f03a3068e6739f07a98e3c069e761e154d480c2dd2132ef8
+  proven_optimal: true
+- id: dev_0003
+  instance_file: choco_graph_coloring_v6_0_1_dev/instances/dev_0003.json
+  instance_file_sha256: aa3a58e34a44aeeb48940818172a4c2e92589ad942b78dd61ef97629b3e3d85a
+  bks: 6
+  bks_solution_file: choco_graph_coloring_v6_0_1_dev/bks_solutions/dev_0003.solution.json
+  bks_solution_file_sha256: 5fd30b9eb93dc0069cba569bc75f76014ee5602d3ee300367a57475287a7e854
+  proven_optimal: true
+- id: dev_0004
+  instance_file: choco_graph_coloring_v6_0_1_dev/instances/dev_0004.json
+  instance_file_sha256: d2c067429d8c7c5a225630ffbba4730c74858b492a3e4fe6c86ac4dc52d709c9
+  bks: 6
+  bks_solution_file: choco_graph_coloring_v6_0_1_dev/bks_solutions/dev_0004.solution.json
+  bks_solution_file_sha256: 62a0b13aa22a6040628807b6bf2674a601e9ce53c17b731d7b742f2f56ed78a7
+  proven_optimal: true
+selection:
+  source_generator: graph_coloring
+  kind: graph_coloring
+  count: 5
+  colors:
+  - 6
+  randomness:
+    instance_seed: 661100
+  extra_edge_probability:
+  - 0.02
+  - 0.03
+  - 0.04
+  - 0.05
+  - 0.08

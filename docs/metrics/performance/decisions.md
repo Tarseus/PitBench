@@ -23,3 +23,26 @@
   not contribute to the Performance estimand or classification.
 - Distributional Generalization may consume `judge_shift` observations when that
   dimension is developed. It is not a dependency of the Performance protocol.
+
+## 2026-10-15: noise-calibrated public directions
+
+- A one-run exact coverage difference is reported with a paired instance
+  interval. It has a public direction only when that interval excludes zero;
+  otherwise the public result is `inconclusive`, and PAR-2 does not override
+  unresolved coverage.
+- A directional result from any full real Performance panel is provisional
+  until a fresh, complete Base/Agent repeat in reverse build and job order has
+  the same direction. Discordant directions or an inconclusive repeat produce
+  an `inconclusive` final result. An incomplete repeat produces `incomplete`.
+- Independent repeats are preserved as separate observations and reports;
+  they are not treated as additional solver seeds in one instance bootstrap.
+- Final evaluations measure Base afresh by default. Explicit Base-cache reuse
+  can produce exploratory estimates but does not support an unconfirmed
+  directional public label. Source repository and image build caches remain
+  available.
+
+These decisions follow the seven-task empty-patch audit and the real PyVRP
+same-code false positive documented in
+[validation-results.md](validation-results.md). The protocol remains a freeze
+candidate pending further repeated-null evidence, especially for the exact
+secondary PAR-2 branch.

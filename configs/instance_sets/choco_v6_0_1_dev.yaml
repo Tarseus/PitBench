@@ -1,10 +1,66 @@
-schema_version: "1.0"
+schema_version: '1.0'
 visibility: agent
 format: normalized_bin_packing_json
-generator:
-  kind: bin_packing
-  count: 5
-  items: [50, 100, 250]
+instances:
+- id: dev_0000
+  instance_file: choco_v6_0_1_dev/instances/dev_0000.json
+  instance_file_sha256: 3af9aaa2f07bd84a97f26e305f556188e219325e4af42c0f75001f3ac8017050
+  bks: 26
+  bks_solution_file: choco_v6_0_1_dev/bks_solutions/dev_0000.solution.json
+  bks_solution_file_sha256: 60d7eb1bf0286b299861fa7b49ce5e646acb78cd227c224a465740a4be3f20fd
+  proven_optimal: true
+  proof_file: choco_v6_0_1_dev/proofs/dev_0000.proof.json
+  proof_file_sha256: ad5195412638cbc71af19f2959375e6176c6f1f9582a0c232b8e626c0c3edeeb
+- id: dev_0001
+  instance_file: choco_v6_0_1_dev/instances/dev_0001.json
+  instance_file_sha256: 2e26768bbeef4d4dd9689a978c263b059e67fc5059556521a6364ead84d180f1
+  bks: 49
+  bks_solution_file: choco_v6_0_1_dev/bks_solutions/dev_0001.solution.json
+  bks_solution_file_sha256: c11e4b9ed4876401b4678df9e767acf60ba83706bd871a96d28ab22d554bd3cd
+  proven_optimal: true
+  proof_file: choco_v6_0_1_dev/proofs/dev_0001.proof.json
+  proof_file_sha256: 6083300f05e2cb3e6141a5a807c190135f4e700d61213f7e4bd22019de2829ee
+- id: dev_0002
+  instance_file: choco_v6_0_1_dev/instances/dev_0002.json
+  instance_file_sha256: 53c0be820521a83a3e1a5bb10af9fa9520f4945b85a781a19c3b5a69656a8d08
+  bks: 132
+  bks_solution_file: choco_v6_0_1_dev/bks_solutions/dev_0002.solution.json
+  bks_solution_file_sha256: 79af1899f8bf5e283f91ee51e9b80b2cd27ea08b655614395006e7043fd78688
+  proven_optimal: true
+  proof_file: choco_v6_0_1_dev/proofs/dev_0002.proof.json
+  proof_file_sha256: 476c1ab4dd78c3898eca9d1b7c52fd84d9067502fb74135dae9707801e56cc84
+- id: dev_0003
+  instance_file: choco_v6_0_1_dev/instances/dev_0003.json
+  instance_file_sha256: 80bb5afc2c2d4539965f9b74a4236d2dd9f64c386f9b0bd584eaf41e366f6272
+  bks: 27
+  bks_solution_file: choco_v6_0_1_dev/bks_solutions/dev_0003.solution.json
+  bks_solution_file_sha256: 7b399b993bb370cb5f7406c9fb516cda4ecc8da724aa4b2f6ff5b1be730d8e12
+  proven_optimal: true
+  proof_file: choco_v6_0_1_dev/proofs/dev_0003.proof.json
+  proof_file_sha256: 01c1510ad4e8d52aeb72fcacb59b453915b0d911bd4d47fed1821e77100b89f4
+- id: dev_0004
+  instance_file: choco_v6_0_1_dev/instances/dev_0004.json
+  instance_file_sha256: 6edfa301337146a205317c41b8a263c7dd15073f9ea92904bfc94b9e6f03d1e5
+  bks: 49
+  bks_solution_file: choco_v6_0_1_dev/bks_solutions/dev_0004.solution.json
+  bks_solution_file_sha256: 57907efffa07aec45188023de5cfe3c14c53b6267ca7131bd99a196bc12356a0
+  proven_optimal: true
+  proof_file: choco_v6_0_1_dev/proofs/dev_0004.proof.json
+  proof_file_sha256: 38fa3da417bbffea575609f7a6cfe484e0533d638cd7ae2bd36c117fb8482ac3
+selection:
+  source_generator: uniform_integer_bin_packing
   capacity: 100
-  weight_distribution: uniform_integer
-  randomness: {instance_seed: 60100}
+  item_counts:
+  - 50
+  - 100
+  - 250
+  selected_seeds:
+  - 60000
+  - 60000
+  - 60002
+  - 60001
+  - 60001
+  proof_solver_commit: 551ad10d94835c99e5e1e684500d3db398c0e345
+  proof_solver_threads: 1
+  proof_solver_seed: 0
+  proof_adapter_source_sha256: 6feb2e63fa72d5ffa26e9f6a25c546c7314c65b38c6ef17df9eb0f86284ec7ea

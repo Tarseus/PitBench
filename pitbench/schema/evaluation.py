@@ -56,6 +56,8 @@ class ArtifactManifest(BaseModel):
     candidate_patch: ArtifactRef | None = None
     observations: ArtifactRef | None = None
     expected_run_grid: ArtifactRef | None = None
+    performance_confirmation_observations: ArtifactRef | None = None
+    performance_confirmation_expected_run_grid: ArtifactRef | None = None
     seed_robustness_details: ArtifactRef | None = None
     representation_robustness_details: ArtifactRef | None = None
     resource_details: ArtifactRef | None = None
@@ -68,6 +70,7 @@ class ArtifactManifest(BaseModel):
 class EvaluationSummary(BaseModel):
     observation_count: int = Field(ge=0)
     valid_observation_count: int = Field(ge=0)
+    performance_confirmation_observation_count: int = Field(default=0, ge=0)
     counts_by_state: dict[CodeState, int] = Field(default_factory=dict)
     performance: PerformanceReport | ExactPerformanceReport | None = None
     controlled_transfer: ControlledTransferReport | None = None

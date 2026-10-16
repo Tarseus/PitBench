@@ -2,9 +2,10 @@
 
 *A repository-level benchmark for combinatorial optimization solvers.*
 
-PitBench is a benchmark for evaluating whether coding agents can make
-statistically significant, generalizable performance improvements to mature
-combinatorial optimization solver repositories.
+PitBench evaluates whether coding agents can make correct, repeatable, and
+generalizable performance improvements to mature combinatorial optimization
+solver repositories. Directional conclusions require calibrated evidence from
+the solver's actual outputs.
 
 <p align="center">
   <img src="https://img.shields.io/badge/PitBench-Benchmark-8A2BE2?style=for-the-badge&logo=github&logoColor=white" alt="PitBench Benchmark">
@@ -37,7 +38,7 @@ combinatorial optimization solver repositories.
 
 ## 🎯 Why Combinatorial Optimization (CO)?
 
-**Combinatorial Optimization (CO)** is the algorithmic backbone of modern logistics, supply chains, manufacturing, and scheduling. Developing and accelerating high-performance solvers requires mathematical insight, intricate search heuristics, and low-level systems programming. PitBench is designed for repository-level evaluation of CO solvers; **PyVRP is the first implemented track**, currently represented by four release snapshots, rather than the boundary of the benchmark.
+**Combinatorial Optimization (CO)** is the algorithmic backbone of modern logistics, supply chains, manufacturing, and scheduling. Developing and accelerating high-performance solvers requires mathematical insight, intricate search heuristics, and low-level systems programming. PitBench evaluates one pinned release per solver across five repositories and seven current solver–problem tasks. Its research motivation is to test whether ordinary coding-agent evaluations misjudge solver modifications; see [Benchmark motivation](docs/benchmark-motivation.md) and the [noise-calibration protocol](docs/evaluation-noise-calibration.md).
 
 Unlike general repository-level coding benchmarks, solver optimization must preserve problem semantics while evaluating a randomized quality-time process:
 
@@ -52,13 +53,15 @@ Unlike general repository-level coding benchmarks, solver optimization must pres
 ## 🌟 Key Highlights
 
 1. **Repository-Level CO Solver Optimization**
-   Agents modify real solver repositories rather than isolated algorithm exercises. The current implementation uses PyVRP release snapshots.
+   Agents modify real solver repositories rather than isolated algorithm exercises. The current benchmark covers five solvers with one pinned version each.
 
-2. **Four PyVRP Release Snapshots**
-   The supported tasks cover PyVRP v0.12.2, v0.13.0, v0.13.4, and v0.14.0 using common instances, seeds, and budgets.
+2. **Five Solver Repositories, Seven Current Tasks**
+   PyVRP, VROOM, HiGHS, Choco, and OR-Tools CP-SAT cover heuristic and exact solving across routing, packing, coloring, and scheduling problems. HiGHS and Choco each include a second problem type on the same pinned solver version.
 
 3. **CO-Specific Quality-Time Performance-First Protocol**
-   Evaluates true algorithmic improvements by measuring **normalized optimality gap reductions ($\Delta \text{gap} = \text{gap}_{\text{base}} - \text{gap}_{\text{agent}}$)** against official **Best-Known-Solutions (CVRPLIB-X BKS)** under **fixed time budgets (`budget_sec` = 1s, 5s, 10s)**, paired across identical solver seeds with **5,000 instance-cluster bootstrap 95% confidence intervals**.
+   Heuristic tasks measure paired normalized optimality-gap reductions against best-known solutions; exact tasks measure independently verified optimal coverage and penalized solve time. Each task declares its own budgets and seeds, with instance-cluster bootstrap confidence intervals for paired comparisons.
+   A directional result is confirmed with a fresh, opposite-order Base/Agent
+   run before it becomes a public improvement or regression label.
 
 4. **Prepared Docker Environments**
    PyVRP native extensions are compiled in prepared, commit-tagged images. Agent execution is network-disabled, while evaluator-owned hidden assets are supplied only to a separate judge environment.
@@ -77,7 +80,7 @@ Unlike general repository-level coding benchmarks, solver optimization must pres
 ┌───────────────────────────────┐   ┌───────────────────────────────┐   ┌───────────────────────────────┐
 │   1. Quality-Time Contract    │   │  2. Randomized Repeatability  │   │  3. Held-Out Generalization   │
 ├───────────────────────────────┤   ├───────────────────────────────┤   ├───────────────────────────────┤
-│ • Fixed budgets (1s/5s/10s)  │   │ • Multi-seed paired trials    │   │ • Evaluate on unseen instances│
+│ • Task-specific fixed budgets│   │ • Multi-seed paired trials    │   │ • Evaluate on unseen instances│
 │ • Anchored to optimum / BKS   │   │ • Instance-cluster bootstrap  │   │ • Retention on hidden shifts  │
 │ • True Gap Reduction:         │   │ • Strict 95% confidence bounds│   │ • Check retention beyond dev  │
 │   Δgap = gap_base - gap_agent │   │ • Paired seed evidence        │   │   on judge_shift              │
@@ -90,7 +93,7 @@ Unlike general repository-level coding benchmarks, solver optimization must pres
 
 ### 2. Randomized Repeatability & Statistical Rigor
 - Metaheuristics and randomized search algorithms exhibit high variance across seeds.
-- PyVRP evaluations pair Base and Agent across five solver seeds and compute **instance-cluster bootstrap 95% confidence intervals (CI95)**. An improvement claim is accepted only when the lower bound is strictly positive ($CI_{\text{lower}} > 0$).
+- Stochastic evaluations pair Base and Agent across the task's declared solver seeds and compute **instance-cluster bootstrap 95% confidence intervals (CI95)**. An improvement claim is accepted only when the lower bound is strictly positive ($CI_{\text{lower}} > 0$).
 
 ### 3. Generalization across Problem Topologies (Held-Out Retention)
 - Evaluations test both calibration instances (`judge_id`) and unseen structural shift instances (`judge_shift`, e.g., clustered customer distributions, skewed demand profiles).
@@ -103,10 +106,16 @@ Unlike general repository-level coding benchmarks, solver optimization must pres
 
 | Task ID | Solver & Version | Problem Family | Architecture | Optimization Scope |
 | :--- | :--- | :--- | :--- | :--- |
-| `pyvrp_v0_12_2` | **PyVRP** v0.12.2 | CVRP | C++ / Python (Pybind11) | Search and local-search efficiency |
-| `pyvrp_v0_13_0` | **PyVRP** v0.13.0 | CVRP | C++ / Python (Pybind11) | Search and local-search efficiency |
-| `pyvrp_v0_13_4` | **PyVRP** v0.13.4 | CVRP | C++ / Python (Pybind11) | Search and local-search efficiency |
 | `pyvrp_v0_14_0` | **PyVRP** v0.14.0 | CVRP | C++ / Python (Pybind11) | Search and local-search efficiency |
+| `vroom_v1_15_0` | **VROOM** v1.15.0 | CVRP | C++ | Route quality under fixed budgets |
+| `highs_v1_15_1` | **HiGHS** v1.15.1 | Scheduling MIP | C++ | Verified optimal coverage and solve time |
+| `highs_multidimensional_knapsack_v1_15_1` | **HiGHS** v1.15.1 | Multidimensional 0–1 knapsack | C++ | Verified optimal coverage and solve time |
+| `choco_v6_0_1` | **Choco** v6.0.1 | Bin packing | Java | Verified optimal coverage and solve time |
+| `choco_graph_coloring_v6_0_1` | **Choco** v6.0.1 | Graph coloring | Java | Verified optimal coverage and solve time |
+| `ortools_cp_sat_solve_v9_15` | **OR-Tools CP-SAT** v9.15 | Job-shop scheduling | C++ / Python | Verified optimal coverage and solve time |
+
+Older PyVRP task definitions are retained only to reproduce historical runs;
+the current panel uses v0.14.0 alone.
 
 ---
 
@@ -214,7 +223,8 @@ that omitted submodules.
 Prepared task images are reused when their source is pinned by
 digest and their revision, tooling, and copied development data match; mutable
 image tags are rebuilt. BASE solver observations use the separate cache under
-`.pitbench/cache/base`.
+`.pitbench/cache/base`, keyed by the task configuration and effective judge image
+so replacing an instance panel cannot reuse observations from the old panel.
 
 By default, the task image includes visible development instances and the
 `pitbench inspect`, `pitbench workspace`, and `pitbench bench` commands. Inside
@@ -226,15 +236,27 @@ first development seed. It writes per-run results and paired development
 feedback under `/pitbench/runs`; `--build` refreshes the current solver and the
 evaluator still judges independently. `--instance` selects a public ID/name or
 any readable custom instance file; `--seed`, `--budget`, and `--threads` control
-each development run. Feedback records the input hash and runner artifact hash
+each development run. `--all-seeds` and `--all-budgets` optionally run the full
+declared development grid; use the same selection for Base and Agent. Runner
+timeouts and start failures also leave per-run feedback and available logs.
+If the configured results directory is read-only, `pitbench bench` automatically
+uses a task-specific directory under the container's temporary directory and
+prints the selected path.
+For HiGHS, independent development verification applies to the hash-bound
+provided LP instances; custom LP files still run but are marked unverified.
+Feedback records the input hash and runner artifact hash
 so Base/Agent comparisons expose stale builds. Set `agent_tools: []` explicitly
 in the local config to omit these tools and instances.
 
 The normal candidate judge collects Performance and Resource Efficiency data,
-plus the reliability, seed, and representation runs enabled by each task config.
+plus the seed and representation runs enabled by each task config. Solver
+failures, missing runs, and independent solution checks remain in the raw
+evaluation records. The current benchmark does not include an
+Operational Reliability score because its completed panels did not distinguish
+Base from Agent.
 Configuration Robustness still uses the separate release collector and is not
 part of candidate judging. The task IDs alone do not imply complete coverage of
-all five dimensions; in particular, the current HiGHS task does not enable
+all active measures; in particular, the current HiGHS task does not enable
 representation runs. Provision its private assets and judge image before launch.
 
 The default Codex configuration uses `runner_backend: workspace`. Codex and its
@@ -307,11 +329,9 @@ uv run pitbench report \
   --task-config configs/tasks/<task_id>.yaml --json
 ```
 
-Tasks with `evaluation.operational_reliability: true` also run a public boundary
-test suite. This is enabled for PyVRP 0.14.0 and HiGHS 1.15.1. Each has four
-small feasible cases, using the task's existing budgets, threads, and 30
-development seeds. The normal `evaluate` and `judge` commands include this suite;
-to run just these cases on an already captured candidate patch:
+The public boundary suite remains available as an explicit diagnostic. It is
+not run by the current benchmark's normal `evaluate` or `judge`
+commands. To run only these cases on an already captured candidate patch:
 
 ```bash
 uv run pitbench judge pyvrp_v0_14_0 candidate.patch \
@@ -333,7 +353,7 @@ reported separately. Invalid solutions still fail the existing qualification
 check. The integral MIP cases also check reported objective values and false
 optimality claims against their known optima.
 
-The reported pass rate counts instance–seed runs within each budget, with the
+The diagnostic pass rate counts instance–seed runs within each budget, with the
 whole declared grid as its denominator. It is left unset when runs are missing.
 It describes this test suite, not a deployment success probability. Boundary
 observations are excluded from performance, resource, and seed-IQR aggregation.

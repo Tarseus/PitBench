@@ -77,7 +77,7 @@ class EvaluationConfig(BaseModel):
     judge_cpus: float | None = None
     judge_memory: str | None = None
     judge_parallel_runs: int | None = None
-    base_cache: bool = True
+    base_cache: bool = False
 
     @classmethod
     def from_yaml(cls, path: Path) -> EvaluationConfig:

@@ -20,14 +20,14 @@ repository:
   plugin: pitbench.repositories.plugins:PyVRPRepositoryPlugin
   editable_paths: [pyvrp]
   agent_image: ghcr.io/tarseus/pitbench-pyvrp@sha256:776623be0e47b5f907efc3855886b6cd635b6c09c17f2b8fd4c0597f2f74f445
-  judge_image: ghcr.io/tarseus/pitbench-pyvrp@sha256:776623be0e47b5f907efc3855886b6cd635b6c09c17f2b8fd4c0597f2f74f445
+  judge_image: ghcr.io/tarseus/pitbench-pyvrp-judge@sha256:c7a4f9abecc90cfcc5e4368ba46a9f35d5f7be2883ac53cff49e7f365f1c79a3
 oracle:
     kind: best_known_solution
     source: private://calibration/cvrplib_x/oracle.yaml
     objective_sense: minimize
 evaluation:
   performance_protocol: heuristic_fixed_budget
-  operational_reliability: true
+  operational_reliability: false
   budgets_sec: [5.0, 10.0]
   primary_budget_sec: 10.0
   representation_robustness:

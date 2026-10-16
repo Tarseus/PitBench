@@ -108,12 +108,16 @@ class NuisanceCollection:
         output: Path,
         *,
         repository: Path | None = None,
+        candidate_patch: Path | None = None,
         private_root: Path = ROOT / "private",
         panel: str | None = None,
     ) -> dict:
         import yaml
 
-        from pitbench.evaluator.representation import prepare_transformations
+        from pitbench.evaluator.representation import (
+            prepare_precomputed_transformations,
+            prepare_transformations,
+        )
         from pitbench.evaluator.representations import representation_type
         from pitbench.instances.generate import prepare_collection_instances
         from pitbench.repositories.base import RepositoryPluginRegistry
@@ -139,6 +143,27 @@ class NuisanceCollection:
         ):
             raise ValueError("numeric representation requires a verification tolerance")
         executor = COLLECTION_EXECUTORS[config["execution"]]
+        if candidate_patch is not None and config["execution"] != "judge":
+            raise ValueError("candidate patches require judge execution")
+        if (
+            candidate_patch is None
+            and config["execution"] == "judge"
+            and "agent" in config["code_states"]
+        ):
+            output.mkdir(parents=True, exist_ok=True)
+            candidate_patch = output / "empty.patch"
+            if candidate_patch.exists():
+                if candidate_patch.read_bytes():
+                    raise ValueError("saved empty candidate patch has changed")
+            else:
+                candidate_patch.write_bytes(b"")
+        if candidate_patch is not None:
+            candidate_patch = candidate_patch.resolve(strict=True)
+            candidate_patch_sha256 = hashlib.sha256(
+                candidate_patch.read_bytes()
+            ).hexdigest()
+        else:
+            candidate_patch_sha256 = None
         identity = executor.identity(task, repository)
         if identity["version"] != task.release.version or (
             identity.get("binding_git_hash")
@@ -154,6 +179,7 @@ class NuisanceCollection:
                 or manifest["task_configuration"] != task.model_dump(mode="json")
                 or manifest["repository"]
                 != (str(repository.resolve()) if repository else None)
+                or manifest.get("candidate_patch_sha256") != candidate_patch_sha256
             ):
                 raise ValueError(
                     "existing experiment differs from requested configuration"
@@ -163,7 +189,44 @@ class NuisanceCollection:
             ROOT / config["instance_source"],
             output / "sources",
             path_template=config.get("instance_path_template"),
+            generated_stem_prefix=config.get("generated_stem_prefix"),
         )
+        if config.get("reference_solver_commit") is not None:
+            from pitbench.problem_families.verification import (
+                validate_bin_packing_optimum_record,
+            )
+
+            for instance in instances:
+                proof_path = instance.get("proof_path")
+                solution_path = instance.get("bks_solution_path")
+                if proof_path is None or solution_path is None:
+                    raise ValueError("representation reference files are missing")
+                proof = json.loads(Path(proof_path).read_text())
+                source = Path(instance["path"])
+                if (
+                    proof["solver_commit"] != config["reference_solver_commit"]
+                    or proof["adapter_source_sha256"]
+                    != config["reference_adapter_source_sha256"]
+                    or not 0
+                    < proof["budget_sec"]
+                    <= config["reference_proof_budget_sec"]
+                ):
+                    raise ValueError("representation reference proof run differs")
+                payload = json.loads(source.read_text())
+                reference_solution = json.loads(Path(solution_path).read_text())
+                optimum = validate_bin_packing_optimum_record(
+                    proof,
+                    instance_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+                    weights=payload["weights"],
+                    capacity=payload["capacity"],
+                    reference_bins=reference_solution["bins"],
+                )
+                if (
+                    instance.get("bks") != optimum
+                    or instance.get("proven_optimal") is not True
+                ):
+                    raise ValueError("representation reference target differs")
+                instance["reference_verified"] = True
         if len(instances) != config["instance_count"] or len(
             {i["id"] for i in instances}
         ) != len(instances):
@@ -174,18 +237,39 @@ class NuisanceCollection:
         if not seeds or len(seeds) != len(set(seeds)):
             raise ValueError("solver seeds must be nonempty and unique")
         generator = transform.generator(config["representation"]["generation_seed"])
+        precomputed_manifest = config["representation"].get("precomputed_manifest")
         jobs, transformations = [], {}
         for instance in instances:
-            prepared = prepare_transformations(
-                Path(instance["path"]),
-                instance["id"],
-                instance["bks"],
-                output,
-                transform.name,
-                config["representation"]["count"],
-                generator,
-                tolerance=config["representation"].get("verification_tolerance"),
-            )
+            if precomputed_manifest is not None:
+                prepared = prepare_precomputed_transformations(
+                    Path(instance["path"]),
+                    instance["id"],
+                    instance["bks"],
+                    output,
+                    transform.name,
+                    ROOT / precomputed_manifest,
+                    config["representation"]["count"],
+                    generation_seed=config["representation"]["generation_seed"],
+                    protocol_version=config["representation"].get("protocol_version"),
+                    solver_commit=task.release.base_commit,
+                    reference_solution=(
+                        Path(instance["bks_solution_path"])
+                        if instance.get("bks_solution_path")
+                        else None
+                    ),
+                    proven_optimal=instance.get("proven_optimal"),
+                )
+            else:
+                prepared = prepare_transformations(
+                    Path(instance["path"]),
+                    instance["id"],
+                    instance["bks"],
+                    output,
+                    transform.name,
+                    config["representation"]["count"],
+                    generator,
+                    tolerance=config["representation"].get("verification_tolerance"),
+                )
             transformations.update(prepared)
             original_path = next(iter(prepared.values()))["original_instance_path"]
             variants = [
@@ -236,6 +320,9 @@ class NuisanceCollection:
                                 "original_path": original_path,
                                 "transformation": mapping,
                                 "bks": instance["bks"],
+                                "reference_verified": instance.get(
+                                    "reference_verified", True
+                                ),
                             }
                         )
         random.Random(config["schedule_seed"]).shuffle(jobs)
@@ -245,6 +332,8 @@ class NuisanceCollection:
             "task_configuration": task.model_dump(mode="json"),
             "solver": identity,
             "repository": str(repository.resolve()) if repository else None,
+            "candidate_patch": str(candidate_patch) if candidate_patch else None,
+            "candidate_patch_sha256": candidate_patch_sha256,
             "private_root": str(private_root.resolve()),
             "budgets_sec": task.evaluation.budgets_sec,
             "solver_seeds": seeds,
@@ -303,6 +392,7 @@ class NuisanceCollection:
         prepare.add_argument("--config", type=Path, required=True)
         prepare.add_argument("--panel")
         prepare.add_argument("--repository", type=Path)
+        prepare.add_argument("--candidate-patch", type=Path)
         prepare.add_argument("--private-root", type=Path, default=ROOT / "private")
         run = commands.add_parser("run")
         run.add_argument("--cpus", type=int, nargs="+", required=True)
@@ -324,6 +414,7 @@ class NuisanceCollection:
                 args.config,
                 output,
                 repository=args.repository,
+                candidate_patch=args.candidate_patch,
                 private_root=args.private_root,
                 panel=args.panel,
             )
@@ -428,6 +519,17 @@ class JudgeCollection:
         task = PitBenchTask.model_validate(manifest["task_configuration"])
         repository = Path(manifest["repository"])
         JudgeCollection.identity(task, repository)
+        candidate_patch = (
+            Path(manifest["candidate_patch"])
+            if manifest.get("candidate_patch") is not None
+            else None
+        )
+        if (
+            candidate_patch is not None
+            and hashlib.sha256(candidate_patch.read_bytes()).hexdigest()
+            != manifest["candidate_patch_sha256"]
+        ):
+            raise ValueError("candidate patch changed since collection preparation")
         transform = representation_type(manifest["config"]["representation"]["kind"])
         verifier = transform.verifier(
             manifest["config"]["representation"].get("verification_tolerance")
@@ -510,6 +612,8 @@ class JudgeCollection:
                     observation.valid
                     and (record["verification"] or {}).get("feasible")
                     and detailed["verification"]["objective_preserved"]
+                    and observation.objective
+                    == (record["verification"] or {}).get("objective")
                 )
             write_json(output / "runs" / job["run_id"] / "result.json", record)
 
@@ -521,7 +625,7 @@ class JudgeCollection:
                 repository,
                 ROOT,
                 Path(manifest["private_root"]),
-                None,
+                candidate_patch,
                 output / "judge",
                 code_states=tuple(CodeState(s) for s in manifest["code_states"]),
                 parallel_runs=len(cpus),
@@ -540,8 +644,8 @@ class JudgeCollection:
         ]
         from pitbench.schema.observation import RunObservation
 
-        ObservationStore.write(
-            output / "observations.parquet",
+        ObservationStore.write_jsonl(
+            output / "observations.jsonl",
             [RunObservation.model_validate(record) for record in records],
         )
 
@@ -860,14 +964,14 @@ def _run_external_configuration(
             [
                 "--output",
                 str(output),
-            "--seed",
-            str(job["solver_seed"]),
-            "--budget",
-            str(job["budget_sec"]),
-            "--threads",
-            str(job["threads"]),
-            "--parameters",
-            str(parameter_path),
+                "--seed",
+                str(job["solver_seed"]),
+                "--budget",
+                str(job["budget_sec"]),
+                "--threads",
+                str(job["threads"]),
+                "--parameters",
+                str(parameter_path),
             ]
         )
         driver.main(arguments)
@@ -884,17 +988,15 @@ def _run_external_configuration(
     result["error_stage"] = "verification"
     solution = output.with_suffix(".solution.json")
     result["solution_path"] = str(solution) if solution.exists() else None
-    result["verification"] = verifier(
-        Path(job["instance"]["path"]), solution
-    ) if solution.exists() else None
+    result["verification"] = (
+        verifier(Path(job["instance"]["path"]), solution) if solution.exists() else None
+    )
     if (result["verification"] or {}).get("infrastructure_error"):
         raise RuntimeError(
             "independent verifier infrastructure error: "
             + str(result["verification"].get("detail") or "no detail")
         )
-    result["verified_feasible"] = bool(
-        (result["verification"] or {}).get("feasible")
-    )
+    result["verified_feasible"] = bool((result["verification"] or {}).get("feasible"))
     result.pop("error_stage", None)
 
 
@@ -946,8 +1048,8 @@ class VroomCollectionBackend(CollectionBackend):
             directory,
             result,
             parameters,
-            lambda instance, solution: CVRPFamily().verify(instance, solution).model_dump(
-                mode="json"
+            lambda instance, solution: (
+                CVRPFamily().verify(instance, solution).model_dump(mode="json")
             ),
             solver_command=_vroom_solver_command(),
         )
@@ -969,7 +1071,9 @@ class OrToolsCpSatCollectionBackend(CollectionBackend):
 
         def verify_cp_sat(instance_path: Path, solution_path: Path) -> dict:
             repository = RepositoryPluginRegistry.load(job["repository_plugin"])
-            with tempfile.TemporaryDirectory(prefix="pitbench-cp-sat-verifier-") as temporary:
+            with tempfile.TemporaryDirectory(
+                prefix="pitbench-cp-sat-verifier-"
+            ) as temporary:
                 verifier = repository.prepare_independent_verifier(Path(temporary))
                 if verifier is None:
                     raise RuntimeError("CP-SAT independent verifier is unavailable")

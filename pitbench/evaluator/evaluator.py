@@ -8,7 +8,7 @@ from pathlib import Path
 
 from adapters.pitbench.adapter import PitBenchAdapter
 from pitbench.evaluator.artifacts import artifact_ref
-from pitbench.evaluator.docker_judge import DockerJudge
+from pitbench.evaluator.docker_judge import DockerJudge, judge_harness_sha256
 from pitbench.evaluator.judge import FixtureJudge, JudgePlan
 from pitbench.evaluator.private_assets import (
     PrivateAssetResolver,
@@ -23,6 +23,9 @@ from pitbench.metrics.controlled_transfer_report import (
 from pitbench.metrics.performance_report import (
     ExactPerformanceReport,
     ExactRunOutcomeKind,
+    PerformanceClassification,
+    PerformanceConfirmation,
+    adjudicate_performance_confirmation,
     compute_task_performance_report,
 )
 from pitbench.metrics.reliability_report import compute_reliability_reports
@@ -80,6 +83,7 @@ def _base_cache_is_complete(
         item.code_state != CodeState.BASE
         or item.test_suite is not None
         or item.equivalence_parent_id is not None
+        or item.threads != task.evaluation.threads
         for item in observations
     ):
         return False
@@ -120,6 +124,22 @@ def _base_cache_is_complete(
         for item in observations
     }
     return len(observations) == expected_count == len(keys)
+
+
+def _base_cache_path(
+    cache_root: Path,
+    task: PitBenchTask,
+    task_config_path: Path,
+    judge_image: str,
+) -> Path:
+    task_config_digest = hashlib.sha256(task_config_path.read_bytes()).hexdigest()[:16]
+    judge_image_digest = hashlib.sha256(judge_image.encode()).hexdigest()[:16]
+    harness_digest = judge_harness_sha256(Path(__file__).resolve().parents[2])[:16]
+    return cache_root / (
+        f"{task.task_id}-threads-{task.evaluation.threads}-"
+        f"task-{task_config_digest}-image-{judge_image_digest}-"
+        f"harness-{harness_digest}_base.parquet"
+    )
 
 
 def _checkpoint_observations_if_complete(
@@ -226,7 +246,12 @@ class PitBenchEvaluator(Evaluator):
 
         if base_observations_path is None and use_base_cache:
             cache_root = Path(config.get("base_cache_path", ".pitbench/cache/base"))
-            candidate_cache = cache_root / f"{task.task_id}_base.parquet"
+            candidate_cache = _base_cache_path(
+                cache_root,
+                task,
+                Path(config["task_config_path"]),
+                str(config["judge_image"]),
+            )
             if candidate_cache.is_file():
                 base_observations_path = str(candidate_cache)
             else:
@@ -302,12 +327,13 @@ class PitBenchEvaluator(Evaluator):
                 instances_per_instance_set=config.get("instances_per_instance_set"),
                 solver_seed_limit=config.get("solver_seed_limit"),
             )
+            judge_identity = judge.checkpoint_identity()
             observations = None
             if not config.get("reliability_only", False):
                 observations = _checkpoint_observations_if_complete(
                     request.output_dir,
                     task.task_id,
-                    judge.checkpoint_identity(),
+                    judge_identity,
                 )
                 if observations is not None and progress_callback is not None:
                     progress_callback(
@@ -440,7 +466,10 @@ class PitBenchEvaluator(Evaluator):
         reliability = None
         reliability_details_ref = None
         if (
-            task.evaluation.operational_reliability
+            (
+                task.evaluation.operational_reliability
+                or config.get("reliability_only", False)
+            )
             and not fixture_mode
             and preflight_validity.accepted
         ):
@@ -523,6 +552,127 @@ class PitBenchEvaluator(Evaluator):
             )
             else None
         )
+        confirmation_observations: list[RunObservation] = []
+        confirmation_report = None
+        if (
+            performance is not None
+            and performance.classification
+            in {
+                PerformanceClassification.IMPROVED,
+                PerformanceClassification.REGRESSED,
+            }
+            and is_real_full_eval
+            and not config.get("smoke_test", False)
+            and config.get("instances_per_instance_set") is None
+            and config.get("solver_seed_limit") is None
+            and config.get("confirm_directional_performance", True)
+            and set(code_states) == set(CodeState)
+        ):
+            initial_classification = performance.classification
+            if cached_base is not None:
+                performance = performance.model_copy(
+                    update={
+                        "classification": PerformanceClassification.INCONCLUSIVE,
+                        "confirmation": PerformanceConfirmation(
+                            initial_classification=initial_classification,
+                            confirmed=False,
+                            repeat_observation_count=0,
+                            repeat_valid_observation_count=0,
+                            repeat_order="not_run_cached_base",
+                        ),
+                    }
+                )
+            else:
+                confirmation_dir = request.output_dir / "performance-confirmation"
+                confirmation_judge = DockerJudge(
+                    image=image,
+                    task_config_path=task_config_path,
+                    base_repository=Path(config["base_repository"]),
+                    private_root=Path(config["private_root"]),
+                    candidate_patch=request.candidate_patch_path,
+                    output_dir=confirmation_dir,
+                    cpus=cpus,
+                    memory=str(config.get("judge_memory", "8g")),
+                    cpuset_cpus=config.get("judge_cpuset_cpus"),
+                    code_states=tuple(reversed(code_states)),
+                    parallel_runs=parallel_runs,
+                    progress_callback=progress_callback,
+                )
+                confirmation_identity = confirmation_judge.checkpoint_identity()
+                if any(
+                    judge_identity[key] != confirmation_identity[key]
+                    for key in judge_identity
+                    if key != "code_states"
+                ) or confirmation_identity["code_states"] != list(
+                    reversed(judge_identity["code_states"])
+                ):
+                    raise ValueError(
+                        "Performance confirmation changed task, patch, image, "
+                        "harness, resources, or Base/Agent order"
+                    )
+                confirmation_observations = (
+                    _checkpoint_observations_if_complete(
+                        confirmation_dir,
+                        task.task_id,
+                        confirmation_identity,
+                    )
+                    or confirmation_judge.run()
+                )
+                confirmation_parquet = confirmation_dir / "trials.parquet"
+                ObservationStore.write(
+                    confirmation_parquet, confirmation_observations
+                )
+                confirmation_grid_path = confirmation_dir / "expected-run-grid.json"
+                confirmation_grid = ExpectedRunGrid.model_validate_json(
+                    confirmation_grid_path.read_text()
+                )
+                if expected_run_grid != confirmation_grid:
+                    raise ValueError(
+                        "Performance confirmation uses a different expected run grid"
+                    )
+                confirmation_report = compute_task_performance_report(
+                    [
+                        item
+                        for item in confirmation_observations
+                        if item.equivalence_parent_id is None
+                        and item.test_suite is None
+                    ],
+                    task=task,
+                    expected_run_grid=confirmation_grid,
+                )
+                if confirmation_report is None:
+                    raise ValueError("Performance confirmation produced no report")
+                performance = adjudicate_performance_confirmation(
+                    performance,
+                    confirmation_report,
+                    repeat_observation_count=len(confirmation_observations),
+                    repeat_valid_observation_count=sum(
+                        item.valid for item in confirmation_observations
+                    ),
+                )
+                (confirmation_dir / "report.json").write_text(
+                    json.dumps(
+                        {
+                            "initial_classification": initial_classification.value,
+                            "repeat_report": confirmation_report.model_dump(mode="json"),
+                            "final_classification": performance.classification.value,
+                        },
+                        indent=2,
+                    )
+                    + "\n"
+                )
+                artifacts.performance_confirmation_observations = artifact_ref(
+                    confirmation_parquet,
+                    root=request.output_dir,
+                    media_type="application/vnd.apache.parquet",
+                    private=True,
+                )
+                artifacts.performance_confirmation_expected_run_grid = artifact_ref(
+                    confirmation_grid_path,
+                    root=request.output_dir,
+                    media_type="application/json",
+                    private=True,
+                )
         controlled_transfer = None
         controlled_transfer_config = getattr(
             task.evaluation,
@@ -545,10 +695,17 @@ class PitBenchEvaluator(Evaluator):
                 ]
                 for budget in performance.by_budget.values()
             )
+        if isinstance(confirmation_report, ExactPerformanceReport):
+            exact_qualification_failures += sum(
+                budget.agent.outcome_counts[
+                    ExactRunOutcomeKind.QUALIFICATION_FAILURE.value
+                ]
+                for budget in confirmation_report.by_budget.values()
+            )
         validity = evaluator_validity(
             patch_exists=patch_exists,
             fixture_mode=fixture_mode,
-            observations=observations,
+            observations=[*observations, *confirmation_observations],
             exact_qualification_failures=exact_qualification_failures,
         )
         return EvaluationResult(
@@ -558,6 +715,9 @@ class PitBenchEvaluator(Evaluator):
             summary=EvaluationSummary(
                 observation_count=len(observations),
                 valid_observation_count=sum(item.valid for item in observations),
+                performance_confirmation_observation_count=len(
+                    confirmation_observations
+                ),
                 counts_by_state=dict(counts),
                 performance=performance,
                 controlled_transfer=controlled_transfer,

@@ -1,5 +1,12 @@
 # Operational Reliability cross-object scope
 
+This is the historical M0-M5 diagnostic protocol. The current five-task
+benchmark retired Operational Reliability as a scored dimension on
+2026-10-14 because the completed Base/Agent panels had no discriminatory
+variation. The explicit boundary suite remains available for diagnostics;
+normal evaluation still retains failure, missingness, and independent
+solution-verification records.
+
 ## M0: current solver capability boundary
 
 Operational Reliability measures observed execution coverage and failure modes on
@@ -38,7 +45,7 @@ single solver seed and budgets.
 
 ## Shared configuration
 
-Every current task enables the operational-reliability flag. The task's own
+Historical panels enabled the operational-reliability flag. The task's own
 budget and thread configuration is retained. Stochastic tasks use their declared
 development seed list; deterministic tasks retain their declared execution seed
 without interpreting it as a randomization axis.
@@ -46,9 +53,9 @@ without interpreting it as a randomization axis.
 Reliability reports preserve Base/Agent pairing when both states are evaluated,
 but do not convert a paired change into a performance or robustness score.
 
-Operational failures remain owned by Operational Reliability. Semantic invalidity
-remains owned by Qualification, and a timeout is not silently classified as a
-semantic invalidity.
+Operational failures remain visible in raw run status and missingness records.
+Semantic invalidity remains owned by Qualification, and a timeout is not
+silently classified as a semantic invalidity.
 
 ## Lifecycle boundary
 

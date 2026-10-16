@@ -35,8 +35,6 @@ def main() -> None:
     )
     args = parser.parse_args()
     task = PitBenchTask.from_yaml(args.task_config)
-    if args.reliability_only and not task.evaluation.operational_reliability:
-        parser.error("task does not enable operational reliability")
     boundary_cases = (
         prepare_boundary_cases(
             task,
@@ -50,7 +48,7 @@ def main() -> None:
             ),
             solver_seed_limit=args.solver_seed_limit,
         )
-        if task.evaluation.operational_reliability
+        if task.evaluation.operational_reliability or args.reliability_only
         else []
     )
     if (

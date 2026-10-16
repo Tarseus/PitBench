@@ -347,13 +347,7 @@ class PitBenchTask(BaseModel):
                 )
             if self.evaluation.exact_time_basis == ExactTimeBasis.SOLVE_WALL_TIME:
                 if self.problem_family != ProblemFamily.CP:
-                    raise ValueError(
-                        "solve wall time is reserved for the parallel CP-SAT task"
-                    )
-                if self.evaluation.threads != 8:
-                    raise ValueError(
-                        "parallel CP-SAT exact solving requires exactly eight threads"
-                    )
+                    raise ValueError("solve wall time is reserved for CP exact solving")
         kinds = {instance_set.kind for instance_set in self.instance_sets}
         required = {InstanceSetKind.AGENT_DEV, InstanceSetKind.JUDGE_ID}
         missing = required - kinds

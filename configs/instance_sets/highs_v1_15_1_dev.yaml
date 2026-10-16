@@ -1,8 +1,47 @@
-schema_version: "1.0"
+schema_version: '1.0'
 visibility: agent
 format: lp
-generator:
-  kind: single_machine_scheduling_mip
-  count: 5
-  jobs: [20, 40, 80]
-  randomness: {instance_seed: 115100}
+instances:
+- id: dev_0000
+  instance_file: highs_v1_15_1_dev/instances/dev_0000.lp
+  instance_file_sha256: 7e5b0fa3eee2b41f49782c0cbd067e81d35886a2b70971c0b5d28cb0511497d8
+  bks: 276
+  bks_solution_file: highs_v1_15_1_dev/bks_solutions/dev_0000.solution.json
+  bks_solution_file_sha256: 9bf3cfce0ae45972b0df705ed253b8854535e9c8420acf30891f3e606ca55c75
+  proven_optimal: true
+- id: dev_0001
+  instance_file: highs_v1_15_1_dev/instances/dev_0001.lp
+  instance_file_sha256: a4e34d8a5f4f0eeaa833af7b03352ef60ffab8dee1618ed76320beb87d064cd5
+  bks: 508
+  bks_solution_file: highs_v1_15_1_dev/bks_solutions/dev_0001.solution.json
+  bks_solution_file_sha256: e443bee1f37c9694b8ed7bb44b0f81dc83200bb0ca5e86b79c12de96ce654dff
+  proven_optimal: true
+- id: dev_0002
+  instance_file: highs_v1_15_1_dev/instances/dev_0002.lp
+  instance_file_sha256: 2a896d9755b22cce463140e3c106d3df67833cbda448979d578def15214bebbd
+  bks: 368
+  bks_solution_file: highs_v1_15_1_dev/bks_solutions/dev_0002.solution.json
+  bks_solution_file_sha256: a41f08ebb872b1ada8526b9944e99c7213a16f71a62329b19516cc94d78c3342
+  proven_optimal: true
+- id: dev_0003
+  instance_file: highs_v1_15_1_dev/instances/dev_0003.lp
+  instance_file_sha256: a66c25a0638673684c750e7e2953412c50e8ea26c44f4f7399639632b7a33238
+  bks: 358
+  bks_solution_file: highs_v1_15_1_dev/bks_solutions/dev_0003.solution.json
+  bks_solution_file_sha256: 21542720a9bbde273f0a7b7a9dd1c5fde1eaeab0efd08f15b8a4697b7872d37d
+  proven_optimal: true
+- id: dev_0004
+  instance_file: highs_v1_15_1_dev/instances/dev_0004.lp
+  instance_file_sha256: 51d331df4ca8dfb56d7a84f65a7533be51010efea51bb3ea9b91883882a449e1
+  bks: 218
+  bks_solution_file: highs_v1_15_1_dev/bks_solutions/dev_0004.solution.json
+  bks_solution_file_sha256: df1af61953bd2ea0035f0505997c892f8424f319ffa8566bec8a9c95cef3fe2c
+  proven_optimal: true
+selection:
+  source_generator: single_machine_scheduling_mip
+  jobs:
+  - 9
+  - 10
+  - 11
+  instance_seed_start: 115100
+  optimality_basis: shortest_processing_time

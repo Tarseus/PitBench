@@ -12,6 +12,20 @@ from pitbench.evaluator.storage import ObservationStore
 from pitbench.schema.observation import CodeState, RunObservation
 
 
+def judge_harness_sha256(package_root: Path) -> str:
+    """Fingerprint the Python code mounted into the isolated judge."""
+    digest = hashlib.sha256()
+    for source_root in (package_root / "pitbench", package_root / "adapters"):
+        for path in sorted(source_root.rglob("*.py")):
+            relative = path.relative_to(package_root).as_posix().encode()
+            content = path.read_bytes()
+            digest.update(len(relative).to_bytes(8, "big"))
+            digest.update(relative)
+            digest.update(len(content).to_bytes(8, "big"))
+            digest.update(content)
+    return digest.hexdigest()
+
+
 class DockerJudge:
     """Launch a fresh, network-disabled judge container for one candidate."""
 
@@ -57,15 +71,20 @@ class DockerJudge:
         if solver_seed_limit is not None and solver_seed_limit < 1:
             raise ValueError("solver_seed_limit must be positive")
         self.solver_seed_limit = solver_seed_limit
+        self.package_root = Path(__file__).resolve().parents[2]
+        self.harness_sha256 = judge_harness_sha256(self.package_root)
+        self.candidate_patch_sha256 = hashlib.sha256(
+            self.candidate_patch.read_bytes()
+        ).hexdigest()
+        self.task_config_sha256 = hashlib.sha256(
+            self.task_config_path.read_bytes()
+        ).hexdigest()
 
     def checkpoint_identity(self) -> dict[str, object]:
         return {
-            "candidate_patch_sha256": hashlib.sha256(
-                self.candidate_patch.read_bytes()
-            ).hexdigest(),
-            "task_config_sha256": hashlib.sha256(
-                self.task_config_path.read_bytes()
-            ).hexdigest(),
+            "candidate_patch_sha256": self.candidate_patch_sha256,
+            "task_config_sha256": self.task_config_sha256,
+            "harness_sha256": self.harness_sha256,
             "judge_image": self.image,
             "cpus": self.cpus,
             "memory": self.memory,
@@ -78,7 +97,8 @@ class DockerJudge:
         }
 
     def run(self) -> list[RunObservation]:
-        package_root = Path(__file__).resolve().parents[2]
+        package_root = self.package_root
+        self._check_inputs_unchanged("before launch")
         observations = self.output_dir / "judge-observations.jsonl"
         command = [
             "docker",
@@ -171,6 +191,7 @@ class DockerJudge:
                     else:
                         recent_output.append(line)
         returncode = process.wait()
+        self._check_inputs_unchanged("during the run", observations)
         if returncode:
             details = ([last_progress] if last_progress is not None else []) + list(
                 recent_output
@@ -182,3 +203,29 @@ class DockerJudge:
         if not observations.is_file():
             raise RuntimeError("isolated judge produced no observations")
         return ObservationStore.read_jsonl(observations)
+
+    def _check_inputs_unchanged(
+        self, phase: str, observations: Path | None = None
+    ) -> None:
+        checks = {
+            "judge harness code": (
+                judge_harness_sha256(self.package_root),
+                self.harness_sha256,
+            ),
+            "task configuration": (
+                hashlib.sha256(self.task_config_path.read_bytes()).hexdigest(),
+                self.task_config_sha256,
+            ),
+            "candidate patch": (
+                hashlib.sha256(self.candidate_patch.read_bytes()).hexdigest(),
+                self.candidate_patch_sha256,
+            ),
+        }
+        for name, (actual, expected) in checks.items():
+            if actual != expected:
+                retained = (
+                    f"; observations remain at {observations}"
+                    if observations is not None
+                    else ""
+                )
+                raise RuntimeError(f"{name} changed {phase}{retained}")

@@ -1,0 +1,53 @@
+schema_version: '3.0'
+task_id: choco_graph_coloring_v6_0_1
+release:
+  repository: chocoteam/choco-solver
+  version: 6.0.1
+  tag: v6.0.1
+  base_commit: 05e356a859cc3363453ae1cfc5d8f2118264f005
+  released_at: 2026-05-21 12:40:31+00:00
+  url: https://github.com/chocoteam/choco-solver/releases/tag/v6.0.1
+task_type: exact_solver
+problem_family: cp
+optimization_scope: exact_search_efficiency
+instruction: Improve exact-solver performance on the declared problem while preserving
+  feasibility, objective semantics, and solver correctness. Use only visible development
+  instances.
+repository:
+  clone_url: https://github.com/chocoteam/choco-solver.git
+  plugin: pitbench.repositories.plugins:ChocoRepositoryPlugin
+  editable_paths:
+  - solver
+  agent_image: pitbench-choco:05e356a859cc
+  judge_image: sha256:f72f0c675b547373436a1b0a8c44f7eb4c0406d3ee5c455ecaadff630ee3fe60
+oracle:
+  kind: known_optimum
+  source: private://oracles/choco_graph_coloring_v6_0_1.yaml
+  source_sha256: affb9de59930ead150d0b4518dabd99471ed7d991c1aab21e2bff02fb3f6173c
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  threads: 1
+  verifier: trusted_optimum
+  solver_seeds:
+  - 0
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/choco_graph_coloring_v6_0_1_dev.yaml
+  instance_set_config_sha256: 07aff06a1aba46b604cd01b90591e476186b1bdad21f7cad51fd502d9f4d7df7
+  size: 5
+  randomness:
+    instance_seed: 661100
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/choco_graph_coloring_v6_0_1/judge_id.yaml
+  instance_set_config_sha256: 948e6c6ba9c55ee2f9b48576632df4f8a81469915135a1c667f28fabc31999e0
+  size: 30
+problem_variant: graph_coloring
+formulation_id: graph_coloring

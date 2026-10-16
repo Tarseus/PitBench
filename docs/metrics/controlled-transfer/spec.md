@@ -59,11 +59,14 @@ $$
 
 A positive \(G_h(c)\) is a task-native time or quality benefit for Agent over Base.
 
-For exact tasks, each condition first retains the existing coverage-first exact
-Performance conclusion: higher Agent solved coverage is improved, lower coverage is
-regressed, and equal coverage is then classified by paired penalized runtime. The
-normalized time benefit \(G_h(c)\) is reported for retention analysis and cannot
-override that conclusion.
+For exact tasks, each condition follows the coverage-first Performance conclusion.
+Report paired Agent-minus-Base verified-solved coverage and an instance-bootstrap
+interval, clustering declared template siblings together. A coverage difference is
+`improved` or `regressed` only when its interval excludes zero in that direction;
+an unresolved difference is `inconclusive`. Only exactly equal coverage is then
+classified by the paired penalized-runtime interval. The normalized time benefit
+\(G_h(c)\) is reported for retention analysis and cannot override an unresolved
+coverage difference.
 
 ## Retention reporting
 

@@ -12,6 +12,10 @@ from typing import Any
 
 import yaml
 
+from pitbench.problem_families.public_verification import (
+    format_multidimensional_knapsack_lp,
+)
+
 
 def _choice(values: list[int], index: int) -> int:
     return values[index % len(values)]
@@ -249,11 +253,126 @@ def _scheduling_lp(config: dict[str, Any], index: int, destination: Path) -> Non
     destination.write_text("\n".join(lines) + "\n")
 
 
+def multidimensional_knapsack_data(
+    config: dict[str, Any], index: int
+) -> tuple[list[list[int]], list[int], list[int]]:
+    """Plant a feasible packing whose value meets a linear dual bound."""
+
+    rng = random.Random(_instance_seed(config, index))
+    item_count = _choice(config["items"], index)
+    dimensions = _choice(config["dimensions"], index)
+    weight_max = int(config["weight_max"])
+    if item_count < 2 or dimensions < 2 or weight_max < 2:
+        raise ValueError("invalid multidimensional knapsack generator settings")
+    weights = [
+        [rng.randint(1, weight_max) for _ in range(item_count)]
+        for _ in range(dimensions)
+    ]
+    selected = sorted(rng.sample(range(item_count), item_count // 2))
+    capacities = [sum(row[item] for item in selected) for row in weights]
+    return weights, capacities, selected
+
+
+def _multidimensional_knapsack_lp(
+    config: dict[str, Any], index: int, destination: Path
+) -> None:
+    weights, capacities, _ = multidimensional_knapsack_data(config, index)
+    destination.write_text(format_multidimensional_knapsack_lp(weights, capacities))
+
+
+def mycielski_graph(chromatic_number: int) -> tuple[set[tuple[int, int]], list[int]]:
+    """Build the canonical graph M^(k-2)(K2) and its k-coloring."""
+
+    if not 2 <= chromatic_number <= 9:
+        raise ValueError("Mycielski chromatic number must be in [2, 9]")
+    edges = {(0, 1)}
+    colors = [0, 1]
+    for new_color in range(2, chromatic_number):
+        previous_count = len(colors)
+        new_edges = set(edges)
+        for first, second in edges:
+            new_edges.add(
+                (
+                    min(first + previous_count, second),
+                    max(first + previous_count, second),
+                )
+            )
+            new_edges.add(
+                (
+                    min(second + previous_count, first),
+                    max(second + previous_count, first),
+                )
+            )
+        for vertex in range(previous_count):
+            new_edges.add((vertex + previous_count, 2 * previous_count))
+        edges = new_edges
+        colors = [*colors, *colors, new_color]
+    return edges, colors
+
+
+def graph_coloring_data(
+    config: dict[str, Any], index: int
+) -> tuple[dict[str, Any], list[int], dict[str, Any]]:
+    """Relabel a graph with a theorem-backed chromatic lower bound."""
+
+    rng = random.Random(_instance_seed(config, index))
+    chromatic_number = _choice(config["colors"], index)
+    probability_config = config.get("extra_edge_probability", 0)
+    extra_edge_probability = float(
+        _choice(probability_config, index)
+        if isinstance(probability_config, list)
+        else probability_config
+    )
+    if not 0 <= extra_edge_probability < 1:
+        raise ValueError("invalid graph coloring edge probability")
+    canonical_edges, canonical_colors = mycielski_graph(chromatic_number)
+    vertex_count = len(canonical_colors)
+    permutation = list(range(vertex_count))
+    rng.shuffle(permutation)
+    old_to_new = {old: new for new, old in enumerate(permutation)}
+    colors = [canonical_colors[old] for old in permutation]
+    edges = {
+        (
+            min(old_to_new[first], old_to_new[second]),
+            max(old_to_new[first], old_to_new[second]),
+        )
+        for first, second in canonical_edges
+    }
+    edges.update(
+        (first, second)
+        for first in range(vertex_count)
+        for second in range(first + 1, vertex_count)
+        if colors[first] != colors[second] and rng.random() < extra_edge_probability
+    )
+    return (
+        {
+            "name": f"graph_{index:04d}",
+            "problem_kind": "graph_coloring",
+            "vertex_count": vertex_count,
+            "edge_endpoints": [endpoint for edge in sorted(edges) for endpoint in edge],
+        },
+        colors,
+        {
+            "kind": "mycielski_lower_bound",
+            "chromatic_number": chromatic_number,
+            "permutation": permutation,
+        },
+    )
+
+
+def _graph_coloring(config: dict[str, Any], index: int, destination: Path) -> None:
+    instance, _, _ = graph_coloring_data(config, index)
+    instance["name"] = destination.stem
+    destination.write_text(json.dumps(instance, indent=2) + "\n")
+
+
 _GENERATORS = {
     "euclidean_cvrp": ("json", _cvrp),
     "bin_packing": ("json", _bin_packing),
     "repeated_constants_cumulative": ("json", _ortools),
     "single_machine_scheduling_mip": ("lp", _scheduling_lp),
+    "multidimensional_knapsack_mip": ("lp", _multidimensional_knapsack_lp),
+    "graph_coloring": ("json", _graph_coloring),
 }
 
 
@@ -388,6 +507,7 @@ def prepare_collection_instances(
     destination: Path,
     *,
     path_template: str | None = None,
+    generated_stem_prefix: str | None = None,
 ) -> list[dict]:
     """Copy a fixed input panel using explicit paths, including archived indices.
 
@@ -404,7 +524,7 @@ def prepare_collection_instances(
             payload,
             destination,
             expected_visibility=payload.get("visibility", "agent"),
-            stem_prefix=source.stem,
+            stem_prefix=generated_stem_prefix or source.stem,
         )
         return [
             {"id": path.stem, "path": str(path.resolve()), "bks": None}
@@ -435,8 +555,33 @@ def prepare_collection_instances(
                 raise ValueError(f"prepared input changed: {target}")
         else:
             shutil.copy2(original, target)
+        bks_solution = (
+            verify_public_file(
+                source.parent,
+                item["bks_solution_file"],
+                item["bks_solution_file_sha256"],
+            )
+            if "bks_solution_file" in item
+            else None
+        )
+        proof_path = (
+            verify_public_file(
+                source.parent,
+                item["proof_file"],
+                item["proof_file_sha256"],
+            )
+            if "proof_file" in item
+            else None
+        )
         instances.append(
-            {"id": identity, "path": str(target.resolve()), "bks": item.get("bks")}
+            {
+                "id": identity,
+                "path": str(target.resolve()),
+                "bks": item.get("bks"),
+                "bks_solution_path": str(bks_solution) if bks_solution else None,
+                "proof_path": str(proof_path) if proof_path else None,
+                "proven_optimal": item.get("proven_optimal"),
+            }
         )
     return instances
 
@@ -691,10 +836,13 @@ def prepare_trusted_optimum_oracle(
     private_root: Path,
     output_path: Path,
     reference_solution_dir: Path,
+    bin_packing_proof_dir: Path | None = None,
+    proof_solver_commit: str | None = None,
 ) -> dict[str, Any]:
     from pitbench.problem_families.verification import (
         TrustedOptimumOracle,
         TrustedOptimumRecord,
+        validate_bin_packing_optimum_record,
     )
     from pitbench.schema.task import PitBenchTask
 
@@ -706,6 +854,8 @@ def prepare_trusted_optimum_oracle(
     if generator["kind"] not in {
         "single_machine_scheduling_mip",
         "bin_packing",
+        "multidimensional_knapsack_mip",
+        "graph_coloring",
     }:
         raise ValueError("unsupported trusted optimum problem kind")
     private_root = private_root.resolve()
@@ -728,6 +878,7 @@ def prepare_trusted_optimum_oracle(
         )
         for index, instance_path in enumerate(instance_paths):
             instance_id = instance_path.stem
+            proof_file_sha256 = None
             if generator["kind"] == "single_machine_scheduling_mip":
                 processing_times = scheduling_processing_times(generator, index)
                 order = sorted(
@@ -749,26 +900,79 @@ def prepare_trusted_optimum_oracle(
                     "kind": "shortest_processing_time",
                     "processing_times": processing_times,
                 }
+            elif generator["kind"] == "multidimensional_knapsack_mip":
+                weights, capacities, selected = multidimensional_knapsack_data(
+                    generator, index
+                )
+                optimal_objective = -sum(capacities)
+                problem_kind = "multidimensional_knapsack"
+                reference_solution = {"selected_items": selected}
+                optimality_basis = {
+                    "kind": "capacity_dual_bound",
+                    "dimensions": len(weights),
+                    "items": len(weights[0]),
+                }
+            elif generator["kind"] == "graph_coloring":
+                instance, colors, basis = graph_coloring_data(generator, index)
+                instance["name"] = instance_id
+                if json.loads(instance_path.read_text()) != instance:
+                    raise ValueError("graph coloring generated input changed")
+                optimal_objective = basis["chromatic_number"]
+                problem_kind = "graph_coloring"
+                reference_solution = {"colors": colors}
+                optimality_basis = basis
             else:
                 instance = json.loads(instance_path.read_text())
                 weights = instance["weights"]
                 capacity = instance["capacity"]
-                reference_bins = first_fit_decreasing_packing(weights, capacity)
-                capacity_lower_bound = math.ceil(sum(weights) / capacity)
-                if len(reference_bins) != capacity_lower_bound:
-                    raise ValueError(
-                        f"instance {instance_id} reference packing does not match "
-                        "its capacity lower bound"
+                if bin_packing_proof_dir is not None:
+                    proof_path = bin_packing_proof_dir / f"{instance_id}.proof.json"
+                    proof_bytes = proof_path.read_bytes()
+                    proof = json.loads(proof_bytes)
+                    if not isinstance(proof, dict):
+                        raise ValueError(
+                            f"bin packing proof is not an object: {instance_id}"
+                        )
+                    if (
+                        proof_solver_commit is not None
+                        and proof.get("solver_commit") != proof_solver_commit
+                    ):
+                        raise ValueError(
+                            f"bin packing proof solver commit differs: {instance_id}"
+                        )
+                    reference_bins = proof.get("bins")
+                    optimal_objective = validate_bin_packing_optimum_record(
+                        proof,
+                        instance_sha256=hashlib.sha256(
+                            instance_path.read_bytes()
+                        ).hexdigest(),
+                        weights=weights,
+                        capacity=capacity,
+                        reference_bins=reference_bins,
                     )
-                optimal_objective = capacity_lower_bound
+                    optimality_basis = {
+                        "kind": "independent_solver_optimal",
+                        "solver": "ortools_cp_sat",
+                        "proof": proof,
+                    }
+                    proof_file_sha256 = hashlib.sha256(proof_bytes).hexdigest()
+                else:
+                    reference_bins = first_fit_decreasing_packing(weights, capacity)
+                    capacity_lower_bound = math.ceil(sum(weights) / capacity)
+                    if len(reference_bins) != capacity_lower_bound:
+                        raise ValueError(
+                            f"instance {instance_id} reference packing does not match "
+                            "its capacity lower bound"
+                        )
+                    optimal_objective = capacity_lower_bound
+                    optimality_basis = {
+                        "kind": "capacity_lower_bound",
+                        "total_weight": sum(weights),
+                        "capacity": capacity,
+                        "lower_bound": capacity_lower_bound,
+                    }
                 problem_kind = "bin_packing"
                 reference_solution = {"bins": reference_bins}
-                optimality_basis = {
-                    "kind": "capacity_lower_bound",
-                    "total_weight": sum(weights),
-                    "capacity": capacity,
-                    "lower_bound": capacity_lower_bound,
-                }
 
             reference_solution_path = (
                 reference_solution_dir / f"{instance_id}.solution.json"
@@ -804,6 +1008,11 @@ def prepare_trusted_optimum_oracle(
                         "oracle_builder": (
                             "pitbench.instances.generate:prepare_trusted_optimum_oracle"
                         ),
+                        **(
+                            {"proof_file_sha256": proof_file_sha256}
+                            if proof_file_sha256 is not None
+                            else {}
+                        ),
                     },
                     verification_provenance=(
                         "pitbench.problem_families.verification:TrustedOptimumFamily"
@@ -820,3 +1029,67 @@ def prepare_trusted_optimum_oracle(
         yaml.safe_dump(oracle.model_dump(mode="json"), sort_keys=False)
     )
     return oracle.model_dump(mode="json")
+
+
+def prepare_generated_development_panel(
+    generator_config_path: Path,
+    instance_set_config_path: Path,
+) -> dict[str, Any]:
+    """Freeze generated exact-task inputs and visible reference solutions."""
+
+    payload = yaml.safe_load(generator_config_path.read_text())
+    if payload.get("visibility") != "agent":
+        raise ValueError("development panel generator must be agent-visible")
+    config = payload["generator"]
+    kind = config["kind"]
+    if kind not in {"multidimensional_knapsack_mip", "graph_coloring"}:
+        raise ValueError("unsupported generated development panel")
+    suffix, generator = _GENERATORS[kind]
+    panel_dir = instance_set_config_path.with_suffix("")
+    instances_dir = panel_dir / "instances"
+    solutions_dir = panel_dir / "bks_solutions"
+    instances_dir.mkdir(parents=True, exist_ok=True)
+    solutions_dir.mkdir(parents=True, exist_ok=True)
+    records: list[dict[str, Any]] = []
+    for index in range(int(config["count"])):
+        instance_id = f"dev_{index:04d}"
+        instance_path = instances_dir / f"{instance_id}.{suffix}"
+        generator(config, index, instance_path)
+        if kind == "multidimensional_knapsack_mip":
+            _, capacities, selected = multidimensional_knapsack_data(config, index)
+            optimum = -sum(capacities)
+            solution = {"selected_items": selected}
+        else:
+            _, colors, basis = graph_coloring_data(config, index)
+            optimum = basis["chromatic_number"]
+            solution = {"colors": colors}
+        solution_path = solutions_dir / f"{instance_id}.solution.json"
+        solution_path.write_text(json.dumps(solution, indent=2) + "\n")
+        records.append(
+            {
+                "id": instance_id,
+                "instance_file": instance_path.relative_to(
+                    instance_set_config_path.parent
+                ).as_posix(),
+                "instance_file_sha256": hashlib.sha256(
+                    instance_path.read_bytes()
+                ).hexdigest(),
+                "bks": optimum,
+                "bks_solution_file": solution_path.relative_to(
+                    instance_set_config_path.parent
+                ).as_posix(),
+                "bks_solution_file_sha256": hashlib.sha256(
+                    solution_path.read_bytes()
+                ).hexdigest(),
+                "proven_optimal": True,
+            }
+        )
+    manifest = {
+        "schema_version": "1.0",
+        "visibility": "agent",
+        "format": suffix,
+        "instances": records,
+        "selection": {"source_generator": kind, **config},
+    }
+    instance_set_config_path.write_text(yaml.safe_dump(manifest, sort_keys=False))
+    return manifest

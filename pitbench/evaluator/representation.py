@@ -82,6 +82,86 @@ def prepare_transformations(
     return transformations
 
 
+def prepare_precomputed_transformations(
+    source: Path,
+    instance_id: str,
+    anchor: float | None,
+    output_dir: Path,
+    kind: str,
+    manifest_path: Path,
+    count: int,
+    *,
+    generation_seed: int | None = None,
+    protocol_version: str | None = None,
+    solver_commit: str | None = None,
+    reference_solution: Path | None = None,
+    proven_optimal: bool | None = None,
+) -> dict[str, dict]:
+    """Copy hash-bound equivalent inputs prepared by a pinned model builder."""
+    representation = representation_type(kind)
+    manifest = json.loads(manifest_path.read_text())
+    if (
+        manifest.get("kind") != kind
+        or manifest.get("relabelings_per_instance") != count
+    ):
+        raise ValueError(
+            "precomputed representation manifest differs from configuration"
+        )
+    for field, expected in (
+        ("generation_seed", generation_seed),
+        ("protocol_version", protocol_version),
+        ("solver_commit", solver_commit),
+    ):
+        if expected is not None and manifest.get(field) != expected:
+            raise ValueError(f"precomputed representation {field} differs")
+    entry = manifest["instances"][instance_id]
+    if reference_solution is not None:
+        if proven_optimal is not True or anchor is None:
+            raise ValueError("precomputed exact reference is not proven optimal")
+        representation.verify_reference(reference_solution, anchor, entry["jobs"])
+    original_bytes = source.read_bytes()
+    original_sha256 = hashlib.sha256(original_bytes).hexdigest()
+    if original_sha256 != entry["original_sha256"]:
+        raise ValueError("precomputed representation source hash differs")
+    original_path = (
+        output_dir / "inputs" / "original" / f"{instance_id}{representation.suffix}"
+    )
+    original_path.parent.mkdir(parents=True, exist_ok=True)
+    preserve_input(original_path, representation.read_input(source), representation)
+    if len(entry["variants"]) != count:
+        raise ValueError("precomputed representation count differs")
+    transformations = {}
+    for variant in entry["variants"]:
+        new_to_original = variant["new_to_original"]
+        jobs = entry["jobs"]
+        if sorted(new_to_original) != list(range(len(jobs))):
+            raise ValueError("precomputed job permutation is not a bijection")
+        transform_id = variant["transform_id"]
+        identity = f"{instance_id}__{transform_id}"
+        asset = manifest_path.parent / variant["file"]
+        if hashlib.sha256(asset.read_bytes()).hexdigest() != variant["sha256"]:
+            raise ValueError("precomputed transformed model hash differs")
+        path = (
+            output_dir / "inputs" / "relabeled" / f"{identity}{representation.suffix}"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        preserve_input(path, representation.read_input(asset), representation)
+        transformations[identity] = {
+            "representation": kind,
+            "original_instance_id": instance_id,
+            "original_instance_path": str(original_path.relative_to(output_dir)),
+            "transformed_instance_path": str(path.relative_to(output_dir)),
+            "transform_id": transform_id,
+            "original_sha256": original_sha256,
+            "transformed_sha256": variant["sha256"],
+            "jobs": jobs,
+            "new_to_original": new_to_original,
+            "start_variable_indices": variant["start_variable_indices"],
+            "bks": anchor,
+        }
+    return transformations
+
+
 def prepare_cases(
     task: PitBenchTask,
     private_root: Path,
@@ -296,9 +376,7 @@ def run_with_representation(
         return observations
     from pitbench.metrics.nuisance_report import report_nuisance_results
 
-    representation_summary = report_nuisance_results(
-        output_dir, output_dir / "report"
-    )
+    representation_summary = report_nuisance_results(output_dir, output_dir / "report")
     details["representation_robustness"] = representation_summary[
         "representation_robustness"
     ]

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import random
 from abc import ABC, abstractmethod
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
@@ -187,6 +189,202 @@ class CustomerRepresentation(RepresentationPlugin):
                 raise ValueError("solution contains an invalid customer index")
             routes.append([new_to_original[node] for node in route])
         return {"routes": routes}
+
+
+class BinPackingItemRepresentation(RepresentationPlugin):
+    """Permute item order while preserving bin-packing weights and capacity."""
+
+    name = "item_relabeling"
+    family = "cp"
+    requires_tolerance = False
+    suffix = ".json"
+    generator = staticmethod(random.Random)
+
+    @staticmethod
+    def verifier(tolerance=None):
+        from pitbench.problem_families.verification import CPFamily
+
+        return CPFamily()
+
+    @staticmethod
+    def assert_same(original, restored) -> None:
+        if original != restored:
+            raise ValueError("representation input changed")
+
+    @staticmethod
+    def read_input(path: Path) -> dict:
+        return json.loads(path.read_text())
+
+    @staticmethod
+    def write_input(path: Path, model: dict) -> None:
+        path.write_text(json.dumps(model, indent=2, allow_nan=False) + "\n")
+
+    @staticmethod
+    def mappings(model: dict, count: int, generator: random.Random) -> list[dict]:
+        weights = model["weights"]
+        if not isinstance(weights, list) or len(weights) < 2 or count < 1:
+            raise ValueError("item relabeling needs at least two items and one mapping")
+        distinct_inputs = math.factorial(len(weights))
+        for repeated in Counter(weights).values():
+            distinct_inputs //= math.factorial(repeated)
+        if distinct_inputs - 1 < count:
+            raise ValueError("not enough distinct item-order representations")
+        original = tuple(range(len(weights)))
+        seen = {original}
+        seen_weights = {tuple(weights)}
+        mappings = []
+        while len(mappings) < count:
+            permutation = list(original)
+            generator.shuffle(permutation)
+            signature = tuple(permutation)
+            reordered_weights = tuple(weights[index] for index in permutation)
+            if signature not in seen and reordered_weights not in seen_weights:
+                seen.add(signature)
+                seen_weights.add(reordered_weights)
+                mappings.append({"new_to_original": permutation})
+        return mappings
+
+    @staticmethod
+    def transform(model: dict, mapping: dict) -> dict:
+        weights = model["weights"]
+        new_to_original = mapping["new_to_original"]
+        if sorted(new_to_original) != list(range(len(weights))):
+            raise ValueError("item mapping must be a bijection")
+        if type(model.get("capacity")) is not int or model["capacity"] <= 0:
+            raise ValueError("invalid bin-packing capacity")
+        return {**model, "weights": [weights[index] for index in new_to_original]}
+
+    @staticmethod
+    def verify_files(
+        original: Path,
+        transformed: Path,
+        solution: Path,
+        mapped_path: Path,
+        mapping: dict,
+        tolerance: float | None = None,
+    ) -> dict:
+        from pitbench.problem_families.verification import CPFamily
+
+        family = CPFamily()
+        checked = family.verify(transformed, solution)
+        new_to_original = mapping["new_to_original"]
+        payload = json.loads(solution.read_text())
+        mapped_bins = [
+            [new_to_original[item] for item in bin_items]
+            for bin_items in payload["bins"]
+        ]
+        BinPackingItemRepresentation.write_input(mapped_path, {"bins": mapped_bins})
+        mapped = family.verify(original, mapped_path)
+        return {
+            "transformed": checked.model_dump(),
+            "mapped_original": mapped.model_dump(),
+            "objective_preserved": (
+                checked.objective == mapped.objective
+                if checked.objective is not None and mapped.objective is not None
+                else None
+            ),
+        }
+
+
+class JobShopRepresentation(RepresentationPlugin):
+    """Verify precomputed job permutations of a fixed CP-SAT model."""
+
+    name = "job_relabeling"
+    family = "cp"
+    requires_tolerance = False
+    suffix = ".pb"
+    generator = staticmethod(random.Random)
+
+    @staticmethod
+    def verifier(tolerance=None):
+        # The repository plugin prepares the independent fixed-model verifier.
+        return None
+
+    @staticmethod
+    def assert_same(original, restored) -> None:
+        if original != restored:
+            raise ValueError("representation input changed")
+
+    @staticmethod
+    def read_input(path: Path) -> bytes:
+        return path.read_bytes()
+
+    @staticmethod
+    def write_input(path: Path, model: bytes) -> None:
+        path.write_bytes(model)
+
+    @staticmethod
+    def mappings(model, count: int, generator) -> list:
+        raise ValueError("job relabeling requires a verified precomputed manifest")
+
+    @staticmethod
+    def transform(model, mapping):
+        raise ValueError("job relabeling requires a verified precomputed manifest")
+
+    @staticmethod
+    def verify_reference(reference_path: Path, anchor: float, jobs: list) -> None:
+        from pitbench.problem_families.verification import _check_job_shop_start_times
+
+        start_times = json.loads(reference_path.read_text())["start_times"]
+        result = _check_job_shop_start_times(start_times, jobs)
+        if not result.feasible or result.objective != anchor:
+            raise ValueError("job-shop reference schedule differs from its target")
+
+    @staticmethod
+    def verify_files(
+        original: Path,
+        transformed: Path,
+        solution: Path,
+        mapped_path: Path,
+        mapping: dict,
+        tolerance: float | None = None,
+    ) -> dict:
+        from pitbench.problem_families.verification import _check_job_shop_start_times
+
+        if (
+            hashlib.sha256(original.read_bytes()).hexdigest()
+            != mapping["original_sha256"]
+        ):
+            raise ValueError("original job-shop model hash differs")
+        if (
+            hashlib.sha256(transformed.read_bytes()).hexdigest()
+            != mapping["transformed_sha256"]
+        ):
+            raise ValueError("transformed job-shop model hash differs")
+        original_jobs = mapping["jobs"]
+        new_to_original = mapping["new_to_original"]
+        transformed_jobs = [original_jobs[index] for index in new_to_original]
+        start_indices = mapping["start_variable_indices"]
+        values = json.loads(solution.read_text())["values"]
+        if any(type(value) is not int for value in values):
+            raise ValueError("job-shop solution contains noninteger values")
+        if any(
+            type(index) is not int or not 0 <= index < len(values)
+            for index in start_indices
+        ):
+            raise ValueError("job-shop start-variable mapping is invalid")
+        transformed_starts = [values[index] for index in start_indices]
+        checked = _check_job_shop_start_times(transformed_starts, transformed_jobs)
+        mapped_by_job = [None] * len(original_jobs)
+        cursor = 0
+        for new_job, old_job in enumerate(new_to_original):
+            operation_count = len(transformed_jobs[new_job])
+            mapped_by_job[old_job] = transformed_starts[
+                cursor : cursor + operation_count
+            ]
+            cursor += operation_count
+        mapped_starts = [start for job in mapped_by_job for start in job]
+        mapped_path.write_text(json.dumps({"start_times": mapped_starts}) + "\n")
+        mapped = _check_job_shop_start_times(mapped_starts, original_jobs)
+        return {
+            "transformed": checked.model_dump(),
+            "mapped_original": mapped.model_dump(),
+            "objective_preserved": (
+                checked.objective == mapped.objective
+                if checked.objective is not None and mapped.objective is not None
+                else None
+            ),
+        }
 
 
 VECTOR_FIELDS = ("cost", "col_lower", "col_upper", "integrality", "col_names")

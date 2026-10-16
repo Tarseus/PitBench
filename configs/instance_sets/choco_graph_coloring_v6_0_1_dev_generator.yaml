@@ -1,0 +1,16 @@
+schema_version: '1.0'
+visibility: agent
+format: json
+generator:
+  kind: graph_coloring
+  count: 5
+  colors:
+  - 6
+  randomness:
+    instance_seed: 661100
+  extra_edge_probability:
+  - 0.02
+  - 0.03
+  - 0.04
+  - 0.05
+  - 0.08

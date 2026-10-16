@@ -16,6 +16,63 @@ panels:
     control_repeats: 0
     schedule_seed: 20260907
     watchdog_grace_sec: 60
+  routing_vroom:
+    task_config: configs/tasks/vroom_v1_15_0.yaml
+    execution: judge
+    instance_source: configs/instance_sets/pyvrp_cvrp_v1_dev.yaml
+    instance_count: 10
+    axes: [representation]
+    code_states: [base, agent]
+    solver_seeds: [0]
+    representation:
+      kind: customer_relabeling
+      protocol_version: "0.0.2"
+      generation_seed: 20260907
+      solver_seed: 0
+      count: 30
+    control_repeats: 0
+    schedule_seed: 20260907
+    watchdog_grace_sec: 60
+  exact_cp_sat_job_order:
+    task_config: configs/tasks/ortools_cp_sat_solve_v9_15.yaml
+    execution: judge
+    instance_source: configs/instance_sets/ortools_cp_sat_solve_v9_15_dev.yaml
+    instance_count: 5
+    axes: [representation]
+    code_states: [base, agent]
+    solver_seeds: [0]
+    representation:
+      kind: job_relabeling
+      protocol_version: "0.0.2"
+      outcome: capped_optimal_time
+      precomputed_manifest: configs/instance_sets/ortools_cp_sat_solve_v9_15_dev/representations/manifest.json
+      generation_seed: 20260907
+      solver_seed: 0
+      count: 30
+    control_repeats: 0
+    schedule_seed: 20260907
+    watchdog_grace_sec: 60
+  exact_choco_item_order:
+    task_config: configs/tasks/choco_v6_0_1.yaml
+    execution: judge
+    instance_source: configs/instance_sets/choco_v6_0_1_dev.yaml
+    reference_solver_commit: 551ad10d94835c99e5e1e684500d3db398c0e345
+    reference_adapter_source_sha256: 6feb2e63fa72d5ffa26e9f6a25c546c7314c65b38c6ef17df9eb0f86284ec7ea
+    reference_proof_budget_sec: 10
+    instance_count: 5
+    axes: [representation]
+    code_states: [base, agent]
+    solver_seeds: [0]
+    representation:
+      kind: item_relabeling
+      protocol_version: "0.0.2"
+      outcome: capped_optimal_time
+      generation_seed: 20260907
+      solver_seed: 0
+      count: 30
+    control_repeats: 0
+    schedule_seed: 20260907
+    watchdog_grace_sec: 60
   linear:
     task_config: configs/tasks/highs_v1_15_1.yaml
     execution: isolated

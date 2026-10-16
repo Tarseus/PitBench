@@ -1,5 +1,27 @@
 # Operational Reliability M5 validation results
 
+Historical validation record. The current five-task benchmark retired this
+dimension on 2026-10-14 after its completed Base/Agent panels showed no
+discriminatory variation. The observations and failure classifications below
+remain available for audit and explicit diagnostics.
+
+The decision reviewed the four current non-HiGHS tasks under
+`codex-gpt-6-luna-xhigh-four-20261012`,
+`codex-gpt-6-luna-medium-four-20261012`, and
+`codex-gpt-6-sol-xhigh-four-20261013`. Across all 12 task/model reports and
+their declared budgets, both Base and Agent pass rates were 1.0 with no
+paired pass-to-fail or fail-to-pass changes. This is a lack of discrimination
+on the observed panels, not evidence that future solver changes cannot fail.
+
+After retirement, the VROOM empty-patch normal dry run at
+`runs/reliability-retired-vroom-20261014/dry-run/vroom_v1_15_0/` produced six
+ordinary observations and no reliability report. The explicit
+`--reliability-only` run at `runs/reliability-retired-vroom-20261014/diagnostic/`
+completed all 24 declared boundary observations (four cases, three budgets,
+Base and Agent), all valid, and produced a complete reliability report. This
+checks that the retired dimension is absent from normal scoring while the
+diagnostic remains callable.
+
 ## M5 outcome
 
 Operational Reliability M5 passes for the current declared solver capabilities:

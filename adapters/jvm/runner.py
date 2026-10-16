@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -85,10 +86,17 @@ def _verify_compiled_adapter(repository: Path, solver: str) -> None:
     class_name = "ExactSolverRunner" if solver == "choco" else "OrToolsCpSatRunner"
     class_file = output / "org" / "pitbench" / "adapters" / f"{class_name}.class"
     if not class_file.is_file():
-        raise RuntimeError(f"compiled {solver} adapter is unavailable; rebuild the image")
+        raise RuntimeError(
+            f"compiled {solver} adapter is unavailable; rebuild the image"
+        )
     fingerprint = output / "adapter-source.sha256"
-    if not fingerprint.is_file() or fingerprint.read_text().strip() != _adapter_source_sha256(solver):
-        raise RuntimeError(f"compiled {solver} adapter differs from source; rebuild the image")
+    if (
+        not fingerprint.is_file()
+        or fingerprint.read_text().strip() != _adapter_source_sha256(solver)
+    ):
+        raise RuntimeError(
+            f"compiled {solver} adapter differs from source; rebuild the image"
+        )
 
 
 def _repository_commit(repository: Path) -> str | None:
@@ -106,7 +114,9 @@ def _repository_commit(repository: Path) -> str | None:
 def _solver_identity(repository: Path, solver: str) -> dict:
     if solver == "choco":
         assembly = _choco_assembly(repository)
-        match = re.search(r"choco-solver-([0-9][^-]+)-jar-with-dependencies", assembly.name)
+        match = re.search(
+            r"choco-solver-([0-9][^-]+)-jar-with-dependencies", assembly.name
+        )
         if match is None:
             raise RuntimeError(f"cannot determine Choco version from {assembly.name}")
         version = match.group(1)
@@ -114,7 +124,9 @@ def _solver_identity(repository: Path, solver: str) -> dict:
         artifact = _ortools_java_artifact(repository, "ortools-java")
         match = re.search(r"-(\d+\.\d+)(?:\.\d+)?$", artifact.stem)
         if match is None:
-            raise RuntimeError(f"cannot determine OR-Tools version from {artifact.name}")
+            raise RuntimeError(
+                f"cannot determine OR-Tools version from {artifact.name}"
+            )
         version = match.group(1)
     else:
         raise ValueError(f"unsupported external identity probe: {solver}")
@@ -131,6 +143,7 @@ package org.pitbench.adapters;
 import com.google.ortools.Loader;
 import com.google.ortools.sat.CpModel;
 import com.google.ortools.sat.CpModelProto;
+import com.google.ortools.sat.ConstraintProto;
 import com.google.ortools.sat.CpSolver;
 import com.google.ortools.sat.CpSolverResponse;
 import com.google.ortools.sat.CpSolverStatus;
@@ -210,9 +223,8 @@ public final class OrToolsCpSatRunner {
     return result;
   }
 
-  private static void prepareJobShop(String instancePath, String outputPath)
+  private static String buildJobShop(int[] input, String outputPath)
       throws IOException {
-    int[] input = readJobShopIntegers(Path.of(instancePath));
     if (input.length < 2 || input[0] <= 0 || input[1] <= 0) {
       throw new IllegalArgumentException("job-shop instance must start with positive job and machine counts");
     }
@@ -274,7 +286,7 @@ public final class OrToolsCpSatRunner {
     model.addMaxEquality(makespan, finalOperations);
     model.minimize(makespan);
     Files.write(Path.of(outputPath), model.model().toByteArray());
-    System.out.println(
+    return (
         "{\\\"job_count\\\":" + jobCount
             + ",\\\"machine_count\\\":" + machineCount
             + ",\\\"start_variable_indices\\\":"
@@ -282,7 +294,291 @@ public final class OrToolsCpSatRunner {
             + "}");
   }
 
+  private static void prepareJobShop(String instancePath, String outputPath)
+      throws IOException {
+    System.out.println(buildJobShop(readJobShopIntegers(Path.of(instancePath)), outputPath));
+  }
+
+  private static int[] decodeJobShop(CpModelProto model) {
+    java.util.regex.Pattern startName = java.util.regex.Pattern.compile("start_([0-9]+)_([0-9]+)");
+    java.util.regex.Pattern intervalName = java.util.regex.Pattern.compile("interval_([0-9]+)_([0-9]+)");
+    int jobCount = 0;
+    int machineCount = 0;
+    for (int index = 0; index < model.getVariablesCount(); index++) {
+      java.util.regex.Matcher match = startName.matcher(model.getVariables(index).getName());
+      if (match.matches()) {
+        jobCount = Math.max(jobCount, Integer.parseInt(match.group(1)) + 1);
+      }
+    }
+    for (int index = 0; index < model.getConstraintsCount(); index++) {
+      if (model.getConstraints(index).hasNoOverlap()) {
+        machineCount++;
+      }
+    }
+    if (jobCount < 1 || machineCount < 1) {
+      throw new IllegalArgumentException("unrecognized job-shop model");
+    }
+    int[][] machines = new int[jobCount][machineCount];
+    int[][] durations = new int[jobCount][machineCount];
+    for (int[] row : machines) {
+      java.util.Arrays.fill(row, -1);
+    }
+    int machine = 0;
+    for (int index = 0; index < model.getConstraintsCount(); index++) {
+      ConstraintProto noOverlap = model.getConstraints(index);
+      if (!noOverlap.hasNoOverlap()) {
+        continue;
+      }
+      for (int intervalIndex : noOverlap.getNoOverlap().getIntervalsList()) {
+        ConstraintProto interval = model.getConstraints(intervalIndex);
+        java.util.regex.Matcher match = intervalName.matcher(interval.getName());
+        if (!interval.hasInterval() || !match.matches()) {
+          throw new IllegalArgumentException("unrecognized job-shop interval");
+        }
+        int job = Integer.parseInt(match.group(1));
+        int operation = Integer.parseInt(match.group(2));
+        if (job >= jobCount || operation >= machineCount
+            || machines[job][operation] != -1) {
+          throw new IllegalArgumentException("invalid job-shop interval mapping: " + interval.getName());
+        }
+        com.google.ortools.sat.LinearExpressionProto size = interval.getInterval().getSize();
+        long duration;
+        if (size.getVarsCount() == 0) {
+          duration = size.getOffset();
+        } else if (size.getVarsCount() == 1 && size.getCoeffs(0) == 1) {
+          com.google.ortools.sat.IntegerVariableProto constant =
+              model.getVariables(size.getVars(0));
+          if (constant.getDomainCount() != 2 || constant.getDomain(0) != constant.getDomain(1)) {
+            throw new IllegalArgumentException("job-shop interval size is not constant");
+          }
+          duration = constant.getDomain(0) + size.getOffset();
+        } else {
+          throw new IllegalArgumentException("unsupported job-shop interval size");
+        }
+        if (duration <= 0 || duration > Integer.MAX_VALUE) {
+          throw new IllegalArgumentException("invalid job-shop duration");
+        }
+        machines[job][operation] = machine;
+        durations[job][operation] = (int) duration;
+      }
+      machine++;
+    }
+    int[] input = new int[2 + 2 * jobCount * machineCount];
+    input[0] = jobCount;
+    input[1] = machineCount;
+    int cursor = 2;
+    for (int job = 0; job < jobCount; job++) {
+      for (int operation = 0; operation < machineCount; operation++) {
+        if (machines[job][operation] < 0) {
+          throw new IllegalArgumentException("job-shop operation is missing");
+        }
+        input[cursor++] = machines[job][operation];
+        input[cursor++] = durations[job][operation];
+      }
+    }
+    return input;
+  }
+
+  private static String inspectJobShop(Path path) throws IOException {
+    byte[] original = Files.readAllBytes(path);
+    CpModelProto model = CpModelProto.parseFrom(original);
+    int[] input = decodeJobShop(model);
+    Path rebuilt = Files.createTempFile("pitbench-jssp-", ".pb");
+    try {
+      buildJobShop(input, rebuilt.toString());
+      if (!java.util.Arrays.equals(original, Files.readAllBytes(rebuilt))) {
+        throw new IllegalArgumentException("job-shop model differs from the pinned builder");
+      }
+    } finally {
+      Files.deleteIfExists(rebuilt);
+    }
+    int jobCount = input[0];
+    int machineCount = input[1];
+    int[][] starts = new int[jobCount][machineCount];
+    for (int[] row : starts) {
+      java.util.Arrays.fill(row, -1);
+    }
+    java.util.regex.Pattern startName = java.util.regex.Pattern.compile("start_([0-9]+)_([0-9]+)");
+    for (int index = 0; index < model.getVariablesCount(); index++) {
+      java.util.regex.Matcher match = startName.matcher(model.getVariables(index).getName());
+      if (match.matches()) {
+        int job = Integer.parseInt(match.group(1));
+        int operation = Integer.parseInt(match.group(2));
+        if (job >= jobCount || operation >= machineCount || starts[job][operation] != -1) {
+          throw new IllegalArgumentException("invalid job-shop start variable mapping");
+        }
+        starts[job][operation] = index;
+      }
+    }
+    StringBuilder json = new StringBuilder("{\\\"jobs\\\":[");
+    int cursor = 2;
+    for (int job = 0; job < jobCount; job++) {
+      if (job > 0) {
+        json.append(',');
+      }
+      json.append('[');
+      for (int operation = 0; operation < machineCount; operation++) {
+        if (operation > 0) {
+          json.append(',');
+        }
+        if (starts[job][operation] < 0) {
+          throw new IllegalArgumentException("job-shop start variable is missing");
+        }
+        json.append('[').append(input[cursor++]).append(',')
+            .append(input[cursor++]).append(']');
+      }
+      json.append(']');
+    }
+    json.append("],\\\"start_variable_indices\\\":[");
+    boolean first = true;
+    for (int[] row : starts) {
+      for (int index : row) {
+        if (!first) {
+          json.append(',');
+        }
+        json.append(index);
+        first = false;
+      }
+    }
+    return json.append("]}").toString();
+  }
+
+  private static void relabelJobShop(Path source, Path output, String mappingText)
+      throws IOException {
+    inspectJobShop(source);
+    int[] input = decodeJobShop(CpModelProto.parseFrom(Files.readAllBytes(source)));
+    String[] tokens = mappingText.split(",");
+    int jobCount = input[0];
+    int machineCount = input[1];
+    if (tokens.length != jobCount) {
+      throw new IllegalArgumentException("job permutation has the wrong length");
+    }
+    boolean[] seen = new boolean[jobCount];
+    int[] reordered = input.clone();
+    for (int newJob = 0; newJob < jobCount; newJob++) {
+      int oldJob = Integer.parseInt(tokens[newJob]);
+      if (oldJob < 0 || oldJob >= jobCount || seen[oldJob]) {
+        throw new IllegalArgumentException("job permutation is not a bijection");
+      }
+      seen[oldJob] = true;
+      System.arraycopy(input, 2 + 2 * machineCount * oldJob,
+          reordered, 2 + 2 * machineCount * newJob, 2 * machineCount);
+    }
+    buildJobShop(reordered, output.toString());
+    System.out.println(inspectJobShop(output));
+  }
+
+  private static void proveBinPacking(String capacityText, String weightsText,
+      String binCountText, String budgetText) {
+    int capacity = Integer.parseInt(capacityText);
+    int binCount = Integer.parseInt(binCountText);
+    double budget = Double.parseDouble(budgetText);
+    String[] tokens = weightsText.split(",");
+    if (capacity <= 0 || binCount <= 0 || !Double.isFinite(budget) || budget <= 0) {
+      throw new IllegalArgumentException("invalid bin-packing proof configuration");
+    }
+    int[] weights = new int[tokens.length];
+    for (int item = 0; item < tokens.length; item++) {
+      weights[item] = Integer.parseInt(tokens[item]);
+      if (weights[item] <= 0 || weights[item] > capacity) {
+        throw new IllegalArgumentException("item weight is outside bin capacity");
+      }
+    }
+    Loader.loadNativeLibraries();
+    CpModelProto.Builder proto = CpModelProto.newBuilder();
+    int[][] assignments = new int[weights.length][binCount];
+    int[] usedBins = new int[binCount];
+    for (int bin = 0; bin < binCount; bin++) {
+      usedBins[bin] = proto.getVariablesCount();
+      proto.addVariablesBuilder().addDomain(0).addDomain(1)
+          .setName("used_" + bin);
+    }
+    for (int item = 0; item < weights.length; item++) {
+      for (int bin = 0; bin < binCount; bin++) {
+        assignments[item][bin] = proto.getVariablesCount();
+        proto.addVariablesBuilder().addDomain(0).addDomain(1)
+            .setName("item_" + item + "_bin_" + bin);
+      }
+      ConstraintProto.Builder once = proto.addConstraintsBuilder();
+      for (int bin = 0; bin < binCount; bin++) {
+        once.getLinearBuilder().addVars(assignments[item][bin]).addCoeffs(1);
+      }
+      once.getLinearBuilder().addDomain(1).addDomain(1);
+    }
+    Integer[] descendingItems = new Integer[weights.length];
+    for (int item = 0; item < weights.length; item++) {
+      descendingItems[item] = item;
+    }
+    java.util.Arrays.sort(descendingItems, (left, right) -> {
+      int byWeight = Integer.compare(weights[right], weights[left]);
+      return byWeight != 0 ? byWeight : Integer.compare(left, right);
+    });
+    for (int rank = 0; rank < descendingItems.length; rank++) {
+      for (int bin = rank + 1; bin < binCount; bin++) {
+        proto.addConstraintsBuilder().getLinearBuilder()
+            .addVars(assignments[descendingItems[rank]][bin]).addCoeffs(1)
+            .addDomain(0).addDomain(0);
+      }
+    }
+    for (int bin = 0; bin < binCount; bin++) {
+      ConstraintProto.Builder load = proto.addConstraintsBuilder();
+      for (int item = 0; item < weights.length; item++) {
+        load.getLinearBuilder().addVars(assignments[item][bin])
+            .addCoeffs(weights[item]);
+      }
+      load.getLinearBuilder().addVars(usedBins[bin]).addCoeffs(-capacity)
+          .addDomain(-capacity).addDomain(0);
+      proto.getObjectiveBuilder().addVars(usedBins[bin]).addCoeffs(1);
+      if (bin > 0) {
+        proto.addConstraintsBuilder().getLinearBuilder()
+            .addVars(usedBins[bin - 1]).addCoeffs(1)
+            .addVars(usedBins[bin]).addCoeffs(-1)
+            .addDomain(0).addDomain(1);
+      }
+    }
+    proto.getObjectiveBuilder().setScalingFactor(1.0);
+    CpModel model = new CpModel();
+    model.getBuilder().mergeFrom(proto.build());
+    CpSolver solver = new CpSolver();
+    solver.getParameters().setMaxTimeInSeconds(budget);
+    solver.getParameters().setNumWorkers(1);
+    solver.getParameters().setRandomSeed(0);
+    CpSolverStatus status = solver.solve(model);
+    CpSolverResponse response = solver.response();
+    System.out.println("STATUS " + status.name());
+    System.out.println("OBJECTIVE " + response.getObjectiveValue());
+    System.out.println("BOUND " + response.getBestObjectiveBound());
+    if (status == CpSolverStatus.OPTIMAL || status == CpSolverStatus.FEASIBLE) {
+      for (int bin = 0; bin < binCount; bin++) {
+        if (response.getSolution(usedBins[bin]) == 0) {
+          continue;
+        }
+        StringBuilder items = new StringBuilder("BIN " + bin);
+        for (int item = 0; item < weights.length; item++) {
+          if (response.getSolution(assignments[item][bin]) == 1) {
+            items.append(' ').append(item);
+          }
+        }
+        System.out.println(items);
+      }
+    }
+  }
+
   public static void main(String[] args) throws IOException {
+    if (args.length == 2 && args[0].equals("inspect-jssp")) {
+      Loader.loadNativeLibraries();
+      System.out.println(inspectJobShop(Path.of(args[1])));
+      return;
+    }
+    if (args.length == 4 && args[0].equals("relabel-jssp")) {
+      Loader.loadNativeLibraries();
+      relabelJobShop(Path.of(args[1]), Path.of(args[2]), args[3]);
+      return;
+    }
+    if (args.length == 5 && args[0].equals("prove-bin-packing")) {
+      proveBinPacking(args[1], args[2], args[3], args[4]);
+      return;
+    }
     if (args.length == 3 && args[0].equals("prepare-jssp")) {
       Loader.loadNativeLibraries();
       prepareJobShop(args[1], args[2]);
@@ -295,8 +591,8 @@ public final class OrToolsCpSatRunner {
     long solverSeed = Long.parseLong(args[1]);
     double budgetSec = Double.parseDouble(args[2]);
     int threads = Integer.parseInt(args[3]);
-    if (!Double.isFinite(budgetSec) || budgetSec <= 0 || threads != 8) {
-      throw new IllegalArgumentException("parallel CP-SAT requires a positive budget and eight threads");
+    if (!Double.isFinite(budgetSec) || budgetSec <= 0 || threads != 1) {
+      throw new IllegalArgumentException("CP-SAT requires a positive budget and one solver thread");
     }
     String parameters = args.length == 5 ? args[4] : "{}";
     boolean cpModelPresolve = booleanField(parameters, "cp_model_presolve", true);
@@ -485,7 +781,9 @@ def compile_adapter(repository: Path, solver: str) -> None:
             cwd=repository,
             check=True,
         )
-        (output / "adapter-source.sha256").write_text(_adapter_source_sha256(solver) + "\n")
+        (output / "adapter-source.sha256").write_text(
+            _adapter_source_sha256(solver) + "\n"
+        )
         return
     subprocess.run(
         [
@@ -554,8 +852,8 @@ def run_ortools_cp_sat(repository: Path) -> None:
         _verify_compiled_adapter(repository, "ortools_cp_sat")
         print(json.dumps(_solver_identity(repository, "ortools_cp_sat")))
         return
-    if request.get("threads") != 8:
-        raise ValueError("parallel CP-SAT runner requires eight threads")
+    if request.get("threads") != 1:
+        raise ValueError("CP-SAT runner requires one solver thread")
     output = _adapter_output(repository, "ortools_cp_sat")
     native_library_path = repository / "build" / "lib"
     completed = subprocess.run(
@@ -615,17 +913,213 @@ def prepare_ortools_cp_sat_job_shop(
     return json.loads(completed.stdout)
 
 
+def prove_bin_packing(repository: Path, instance_path: Path, budget_sec: float) -> dict:
+    instance = json.loads(instance_path.read_text())
+    weights = instance.get("weights")
+    capacity = instance.get("capacity")
+    if (
+        type(capacity) is not int
+        or capacity <= 0
+        or not isinstance(weights, list)
+        or not weights
+        or any(
+            type(weight) is not int or not 0 < weight <= capacity for weight in weights
+        )
+        or budget_sec <= 0
+    ):
+        raise ValueError("invalid bin-packing proof input")
+
+    loads: list[int] = []
+    for item in sorted(range(len(weights)), key=lambda item: (-weights[item], item)):
+        for index, load in enumerate(loads):
+            if load + weights[item] <= capacity:
+                loads[index] += weights[item]
+                break
+        else:
+            loads.append(weights[item])
+
+    adapter_output = _adapter_output(repository, "ortools_cp_sat")
+    completed = subprocess.run(
+        [
+            "java",
+            "-cp",
+            _ortools_classpath(repository, adapter_output),
+            "org.pitbench.adapters.OrToolsCpSatRunner",
+            "prove-bin-packing",
+            str(capacity),
+            ",".join(map(str, weights)),
+            str(len(loads)),
+            str(budget_sec),
+        ],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    fields = {}
+    bins = []
+    for line in completed.stdout.splitlines():
+        key, _, value = line.partition(" ")
+        if key == "BIN":
+            bins.append([int(item) for item in value.split()[1:]])
+        elif key in {"STATUS", "OBJECTIVE", "BOUND", "WALL"}:
+            fields[key] = value
+    if "STATUS" not in fields:
+        raise RuntimeError("bin-packing proof returned no solver status")
+    status = fields["STATUS"]
+    objective = float(fields["OBJECTIVE"])
+    best_bound = float(fields["BOUND"])
+    feasible = status in {"OPTIMAL", "FEASIBLE"}
+    if feasible:
+        items = [item for bin_items in bins for item in bin_items]
+        if (
+            len(items) != len(weights)
+            or set(items) != set(range(len(weights)))
+            or any(
+                not bin_items or sum(weights[item] for item in bin_items) > capacity
+                for bin_items in bins
+            )
+            or objective != len(bins)
+        ):
+            raise ValueError("CP-SAT reference packing failed independent verification")
+    if status == "OPTIMAL" and best_bound != objective:
+        raise ValueError("CP-SAT optimum and proof bound differ")
+    revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return {
+        "instance_sha256": hashlib.sha256(instance_path.read_bytes()).hexdigest(),
+        "solver_commit": revision,
+        "adapter_source_sha256": _adapter_source_sha256("ortools_cp_sat"),
+        "solver_threads": 1,
+        "solver_seed": 0,
+        "budget_sec": budget_sec,
+        "status": status,
+        "objective": int(objective) if feasible else None,
+        "best_bound": best_bound,
+        "bins": bins if feasible else None,
+    }
+
+
+def prepare_job_shop_relabelings(
+    repository: Path,
+    instances_dir: Path,
+    output_dir: Path,
+    count: int,
+    generation_seed: int,
+) -> dict:
+    if count < 1:
+        raise ValueError("relabeling count must be positive")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    adapter_output = _adapter_output(repository, "ortools_cp_sat")
+    command = [
+        "java",
+        "-cp",
+        _ortools_classpath(repository, adapter_output),
+        "org.pitbench.adapters.OrToolsCpSatRunner",
+    ]
+    generator = random.Random(generation_seed)
+    instances = {}
+    for original_path in sorted(instances_dir.glob("*.pb")):
+        inspected = subprocess.run(
+            [*command, "inspect-jssp", str(original_path)],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        original = json.loads(inspected.stdout)
+        job_count = len(original["jobs"])
+        identity = tuple(range(job_count))
+        seen = {identity}
+        variants = []
+        while len(variants) < count:
+            new_to_original = list(identity)
+            generator.shuffle(new_to_original)
+            signature = tuple(new_to_original)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            transform_id = f"job_relabeling_{len(variants):02d}"
+            transformed_path = output_dir / f"{original_path.stem}__{transform_id}.pb"
+            completed = subprocess.run(
+                [
+                    *command,
+                    "relabel-jssp",
+                    str(original_path),
+                    str(transformed_path),
+                    ",".join(map(str, new_to_original)),
+                ],
+                cwd=repository,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            transformed = json.loads(completed.stdout)
+            if transformed["jobs"] != [
+                original["jobs"][index] for index in new_to_original
+            ]:
+                raise ValueError("relabeling changed job-shop operations")
+            variants.append(
+                {
+                    "transform_id": transform_id,
+                    "new_to_original": new_to_original,
+                    "file": transformed_path.name,
+                    "sha256": hashlib.sha256(transformed_path.read_bytes()).hexdigest(),
+                    "start_variable_indices": transformed["start_variable_indices"],
+                }
+            )
+        instances[original_path.stem] = {
+            "original_sha256": hashlib.sha256(original_path.read_bytes()).hexdigest(),
+            "jobs": original["jobs"],
+            "start_variable_indices": original["start_variable_indices"],
+            "variants": variants,
+        }
+    if not instances:
+        raise ValueError("no job-shop model protos found")
+    manifest = {
+        "kind": "job_relabeling",
+        "protocol_version": "0.0.2",
+        "generation_seed": generation_seed,
+        "relabelings_per_instance": count,
+        "solver_commit": subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+        "adapter_source_sha256": _adapter_source_sha256("ortools_cp_sat"),
+        "instances": instances,
+    }
+    (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    return manifest
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
-        choices=["compile", "run", "prepare-jssp"],
+        choices=[
+            "compile",
+            "run",
+            "prepare-jssp",
+            "prove-bin-packing",
+            "prepare-jssp-relabelings",
+        ],
     )
     parser.add_argument("--solver", choices=["choco", "ortools_cp_sat"], required=True)
     parser.add_argument("--repository", type=Path, default=Path.cwd())
     parser.add_argument("--instance", type=Path)
+    parser.add_argument("--instances-dir", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--budget", type=float)
+    parser.add_argument("--count", type=int)
+    parser.add_argument("--generation-seed", type=int)
     args = parser.parse_args()
     repository = args.repository.resolve()
     if args.command == "compile":
@@ -647,6 +1141,44 @@ def main() -> None:
                     args.output.resolve(),
                 )
             )
+        )
+    elif args.command == "prove-bin-packing":
+        if (
+            args.solver != "ortools_cp_sat"
+            or args.instance is None
+            or args.output is None
+            or args.budget is None
+        ):
+            raise ValueError(
+                "prove-bin-packing requires an OR-Tools instance, output, and budget"
+            )
+        proof = prove_bin_packing(repository, args.instance.resolve(), args.budget)
+        args.output.write_text(json.dumps(proof, indent=2) + "\n")
+        print(
+            json.dumps(
+                {key: proof[key] for key in ("status", "objective", "best_bound")}
+            )
+        )
+    elif args.command == "prepare-jssp-relabelings":
+        if (
+            args.solver != "ortools_cp_sat"
+            or args.instances_dir is None
+            or args.output is None
+            or args.count is None
+            or args.generation_seed is None
+        ):
+            raise ValueError(
+                "prepare-jssp-relabelings requires instances, output, count, and seed"
+            )
+        manifest = prepare_job_shop_relabelings(
+            repository,
+            args.instances_dir.resolve(),
+            args.output.resolve(),
+            args.count,
+            args.generation_seed,
+        )
+        print(
+            json.dumps({"instances": len(manifest["instances"]), "count": args.count})
         )
     elif args.solver == "choco":
         run_choco(repository)

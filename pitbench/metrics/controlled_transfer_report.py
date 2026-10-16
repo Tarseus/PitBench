@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from pitbench.metrics.performance_report import (
     ExactRunOutcomeKind,
     PerformanceClassification,
+    classify_exact_performance,
     compute_exact_run_outcome,
 )
 from pitbench.schema.observation import (
@@ -69,6 +70,7 @@ class ControlledTransferConditionReport(BaseModel):
     supports_retention: bool = False
     base_solved_coverage: float | None = None
     agent_solved_coverage: float | None = None
+    paired_coverage_ci95: ControlledTransferConfidenceInterval | None = None
     incomplete_run_count: int = Field(default=0, ge=0)
     qualification_failure_count: int = Field(default=0, ge=0)
     oracle_discrepancy_count: int = Field(default=0, ge=0)
@@ -95,7 +97,9 @@ class _ConditionEvidence(BaseModel):
     instance_templates: dict[tuple[str, str], str | None] = Field(default_factory=dict)
     base_solved_coverage: float | None = None
     agent_solved_coverage: float | None = None
-    native_classification: PerformanceClassification | None = None
+    coverage_change_by_instance: dict[tuple[str, str], float] = Field(
+        default_factory=dict
+    )
     incomplete_run_count: int = 0
     qualification_failure_count: int = 0
     oracle_discrepancy_count: int = 0
@@ -349,21 +353,22 @@ def _exact_evidence(
         if agent_solved_by_instance
         else None
     )
-    native_classification = None
-    if status is ControlledTransferConditionStatus.COMPLETE:
-        if base_coverage is None or agent_coverage is None:
-            status = ControlledTransferConditionStatus.INCOMPLETE
-        elif agent_coverage > base_coverage:
-            native_classification = PerformanceClassification.IMPROVED
-        elif agent_coverage < base_coverage:
-            native_classification = PerformanceClassification.REGRESSED
+    if (
+        status is ControlledTransferConditionStatus.COMPLETE
+        and (base_coverage is None or agent_coverage is None)
+    ):
+        status = ControlledTransferConditionStatus.INCOMPLETE
     return _ConditionEvidence(
         status=status,
         instance_values=instance_values,
         instance_templates=templates,
         base_solved_coverage=base_coverage,
         agent_solved_coverage=agent_coverage,
-        native_classification=native_classification,
+        coverage_change_by_instance={
+            instance: statistics.fmean(agent_solved_by_instance[instance])
+            - statistics.fmean(base_solved_by_instance[instance])
+            for instance in base_solved_by_instance
+        },
         incomplete_run_count=incomplete_run_count,
         qualification_failure_count=qualification_failure_count,
         oracle_discrepancy_count=oracle_discrepancy_count,
@@ -473,42 +478,68 @@ def compute_controlled_transfer_report(
         if evidence.status is ControlledTransferConditionStatus.COMPLETE
     }
     draws = _bootstrap_draws(complete_evidences)
+    coverage_draws = (
+        _bootstrap_draws(
+            {
+                condition_id: evidence.model_copy(
+                    update={"instance_values": evidence.coverage_change_by_instance}
+                )
+                for condition_id, evidence in complete_evidences.items()
+            }
+        )
+        if task.evaluation.performance_protocol is PerformanceProtocol.EXACT_VERIFIED_SOLVE
+        else {}
+    )
     reports: dict[str, ControlledTransferConditionReport] = {}
     for condition_id, condition in conditions.items():
         evidence = evidences[condition_id]
         benefit = _benefit(evidence)
         benefit_ci = _interval(draws.get(condition_id, []), tail_probability=0.025)
+        coverage_ci = _interval(
+            coverage_draws.get(condition_id, []), tail_probability=0.025
+        )
         reports[condition_id] = ControlledTransferConditionReport(
             condition_id=condition_id,
             view=condition.view,
             reference_condition_id=condition.reference_condition_id,
             budget_sec=condition.budget_sec or task.evaluation.primary_budget_sec,
             status=evidence.status,
-            native_classification=evidence.native_classification,
             instance_count=len(evidence.instance_values),
             benefit=benefit,
             benefit_ci95=benefit_ci,
             base_solved_coverage=evidence.base_solved_coverage,
             agent_solved_coverage=evidence.agent_solved_coverage,
+            paired_coverage_ci95=coverage_ci,
             incomplete_run_count=evidence.incomplete_run_count,
             qualification_failure_count=evidence.qualification_failure_count,
             oracle_discrepancy_count=evidence.oracle_discrepancy_count,
         )
     if task.evaluation.performance_protocol is PerformanceProtocol.EXACT_VERIFIED_SOLVE:
-        for condition_id, report in reports.items():
-            if (
-                report.status is not ControlledTransferConditionStatus.COMPLETE
-                or report.native_classification is not None
-            ):
+        for report in reports.values():
+            if report.status is not ControlledTransferConditionStatus.COMPLETE:
                 continue
-            if report.benefit_ci95 is None:
-                report.native_classification = PerformanceClassification.INCOMPLETE
-            elif report.benefit_ci95.lower > 0:
-                report.native_classification = PerformanceClassification.IMPROVED
-            elif report.benefit_ci95.upper < 0:
-                report.native_classification = PerformanceClassification.REGRESSED
-            else:
-                report.native_classification = PerformanceClassification.INCONCLUSIVE
+            report.native_classification = classify_exact_performance(
+                coverage_difference=(
+                    report.agent_solved_coverage - report.base_solved_coverage
+                    if report.agent_solved_coverage is not None
+                    and report.base_solved_coverage is not None
+                    else None
+                ),
+                coverage_interval=(
+                    (
+                        report.paired_coverage_ci95.lower,
+                        report.paired_coverage_ci95.upper,
+                    )
+                    if report.paired_coverage_ci95 is not None
+                    else None
+                ),
+                runtime_interval=(
+                    (report.benefit_ci95.lower, report.benefit_ci95.upper)
+                    if report.benefit_ci95 is not None
+                    else None
+                ),
+                complete=True,
+            )
     targets_by_reference: dict[str, list[str]] = defaultdict(list)
     for condition in conditions.values():
         if condition.reference_condition_id is not None:
@@ -599,9 +630,24 @@ def format_controlled_transfer_report(report: ControlledTransferReport) -> str:
             if condition.native_classification is not None
             else "-"
         )
+        coverage = ""
+        if (
+            condition.base_solved_coverage is not None
+            and condition.agent_solved_coverage is not None
+        ):
+            coverage = (
+                f"; solved_coverage={condition.base_solved_coverage:.3%}"
+                f"->{condition.agent_solved_coverage:.3%}"
+            )
+            if condition.paired_coverage_ci95 is not None:
+                interval = condition.paired_coverage_ci95
+                coverage += (
+                    f"; coverage_delta_ci95=[{interval.lower:.3%},"
+                    f" {interval.upper:.3%}]"
+                )
         lines.append(
             f"{condition.condition_id}: {condition.status.value}; "
-            f"benefit={benefit}; retention={ratio}; native={native}"
+            f"benefit={benefit}; retention={ratio}; native={native}{coverage}"
         )
     for path in report.scale_paths.values():
         condition_id = path.largest_continuously_supported_condition_id or "-"

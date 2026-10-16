@@ -120,7 +120,7 @@ search_branching:
 The source comments support the stated ranges and enum values. The first space
 holds constant:
 
-- `num_workers` and the task's eight-worker contract;
+- `num_workers` and the task's one-worker-per-process contract;
 - time limits;
 - solver seed;
 - numerical correctness settings; and

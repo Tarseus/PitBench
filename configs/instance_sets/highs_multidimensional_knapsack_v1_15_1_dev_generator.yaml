@@ -1,0 +1,15 @@
+schema_version: '1.0'
+visibility: agent
+format: lp
+generator:
+  kind: multidimensional_knapsack_mip
+  count: 5
+  items:
+  - 60
+  - 65
+  - 70
+  dimensions:
+  - 3
+  weight_max: 100
+  randomness:
+    instance_seed: 811100

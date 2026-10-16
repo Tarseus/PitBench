@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pitbench.instances.generate import (
     prepare_cp_sat_job_shop_panel,
+    prepare_generated_development_panel,
     prepare_trusted_optimum_oracle,
 )
 
@@ -21,12 +22,23 @@ def main() -> None:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--reference-solutions", type=Path)
     parser.add_argument("--job-shop-source-root", type=Path)
+    parser.add_argument("--development-generator", type=Path)
     parser.add_argument("--job-shop-instance-ids")
     parser.add_argument("--task-id")
     parser.add_argument("--model-preparer-image")
     parser.add_argument("--visibility", choices=["agent", "judge"])
     parser.add_argument("--reference-source-dirs")
+    parser.add_argument("--oracle-proof-dir", type=Path)
+    parser.add_argument("--proof-solver-commit")
     args = parser.parse_args()
+    if args.development_generator is not None:
+        if args.instance_set_config is None:
+            parser.error("development preparation requires --instance-set-config")
+        panel = prepare_generated_development_panel(
+            args.development_generator, args.instance_set_config
+        )
+        print(f"prepared {len(panel['instances'])} visible exact-task inputs")
+        return
     if args.job_shop_source_root is not None:
         required = {
             "--instance-set-name": args.instance_set_name,
@@ -99,6 +111,8 @@ def main() -> None:
         private_root=args.private_root,
         output_path=args.output,
         reference_solution_dir=args.reference_solutions,
+        bin_packing_proof_dir=args.oracle_proof_dir,
+        proof_solver_commit=args.proof_solver_commit,
     )
     print(
         f"prepared {len(oracle['records'])} trusted optima; "

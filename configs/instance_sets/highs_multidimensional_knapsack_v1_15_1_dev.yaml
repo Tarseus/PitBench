@@ -1,0 +1,52 @@
+schema_version: '1.0'
+visibility: agent
+format: lp
+instances:
+- id: dev_0000
+  instance_file: highs_multidimensional_knapsack_v1_15_1_dev/instances/dev_0000.lp
+  instance_file_sha256: ec84ee67a22460c6a454d0527f3e9c3a88a5d9af096ef34e01bfc75211ed5afe
+  bks: -4542
+  bks_solution_file: highs_multidimensional_knapsack_v1_15_1_dev/bks_solutions/dev_0000.solution.json
+  bks_solution_file_sha256: 18d3f27f8325449458b8d7254208bcd5fdaf8f1bb908023cf1ce7276fda33716
+  proven_optimal: true
+- id: dev_0001
+  instance_file: highs_multidimensional_knapsack_v1_15_1_dev/instances/dev_0001.lp
+  instance_file_sha256: 83da60949e686ee5d30fa7750f8624afa0b06c50b94fe12149e247bccc011f7f
+  bks: -5031
+  bks_solution_file: highs_multidimensional_knapsack_v1_15_1_dev/bks_solutions/dev_0001.solution.json
+  bks_solution_file_sha256: e0a397260c4e2955c45be6a822df3a315960dcb7b31f635e7f1ba3673eff56c5
+  proven_optimal: true
+- id: dev_0002
+  instance_file: highs_multidimensional_knapsack_v1_15_1_dev/instances/dev_0002.lp
+  instance_file_sha256: 4169d842d97a3c95b4f4e8d5c9142496e39e128312e8015d15757c64d2725621
+  bks: -5422
+  bks_solution_file: highs_multidimensional_knapsack_v1_15_1_dev/bks_solutions/dev_0002.solution.json
+  bks_solution_file_sha256: 81ab8f0433f6a3d31d1f453528d85ec325ebdee4d181f531ef49c4ecda494e9b
+  proven_optimal: true
+- id: dev_0003
+  instance_file: highs_multidimensional_knapsack_v1_15_1_dev/instances/dev_0003.lp
+  instance_file_sha256: 32f676eaa2c10e3f3c9e216f68583f4049482745a98dffdfb3fcf7826363c396
+  bks: -4775
+  bks_solution_file: highs_multidimensional_knapsack_v1_15_1_dev/bks_solutions/dev_0003.solution.json
+  bks_solution_file_sha256: 6a5c5542710736f36328508506597210509f4c9edc52f2600ed8f2859a8303df
+  proven_optimal: true
+- id: dev_0004
+  instance_file: highs_multidimensional_knapsack_v1_15_1_dev/instances/dev_0004.lp
+  instance_file_sha256: c78a9110a1a4ce845858573600b60f41e81aef2ce64545a853cbd13d010e2c9e
+  bks: -4933
+  bks_solution_file: highs_multidimensional_knapsack_v1_15_1_dev/bks_solutions/dev_0004.solution.json
+  bks_solution_file_sha256: dea582dfaaecc720e6eb79d0f84a0b81ab7b993b4461ef4fb46506a28a04837e
+  proven_optimal: true
+selection:
+  source_generator: multidimensional_knapsack_mip
+  kind: multidimensional_knapsack_mip
+  count: 5
+  items:
+  - 60
+  - 65
+  - 70
+  dimensions:
+  - 3
+  weight_max: 100
+  randomness:
+    instance_seed: 811100

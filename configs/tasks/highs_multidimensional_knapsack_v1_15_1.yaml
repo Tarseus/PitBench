@@ -1,0 +1,58 @@
+schema_version: '3.0'
+task_id: highs_multidimensional_knapsack_v1_15_1
+release:
+  repository: ERGO-Code/HiGHS
+  version: 1.15.1
+  tag: v1.15.1
+  base_commit: 04024d701f79feb8e2f18bc3df0dffc04ef05088
+  released_at: 2026-07-02 11:25:02+00:00
+  url: https://github.com/ERGO-Code/HiGHS/releases/tag/v1.15.1
+task_type: exact_solver
+problem_family: mip
+optimization_scope: exact_search_efficiency
+instruction: Improve exact-solver performance on the declared problem while preserving
+  feasibility, objective semantics, and solver correctness. Use only visible development
+  instances.
+repository:
+  clone_url: https://github.com/ERGO-Code/HiGHS.git
+  plugin: pitbench.repositories.plugins:HighsRepositoryPlugin
+  editable_paths:
+  - highs
+  - build
+  agent_image: pitbench-highs:single-worker
+  judge_image: sha256:cdac06326fc876dec1a1f689d18e8b3c9e9082c61707f2d8ead0a1efaa8432c7
+oracle:
+  kind: known_optimum
+  source: private://oracles/highs_multidimensional_knapsack_v1_15_1.yaml
+  source_sha256: 6cc9afbf8b6775c8349732c89b872fe8b2ff34d53a9132ee83a255309bd60a12
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  threads: 1
+  verifier: trusted_optimum
+  solver_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/highs_multidimensional_knapsack_v1_15_1_dev.yaml
+  instance_set_config_sha256: 05f64e21f94fa9bc4f1e516eeb85e603aadd172bb717cf7c5077c2c51daef9d1
+  size: 5
+  randomness:
+    instance_seed: 811100
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/highs_multidimensional_knapsack_v1_15_1/judge_id.yaml
+  instance_set_config_sha256: 671ec7d94db4e548eeaf0901d2a7496dcc2fcc0a0fae2c13f2ebbc0943692bd8
+  size: 30
+problem_variant: multidimensional_knapsack
+formulation_id: multidimensional_knapsack_mip

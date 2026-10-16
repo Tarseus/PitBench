@@ -38,13 +38,11 @@ def write_agent_tooling(
         checks = tooling / "problem_families"
         checks.mkdir()
         (checks / "__init__.py").write_text("")
-        shutil.copy2(
-            repository_root
-            / "pitbench"
-            / "problem_families"
-            / "public_verification.py",
-            checks,
-        )
+        for filename in ("base.py", "public_verification.py", "verification.py"):
+            shutil.copy2(
+                repository_root / "pitbench" / "problem_families" / filename,
+                checks,
+            )
 
     agent_bin = task_dir / "agent_bin"
     agent_bin.mkdir()

@@ -40,6 +40,9 @@ from pitbench.metrics.controlled_transfer_report import (
     format_controlled_transfer_report,
 )
 from pitbench.metrics.performance_report import (
+    PerformanceClassification,
+    PerformanceConfirmation,
+    adjudicate_performance_confirmation,
     compute_task_performance_report,
     format_performance_report,
 )
@@ -618,12 +621,12 @@ def evaluate_task(
         ),
     ] = None,
     base_cache: Annotated[
-        bool,
+        bool | None,
         typer.Option(
             "--base-cache/--no-base-cache",
             help="Enable automatic caching and reuse of BASE observations",
         ),
-    ] = True,
+    ] = None,
     base_observations_path: Annotated[
         Path | None,
         typer.Option(
@@ -940,8 +943,9 @@ def judge_candidate(
         typer.Option(help="Immutable judge image digest or local image ID"),
     ] = None,
     judge_cpus: Annotated[
-        float, typer.Option(min=0.1, help="CPU limit for the isolated judge")
-    ] = 8.0,
+        float | None,
+        typer.Option(min=0.1, help="CPU limit for the isolated judge"),
+    ] = None,
     judge_memory: Annotated[
         str, typer.Option(help="Memory limit for the isolated judge")
     ] = "8g",
@@ -1110,6 +1114,14 @@ def judge_candidate(
         f"{summary['valid_observation_count']}/{summary['observation_count']} "
         "valid observations"
     )
+    confirmation = (summary.get("performance") or {}).get("confirmation")
+    if confirmation is not None:
+        typer.echo(
+            "Performance confirmation: "
+            f"{confirmation['repeat_valid_observation_count']}/"
+            f"{confirmation['repeat_observation_count']} valid observations; "
+            f"final={summary['performance']['classification']}"
+        )
     typer.echo(f"Artifacts: {resolved_output_dir}")
     typer.echo(
         f"Report: pitbench report {resolved_output_dir} --task-config {record.task_config_path}"
@@ -1496,6 +1508,99 @@ def report_command(
         if standard
         else None
     )
+    initial_checkpoint_path = target.parent / "judge-checkpoint.json"
+    if performance_report is not None and initial_checkpoint_path.is_file():
+        initial_identity = json.loads(initial_checkpoint_path.read_text())["identity"]
+        if (
+            set(initial_identity["code_states"]) != {"base", "agent"}
+            and performance_report.classification
+            in {
+                PerformanceClassification.IMPROVED,
+                PerformanceClassification.REGRESSED,
+            }
+        ):
+            performance_report = performance_report.model_copy(
+                update={
+                    "classification": PerformanceClassification.INCONCLUSIVE,
+                    "confirmation": PerformanceConfirmation(
+                        initial_classification=performance_report.classification,
+                        confirmed=False,
+                        repeat_observation_count=0,
+                        repeat_valid_observation_count=0,
+                        repeat_order="not_run_cached_base",
+                    ),
+                }
+            )
+    confirmation_dir = target.parent / "performance-confirmation"
+    if confirmation_dir.is_dir():
+        confirmation_parquet = confirmation_dir / "trials.parquet"
+        confirmation_grid_path = confirmation_dir / "expected-run-grid.json"
+        if not confirmation_parquet.is_file() or not confirmation_grid_path.is_file():
+            raise typer.BadParameter(
+                "Performance confirmation artifacts are incomplete",
+                param_hint=str(confirmation_dir),
+            )
+        initial_checkpoint = target.parent / "judge-checkpoint.json"
+        repeat_checkpoint = confirmation_dir / "judge-checkpoint.json"
+        if not initial_checkpoint.is_file() or not repeat_checkpoint.is_file():
+            raise typer.BadParameter(
+                "Performance confirmation is missing its judge identity",
+                param_hint=str(confirmation_dir),
+            )
+        initial_identity = json.loads(initial_checkpoint.read_text())["identity"]
+        repeat_identity = json.loads(repeat_checkpoint.read_text())["identity"]
+        for field in (
+            "candidate_patch_sha256",
+            "task_config_sha256",
+            "judge_image",
+            "cpus",
+            "memory",
+            "parallel_runs",
+            "harness_sha256",
+        ):
+            if initial_identity.get(field) != repeat_identity.get(field):
+                raise typer.BadParameter(
+                    f"Performance confirmation differs in {field}",
+                    param_hint=str(confirmation_dir),
+                )
+        if initial_identity["code_states"] != list(
+            reversed(repeat_identity["code_states"])
+        ):
+            raise typer.BadParameter(
+                "Performance confirmation did not reverse Base/Agent order",
+                param_hint=str(confirmation_dir),
+            )
+        repeat_grid = ExpectedRunGrid.model_validate_json(
+            confirmation_grid_path.read_text()
+        )
+        if expected_run_grid != repeat_grid:
+            raise typer.BadParameter(
+                "Performance confirmation uses a different expected run grid",
+                param_hint=str(confirmation_dir),
+            )
+        repeat_observations = ObservationStore.read(confirmation_parquet)
+        repeat_report = compute_task_performance_report(
+            [item for item in repeat_observations if item.test_suite is None],
+            task=task,
+            expected_run_grid=repeat_grid,
+        )
+        if (
+            performance_report is not None
+            and repeat_report is not None
+            and performance_report.classification
+            in {
+                PerformanceClassification.IMPROVED,
+                PerformanceClassification.REGRESSED,
+            }
+        ):
+            performance_report = adjudicate_performance_confirmation(
+                performance_report,
+                repeat_report,
+                repeat_observation_count=len(repeat_observations),
+                repeat_valid_observation_count=sum(
+                    item.valid for item in repeat_observations
+                ),
+            )
     controlled_transfer_report = (
         compute_controlled_transfer_report(
             standard,
@@ -1524,7 +1629,9 @@ def report_command(
         else None
     )
     reliability_report = None
-    if task.evaluation.operational_reliability:
+    if task.evaluation.operational_reliability or any(
+        item.test_suite == "operational_reliability" for item in observations
+    ):
         reliability_report, _ = compute_reliability_reports(observations, task=task)
 
     if json_output:

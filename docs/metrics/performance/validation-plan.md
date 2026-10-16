@@ -72,15 +72,39 @@ Expected result: each configuration classifies from its declared primary budget 
 retains the other budget as diagnostic. Changing the primary budget without changing
 the recorded task protocol identity fails the case.
 
+### Same-code directional false positive and confirmation
+
+Use the retained full PyVRP empty-patch panel whose first fresh Base/Agent run
+has a positive 95% paired-gap interval. Repeat the complete declared grid with
+Base/Agent build and job order reversed. The repeat's interval includes zero.
+
+Expected result: retain both raw rounds and their individual intervals; the
+public result is `inconclusive`. Treating the first-round `improved` label as
+final, or pooling the repeat as additional independent instances or seeds,
+fails the case. A truly directional candidate must show the same direction
+on its fresh confirmation round.
+
 ## Exact-optimization cases
 
 ### Solved coverage dominates speed
 
 Construct a complete panel in which Agent has lower penalized runtime on its verified
-solved runs but lower verified-solved coverage than Base.
+solved runs but lower verified-solved coverage than Base across enough independent
+instances for the paired coverage interval to exclude zero.
 
 Expected result: classify the candidate as `regressed` from solved coverage. Faster
 solved runs or a favorable PAR-2 aggregate cannot mask the lost solved coverage.
+
+### One-run coverage loss from identical code
+
+Use the retained complete, empty-patch CP-SAT control: Agent loses one verified
+solve among 900 paired primary-budget runs, confined to one instance/seed pair.
+
+Expected result: retain Base 125/900, Agent 124/900, and the exact run difference;
+report a coverage interval that touches zero and classify `inconclusive`. A raw
+coverage inequality that immediately calls the identical code `regressed` fails.
+The favorable or unfavorable PAR-2 interval must not override an unresolved
+coverage difference.
 
 ### Equal coverage uses penalized runtime
 

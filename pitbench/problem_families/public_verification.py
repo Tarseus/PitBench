@@ -5,6 +5,37 @@ from __future__ import annotations
 import math
 
 
+def format_multidimensional_knapsack_lp(
+    weights: list[list[int]], capacities: list[int]
+) -> str:
+    """Canonical LP representation shared by generation and public checking."""
+
+    if (
+        not weights
+        or len(weights) != len(capacities)
+        or any(len(row) != len(weights[0]) for row in weights)
+        or any(value <= 0 for row in weights for value in row)
+        or any(capacity <= 0 for capacity in capacities)
+    ):
+        raise ValueError("invalid multidimensional knapsack model")
+    item_count = len(weights[0])
+    profits = [sum(row[item] for row in weights) for item in range(item_count)]
+    lines = [
+        "Minimize",
+        " obj: "
+        + " ".join(f"- {profit} x{item}" for item, profit in enumerate(profits)),
+        "Subject To",
+    ]
+    for dimension, (row, capacity) in enumerate(zip(weights, capacities, strict=True)):
+        lines.append(
+            f" c{dimension}: "
+            + " + ".join(f"{weight} x{item}" for item, weight in enumerate(row))
+            + f" <= {capacity}"
+        )
+    lines.extend(["Binary", *(f" x{item}" for item in range(item_count)), "End"])
+    return "\n".join(lines) + "\n"
+
+
 def edge_cost(
     coordinates: list[list[float]],
     first: int,
@@ -83,4 +114,38 @@ def check_bin_packing(solution: dict, *, weights: list[int], capacity: int) -> d
         "feasible": True,
         "objective": float(len(bins)),
         "detail": "exact integer bin packing verification passed",
+    }
+
+
+def check_graph_coloring(instance: dict, solution: dict) -> dict:
+    vertex_count = instance.get("vertex_count")
+    endpoints = instance.get("edge_endpoints")
+    colors = solution.get("colors")
+    if (
+        type(vertex_count) is not int
+        or vertex_count < 2
+        or not isinstance(endpoints, list)
+        or len(endpoints) % 2
+        or not isinstance(colors, list)
+        or len(colors) != vertex_count
+        or any(
+            type(color) is not int or not 0 <= color < vertex_count for color in colors
+        )
+    ):
+        return {"feasible": False, "detail": "invalid graph coloring input or solution"}
+    for first, second in zip(endpoints[::2], endpoints[1::2], strict=True):
+        if (
+            type(first) is not int
+            or type(second) is not int
+            or not 0 <= first < second < vertex_count
+            or colors[first] == colors[second]
+        ):
+            return {
+                "feasible": False,
+                "detail": "graph edge is invalid or monochromatic",
+            }
+    return {
+        "feasible": True,
+        "objective": float(max(colors) + 1),
+        "detail": "independent graph coloring verification passed",
     }

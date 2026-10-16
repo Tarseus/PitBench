@@ -15,7 +15,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from pitbench.metrics.seed_robustness_report import (
+    _exact_capped_time,
+    _exact_verified_optimal,
+)
 from pitbench.schema.observation import RunObservation
+from pitbench.schema.task import ExactTimeBasis
 
 REPRESENTATION_PROTOCOL_VERSION = "0.0.1"
 REPRESENTATION_STATISTICS_NAME = "type_7_iqr_equal_instance_mean"
@@ -57,6 +62,46 @@ class RepresentationRobustnessReport(BaseModel):
     instance_ids: list[str]
     budgets_sec: list[float]
     by_budget: dict[str, RepresentationBudgetResult]
+
+
+class ExactRepresentationInstanceResult(BaseModel):
+    instance_id: str
+    reference_verified: bool = True
+    expected_relabelings: int = Field(gt=0)
+    observed_relabelings: int = Field(ge=0)
+    available_capped_times: int = Field(ge=0)
+    verified_optimal_count: int = Field(ge=0)
+    capped_time_iqr_sec: float | None = None
+
+
+class ExactRepresentationCodeStateResult(BaseModel):
+    instance_count: int = Field(ge=0)
+    complete_instance_count: int = Field(ge=0)
+    verified_optimal_count: int = Field(ge=0)
+    expected_run_count: int = Field(ge=0)
+    mean_capped_time_iqr_sec: float | None = None
+    instances: list[ExactRepresentationInstanceResult]
+
+
+class ExactRepresentationBudgetResult(BaseModel):
+    budget_sec: float = Field(gt=0)
+    base: ExactRepresentationCodeStateResult
+    agent: ExactRepresentationCodeStateResult
+    change_sec: float | None = None
+
+
+class ExactRepresentationRobustnessReport(BaseModel):
+    task_id: str
+    metric: Literal["representation_robustness"] = "representation_robustness"
+    protocol_version: str = "0.0.2"
+    statistics: str = REPRESENTATION_STATISTICS_NAME
+    outcome: Literal["capped_optimal_time"] = "capped_optimal_time"
+    time_basis: ExactTimeBasis
+    solver_seed: int = REPRESENTATION_SOLVER_SEED
+    relabelings_per_instance: int = Field(gt=0)
+    instance_ids: list[str]
+    budgets_sec: list[float]
+    by_budget: dict[str, ExactRepresentationBudgetResult]
 
 
 def _type_7_quantile(values: Sequence[float], probability: float) -> float:
@@ -120,6 +165,7 @@ def compute_representation_robustness_report(
     budgets_sec: Sequence[float],
     solver_seed: int = REPRESENTATION_SOLVER_SEED,
     relabelings_per_instance: int = REPRESENTATION_RELABELINGS_PER_INSTANCE,
+    protocol_version: str = REPRESENTATION_PROTOCOL_VERSION,
 ) -> RepresentationRobustnessReport:
     """Compute the formal customer-relabeling Representation Robustness report."""
     declared_instances = list(instance_ids)
@@ -211,6 +257,170 @@ def compute_representation_robustness_report(
 
     return RepresentationRobustnessReport(
         task_id=task_id,
+        protocol_version=protocol_version,
+        solver_seed=solver_seed,
+        relabelings_per_instance=relabelings_per_instance,
+        instance_ids=declared_instances,
+        budgets_sec=declared_budgets,
+        by_budget=by_budget,
+    )
+
+
+def compute_exact_representation_robustness_report(
+    records: Sequence[dict],
+    *,
+    task_id: str,
+    instance_ids: Sequence[str],
+    budgets_sec: Sequence[float],
+    time_basis: ExactTimeBasis,
+    solver_seed: int,
+    relabelings_per_instance: int,
+    protocol_version: str,
+) -> ExactRepresentationRobustnessReport:
+    if (
+        protocol_version != "0.0.2"
+        or solver_seed != 0
+        or relabelings_per_instance != 30
+    ):
+        raise ValueError(
+            "exact representation protocol requires version 0.0.2, seed 0, and 30 relabelings"
+        )
+    declared_instances = list(instance_ids)
+    declared_budgets = list(budgets_sec)
+    if not declared_instances or len(set(declared_instances)) != len(
+        declared_instances
+    ):
+        raise ValueError("exact representation instances must be distinct")
+    if not declared_budgets or any(budget <= 0 for budget in declared_budgets):
+        raise ValueError("exact representation budgets must be positive")
+    if len(set(declared_budgets)) != len(declared_budgets):
+        raise ValueError("exact representation budgets must be distinct")
+
+    indexed: dict[tuple[str, float, str, int], dict] = {}
+    for record in records:
+        if (
+            record.get("task_id") not in (None, task_id)
+            or record.get("axis") != "representation"
+        ):
+            raise ValueError("record belongs to another representation experiment")
+        instance_id = record.get("instance")
+        budget_sec = record.get("budget_sec")
+        code_state = record.get("code_state")
+        replicate = record.get("replicate")
+        if (
+            instance_id not in declared_instances
+            or budget_sec not in declared_budgets
+            or code_state not in {"base", "agent"}
+            or record.get("solver_seed") != solver_seed
+            or type(replicate) is not int
+            or not 0 <= replicate < relabelings_per_instance
+        ):
+            raise ValueError("record is outside the declared exact representation grid")
+        key = (instance_id, budget_sec, code_state, replicate)
+        if key in indexed:
+            raise ValueError("duplicate exact representation observation")
+        indexed[key] = record
+
+    by_budget = {}
+    for budget_sec in declared_budgets:
+        states = {}
+        for code_state in ("base", "agent"):
+            instance_results = []
+            for instance_id in declared_instances:
+                observations = [
+                    indexed.get((instance_id, budget_sec, code_state, replicate))
+                    for replicate in range(relabelings_per_instance)
+                ]
+                available_times = []
+                verified_optimal_count = 0
+                for record in observations:
+                    if record is None:
+                        continue
+                    payload = record.get("observation")
+                    if payload is None:
+                        raise ValueError(
+                            "exact representation record lacks its observation"
+                        )
+                    observation = RunObservation.model_validate(payload)
+                    if (
+                        observation.task_id != task_id
+                        or observation.instance_id != record.get("instance_id")
+                        or observation.budget_sec != budget_sec
+                        or observation.code_state.value != code_state
+                    ):
+                        raise ValueError(
+                            "exact representation observation identity differs"
+                        )
+                    if record.get(
+                        "verified_feasible"
+                    ) is True and _exact_verified_optimal(observation):
+                        verified_optimal_count += 1
+                    capped_time = _exact_capped_time(
+                        observation, budget_sec=budget_sec, time_basis=time_basis
+                    )
+                    if capped_time is not None and (
+                        record.get("verified_feasible") is True
+                        or observation.solver_termination.value == "time_limit"
+                    ):
+                        available_times.append(capped_time)
+                observed = sum(record is not None for record in observations)
+                reference_verified = all(
+                    record is None or record.get("reference_verified", True) is True
+                    for record in observations
+                )
+                instance_results.append(
+                    ExactRepresentationInstanceResult(
+                        instance_id=instance_id,
+                        reference_verified=reference_verified,
+                        expected_relabelings=relabelings_per_instance,
+                        observed_relabelings=observed,
+                        available_capped_times=len(available_times),
+                        verified_optimal_count=verified_optimal_count,
+                        capped_time_iqr_sec=(
+                            representation_iqr(available_times)
+                            if reference_verified
+                            and observed
+                            == len(available_times)
+                            == relabelings_per_instance
+                            else None
+                        ),
+                    )
+                )
+            complete_iqrs = [
+                result.capped_time_iqr_sec
+                for result in instance_results
+                if result.capped_time_iqr_sec is not None
+            ]
+            states[code_state] = ExactRepresentationCodeStateResult(
+                instance_count=len(declared_instances),
+                complete_instance_count=len(complete_iqrs),
+                verified_optimal_count=sum(
+                    result.verified_optimal_count for result in instance_results
+                ),
+                expected_run_count=len(declared_instances) * relabelings_per_instance,
+                mean_capped_time_iqr_sec=(
+                    statistics.fmean(complete_iqrs)
+                    if len(complete_iqrs) == len(declared_instances)
+                    else None
+                ),
+                instances=instance_results,
+            )
+        base_mean = states["base"].mean_capped_time_iqr_sec
+        agent_mean = states["agent"].mean_capped_time_iqr_sec
+        by_budget[f"{budget_sec:g}"] = ExactRepresentationBudgetResult(
+            budget_sec=budget_sec,
+            base=states["base"],
+            agent=states["agent"],
+            change_sec=(
+                agent_mean - base_mean
+                if base_mean is not None and agent_mean is not None
+                else None
+            ),
+        )
+    return ExactRepresentationRobustnessReport(
+        task_id=task_id,
+        protocol_version=protocol_version,
+        time_basis=time_basis,
         solver_seed=solver_seed,
         relabelings_per_instance=relabelings_per_instance,
         instance_ids=declared_instances,
@@ -239,9 +449,7 @@ class DirectoryRunResults:
             verification = record.get("verification") or {}
             normalized_gap = record.get("normalized_gap")
             if normalized_gap is None:
-                normalized_gap = (record.get("observation") or {}).get(
-                    "normalized_gap"
-                )
+                normalized_gap = (record.get("observation") or {}).get("normalized_gap")
             records.append(
                 {
                     **job,
@@ -500,10 +708,32 @@ def report_nuisance_results(source: Path, output: Path) -> dict:
                     "count", REPRESENTATION_RELABELINGS_PER_INSTANCE
                 ),
             ),
+            protocol_version=representation_configuration.get(
+                "protocol_version", REPRESENTATION_PROTOCOL_VERSION
+            ),
         )
         summary["statistics"] = REPRESENTATION_STATISTICS_NAME
-        summary["representation_robustness"] = (
-            formal_representation_report.model_dump(mode="json")
+        summary["representation_robustness"] = formal_representation_report.model_dump(
+            mode="json"
+        )
+    elif (
+        planned_axes == {"representation"}
+        and representation_configuration.get("outcome") == "capped_optimal_time"
+    ):
+        task_evaluation = manifest["task_configuration"]["evaluation"]
+        formal_representation_report = compute_exact_representation_robustness_report(
+            records,
+            task_id=manifest["task_id"],
+            instance_ids=_representation_instance_ids(manifest),
+            budgets_sec=manifest["budgets_sec"],
+            time_basis=ExactTimeBasis(task_evaluation["exact_time_basis"]),
+            solver_seed=representation_configuration["solver_seed"],
+            relabelings_per_instance=representation_configuration["count"],
+            protocol_version=representation_configuration["protocol_version"],
+        )
+        summary["statistics"] = REPRESENTATION_STATISTICS_NAME
+        summary["representation_robustness"] = formal_representation_report.model_dump(
+            mode="json"
         )
     manifest["code_states"] = list(
         dict.fromkeys(job["code_state"] for job in manifest["jobs"])

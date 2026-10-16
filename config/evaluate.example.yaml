@@ -21,6 +21,7 @@ configuration_robustness:
 # Evaluation execution options (null uses system auto-detection, e.g. nproc - 2)
 # judge_parallel_runs: 10
 # judge_cpus: 10.0
+# Reusing measured BASE observations is opt-in; it can create cross-run noise.
 # base_cache: true
 
 # Development instances and inspection/benchmark commands are enabled by default.

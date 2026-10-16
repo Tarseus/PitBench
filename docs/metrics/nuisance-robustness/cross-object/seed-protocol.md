@@ -36,9 +36,13 @@ solvers:
 - PyVRP heuristic tasks: 5 and 10 seconds, one thread, using the frozen PyVRP
   seed protocol;
 - HiGHS exact MIP: 10 and 30 seconds, one thread;
-- OR-Tools CP-SAT exact solving: 10 and 30 seconds, eight workers;
+- OR-Tools CP-SAT exact solving: 10 and 30 seconds, one worker per process;
 - Choco exact solving: 5 and 20 seconds, one thread;
 - VROOM: no Seed Robustness panel because the solver is deterministic.
+
+The judge schedules independent single-worker runs in parallel. Earlier CP-SAT
+eight-worker seed observations belong to the prior execution setting and do not
+validate the current single-worker panel.
 
 The HiGHS, CP-SAT, and Choco task files now declare 30 development seeds and
 private 30-seed evaluation lists under this candidate protocol. Their existing

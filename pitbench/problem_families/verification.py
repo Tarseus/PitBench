@@ -18,10 +18,65 @@ from pitbench.problem_families.base import ProblemFamilyPlugin, VerificationResu
 from pitbench.problem_families.public_verification import (
     check_bin_packing,
     check_cvrp,
+    check_graph_coloring,
     edge_cost,
+    format_multidimensional_knapsack_lp,
 )
 
 _edge_cost = edge_cost
+_SCHEDULING_INTEGRALITY_TOLERANCE = Decimal("0.000001")
+
+
+def validate_bin_packing_optimum_record(
+    proof: dict,
+    *,
+    instance_sha256: str,
+    weights: list[int],
+    capacity: int,
+    reference_bins: list[list[int]],
+) -> int:
+    """Check a fixed external solver result and its independently checked packing.
+
+    The external solver's optimal bound is retained as provenance; this check
+    does not reconstruct that solver's search proof.
+    """
+    if not isinstance(proof, dict):
+        raise ValueError("bin packing optimum record is not an object")
+    if not isinstance(reference_bins, list) or any(
+        not isinstance(bin_items, list) for bin_items in reference_bins
+    ):
+        raise ValueError("bin packing reference bins are missing")
+    solver_commit = proof.get("solver_commit")
+    adapter_source_sha256 = proof.get("adapter_source_sha256")
+    budget = proof.get("budget_sec")
+    objective = proof.get("objective")
+    best_bound = proof.get("best_bound")
+    if (
+        proof.get("instance_sha256") != instance_sha256
+        or not isinstance(solver_commit, str)
+        or re.fullmatch(r"[0-9a-f]{40}", solver_commit) is None
+        or not isinstance(adapter_source_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", adapter_source_sha256) is None
+        or proof.get("solver_threads") != 1
+        or proof.get("solver_seed") != 0
+        or type(budget) not in {int, float}
+        or not math.isfinite(budget)
+        or budget <= 0
+        or proof.get("status") != "OPTIMAL"
+        or type(objective) is not int
+        or objective <= 0
+        or type(best_bound) not in {int, float}
+        or not math.isfinite(best_bound)
+        or best_bound != objective
+        or proof.get("bins") != reference_bins
+    ):
+        raise ValueError("bin packing optimum record is inconsistent")
+    checked = check_bin_packing(
+        {"bins": reference_bins}, weights=weights, capacity=capacity
+    )
+    if not checked["feasible"] or checked["objective"] != objective:
+        raise ValueError("bin packing reference does not match optimum record")
+    return objective
 
 
 class TrustedOptimumRecord(BaseModel):
@@ -33,6 +88,8 @@ class TrustedOptimumRecord(BaseModel):
         "single_machine_scheduling",
         "job_shop_scheduling",
         "bin_packing",
+        "multidimensional_knapsack",
+        "graph_coloring",
     ]
     objective_sense: Literal["minimize", "maximize"]
     optimal_objective: int
@@ -246,11 +303,16 @@ def _check_scheduling_solution(
             feasible=False,
             detail="scheduling solution variable set mismatch",
         )
-    if any(value != value.to_integral_value() for value in values.values()):
+    rounded_values = {name: value.to_integral_value() for name, value in values.items()}
+    if any(
+        abs(value - rounded_values[name]) > _SCHEDULING_INTEGRALITY_TOLERANCE
+        for name, value in values.items()
+    ):
         return VerificationResult(
             feasible=False,
-            detail="scheduling solution requires integer variables",
+            detail="scheduling solution exceeds integrality tolerance",
         )
+    values = rounded_values
     horizon = sum(processing_times)
     starts = [values[f"s{index}"] for index in range(job_count)]
     if any(start < 0 or start > horizon for start in starts):
@@ -276,7 +338,7 @@ def _check_scheduling_solution(
                     detail=f"scheduling jobs {first} and {second} overlap",
                 )
     objective = sum(starts, Decimal(0))
-    if reported_objective != objective:
+    if abs(reported_objective - objective) > _SCHEDULING_INTEGRALITY_TOLERANCE:
         return VerificationResult(
             feasible=False,
             detail="scheduling objective does not match start times",
@@ -338,6 +400,88 @@ def _check_bin_packing_solution(
 ) -> VerificationResult:
     return VerificationResult.model_validate(
         check_bin_packing(solution, weights=weights, capacity=capacity)
+    )
+
+
+def _public_multidimensional_knapsack_data(
+    instance_path: Path,
+) -> tuple[list[list[int]], list[int]] | None:
+    """Accept only the canonical LP emitted by the shared instance generator."""
+
+    try:
+        source = instance_path.read_text()
+    except OSError:
+        return None
+    lines = source.splitlines()
+    if len(lines) < 8 or lines[:1] != ["Minimize"] or "Subject To" not in lines:
+        return None
+    subject = lines.index("Subject To")
+    if subject != 2 or "Binary" not in lines:
+        return None
+    binary = lines.index("Binary")
+    weights: list[list[int]] = []
+    capacities: list[int] = []
+    for dimension, line in enumerate(lines[subject + 1 : binary]):
+        match = re.fullmatch(r" c(\d+): (.+) <= (\d+)", line)
+        if match is None or int(match.group(1)) != dimension:
+            return None
+        terms = match.group(2).split(" + ")
+        row: list[int] = []
+        for item, term in enumerate(terms):
+            parsed = re.fullmatch(r"(\d+) x(\d+)", term)
+            if parsed is None or int(parsed.group(2)) != item:
+                return None
+            row.append(int(parsed.group(1)))
+        weights.append(row)
+        capacities.append(int(match.group(3)))
+    try:
+        canonical = format_multidimensional_knapsack_lp(weights, capacities)
+    except ValueError:
+        return None
+    return (weights, capacities) if source == canonical else None
+
+
+def _check_multidimensional_knapsack_solution(
+    solution: dict,
+    weights: list[list[int]],
+    capacities: list[int],
+) -> VerificationResult:
+    try:
+        values, reported_objective = _parse_highs_primal_solution(solution)
+    except (TypeError, ValueError) as error:
+        return VerificationResult(feasible=False, detail=str(error))
+    item_count = len(weights[0])
+    if set(values) != {f"x{item}" for item in range(item_count)}:
+        return VerificationResult(
+            feasible=False, detail="knapsack variable set mismatch"
+        )
+    assignment: list[int] = []
+    for item in range(item_count):
+        value = values[f"x{item}"]
+        rounded = value.to_integral_value()
+        if abs(value - rounded) > _SCHEDULING_INTEGRALITY_TOLERANCE or rounded not in {
+            0,
+            1,
+        }:
+            return VerificationResult(
+                feasible=False, detail="nonbinary knapsack assignment"
+            )
+        assignment.append(int(rounded))
+    if any(
+        sum(weight * assignment[item] for item, weight in enumerate(row)) > capacity
+        for row, capacity in zip(weights, capacities, strict=True)
+    ):
+        return VerificationResult(feasible=False, detail="knapsack capacity exceeded")
+    objective = -sum(
+        sum(row[item] for row in weights) * assignment[item]
+        for item in range(item_count)
+    )
+    if abs(reported_objective - objective) > _SCHEDULING_INTEGRALITY_TOLERANCE:
+        return VerificationResult(feasible=False, detail="knapsack objective mismatch")
+    return VerificationResult(
+        feasible=True,
+        objective=float(objective),
+        detail="independent multidimensional knapsack verification passed",
     )
 
 
@@ -500,6 +644,8 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
             reference_solution = json.loads(self.reference_solution_path.read_text())
         except (OSError, json.JSONDecodeError) as error:
             return self._oracle_error(f"invalid reference solution: {error}")
+        if not isinstance(reference_solution, dict):
+            return self._oracle_error("trusted optimum reference is not an object")
         if self.record.problem_kind == "single_machine_scheduling":
             processing_times = basis.get("processing_times")
             if (
@@ -547,6 +693,78 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
                 return self._oracle_error("invalid job-shop reference optimum")
             return None
 
+        if self.record.problem_kind == "multidimensional_knapsack":
+            model = _public_multidimensional_knapsack_data(instance_path)
+            if model is None:
+                return self._oracle_error("invalid knapsack instance")
+            weights, capacities = model
+            selected = reference_solution.get("selected_items")
+            if (
+                not isinstance(selected, list)
+                or any(type(item) is not int for item in selected)
+                or len(set(selected)) != len(selected)
+                or any(not 0 <= item < len(weights[0]) for item in selected)
+                or any(
+                    sum(row[item] for item in selected) != capacity
+                    for row, capacity in zip(weights, capacities, strict=True)
+                )
+                or basis
+                != {
+                    "kind": "capacity_dual_bound",
+                    "dimensions": len(weights),
+                    "items": len(weights[0]),
+                }
+                or self.record.optimal_objective != -sum(capacities)
+            ):
+                return self._oracle_error("invalid knapsack reference optimum")
+            return None
+
+        if self.record.problem_kind == "graph_coloring":
+            from pitbench.instances.generate import mycielski_graph
+
+            try:
+                instance = json.loads(instance_path.read_text())
+            except (OSError, json.JSONDecodeError) as error:
+                return self._oracle_error(f"invalid graph instance: {error}")
+            chromatic_number = basis.get("chromatic_number")
+            permutation = basis.get("permutation")
+            edges = instance.get("edge_endpoints")
+            if (
+                basis.get("kind") != "mycielski_lower_bound"
+                or type(chromatic_number) is not int
+                or not 2 <= chromatic_number <= 9
+                or not isinstance(permutation, list)
+                or not isinstance(edges, list)
+                or any(type(vertex) is not int for vertex in permutation)
+                or chromatic_number != self.record.optimal_objective
+            ):
+                return self._oracle_error("invalid Mycielski graph basis")
+            canonical_edges, canonical_colors = mycielski_graph(chromatic_number)
+            vertex_count = len(canonical_colors)
+            if (
+                instance.get("problem_kind") != "graph_coloring"
+                or instance.get("vertex_count") != vertex_count
+                or len(permutation) != vertex_count
+                or set(permutation) != set(range(vertex_count))
+                or len(edges) % 2
+            ):
+                return self._oracle_error("graph coloring instance differs from basis")
+            old_to_new = {old: new for new, old in enumerate(permutation)}
+            edge_set = set(zip(edges[::2], edges[1::2], strict=True))
+            if any(
+                (
+                    min(old_to_new[first], old_to_new[second]),
+                    max(old_to_new[first], old_to_new[second]),
+                )
+                not in edge_set
+                for first, second in canonical_edges
+            ):
+                return self._oracle_error("Mycielski lower-bound subgraph is absent")
+            checked = check_graph_coloring(instance, reference_solution)
+            if not checked["feasible"] or checked["objective"] != chromatic_number:
+                return self._oracle_error("invalid graph coloring reference optimum")
+            return None
+
         try:
             instance = json.loads(instance_path.read_text())
         except (OSError, json.JSONDecodeError) as error:
@@ -554,12 +772,29 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
         weights = instance.get("weights")
         capacity = instance.get("capacity")
         if (
-            basis.get("kind") != "capacity_lower_bound"
-            or not isinstance(weights, list)
+            not isinstance(weights, list)
             or any(type(weight) is not int or weight <= 0 for weight in weights)
             or type(capacity) is not int
             or capacity <= 0
         ):
+            return self._oracle_error("invalid bin packing optimality basis")
+        if basis.get("kind") == "independent_solver_optimal":
+            if basis.get("solver") != "ortools_cp_sat":
+                return self._oracle_error("unsupported bin packing proof solver")
+            try:
+                optimum = validate_bin_packing_optimum_record(
+                    basis.get("proof"),
+                    instance_sha256=self.record.instance_sha256,
+                    weights=weights,
+                    capacity=capacity,
+                    reference_bins=reference_solution.get("bins"),
+                )
+            except (TypeError, ValueError) as error:
+                return self._oracle_error(str(error))
+            if self.record.optimal_objective != optimum:
+                return self._oracle_error("bin packing optimum record target mismatch")
+            return None
+        if basis.get("kind") != "capacity_lower_bound":
             return self._oracle_error("invalid bin packing optimality basis")
         lower_bound = math.ceil(sum(weights) / capacity)
         if basis != {
@@ -602,7 +837,16 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
             )
         if self.record.problem_kind == "job_shop_scheduling":
             return _check_job_shop_solution(solution, self.record.optimality_basis)
+        if self.record.problem_kind == "multidimensional_knapsack":
+            model = _public_multidimensional_knapsack_data(instance_path)
+            if model is None:
+                return self._oracle_error("invalid knapsack instance")
+            return _check_multidimensional_knapsack_solution(solution, *model)
         instance = json.loads(instance_path.read_text())
+        if self.record.problem_kind == "graph_coloring":
+            return VerificationResult.model_validate(
+                check_graph_coloring(instance, solution)
+            )
         return _check_bin_packing_solution(
             solution,
             weights=instance["weights"],
@@ -624,6 +868,13 @@ class MIPFamily(ExternalVerifierFamily):
             except (OSError, json.JSONDecodeError) as error:
                 return VerificationResult(feasible=False, detail=str(error))
             return _check_scheduling_solution(solution, processing_times)
+        knapsack = _public_multidimensional_knapsack_data(instance_path)
+        if knapsack is not None:
+            try:
+                solution = json.loads(solution_path.read_text())
+            except (OSError, json.JSONDecodeError) as error:
+                return VerificationResult(feasible=False, detail=str(error))
+            return _check_multidimensional_knapsack_solution(solution, *knapsack)
         return super().verify(instance_path, solution_path)
 
 
@@ -774,6 +1025,10 @@ class CPFamily(ExternalVerifierFamily):
         try:
             instance = json.loads(instance_path.read_text())
             solution = json.loads(solution_path.read_text())
+            if instance.get("problem_kind") == "graph_coloring":
+                return VerificationResult.model_validate(
+                    check_graph_coloring(instance, solution)
+                )
             weights = instance["weights"]
             capacity = instance["capacity"]
         except (

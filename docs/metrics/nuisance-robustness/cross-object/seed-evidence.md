@@ -61,8 +61,8 @@ Robustness protocol.
 - The CP-SAT Java adapter parses the solver seed as a Java long.
 - It converts the value with Math.toIntExact and passes it to CpSolver through
   setRandomSeed.
-- The current exact CP-SAT task now declares 30 development seeds, a private
-  30-seed evaluation list, two budgets, and eight solver workers.
+- The current exact CP-SAT task declares 30 development seeds, a private
+  30-seed evaluation list, two budgets, and one solver worker per process.
 - This establishes the shared seed-panel configuration; it does not establish
   a real Base/Agent Seed Robustness panel or meaningful seed sensitivity.
 

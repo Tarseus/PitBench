@@ -584,7 +584,7 @@ class HighsDriver(SolverDriver):
             write_result(
                 args.output,
                 started=started,
-                valid=objective is not None,
+                valid=has_solution,
                 has_solution=has_solution,
                 failure_reason=reason,
                 objective=objective,
@@ -629,7 +629,9 @@ class ChocoDriver(SolverDriver):
         arguments = parser()
         arguments.add_argument("--parameters", type=Path)
         args = arguments.parse_args(argv)
-        parameters = json.loads(args.parameters.read_text()) if args.parameters else None
+        parameters = (
+            json.loads(args.parameters.read_text()) if args.parameters else None
+        )
         execute(
             environment_key="PITBENCH_CHOCO_RUNNER",
             instance=args.instance,
@@ -643,7 +645,7 @@ class ChocoDriver(SolverDriver):
 
 
 class OrToolsCpSatExactDriver(SolverDriver):
-    """Invoke the fixed-proto parallel CP-SAT solving adapter."""
+    """Invoke the fixed-proto CP-SAT solving adapter."""
 
     name = "ortools_cp_sat_exact"
     records_trajectory = False
@@ -653,7 +655,9 @@ class OrToolsCpSatExactDriver(SolverDriver):
         arguments = parser(trajectory=False)
         arguments.add_argument("--parameters", type=Path)
         args = arguments.parse_args(argv)
-        parameters = json.loads(args.parameters.read_text()) if args.parameters else None
+        parameters = (
+            json.loads(args.parameters.read_text()) if args.parameters else None
+        )
         execute(
             environment_key="PITBENCH_ORTOOLS_CP_SAT_RUNNER",
             instance=args.instance,

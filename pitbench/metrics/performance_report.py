@@ -31,6 +31,40 @@ class PerformanceClassification(str, Enum):
     INCOMPLETE = "incomplete"
 
 
+def classify_exact_performance(
+    *,
+    coverage_difference: float | None,
+    coverage_interval: tuple[float, float] | None,
+    runtime_interval: tuple[float, float] | None,
+    complete: bool,
+) -> PerformanceClassification:
+    """Apply the common coverage-first exact decision to paired evidence."""
+    if (
+        not complete
+        or coverage_difference is None
+        or coverage_interval is None
+        or runtime_interval is None
+    ):
+        return PerformanceClassification.INCOMPLETE
+    if coverage_difference > 0:
+        return (
+            PerformanceClassification.IMPROVED
+            if coverage_interval[0] > 0
+            else PerformanceClassification.INCONCLUSIVE
+        )
+    if coverage_difference < 0:
+        return (
+            PerformanceClassification.REGRESSED
+            if coverage_interval[1] < 0
+            else PerformanceClassification.INCONCLUSIVE
+        )
+    if runtime_interval[0] > 0:
+        return PerformanceClassification.IMPROVED
+    if runtime_interval[1] < 0:
+        return PerformanceClassification.REGRESSED
+    return PerformanceClassification.INCONCLUSIVE
+
+
 class ExactRunOutcomeKind(str, Enum):
     VERIFIED_SOLVED = "verified_solved"
     SOLVER_ORIGIN_UNSOLVED = "solver_origin_unsolved"
@@ -135,6 +169,8 @@ class ExactStatePerformance(BaseModel):
 
 class PairedExactPerformance(BaseModel):
     paired_instances: int = Field(ge=0)
+    mean_verified_solved_coverage_reduction: float | None = None
+    mean_verified_solved_coverage_reduction_ci95: ConfidenceInterval | None = None
     mean_penalized_runtime_reduction_sec: float | None = None
     mean_penalized_runtime_reduction_ci95: ConfidenceInterval | None = None
     complete: bool
@@ -147,8 +183,18 @@ class ExactBudgetPerformance(BaseModel):
     paired: PairedExactPerformance
 
 
+class PerformanceConfirmation(BaseModel):
+    initial_classification: PerformanceClassification
+    repeat_classification: PerformanceClassification | None = None
+    confirmed: bool
+    repeat_observation_count: int = Field(ge=0)
+    repeat_valid_observation_count: int = Field(ge=0)
+    repeat_order: str = "reversed_base_agent"
+
+
 class ExactPerformanceReport(BaseModel):
     classification: PerformanceClassification
+    confirmation: PerformanceConfirmation | None = None
     time_basis: ExactTimeBasis
     primary_budget_sec: float = Field(gt=0)
     budgets_sec: list[float]
@@ -178,10 +224,54 @@ class BudgetPerformance(BaseModel):
 
 class PerformanceReport(BaseModel):
     classification: PerformanceClassification
+    confirmation: PerformanceConfirmation | None = None
     primary_budget_sec: float = Field(gt=0)
     budgets_sec: list[float]
     primary: BudgetPerformance
     by_budget: dict[str, BudgetPerformance]
+
+
+def adjudicate_performance_confirmation(
+    initial: PerformanceReport | ExactPerformanceReport,
+    repeat: PerformanceReport | ExactPerformanceReport,
+    *,
+    repeat_observation_count: int,
+    repeat_valid_observation_count: int,
+) -> PerformanceReport | ExactPerformanceReport:
+    """Accept a direction only when a fresh opposite-order run agrees."""
+    if type(initial) is not type(repeat):
+        raise ValueError("confirmation uses a different Performance protocol")
+    if (
+        initial.primary_budget_sec != repeat.primary_budget_sec
+        or initial.budgets_sec != repeat.budgets_sec
+    ):
+        raise ValueError("confirmation uses different budgets")
+    direction = initial.classification
+    if direction not in {
+        PerformanceClassification.IMPROVED,
+        PerformanceClassification.REGRESSED,
+    }:
+        raise ValueError("confirmation requires an initial directional result")
+    confirmed = repeat.classification is direction
+    final = (
+        direction
+        if confirmed
+        else PerformanceClassification.INCOMPLETE
+        if repeat.classification is PerformanceClassification.INCOMPLETE
+        else PerformanceClassification.INCONCLUSIVE
+    )
+    return initial.model_copy(
+        update={
+            "classification": final,
+            "confirmation": PerformanceConfirmation(
+                initial_classification=direction,
+                repeat_classification=repeat.classification,
+                confirmed=confirmed,
+                repeat_observation_count=repeat_observation_count,
+                repeat_valid_observation_count=repeat_valid_observation_count,
+            ),
+        }
+    )
 
 
 def _percentile(values: Sequence[float], probability: float) -> float:
@@ -333,6 +423,7 @@ def _paired_exact_performance(
         raise ValueError("exact expected run grid does not pair Base and Agent")
 
     reductions_by_instance: dict[tuple[str, str], list[float]] = defaultdict(list)
+    coverage_reductions_by_instance: dict[tuple[str, str], list[float]] = defaultdict(list)
     complete = True
     for pair_key in sorted(expected_by_state[CodeState.BASE]):
         base_expected = expected_by_state[CodeState.BASE][pair_key]
@@ -348,9 +439,14 @@ def _paired_exact_performance(
         if (
             base_outcome.penalized_runtime_sec is None
             or agent_outcome.penalized_runtime_sec is None
+            or base_outcome.solved is None
+            or agent_outcome.solved is None
         ):
             complete = False
             continue
+        coverage_reductions_by_instance[(pair_key[0], pair_key[1])].append(
+            float(agent_outcome.solved) - float(base_outcome.solved)
+        )
         reductions_by_instance[(pair_key[0], pair_key[1])].append(
             base_outcome.penalized_runtime_sec - agent_outcome.penalized_runtime_sec
         )
@@ -364,8 +460,18 @@ def _paired_exact_performance(
     instance_reductions = [
         statistics.fmean(values) for values in reductions_by_instance.values()
     ]
+    instance_coverage_reductions = [
+        statistics.fmean(values) for values in coverage_reductions_by_instance.values()
+    ]
     return PairedExactPerformance(
         paired_instances=len(reductions_by_instance),
+        mean_verified_solved_coverage_reduction=statistics.fmean(
+            instance_coverage_reductions
+        ),
+        mean_verified_solved_coverage_reduction_ci95=_cluster_mean_ci(
+            coverage_reductions_by_instance,
+            seed=seed,
+        ),
         mean_penalized_runtime_reduction_sec=statistics.fmean(instance_reductions),
         mean_penalized_runtime_reduction_ci95=_cluster_mean_ci(
             reductions_by_instance,
@@ -453,26 +559,32 @@ def compute_exact_performance_report(
     primary = by_budget[f"{primary_budget_sec:g}"]
     base_coverage = primary.base.verified_solved_coverage
     agent_coverage = primary.agent.verified_solved_coverage
+    coverage_interval = (
+        primary.paired.mean_verified_solved_coverage_reduction_ci95
+    )
     paired_interval = primary.paired.mean_penalized_runtime_reduction_ci95
-    if (
-        not primary.base.complete
-        or not primary.agent.complete
-        or not primary.paired.complete
-        or base_coverage is None
-        or agent_coverage is None
-        or paired_interval is None
-    ):
-        classification = PerformanceClassification.INCOMPLETE
-    elif agent_coverage > base_coverage:
-        classification = PerformanceClassification.IMPROVED
-    elif agent_coverage < base_coverage:
-        classification = PerformanceClassification.REGRESSED
-    elif paired_interval.lower > 0:
-        classification = PerformanceClassification.IMPROVED
-    elif paired_interval.upper < 0:
-        classification = PerformanceClassification.REGRESSED
-    else:
-        classification = PerformanceClassification.INCONCLUSIVE
+    classification = classify_exact_performance(
+        coverage_difference=(
+            agent_coverage - base_coverage
+            if agent_coverage is not None and base_coverage is not None
+            else None
+        ),
+        coverage_interval=(
+            (coverage_interval.lower, coverage_interval.upper)
+            if coverage_interval is not None
+            else None
+        ),
+        runtime_interval=(
+            (paired_interval.lower, paired_interval.upper)
+            if paired_interval is not None
+            else None
+        ),
+        complete=(
+            primary.base.complete
+            and primary.agent.complete
+            and primary.paired.complete
+        ),
+    )
 
     return ExactPerformanceReport(
         classification=classification,
@@ -657,16 +769,44 @@ def _format_gap(value: float | None) -> str:
     return "-" if value is None else f"{100 * value:.3f}%"
 
 
+def _confirmation_text(
+    report: PerformanceReport | ExactPerformanceReport,
+) -> str | None:
+    if report.confirmation is not None:
+        evidence = report.confirmation
+        repeat = (
+            evidence.repeat_classification.value
+            if evidence.repeat_classification is not None
+            else "not_run"
+        )
+        return (
+            "Fresh opposite-order confirmation: "
+            f"initial={evidence.initial_classification.value}, "
+            f"repeat={repeat}, "
+            f"confirmed={evidence.confirmed}"
+        )
+    if report.classification in {
+        PerformanceClassification.IMPROVED,
+        PerformanceClassification.REGRESSED,
+    }:
+        return "Single-run direction; independent confirmation is required."
+    return None
+
+
 def _format_exact_performance_report(report: ExactPerformanceReport) -> str:
     lines = [
         "Verified exact-solver performance",
         f"Classification: {report.classification.value}",
         f"Timing basis: {report.time_basis.value}",
         "",
-        "Budget | Base solved | Agent solved | Base PAR-2 | Agent PAR-2 | "
+        "Budget | Base solved | Agent solved | Agent-Base solved coverage "
+        "(95% CI) | Base PAR-2 | Agent PAR-2 | "
         "Base-Agent PAR-2 reduction (95% CI)",
-        "---: | ---: | ---: | ---: | ---: | ---:",
+        "---: | ---: | ---: | ---: | ---: | ---: | ---:",
     ]
+    confirmation_text = _confirmation_text(report)
+    if confirmation_text is not None:
+        lines.insert(2, confirmation_text)
     for cell in report.by_budget.values():
         paired = cell.paired
         reduction = "-"
@@ -675,6 +815,16 @@ def _format_exact_performance_report(report: ExactPerformanceReport) -> str:
         if paired.mean_penalized_runtime_reduction_ci95 is not None:
             interval = paired.mean_penalized_runtime_reduction_ci95
             reduction += f" [{interval.lower:.6g}s, {interval.upper:.6g}s]"
+        coverage_reduction = "-"
+        if paired.mean_verified_solved_coverage_reduction is not None:
+            coverage_reduction = (
+                f"{paired.mean_verified_solved_coverage_reduction:.3%}"
+            )
+        if paired.mean_verified_solved_coverage_reduction_ci95 is not None:
+            interval = paired.mean_verified_solved_coverage_reduction_ci95
+            coverage_reduction += (
+                f" [{interval.lower:.3%}, {interval.upper:.3%}]"
+            )
 
         def coverage(state: ExactStatePerformance) -> str:
             if state.verified_solved_coverage is None:
@@ -691,13 +841,15 @@ def _format_exact_performance_report(report: ExactPerformanceReport) -> str:
 
         lines.append(
             f"{cell.budget_sec:g}s | {coverage(cell.base)} | "
-            f"{coverage(cell.agent)} | {runtime(cell.base)} | "
+            f"{coverage(cell.agent)} | {coverage_reduction} | "
+            f"{runtime(cell.base)} | "
             f"{runtime(cell.agent)} | {reduction}"
         )
     lines.extend(
         [
             "",
-            "Coverage is primary; equal coverage is classified by paired PAR-2.",
+            "Coverage is primary; directional coverage needs an interval excluding "
+            "zero. Equal coverage is classified by paired PAR-2.",
             "95% intervals use an instance bootstrap over per-instance seed means.",
         ]
     )
@@ -717,6 +869,9 @@ def format_performance_report(
         "Base-Agent gap reduction (95% CI) | Paired instances",
         "---: | ---: | ---: | ---: | ---:",
     ]
+    confirmation_text = _confirmation_text(report)
+    if confirmation_text is not None:
+        lines.insert(2, confirmation_text)
     for cell in report.by_budget.values():
         paired = cell.paired
         delta = _format_gap(paired.mean_gap_reduction)
@@ -754,7 +909,9 @@ __all__ = [
     "PairedGapEvidence",
     "PairedExactPerformance",
     "PerformanceClassification",
+    "PerformanceConfirmation",
     "PerformanceReport",
+    "adjudicate_performance_confirmation",
     "compute_exact_run_outcome",
     "compute_exact_performance_report",
     "compute_performance_report",

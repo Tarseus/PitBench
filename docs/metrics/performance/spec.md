@@ -1,5 +1,17 @@
 # Performance specification
 
+Version 0.0.3 is an M6 freeze candidate. Its 2026-10-15 noise-calibration
+decisions require instance-supported exact coverage directions and independent
+opposite-order confirmation of every full real directional result. Earlier
+one-run results are not confirmed under this version.
+
+The 2026-10-13 execution-policy revision runs every current solver task with one
+solver thread per process and schedules independent instance/seed runs in parallel.
+CP-SAT previously used eight workers per process. The retained eight-worker control
+and Agent results are historical evidence for that setting; the new single-worker
+setting requires its own real-panel validation. Budgets, seeds, targets, timing
+bases, and Performance estimators are unchanged by this execution-policy revision.
+
 ## M2: heuristic fixed-budget protocol
 
 The `heuristic_fixed_budget` protocol compares independently verified normalized
@@ -65,7 +77,7 @@ formed. Use a 95% percentile interval with 5000 resamples and fixed bootstrap se
 belongs to Nuisance Robustness.
 
 Report all declared budgets separately. `primary_budget_sec` must belong to the declared
-budget list and selects the public heuristic classification:
+budget list and selects the single-run heuristic classification:
 
 - `improved` when the primary paired-gain interval lower bound is greater than zero;
 - `regressed` when the primary paired-gain interval upper bound is less than zero;
@@ -102,16 +114,17 @@ time is not added to the solver Performance outcome.
 
 ### Declared timing basis
 
-Current sequential exact tasks use solver CPU time as their Performance time
-observation. The parallel CP-SAT exact-solving task instead uses the wall-clock
+HiGHS and Choco use solver CPU time as their Performance time observation. The
+single-worker CP-SAT exact-solving task uses the wall-clock
 time reported from within the CP-SAT `Solve()` call. Its timing interval excludes
 the fixed `CpModelProto` read and Java runner startup. Model construction is not
 evaluated by Performance 0.0.2.
 
-The parallel CP-SAT task fixes eight CP-SAT workers on eight allocated CPU cores.
-It does not permit a candidate-created external multiprocess portfolio. CPU time
-and memory remain Resource Efficiency observations for this task; they are not
-substituted for its wall-clock Performance observation.
+Each solver run is pinned to one allocated CPU core. The judge parallelizes
+independent runs across available cores. Candidate-created external portfolios
+remain outside the task contract. CPU time and memory remain Resource Efficiency
+observations for CP-SAT; they are not substituted for its wall-clock Performance
+observation.
 
 ## Solved exact run
 
@@ -123,17 +136,18 @@ An exact-optimization run is solved only when all applicable conditions hold:
   verified objective equals the task's fixed exact target.
 
 The single-run Performance outcome for a solved run is the task's declared timing
-basis. For current sequential exact tasks this is `cpu_time_sec`; for the parallel
-CP-SAT exact-solving task this is the wall-clock time reported from within
+basis. For HiGHS and Choco this is `cpu_time_sec`; for CP-SAT this is the wall-clock
+time reported from within
 `Solve()`. The other timing observation remains available for diagnostics and
 Resource Efficiency.
 
 ## Fixed exact-target protocol v1
 
-The first `exact_verified_solve` protocol supports two fixed exact-target kinds:
-independently checkable trusted optima for the current HiGHS and Choco tasks, and a
-published-BKS target for the parallel CP-SAT task. VIPR and other certificate-native
-protocols are outside this version.
+The `exact_verified_solve` protocol supports two fixed exact-target kinds:
+trusted optima for the current HiGHS and Choco tasks, and a published-BKS target
+for the CP-SAT task. Trusted-optimum evidence can be an independently checkable
+mathematical bound or the separately recorded optimal result of an independent,
+pinned solver. VIPR and other certificate-native protocols are outside this version.
 
 The v1 panel contains only feasible instances with integer, unambiguous objective
 semantics. An infeasible instance is outside v1 until an independently checked
@@ -146,7 +160,8 @@ Every fixed exact-target record is fixed before candidate evaluation and contain
 - source and verification provenance.
 
 A trusted-optimum record additionally contains a reference solution and its content
-hash, plus an independently checkable basis for the optimum. A published-BKS target
+hash, plus the declared mathematical bound or independent-solver optimal-result
+record. A published-BKS target
 record instead contains the published source artifact hash and path that bind its BKS
 value to the instance; it does not require a reference schedule.
 
@@ -162,31 +177,45 @@ incumbent without reporting optimal termination remains unsolved.
 
 ### HiGHS scheduling oracle
 
-The current generated HiGHS `judge_id` panel uses the single-machine scheduling
+The 2026-10-14 HiGHS `judge_id` panel uses the single-machine scheduling
 structure and sum-of-start-times objective declared by its generator. Oracle generation
 retains the processing times, constructs a shortest-processing-time schedule, records
 its exact objective and reference solution, and binds them to the generated instance
-hash.
+hash. It keeps the 10- and 30-second budgets and 30 solver seeds while using
+9-, 10-, and 11-job instances so both budgets have solved and unsolved cases.
 
 The evaluator-owned verifier checks the returned schedule, non-overlap, model-variable
-values, and objective using integer arithmetic. It does not trust the HiGHS status text,
-reported objective, or the current regular-expression LP verifier as independent
-evidence.
+values, and objective using integer arithmetic. Raw values within the pinned HiGHS
+1.15.1 default MIP feasibility tolerance of `1e-6` are rounded to integers before
+the exact constraint and target checks; values or raw objective reports outside
+that tolerance fail verification. This handles floating-point text such as
+`75.9999999999998` without accepting an infeasible integer schedule. The verifier
+does not trust the HiGHS status text, reported objective, or the current
+regular-expression LP verifier as independent evidence.
 
 ### Choco bin-packing oracle
 
-The first Choco panel uses instances with a reference packing whose bin count matches an
-independently checkable lower-bound certificate. The oracle records the matching lower
-bound, exact optimum, reference packing, instance hash, and provenance.
+The first Choco panel used instances with a reference packing whose bin count matched
+an independently checkable capacity lower bound. The 2026-10-14 candidate panel keeps
+the same bin-packing generator, solver budgets, seed grid, and exact-outcome scoring,
+but admits instances whose optimum is above that elementary lower bound. Each new
+target is fixed before Agent evaluation from a separate, pinned OR-Tools CP-SAT
+`OPTIMAL` run. The retained record binds the instance hash, solver commit, proof
+adapter hash, one-worker setting, fixed solver seed, proof budget, optimal objective,
+matching solver bound, and reference packing. Preparation
+independently checks the packing and its objective against the record.
 
 The evaluator-owned verifier checks that every item appears exactly once, every bin
 respects capacity, and the recomputed bin count equals both the reported objective and
-the trusted optimum. Instances without an approved independently checkable optimum are
-outside the v1 panel.
+the fixed target. It also checks the retained record's identity and internal
+consistency. It does not reconstruct CP-SAT's search proof, so the independent
+solver's `OPTIMAL` result is an explicit trusted-oracle boundary. Instances without
+either an independently checkable mathematical bound or a retained independent
+solver optimum record are outside the active Choco panel.
 
-### Parallel CP-SAT published-BKS target
+### CP-SAT published-BKS target
 
-The parallel CP-SAT judge panel binds each JSSP instance and its fixed integer BKS to
+The CP-SAT judge panel binds each JSSP instance and its fixed integer BKS to
 the published source artifact and its content hash. The judge does not require or retain
 a reference schedule. The evaluator independently verifies the candidate-returned
 schedule and recomputes its integer makespan.
@@ -272,6 +301,17 @@ equal weight:
 C_state(T) = mean_instance(mean_seed(S_state(x, seed; T)))
 ```
 
+The paired coverage improvement is computed from the same Base/Agent seed pairs:
+
+```text
+D(T) = mean_instance(mean_seed(
+    S_agent(x, seed; T) - S_base(x, seed; T)
+))
+```
+
+Report `D(T)` and its instance-bootstrap interval. Seed repetitions within one
+instance do not become independent instances in this interval.
+
 Penalized average runtime is the secondary exact-optimization result. For each code
 state, average the declared seed outcomes within each instance and then give every
 instance equal weight:
@@ -314,21 +354,65 @@ records in the detailed artifacts.
 
 ## Exact-optimization uncertainty and classification
 
-For Base and Agent penalized runtime and the paired penalized-runtime improvement, use
-an instance bootstrap over per-instance seed means. Resample instances with
+For paired coverage improvement, Base and Agent penalized runtime, and paired
+penalized-runtime improvement, use an instance bootstrap over per-instance seed means. Resample instances with
 replacement, preserving each sampled instance's declared seed mean. Use a 95%
 percentile interval with 5000 resamples and fixed bootstrap seed `20260824`.
 
 Report every declared budget separately. Only `primary_budget_sec` determines the
-public classification. Apply the following order:
+single-run classification. Apply the following order:
 
 1. Return `incomplete` when the required primary grid, coverage, penalized-runtime
-   aggregate, or paired penalized-runtime interval is unavailable.
-2. Return `improved` when Agent verified-solved coverage is greater than Base coverage.
-3. Return `regressed` when Agent verified-solved coverage is less than Base coverage.
-4. When the coverage values are equal, return `improved` when the paired
+   aggregate, paired coverage interval, or paired penalized-runtime interval is
+   unavailable.
+2. When Agent coverage is greater than Base coverage, return `improved` only if
+   the paired coverage interval is strictly above zero; otherwise return
+   `inconclusive`.
+3. When Agent coverage is less than Base coverage, return `regressed` only if
+   the paired coverage interval is strictly below zero; otherwise return
+   `inconclusive`.
+4. Only when the coverage values are equal, return `improved` when the paired
    penalized-runtime interval lower bound is greater than zero, `regressed` when its
    upper bound is less than zero, and `inconclusive` when it includes zero.
+
+This change follows the retained same-code noise controls in
+`docs/evaluation-noise-calibration.md`: an empty CP-SAT patch lost one of 900
+verified solves and the former raw-coverage rule falsely called it `regressed`.
+The loss remains in the detailed results; its instance interval includes zero,
+so the public classification is `inconclusive`. PAR-2 cannot override an
+unresolved coverage difference.
+
+## Independent confirmation of directional results
+
+The full real evaluator treats a one-run `improved` or `regressed` result as
+provisional. It automatically repeats the **complete declared grid** with fresh
+Base and Agent observations, the same task/patch/image/harness/resource identity,
+and the opposite Base/Agent build and job order. It retains the second run's
+raw observations, expected grid, checkpoint, and separate Performance report.
+The repeated observations are not appended as extra solver seeds in the first
+run's instance bootstrap.
+
+The public result keeps the direction only when the independent repeat has the
+same directional single-run classification. If the repeat is inconclusive or
+points the other way, the public result is `inconclusive`; if the repeat is
+incomplete, the public result is `incomplete`. A first-run inconclusive or
+incomplete result does not trigger a repeat. Qualification failures in either
+round continue to disqualify the candidate independently of Performance.
+
+The control that motivates this rule is a full, fresh-Base PyVRP empty-patch
+run with 8,160/8,160 valid observations. Its one-run paired gap interval was
+strictly positive and falsely said `improved`. A second run with Base/Agent
+order reversed and the same complete grid was `inconclusive`; the combined
+public result is therefore `inconclusive`. The between-order effect interval
+includes zero, so this does not prove that order alone caused the first false
+positive. It proves that one-run direction was not repeatable under the
+declared resource contract.
+
+Automatic Base-observation reuse is disabled by default for final judgments.
+An explicitly cached Base can support exploratory estimates, but a directional
+single-run result with a cached Base is publicly `inconclusive` until a fresh
+complete comparison is obtained. Limited-panel dry runs and deterministic
+fixtures remain integration checks and do not launch confirmation repeats.
 
 A Qualification failure disqualifies the candidate independently of this
 classification. The PAR-2 classification does not replace Qualification.

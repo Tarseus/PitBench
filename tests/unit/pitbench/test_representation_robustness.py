@@ -13,34 +13,260 @@ from pitbench.evaluator import runner
 from pitbench.evaluator.judge import InstanceCase, JudgePlan, LocalProcessJudge
 from pitbench.evaluator.representation import (
     prepare_cases,
+    prepare_precomputed_transformations,
     preserve_json,
     result_record,
     run_with_representation,
     write_json,
 )
 from pitbench.evaluator.representations import (
+    BinPackingItemRepresentation,
     CustomerRepresentation,
+    JobShopRepresentation,
     LinearModelRepresentation,
     representation_type,
 )
 from pitbench.evaluator.storage import ObservationStore
+from pitbench.instances.generate import prepare_collection_instances
+from pitbench.metrics.nuisance_report import (
+    compute_exact_representation_robustness_report,
+)
 from pitbench.problem_families.verification import (
     CVRPFamily,
     NumericModelFamily,
     _edge_cost,
 )
 from pitbench.schema.observation import CodeState, RunObservation, RunStatus
-from pitbench.schema.task import PitBenchTask
+from pitbench.schema.task import ExactTimeBasis, PitBenchTask
+from pitbench.solver_drivers.common import SolverTermination
 
 # Tests consolidated from tests/unit/pitbench/test_representations.py
 
 
 def test_representation_plugins_register_and_reject_duplicate_names():
     assert representation_type("customer_relabeling") is CustomerRepresentation
+    assert representation_type("item_relabeling") is BinPackingItemRepresentation
+    assert representation_type("job_relabeling") is JobShopRepresentation
     with pytest.raises(ValueError, match="duplicate representation plugin"):
 
         class DuplicateRepresentation(CustomerRepresentation):
             name = "customer_relabeling"
+
+
+def test_item_relabeling_preserves_feasibility_and_maps_solution(tmp_path: Path):
+    original = {"capacity": 10, "weights": [4, 6, 5]}
+    mapping = {"new_to_original": [2, 0, 1]}
+    transformed = BinPackingItemRepresentation.transform(original, mapping)
+    assert transformed["weights"] == [5, 4, 6]
+    original_path = tmp_path / "original.json"
+    transformed_path = tmp_path / "transformed.json"
+    solution_path = tmp_path / "solution.json"
+    mapped_path = tmp_path / "mapped.json"
+    BinPackingItemRepresentation.write_input(original_path, original)
+    BinPackingItemRepresentation.write_input(transformed_path, transformed)
+    solution_path.write_text('{"bins": [[0, 1], [2]]}')
+    result = BinPackingItemRepresentation.verify_files(
+        original_path, transformed_path, solution_path, mapped_path, mapping
+    )
+    assert result["transformed"]["feasible"]
+    assert result["mapped_original"]["feasible"]
+    assert result["objective_preserved"]
+    assert json.loads(mapped_path.read_text()) == {"bins": [[2, 0], [1]]}
+    with pytest.raises(ValueError, match="bijection"):
+        BinPackingItemRepresentation.transform(original, {"new_to_original": [0, 0, 1]})
+    with pytest.raises(ValueError, match="distinct item-order"):
+        BinPackingItemRepresentation.mappings(
+            {"weights": [4, 4, 4]}, 1, random.Random(0)
+        )
+
+
+def test_fixed_bin_packing_references_include_proofs(tmp_path: Path):
+    instances = prepare_collection_instances(
+        ROOT / "configs/instance_sets/choco_v6_0_1_dev.yaml",
+        tmp_path,
+    )
+    assert [item["id"] for item in instances] == [
+        f"dev_{index:04d}" for index in range(5)
+    ]
+    assert all(item["proven_optimal"] is True for item in instances)
+    assert all(item["bks"] is not None and item["proof_path"] for item in instances)
+
+
+def test_job_relabeling_maps_schedule_and_preserves_makespan(tmp_path: Path):
+    original = tmp_path / "original.pb"
+    transformed = tmp_path / "transformed.pb"
+    original.write_bytes(b"original-model")
+    transformed.write_bytes(b"transformed-model")
+    solution = tmp_path / "solution.json"
+    solution.write_text('{"values": [0, 3, 1, 3]}')
+    mapping = {
+        "original_sha256": hashlib.sha256(original.read_bytes()).hexdigest(),
+        "transformed_sha256": hashlib.sha256(transformed.read_bytes()).hexdigest(),
+        "jobs": [[[0, 2], [1, 3]], [[1, 2], [0, 1]]],
+        "new_to_original": [1, 0],
+        "start_variable_indices": [0, 1, 2, 3],
+    }
+    mapped = tmp_path / "mapped.json"
+    result = JobShopRepresentation.verify_files(
+        original, transformed, solution, mapped, mapping
+    )
+    assert result["transformed"]["feasible"]
+    assert result["mapped_original"]["feasible"]
+    assert result["transformed"]["objective"] == 6
+    assert result["objective_preserved"]
+    assert json.loads(mapped.read_text()) == {"start_times": [1, 3, 0, 3]}
+    transformed.write_bytes(b"changed-model")
+    with pytest.raises(ValueError, match="hash differs"):
+        JobShopRepresentation.verify_files(
+            original, transformed, solution, mapped, mapping
+        )
+
+
+def test_precomputed_job_relabeling_checks_source_and_variant_hashes(tmp_path: Path):
+    source = tmp_path / "la01.pb"
+    source.write_bytes(b"original")
+    asset = tmp_path / "la01__job_relabeling_00.pb"
+    asset.write_bytes(b"transformed")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "kind": "job_relabeling",
+                "relabelings_per_instance": 1,
+                "instances": {
+                    "la01": {
+                        "original_sha256": hashlib.sha256(
+                            source.read_bytes()
+                        ).hexdigest(),
+                        "jobs": [[[0, 1]], [[0, 2]]],
+                        "start_variable_indices": [0, 1],
+                        "variants": [
+                            {
+                                "transform_id": "job_relabeling_00",
+                                "new_to_original": [1, 0],
+                                "file": asset.name,
+                                "sha256": hashlib.sha256(
+                                    asset.read_bytes()
+                                ).hexdigest(),
+                                "start_variable_indices": [0, 1],
+                            }
+                        ],
+                    }
+                },
+            }
+        )
+    )
+    prepared = prepare_precomputed_transformations(
+        source, "la01", 2.0, tmp_path / "output", "job_relabeling", manifest, 1
+    )
+    assert len(prepared) == 1
+    assert prepared["la01__job_relabeling_00"]["new_to_original"] == [1, 0]
+    asset.write_bytes(b"corrupted")
+    with pytest.raises(ValueError, match="hash differs"):
+        prepare_precomputed_transformations(
+            source, "la01", 2.0, tmp_path / "other", "job_relabeling", manifest, 1
+        )
+
+
+def test_exact_representation_keeps_unproved_reference_missing():
+    records = []
+    for state in (CodeState.BASE, CodeState.AGENT):
+        for replicate in range(30):
+            instance_id = f"case__item_relabeling_{replicate:02d}"
+            observation = RunObservation(
+                task_id="choco_test",
+                code_state=state,
+                instance_set="nuisance",
+                instance_id=instance_id,
+                solver_seed=0,
+                budget_sec=5,
+                status=RunStatus.COMPLETED,
+                valid=True,
+                objective=2,
+                reported_objective=2,
+                optimal_or_bks=2,
+                solver_termination=SolverTermination.OPTIMAL,
+                cpu_time_sec=(1 + replicate / 100 if state is CodeState.BASE else 0.5),
+            )
+            records.append(
+                {
+                    "task_id": "choco_test",
+                    "axis": "representation",
+                    "instance": "case",
+                    "instance_id": instance_id,
+                    "budget_sec": 5,
+                    "code_state": state.value,
+                    "replicate": replicate,
+                    "solver_seed": 0,
+                    "verified_feasible": True,
+                    "reference_verified": True,
+                    "observation": observation.model_dump(mode="json"),
+                }
+            )
+    report = compute_exact_representation_robustness_report(
+        records,
+        task_id="choco_test",
+        instance_ids=["case"],
+        budgets_sec=[5],
+        time_basis=ExactTimeBasis.CPU_TIME,
+        solver_seed=0,
+        relabelings_per_instance=30,
+        protocol_version="0.0.2",
+    )
+    result = report.by_budget["5"]
+    assert result.base.mean_capped_time_iqr_sec > 0
+    assert result.agent.mean_capped_time_iqr_sec == 0
+    assert result.change_sec < 0
+    assert result.base.verified_optimal_count == 30
+    original_record = records[0].copy()
+    censored_observation = RunObservation.model_validate(records[0]["observation"])
+    records[0]["observation"] = censored_observation.model_copy(
+        update={
+            "status": RunStatus.NO_SOLUTION,
+            "valid": False,
+            "objective": None,
+            "reported_objective": None,
+            "solver_termination": SolverTermination.TIME_LIMIT,
+        }
+    ).model_dump(mode="json")
+    records[0]["verified_feasible"] = False
+    censored = compute_exact_representation_robustness_report(
+        records,
+        task_id="choco_test",
+        instance_ids=["case"],
+        budgets_sec=[5],
+        time_basis=ExactTimeBasis.CPU_TIME,
+        solver_seed=0,
+        relabelings_per_instance=30,
+        protocol_version="0.0.2",
+    )
+    assert censored.by_budget["5"].base.verified_optimal_count == 29
+    assert censored.by_budget["5"].base.mean_capped_time_iqr_sec is not None
+    records[0]["observation"]["status"] = RunStatus.INVALID.value
+    invalid = compute_exact_representation_robustness_report(
+        records,
+        task_id="choco_test",
+        instance_ids=["case"],
+        budgets_sec=[5],
+        time_basis=ExactTimeBasis.CPU_TIME,
+        solver_seed=0,
+        relabelings_per_instance=30,
+        protocol_version="0.0.2",
+    )
+    assert invalid.by_budget["5"].base.mean_capped_time_iqr_sec is None
+    records[0] = original_record
+    records[0]["reference_verified"] = False
+    unproved = compute_exact_representation_robustness_report(
+        records,
+        task_id="choco_test",
+        instance_ids=["case"],
+        budgets_sec=[5],
+        time_basis=ExactTimeBasis.CPU_TIME,
+        solver_seed=0,
+        relabelings_per_instance=30,
+        protocol_version="0.0.2",
+    )
+    assert unproved.by_budget["5"].base.mean_capped_time_iqr_sec is None
 
 
 @pytest.fixture
@@ -508,14 +734,8 @@ def test_runner_collects_configured_relabelings_and_preserves_failures(
     assert details["expected_run_count"] == details["completed_run_count"] == 1200
     assert details["statistics"] == "type_7_iqr_equal_instance_mean"
     assert details["representation_robustness"]["protocol_version"] == "0.0.1"
-    assert (
-        details["representation_robustness"]["by_budget"]["5"]["change"]
-        is not None
-    )
-    assert (
-        details["representation_robustness"]["by_budget"]["10"]["change"]
-        is None
-    )
+    assert details["representation_robustness"]["by_budget"]["5"]["change"] is not None
+    assert details["representation_robustness"]["by_budget"]["10"]["change"] is None
     assert (
         details["candidate_patch_sha256"]
         == hashlib.sha256(patch_path.read_bytes()).hexdigest()

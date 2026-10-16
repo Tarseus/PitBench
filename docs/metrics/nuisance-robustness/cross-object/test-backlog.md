@@ -31,7 +31,7 @@ tests that must be added and run before M3-M5 support claims.
 ## Solver integration
 
 - HiGHS exact task produces the exact Seed Robustness report from 30+30 seeds.
-- OR-Tools CP-SAT exact task produces the same report shape with eight workers.
+- OR-Tools CP-SAT exact task produces the same report shape with one worker per process.
 - Choco exact task produces the same report shape with one worker.
 - Heuristic PyVRP tasks continue using the frozen normalized-gap report without
   semantic changes.

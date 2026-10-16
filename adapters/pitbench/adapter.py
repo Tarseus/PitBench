@@ -86,7 +86,7 @@ class PitBenchAdapter:
         judge_parallel_runs: int | None = None,
         base_observations_path: Path | None = None,
         base_cache_path: Path | None = None,
-        use_base_cache: bool = True,
+        use_base_cache: bool = False,
         smoke_test: bool = False,
         agent_tools: Iterable[AgentTool | str] = (),
     ) -> Path:
@@ -329,7 +329,8 @@ class PitBenchAdapter:
             "`pitbench bench --label base` on visible instances at "
             "`/pitbench/dev_instances`. `pitbench bench` accepts `--instance` "
             "(visible ID/name or a readable custom file), `--seed`, `--budget`, "
-            "and `--threads`; use matching values for Base and Agent.\n"
+            "and `--threads`; `--all-seeds` and `--all-budgets` run the declared "
+            "development grid. Use matching values for Base and Agent.\n"
             if AgentTool.INSPECT in agent_tools and AgentTool.BENCH in agent_tools
             else "1. Baseline: Record the clean repository's behavior on public "
             "development cases before editing.\n"
@@ -400,7 +401,7 @@ class PitBenchAdapter:
         judge_parallel_runs: int | None = None,
         base_observations_path: Path | None = None,
         base_cache_path: Path | None = None,
-        use_base_cache: bool = True,
+        use_base_cache: bool = False,
         smoke_test: bool = False,
         agent_tools: frozenset[AgentTool] = frozenset(),
     ) -> None:

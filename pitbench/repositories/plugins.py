@@ -214,6 +214,7 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
     judge_environment_requirements = {"MAVEN_CONFIG": "/tmp/choco-maven"}
     collection_backend = "pitbench.evaluator.collection:ChocoCollectionBackend"
     driver_name = "choco"
+    representations = {"item_relabeling": ("judge",)}
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         del kind
@@ -324,6 +325,7 @@ class OrToolsCpSatExactRepositoryPlugin(OrToolsRepositoryPlugin):
 
     driver_name = "ortools_cp_sat_exact"
     collection_backend = "pitbench.evaluator.collection:OrToolsCpSatCollectionBackend"
+    representations = {"job_relabeling": ("judge",)}
 
     def agent_build_commands(self) -> list[CommandSpec]:
         return [

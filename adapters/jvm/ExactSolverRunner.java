@@ -97,6 +97,95 @@ public final class ExactSolverRunner {
         return json.append(']').toString();
     }
 
+    private static String colorsJson(Solution solution, IntVar[] colors) {
+        StringBuilder json = new StringBuilder("[");
+        for (int vertex = 0; vertex < colors.length; vertex++) {
+            if (vertex > 0) {
+                json.append(',');
+            }
+            json.append(solution.getIntVal(colors[vertex]));
+        }
+        return json.append(']').toString();
+    }
+
+    private static void runGraphColoring(
+        String instance,
+        long solverSeed,
+        double budgetSec,
+        String searchStrategy
+    ) {
+        int vertexCount = integerField(instance, "vertex_count");
+        int[] endpoints = integerArray(instance, "edge_endpoints");
+        if (vertexCount < 2 || endpoints.length % 2 != 0) {
+            throw new IllegalArgumentException("invalid graph coloring instance");
+        }
+        Model model = new Model("PitBench graph coloring");
+        IntVar[] colors = model.intVarArray("color", vertexCount, 0, vertexCount - 1, false);
+        model.arithm(colors[0], "=", 0).post();
+        for (int edge = 0; edge < endpoints.length; edge += 2) {
+            int first = endpoints[edge];
+            int second = endpoints[edge + 1];
+            if (first < 0 || first >= second || second >= vertexCount) {
+                throw new IllegalArgumentException("invalid graph coloring edge");
+            }
+            model.arithm(colors[first], "!=", colors[second]).post();
+        }
+        IntVar maximumColor = model.intVar("maximumColor", 0, vertexCount - 1, true);
+        model.max(maximumColor, colors).post();
+        model.setSeed(solverSeed);
+        Solver solver = model.getSolver();
+        switch (searchStrategy) {
+            case "input_order_lb":
+                solver.setSearch(Search.inputOrderLBSearch(colors));
+                break;
+            case "min_dom_lb":
+                solver.setSearch(Search.minDomLBSearch(colors));
+                break;
+            case "dom_over_wdeg":
+                solver.setSearch(Search.domOverWDegSearch(colors));
+                break;
+            case "activity_based":
+                solver.setSearch(Search.activityBasedSearch(colors));
+                break;
+            default:
+                throw new IllegalArgumentException("unsupported search_strategy: " + searchStrategy);
+        }
+        solver.limitTime((long) Math.ceil(budgetSec * 1000.0));
+        long cpuStart = processCpuTime();
+        Solution solution = solver.findOptimalSolution(maximumColor, false);
+        long cpuEnd = processCpuTime();
+        boolean hasSolution = solution != null;
+        boolean timedOut = solver.isStopCriterionMet();
+        String termination = hasSolution && !timedOut
+            ? "optimal"
+            : timedOut ? "time_limit" : "other";
+        String solverStatus = hasSolution && !timedOut
+            ? "Optimal"
+            : timedOut ? "Time limit" : "No solution";
+        String cpuTime = cpuStart >= 0 && cpuEnd >= cpuStart
+            ? Double.toString((cpuEnd - cpuStart) / 1_000_000_000.0)
+            : "null";
+        String objective = hasSolution
+            ? Integer.toString(solution.getIntVal(maximumColor) + 1)
+            : "null";
+        String solutionJson = hasSolution
+            ? "{\"colors\":" + colorsJson(solution, colors) + "}"
+            : "{}";
+        System.out.println(
+            "{\"valid\":" + hasSolution
+                + ",\"has_solution\":" + hasSolution
+                + ",\"objective\":" + objective
+                + ",\"solver_status\":\"" + solverStatus + "\""
+                + ",\"solver_termination\":\"" + termination + "\""
+                + ",\"solver_runtime_sec\":" + solver.getTimeCount()
+                + ",\"cpu_time_sec\":" + cpuTime
+                + ",\"nodes\":" + solver.getNodeCount()
+                + ",\"effective_parameters\":{\"search_strategy\":\""
+                + searchStrategy + "\"}"
+                + ",\"solution\":" + solutionJson + "}"
+        );
+    }
+
     public static void main(String[] args) throws IOException {
         if (args.length < 4 || args.length > 5) {
             throw new IllegalArgumentException(
@@ -113,6 +202,10 @@ public final class ExactSolverRunner {
         String parameters = args.length == 5 ? args[4] : "{}";
         String searchStrategy = stringField(parameters, "search_strategy", "input_order_lb");
         String instance = Files.readString(instancePath);
+        if (stringField(instance, "problem_kind", "bin_packing").equals("graph_coloring")) {
+            runGraphColoring(instance, solverSeed, budgetSec, searchStrategy);
+            return;
+        }
         int capacity = integerField(instance, "capacity");
         int[] originalWeights = integerArray(instance, "weights");
         if (originalWeights.length == 0) {

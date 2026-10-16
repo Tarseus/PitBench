@@ -17,8 +17,8 @@ repository:
   clone_url: https://github.com/VROOM-Project/vroom.git
   plugin: pitbench.repositories.plugins:VroomRepositoryPlugin
   editable_paths: [src, include, bin, obj]
-  agent_image: sha256:c778639d3d18ef94faddd7b5b578ce837df9be9e86e6b4b4b76a1abbedb60955
-  judge_image: sha256:c778639d3d18ef94faddd7b5b578ce837df9be9e86e6b4b4b76a1abbedb60955
+  agent_image: sha256:5abcf49eb7e3de79e8ec90b8481816bc6946497430249756f329c50a47218cec
+  judge_image: sha256:5abcf49eb7e3de79e8ec90b8481816bc6946497430249756f329c50a47218cec
 oracle:
     kind: best_known_solution
     source: private://calibration/cvrplib_x/oracle.yaml
@@ -26,7 +26,7 @@ oracle:
     objective_sense: minimize
 evaluation:
   performance_protocol: heuristic_fixed_budget
-  operational_reliability: true
+  operational_reliability: false
   budgets_sec: [1.0, 5.0, 10.0]
   primary_budget_sec: 10.0
   solver_seeds: [0]

@@ -150,11 +150,15 @@ def test_choco_builds_official_source_and_generic_jvm_adapter() -> None:
     validation = plugin.build_commands(BuildKind.VALIDATION)
     performance = plugin.build_commands(BuildKind.PERFORMANCE)
 
-    assert validation[0] == performance[0] == CommandSpec(
-        argv=["mkdir", "-p", "/tmp/choco-maven"]
+    assert (
+        validation[0]
+        == performance[0]
+        == CommandSpec(argv=["mkdir", "-p", "/tmp/choco-maven"])
     )
-    assert validation[1] == performance[1] == CommandSpec(
-        argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/choco-maven"]
+    assert (
+        validation[1]
+        == performance[1]
+        == CommandSpec(argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/choco-maven"])
     )
     assert validation[2] == CommandSpec(
         argv=["mvn", "-q", "package", "-DskipTests"],
@@ -206,7 +210,7 @@ def test_vroom_build_uses_its_source_makefile_without_replacing_flags() -> None:
                 "-lc",
                 "cd src && test -f structures/typedefs.h && exec make -j1 "
                 '"CXXFLAGS=-MMD -MP -I. -Isrc -std=c++20 -Wextra -Wpedantic -Wall '
-                '-O3 -DASIO_STANDALONE -DUSE_ROUTING=true -DNDEBUG '
+                "-O3 -DASIO_STANDALONE -DUSE_ROUTING=true -DNDEBUG "
                 '-D USE_LIBGLPK=true -O1 -g -fsanitize=address,undefined" 2>&1',
             ]
         )
@@ -218,7 +222,7 @@ def test_vroom_build_uses_its_source_makefile_without_replacing_flags() -> None:
                 "-lc",
                 "cd src && test -f structures/typedefs.h && exec make -j1 "
                 '"CXXFLAGS=-MMD -MP -I. -Isrc -std=c++20 -Wextra -Wpedantic -Wall '
-                '-O3 -DASIO_STANDALONE -DUSE_ROUTING=true -DNDEBUG '
+                "-O3 -DASIO_STANDALONE -DUSE_ROUTING=true -DNDEBUG "
                 '-D USE_LIBGLPK=true" 2>&1',
             ]
         )
@@ -310,7 +314,9 @@ def test_ortools_runner_uses_the_built_native_library_path(
 
     def run(command, **kwargs):
         captured["command"] = command
-        return SimpleNamespace(returncode=0, stdout=json.dumps({"valid": True}), stderr="")
+        return SimpleNamespace(
+            returncode=0, stdout=json.dumps({"valid": True}), stderr=""
+        )
 
     monkeypatch.setattr(
         sys,
@@ -321,7 +327,7 @@ def test_ortools_runner_uses_the_built_native_library_path(
                     "instance_path": "/instances/model.pb",
                     "solver_seed": 17,
                     "budget_sec": 10.0,
-                    "threads": 8,
+                    "threads": 1,
                     "parameters": {"cp_model_presolve": True},
                 }
             )

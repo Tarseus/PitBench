@@ -23,9 +23,11 @@ from pitbench.cli.main import (
     _normal_metric_coverage,
 )
 from pitbench.evaluator.collection import AnchorCollection
-from pitbench.evaluator.docker_judge import DockerJudge
+from pitbench.evaluator.docker_judge import DockerJudge, judge_harness_sha256
 from pitbench.evaluator.evaluator import (
     PitBenchEvaluator,
+    _base_cache_is_complete,
+    _base_cache_path,
     _checkpoint_observations_if_complete,
     _default_judge_cpus,
     _default_judge_parallel_runs,
@@ -37,10 +39,12 @@ from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.instances.generate import (
+    first_fit_decreasing_packing,
     materialize_generated_instance_set,
     prepare_cp_sat_job_shop_panel,
     prepare_trusted_optimum_oracle,
 )
+from pitbench.metrics.performance_report import PerformanceClassification
 from pitbench.problem_families.base import (
     ProblemFamilyPlugin,
     ProblemFamilyRegistry,
@@ -71,6 +75,7 @@ from pitbench.schema.task import (
     PerformanceProtocol,
     PitBenchTask,
 )
+from pitbench.tasks import TaskCatalog, TaskRecord, TaskValidationError
 
 # Tests consolidated from tests/unit/pitbench/test_judge_failures.py
 
@@ -282,6 +287,24 @@ def test_primary_budget_must_belong_to_evaluation_budgets() -> None:
         match="primary budget must belong to evaluation budgets",
     ):
         PitBenchTask.model_validate(payload)
+
+
+def test_current_task_catalog_rejects_multithreaded_solver_runs() -> None:
+    task = PitBenchTask.from_yaml(
+        ROOT / "configs/tasks/ortools_cp_sat_solve_v9_15.yaml"
+    )
+    payload = task.model_dump()
+    payload["evaluation"]["threads"] = 8
+
+    historical_task = PitBenchTask.model_validate(payload)
+    with pytest.raises(
+        TaskValidationError, match="current tasks require one solver thread"
+    ):
+        TaskCatalog(ROOT).validate(
+            TaskRecord(
+                ROOT / "configs/tasks/ortools_cp_sat_solve_v9_15.yaml", historical_task
+            )
+        )
 
 
 def test_removed_performance_decision_is_rejected() -> None:
@@ -771,6 +794,26 @@ def test_scheduling_trusted_optimum_verifies_integer_model_and_objective(
     assert result.objective == objective == verifier.record.optimal_objective
     assert "General" in instance_path.read_text()
 
+    positive_index = next(index for index, start in enumerate(starts) if start > 0)
+    positive_start = starts[positive_index]
+    near_integer = raw_solution.replace(
+        f"Objective {objective}", f"Objective {objective}.0000000000002"
+    ).replace(
+        f"\ns{positive_index} {positive_start}\n",
+        f"\ns{positive_index} {positive_start}.0000000000002\n",
+    )
+    solution_path.write_text(json.dumps({"raw_solution": near_integer}))
+    near_integer_result = verifier.verify(instance_path, solution_path)
+    assert near_integer_result.feasible is True
+    assert near_integer_result.objective == objective
+
+    outside_tolerance = raw_solution.replace(
+        f"\ns{positive_index} {positive_start}\n",
+        f"\ns{positive_index} {positive_start}.01\n",
+    )
+    solution_path.write_text(json.dumps({"raw_solution": outside_tolerance}))
+    assert verifier.verify(instance_path, solution_path).feasible is False
+
     overlapping = raw_solution.replace(
         next(f"s{index} {start}" for index, start in enumerate(starts) if start > 0),
         next(f"s{index} 0" for index, start in enumerate(starts) if start > 0),
@@ -810,6 +853,85 @@ def test_bin_packing_trusted_optimum_verifies_capacity_certificate(
     hash_mismatch = verifier.verify(instance_path, verifier.reference_solution_path)
     assert hash_mismatch.feasible is False
     assert hash_mismatch.infrastructure_error is True
+
+
+def test_bin_packing_trusted_optimum_accepts_hash_bound_external_proof(
+    tmp_path: Path,
+) -> None:
+    private_root = tmp_path / "private"
+    private_root.mkdir()
+    config_path = tmp_path / "instance-set.yaml"
+    config = {
+        "schema_version": "1.0",
+        "visibility": "judge",
+        "format": "normalized_bin_packing_json",
+        "generator": {
+            "kind": "bin_packing",
+            "count": 1,
+            "items": [50],
+            "capacity": 100,
+            "weight_distribution": "uniform_integer",
+            "selected_instance_seeds": [60118],
+            "randomness": {"instance_seed": 60110},
+        },
+    }
+    config_path.write_text(yaml.safe_dump(config))
+    instance_path = materialize_generated_instance_set(
+        config,
+        tmp_path / "instances",
+        expected_visibility="judge",
+        stem_prefix="judge_id",
+    )[0]
+    instance = json.loads(instance_path.read_text())
+    bins = first_fit_decreasing_packing(instance["weights"], instance["capacity"])
+    proof_commit = "a" * 40
+    proof = {
+        "instance_sha256": hashlib.sha256(instance_path.read_bytes()).hexdigest(),
+        "solver_commit": proof_commit,
+        "adapter_source_sha256": "b" * 64,
+        "solver_threads": 1,
+        "solver_seed": 0,
+        "budget_sec": 10,
+        "status": "OPTIMAL",
+        "objective": len(bins),
+        "best_bound": float(len(bins)),
+        "bins": bins,
+    }
+    proof_dir = private_root / "proofs"
+    proof_dir.mkdir()
+    (proof_dir / "judge_id_0000.proof.json").write_text(json.dumps(proof))
+    payload = prepare_trusted_optimum_oracle(
+        task_config_path=ROOT / "configs/tasks/choco_v6_0_1.yaml",
+        instance_set_name="judge_id",
+        instance_set_config_path=config_path,
+        private_root=private_root,
+        output_path=private_root / "oracle.yaml",
+        reference_solution_dir=private_root / "references",
+        bin_packing_proof_dir=proof_dir,
+        proof_solver_commit=proof_commit,
+    )
+    record = TrustedOptimumOracle.model_validate(payload).records[0]
+    reference_path = private_root / record.reference_solution_uri.removeprefix(
+        "private://"
+    )
+    verifier = TrustedOptimumFamily(record, reference_path)
+    assert verifier.verify(instance_path, reference_path).feasible is True
+    assert record.optimality_basis["kind"] == "independent_solver_optimal"
+
+    altered_proof = {**proof, "instance_sha256": "0" * 64}
+    altered_record = record.model_copy(
+        update={
+            "optimality_basis": {
+                **record.optimality_basis,
+                "proof": altered_proof,
+            }
+        }
+    )
+    invalid = TrustedOptimumFamily(altered_record, reference_path).verify(
+        instance_path, reference_path
+    )
+    assert invalid.feasible is False
+    assert invalid.infrastructure_error is True
 
 
 def test_cp_family_verifies_public_normalized_bin_packing_without_private_verifier(
@@ -1480,7 +1602,7 @@ def test_docker_judge_failure_reports_last_progress_and_retained_observations(
     assert str(observations) in message
 
 
-def test_limited_judge_run_keeps_the_complete_reliability_suite(tmp_path, monkeypatch):
+def test_limited_judge_run_omits_retired_reliability_suite(tmp_path, monkeypatch):
     from pitbench.evaluator import runner
 
     received = {}
@@ -1521,7 +1643,7 @@ def test_limited_judge_run_keeps_the_complete_reliability_suite(tmp_path, monkey
     runner.main()
 
     assert received["instances_per_instance_set"] == 1
-    assert len(received["additional_cases"]) == 4
+    assert received["additional_cases"] == []
 
 
 def test_driver_preserves_inner_timeout_reason(tmp_path, monkeypatch):
@@ -1642,6 +1764,7 @@ def test_highs_time_limit_does_not_export_fractional_relaxation(tmp_path, monkey
     result = json.loads(output.read_text())
     assert result["solver_termination"] == "time_limit"
     assert result["has_solution"] is False
+    assert result["valid"] is False
     assert not output.with_suffix(".solution.json").exists()
 
 
@@ -1665,9 +1788,83 @@ def test_default_judge_parallel_runs_and_cpus():
         assert _default_judge_cpus(1, mock_task) == 8.0
 
 
+def test_cp_sat_uses_one_solver_thread_with_parallel_judge_processes():
+    task = PitBenchTask.from_yaml(
+        ROOT / "configs/tasks/ortools_cp_sat_solve_v9_15.yaml"
+    )
+    assert task.evaluation.threads == 1
+    with patch("os.sched_getaffinity", return_value=set(range(12))):
+        assert _default_judge_parallel_runs(task) == 10
+
+
+def test_base_cache_rejects_observations_from_other_thread_protocol(tmp_path: Path):
+    task = Mock()
+    task.task_id = "test_task"
+    task.evaluation.threads = 1
+    task.evaluation.seed_robustness = None
+    task.evaluation.solver_seeds = [7]
+    task.evaluation.budgets_sec = [5.0]
+    task.evaluation.representation_robustness = None
+    task.instance_sets = [SimpleNamespace(name="judge_id", kind="judge_id", size=1)]
+    observation = RunObservation(
+        task_id=task.task_id,
+        code_state=CodeState.BASE,
+        instance_set="judge_id",
+        instance_id="inst_1",
+        budget_sec=5.0,
+        solver_seed=7,
+        threads=8,
+        status=RunStatus.COMPLETED,
+        valid=True,
+    )
+    assert not _base_cache_is_complete(task, [observation], tmp_path)
+    assert _base_cache_is_complete(
+        task, [observation.model_copy(update={"threads": 1})], tmp_path
+    )
+
+
+def test_base_cache_path_changes_with_task_config_and_judge_image(tmp_path: Path):
+    task = SimpleNamespace(task_id="test_task", evaluation=SimpleNamespace(threads=1))
+    task_config = tmp_path / "task.yaml"
+    task_config.write_text("old panel")
+    first = _base_cache_path(tmp_path, task, task_config, "sha256:" + "a" * 64)
+    task_config.write_text("new panel")
+    changed_panel = _base_cache_path(tmp_path, task, task_config, "sha256:" + "a" * 64)
+    changed_image = _base_cache_path(tmp_path, task, task_config, "sha256:" + "b" * 64)
+    with patch(
+        "pitbench.evaluator.evaluator.judge_harness_sha256",
+        return_value="f" * 64,
+    ):
+        changed_harness = _base_cache_path(
+            tmp_path, task, task_config, "sha256:" + "b" * 64
+        )
+    assert first != changed_panel != changed_image
+    assert changed_image != changed_harness
+    assert first.name != "test_task-threads-1_base.parquet"
+
+
+def test_judge_harness_fingerprint_changes_with_mounted_code(tmp_path: Path) -> None:
+    source = tmp_path / "pitbench" / "evaluator" / "runner.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("value = 1\n")
+    adapter = tmp_path / "adapters" / "pitbench" / "adapter.py"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text("value = 1\n")
+
+    first = judge_harness_sha256(tmp_path)
+    adapter.write_text("value = 2\n")
+    assert judge_harness_sha256(tmp_path) != first
+
+
 def test_evaluator_uses_base_cache_when_available(tmp_path: Path):
     task_id = "test_task"
-    base_cache_file = tmp_path / "cache" / f"{task_id}_base.parquet"
+    (tmp_path / "task.yaml").write_text("task")
+    base_cache_file = (
+        tmp_path
+        / "cache"
+        / f"{task_id}-threads-1-task-{'0' * 16}-image-{'0' * 16}-"
+        f"harness-{'0' * 16}_base.parquet"
+    )
     base_obs = [
         RunObservation(
             task_id=task_id,
@@ -1759,7 +1956,11 @@ def test_evaluator_uses_base_cache_when_available(tmp_path: Path):
 def test_evaluator_saves_base_cache_on_first_run(tmp_path: Path):
     task_id = "test_task_first_run"
     cache_dir = tmp_path / "cache"
-    base_cache_file = cache_dir / f"{task_id}_base.parquet"
+    (tmp_path / "task.yaml").write_text("task")
+    base_cache_file = cache_dir / (
+        f"{task_id}-threads-1-task-{'0' * 16}-image-{'0' * 16}-"
+        f"harness-{'0' * 16}_base.parquet"
+    )
 
     all_obs = [
         RunObservation(
@@ -1841,6 +2042,118 @@ def test_evaluator_saves_base_cache_on_first_run(tmp_path: Path):
         cached = ObservationStore.read(base_cache_file)
         assert len(cached) == 1
         assert cached[0].code_state == CodeState.BASE
+
+
+def test_directional_performance_requires_fresh_opposite_order_confirmation(
+    tmp_path: Path,
+) -> None:
+    task_id = "test_task"
+    task_config = tmp_path / "task.yaml"
+    task_config.write_text("test task")
+    patch_path = tmp_path / "candidate.patch"
+    patch_path.write_bytes(b"")
+    task = Mock()
+    task.task_id = task_id
+    task.evaluation.seed_robustness = None
+    task.evaluation.representation_robustness = None
+    task.evaluation.operational_reliability = False
+    task.evaluation.performance_protocol = PerformanceProtocol.HEURISTIC_FIXED_BUDGET
+    task.evaluation.primary_budget_sec = 5.0
+    task.evaluation.budgets_sec = [5.0]
+    task.evaluation.solver_seeds = [1]
+    task.evaluation.threads = 1
+    task.instance_sets = [SimpleNamespace(name="judge_id", size=1)]
+
+    def observation(state: CodeState, gap: float) -> RunObservation:
+        return RunObservation(
+            task_id=task_id,
+            code_state=state,
+            instance_set="judge_id",
+            instance_set_kind="judge_id",
+            instance_id="one",
+            solver_seed=1,
+            budget_sec=5.0,
+            status=RunStatus.COMPLETED,
+            valid=True,
+            normalized_gap=gap,
+        )
+
+    states_seen = []
+
+    class FakeJudge:
+        def __init__(self, **kwargs):
+            self.output_dir = kwargs["output_dir"]
+            self.states = kwargs["code_states"]
+            states_seen.append(self.states)
+
+        def checkpoint_identity(self):
+            return {"code_states": [state.value for state in self.states]}
+
+        def run(self):
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            grid = ExpectedRunGrid(
+                task_id=task_id,
+                runs=[
+                    ExpectedRun(
+                        task_id=task_id,
+                        code_state=state,
+                        instance_set="judge_id",
+                        instance_set_kind="judge_id",
+                        instance_id="one",
+                        solver_seed=1,
+                        budget_sec=5.0,
+                    )
+                    for state in CodeState
+                ],
+            )
+            (self.output_dir / "expected-run-grid.json").write_text(
+                grid.model_dump_json()
+            )
+            agent_gap = (
+                0.2 if self.output_dir.name == "performance-confirmation" else 0.1
+            )
+            return [
+                observation(CodeState.BASE, 0.2),
+                observation(CodeState.AGENT, agent_gap),
+            ]
+
+    request = EvaluationRequest(
+        task_id=task_id,
+        task_path=tmp_path,
+        candidate_patch_path=patch_path,
+        candidate_patch_sha256=hashlib.sha256(b"").hexdigest(),
+        output_dir=tmp_path / "output",
+        agent_name="replay",
+        model_name=None,
+        evaluator_config={
+            "task_config_path": str(task_config),
+            "base_repository": str(tmp_path / "repo"),
+            "private_root": str(tmp_path / "private"),
+            "judge_image": "sha256:" + "a" * 64,
+            "judge_cpus": 12,
+            "judge_parallel_runs": 12,
+            "use_base_cache": False,
+        },
+    )
+    with (
+        patch("pitbench.evaluator.evaluator.PitBenchTask.from_yaml", return_value=task),
+        patch("pitbench.evaluator.evaluator.PitBenchAdapter.validate_repository"),
+        patch("pitbench.evaluator.evaluator.DockerJudge", side_effect=FakeJudge),
+    ):
+        result = PitBenchEvaluator().evaluate(request)
+
+    assert states_seen == [
+        (CodeState.BASE, CodeState.AGENT),
+        (CodeState.AGENT, CodeState.BASE),
+    ]
+    assert result.summary.performance is not None
+    assert result.summary.performance.classification is PerformanceClassification.INCONCLUSIVE
+    assert result.summary.performance.confirmation is not None
+    assert result.summary.performance.confirmation.initial_classification is PerformanceClassification.IMPROVED
+    assert result.summary.performance.confirmation.repeat_classification is PerformanceClassification.INCONCLUSIVE
+    assert result.summary.performance_confirmation_observation_count == 2
+    assert result.artifacts.performance_confirmation_observations is not None
+    assert (request.output_dir / "performance-confirmation" / "report.json").is_file()
 
 
 # Tests consolidated from tests/unit/pitbench/test_collection.py

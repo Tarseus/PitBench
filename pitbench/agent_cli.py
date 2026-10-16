@@ -24,6 +24,39 @@ def _path(environment: str, default: str) -> Path:
     return Path(os.environ.get(environment, default)).resolve()
 
 
+def _runs_root(config: dict[str, Any]) -> Path:
+    configured = _path("PITBENCH_RUNS", "/pitbench/runs")
+
+    def prepare(path: Path) -> Path:
+        path.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=path):
+            pass
+        return path
+
+    try:
+        return prepare(configured)
+    except OSError as configured_error:
+        fallback = (
+            Path(tempfile.gettempdir())
+            / "pitbench-runs"
+            / str(config.get("task_id", "unknown-task"))
+        )
+        try:
+            path = prepare(fallback)
+        except OSError as fallback_error:
+            raise OSError(
+                "PitBench could not write development results to either "
+                f"{configured} ({configured_error}) or fallback {fallback} "
+                f"({fallback_error})"
+            ) from fallback_error
+        print(
+            f"PITBENCH_RUNS is not writable at {configured} "
+            f"({configured_error}); using {path}",
+            file=sys.stderr,
+        )
+        return path
+
+
 def _config() -> dict[str, Any]:
     return json.loads(
         _path("PITBENCH_AGENT_CONFIG", "/pitbench/config.json").read_text()
@@ -183,11 +216,37 @@ def _public_verification(
     if not solution_path.is_file():
         return {"verification": "no_solution", "verified_valid": False}
     family = config["problem_family"]
+    if family == "mip" and instance.suffix.lower() == ".lp":
+        known_hashes = {
+            item.get("sha256")
+            for item in config.get("development_targets", {}).values()
+        }
+        if _sha256(instance) not in known_hashes:
+            return {"verification": "unavailable", "verified_valid": None}
+        from pitbench.problem_families.verification import (
+            MIPFamily,
+            _public_multidimensional_knapsack_data,
+            _public_scheduling_processing_times,
+        )
+
+        if (
+            _public_scheduling_processing_times(instance) is None
+            and _public_multidimensional_knapsack_data(instance) is None
+        ):
+            return {"verification": "unavailable", "verified_valid": None}
+        checked = MIPFamily().verify(instance, solution_path)
+        return {
+            "verification": "independent_public",
+            "verified_valid": checked.feasible,
+            "verified_objective": _finite_number(checked.objective),
+            "verification_detail": checked.detail,
+        }
     if family not in {"cvrp", "cp"} or instance.suffix.lower() != ".json":
         return {"verification": "unavailable", "verified_valid": None}
     from pitbench.problem_families.public_verification import (
         check_bin_packing,
         check_cvrp,
+        check_graph_coloring,
     )
 
     try:
@@ -195,6 +254,8 @@ def _public_verification(
         solution_data = json.loads(solution_path.read_text())
         if family == "cvrp":
             checked = check_cvrp(instance_data, solution_data)
+        elif instance_data.get("problem_kind") == "graph_coloring":
+            checked = check_graph_coloring(instance_data, solution_data)
         else:
             checked = check_bin_packing(
                 solution_data,
@@ -333,12 +394,14 @@ def _matching_base_feedback(
     return None
 
 
-def _run_build_steps(config: dict[str, Any], *, dry_run: bool) -> bool:
+def _run_build_steps(
+    config: dict[str, Any], *, dry_run: bool, runs_root: Path | None = None
+) -> bool:
     commands = config.get("build_commands", [])
     if not commands:
         print("public build commands are unavailable", file=sys.stderr)
         return False
-    log_root = _path("PITBENCH_RUNS", "/pitbench/runs") / "build"
+    log_root = (runs_root or _runs_root(config)) / "build"
     log_root.mkdir(parents=True, exist_ok=True)
     for index, step in enumerate(commands, start=1):
         argv = list(map(str, step["argv"]))
@@ -394,13 +457,13 @@ def _run_one(
     patch_sha256: str | None,
     threads: int | None = None,
     artifacts: dict[str, Any] | None = None,
+    runs_root: Path | None = None,
 ) -> bool:
     threads = threads if threads is not None else config["threads"]
     instance_sha256 = _sha256(instance)
     target_info = _target_for(config, instance, instance_sha256)
     artifacts = artifacts if artifacts is not None else _artifact_identity(config)
-    run_root = _path("PITBENCH_RUNS", "/pitbench/runs")
-    run_root = run_root / label
+    run_root = (runs_root or _runs_root(config)) / label
     run_root.mkdir(parents=True, exist_ok=True)
     output = run_root / (
         f"{instance.stem}-{instance_sha256[:12]}.seed-{seed}."
@@ -415,15 +478,15 @@ def _run_one(
                     "instance_id": target_info["id"],
                     "instance_sha256": instance_sha256,
                     "label": label,
+                    "seed": seed,
+                    "budget_sec": budget,
+                    "threads": threads,
                     "command": command,
                 }
             )
         )
         return True
     available, detail = _runner_available(config)
-    if not available:
-        print(f"runner unavailable: {detail}", file=sys.stderr)
-        return False
     for old_path in (
         output,
         output.with_suffix(".solution.json"),
@@ -432,23 +495,41 @@ def _run_one(
         old_path.unlink(missing_ok=True)
     started = time.perf_counter()
     timeout = budget + 60
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=_path("PITBENCH_REPO", "/workspace/repo"),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        print(
-            f"runner timed out after {timeout:g} seconds: {instance.name}",
-            file=sys.stderr,
-        )
-        return False
-    output.with_suffix(".stdout.log").write_text(completed.stdout)
-    output.with_suffix(".stderr.log").write_text(completed.stderr)
+    runner_error: str | None = None
+    if not available:
+        runner_error = f"runner unavailable: {detail}"
+        stdout = ""
+        stderr = ""
+        returncode = None
+    else:
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=_path("PITBENCH_REPO", "/workspace/repo"),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            stdout = completed.stdout
+            stderr = completed.stderr
+            returncode = completed.returncode
+        except subprocess.TimeoutExpired as error:
+            runner_error = f"runner timed out after {timeout:g} seconds"
+            stdout = error.stdout or ""
+            stderr = error.stderr or ""
+            returncode = None
+        except OSError as error:
+            runner_error = f"runner could not start: {error}"
+            stdout = ""
+            stderr = ""
+            returncode = None
+    output.with_suffix(".stdout.log").write_text(
+        stdout.decode(errors="replace") if isinstance(stdout, bytes) else stdout
+    )
+    output.with_suffix(".stderr.log").write_text(
+        stderr.decode(errors="replace") if isinstance(stderr, bytes) else stderr
+    )
     payload = {
         "instance": str(instance),
         "instance_id": target_info["id"],
@@ -463,11 +544,13 @@ def _run_one(
         "artifact_fingerprint": artifacts["fingerprint"],
         "artifact_files": artifacts["files"],
         "artifact_missing": artifacts["missing"],
-        "returncode": completed.returncode,
+        "returncode": returncode,
         "wall_time_sec": time.perf_counter() - started,
         "result": str(output),
     }
-    if output.is_file():
+    if runner_error is not None:
+        payload["result_error"] = runner_error
+    elif output.is_file():
         try:
             result = json.loads(output.read_text())
             target = target_info.get("target")
@@ -505,7 +588,7 @@ def _run_one(
     )
     print(json.dumps(payload))
     return (
-        completed.returncode == 0
+        returncode == 0
         and "result_error" not in payload
         and not (
             payload.get("verification") == "independent_public"
@@ -523,10 +606,18 @@ def bench_command(args: argparse.Namespace) -> int:
         print("base benchmark requires a clean repository", file=sys.stderr)
         return 2
     patch_sha256 = hashlib.sha256(patch).hexdigest() if not args.dry_run else None
-    seed = args.seed if args.seed is not None else config["development_seeds"][0]
-    budget = args.budget if args.budget is not None else config["primary_budget_sec"]
+    seeds = (
+        config["development_seeds"]
+        if getattr(args, "all_seeds", False)
+        else [args.seed if args.seed is not None else config["development_seeds"][0]]
+    )
+    budgets = (
+        config["budgets_sec"]
+        if getattr(args, "all_budgets", False)
+        else [args.budget if args.budget is not None else config["primary_budget_sec"]]
+    )
     threads = args.threads if args.threads is not None else config["threads"]
-    if not math.isfinite(budget) or budget <= 0:
+    if any(not math.isfinite(budget) or budget <= 0 for budget in budgets):
         raise SystemExit("budget must be a positive finite number")
     if threads < 1:
         raise SystemExit("threads must be positive")
@@ -534,7 +625,10 @@ def bench_command(args: argparse.Namespace) -> int:
     if not instances:
         print("no visible development instances are mounted", file=sys.stderr)
         return 2
-    if args.build and not _run_build_steps(config, dry_run=args.dry_run):
+    runs_root = _runs_root(config)
+    if args.build and not _run_build_steps(
+        config, dry_run=args.dry_run, runs_root=runs_root
+    ):
         return 1
     artifacts = _artifact_identity(config)
     succeeded = [
@@ -548,8 +642,11 @@ def bench_command(args: argparse.Namespace) -> int:
             patch_sha256,
             threads,
             artifacts,
+            runs_root,
         )
         for instance in instances
+        for seed in seeds
+        for budget in budgets
     ]
     return 0 if all(succeeded) else 1
 
@@ -712,13 +809,21 @@ def _run_options(parser: argparse.ArgumentParser, *, instance_required: bool) ->
         required=instance_required,
         help="visible instance name/ID or any readable instance file; omit for all visible instances",
     )
-    parser.add_argument(
+    seed_selection = parser.add_mutually_exclusive_group()
+    seed_selection.add_argument(
         "--seed", type=int, help="solver seed; defaults to first development seed"
     )
-    parser.add_argument(
+    seed_selection.add_argument(
+        "--all-seeds", action="store_true", help="run every declared development seed"
+    )
+    budget_selection = parser.add_mutually_exclusive_group()
+    budget_selection.add_argument(
         "--budget",
         type=float,
         help="positive time budget in seconds; defaults to primary budget",
+    )
+    budget_selection.add_argument(
+        "--all-budgets", action="store_true", help="run every declared budget"
     )
     parser.add_argument(
         "--threads", type=int, help="solver threads; defaults to task setting"

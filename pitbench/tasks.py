@@ -62,6 +62,11 @@ class TaskCatalog:
             raise TaskValidationError(
                 f"{task.task_id}: release commit must be a full SHA-1"
             )
+        if task.evaluation.threads != 1:
+            raise TaskValidationError(
+                f"{task.task_id}: current tasks require one solver thread per run; "
+                "the judge parallelizes independent processes"
+            )
         RepositoryPluginRegistry.load(task.repository.plugin)
         ProblemFamilyRegistry.load(task.problem_family)
 
@@ -106,6 +111,12 @@ class TaskCatalog:
                             item["bks_solution_file"],
                             item["bks_solution_file_sha256"],
                         )
+                        if "proof_file" in item:
+                            verify_public_file(
+                                path.parent,
+                                item["proof_file"],
+                                item["proof_file_sha256"],
+                            )
             elif not instance_set.instance_set_config.startswith("private://"):
                 raise TaskValidationError(
                     f"{task.task_id}: judge instance set must use private:// storage"

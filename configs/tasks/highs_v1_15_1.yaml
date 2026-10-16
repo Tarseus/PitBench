@@ -17,16 +17,16 @@ repository:
   clone_url: https://github.com/ERGO-Code/HiGHS.git
   plugin: pitbench.repositories.plugins:HighsRepositoryPlugin
   editable_paths: [highs, build]
-  agent_image: sha256:cdac06326fc876dec1a1f689d18e8b3c9e9082c61707f2d8ead0a1efaa8432c7
+  agent_image: pitbench-highs:single-worker
   judge_image: sha256:cdac06326fc876dec1a1f689d18e8b3c9e9082c61707f2d8ead0a1efaa8432c7
 oracle:
   kind: known_optimum
-  source: private://oracles/highs_v1_15_1.yaml
-  source_sha256: 5a9aa3444727a99bb7f4b1fd0d6e4db8eee2bf6e69cbcf3f2e0c11726c24565f
+  source: private://oracles/highs_v1_15_1_20261014.yaml
+  source_sha256: da096adcf0d14c3c1808f3aaea738889a938318d9634dd764428e1cceaf6ca48
   objective_sense: minimize
 evaluation:
   performance_protocol: exact_verified_solve
-  operational_reliability: true
+  operational_reliability: false
   budgets_sec: [10.0, 30.0]
   primary_budget_sec: 30.0
   seed_robustness:
@@ -43,10 +43,12 @@ instance_sets:
   - name: agent_dev
     kind: agent_dev
     instance_set_config: configs/instance_sets/highs_v1_15_1_dev.yaml
+    instance_set_config_sha256: f0dcec3ef24429e0810377130a4a349eb61194018fed56bd1797b2972a45d729
     size: 5
     randomness: {instance_seed: 115100}
   - name: judge_id
     kind: judge_id
-    instance_set_config: private://hidden_instances/highs_v1_15_1/judge_id.yaml
+    instance_set_config: private://hidden_instances/highs_v1_15_1/judge_id_20261014.yaml
+    instance_set_config_sha256: 53b4c4231afb275d7e70316c243f9423ab0f74d619f490565f0b539853d3bad8
     size: 30
     randomness: {instance_seed: 115110}

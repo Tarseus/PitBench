@@ -24,6 +24,7 @@ from pitbench.metrics.performance_report import (
     ExactRunOutcome,
     ExactRunOutcomeKind,
     PerformanceClassification,
+    adjudicate_performance_confirmation,
     compute_exact_performance_report,
     compute_exact_run_outcome,
     compute_performance_report,
@@ -295,6 +296,68 @@ def test_exact_solved_coverage_dominates_favorable_penalized_runtime() -> None:
     assert report.primary.agent.penalized_average_runtime_sec < (
         report.primary.base.penalized_average_runtime_sec
     )
+
+
+def test_one_lost_exact_solve_in_full_panel_is_inconclusive() -> None:
+    instances = tuple(f"i{index}" for index in range(30))
+    seeds = tuple(range(30))
+    grid = exact_expected_grid(instance_ids=instances, solver_seeds=seeds)
+    observations = [
+        exact_panel_observation(
+            state,
+            instance,
+            seed,
+            cpu_time_sec=5 if state is CodeState.BASE else 1,
+            solved=not (state is CodeState.AGENT and instance == "i0" and seed == 0),
+        )
+        for instance in instances
+        for seed in seeds
+        for state in CodeState
+    ]
+
+    report = compute_exact_performance_report(
+        observations,
+        primary_budget_sec=10,
+        budgets_sec=(10,),
+        expected_run_grid=grid,
+    )
+
+    assert report.primary.base.solved_run_count == 900
+    assert report.primary.agent.solved_run_count == 899
+    assert report.primary.paired.mean_verified_solved_coverage_reduction == pytest.approx(
+        -1 / 900
+    )
+    interval = report.primary.paired.mean_verified_solved_coverage_reduction_ci95
+    assert interval is not None
+    assert interval.lower < 0 == interval.upper
+    assert report.classification is PerformanceClassification.INCONCLUSIVE
+
+
+def test_exact_coverage_regression_across_instances_remains_decisive() -> None:
+    instances = tuple(f"i{index}" for index in range(30))
+    grid = exact_expected_grid(instance_ids=instances)
+    observations = [
+        exact_panel_observation(
+            state,
+            instance,
+            0,
+            cpu_time_sec=5 if state is CodeState.BASE else 1,
+            solved=not (state is CodeState.AGENT and instance in instances[:5]),
+        )
+        for instance in instances
+        for state in CodeState
+    ]
+
+    report = compute_exact_performance_report(
+        observations,
+        primary_budget_sec=10,
+        budgets_sec=(10,),
+        expected_run_grid=grid,
+    )
+
+    interval = report.primary.paired.mean_verified_solved_coverage_reduction_ci95
+    assert interval is not None and interval.upper < 0
+    assert report.classification is PerformanceClassification.REGRESSED
 
 
 def test_equal_exact_coverage_uses_paired_penalized_runtime_interval() -> None:
@@ -569,6 +632,7 @@ def test_performance_report_pairs_seeds_and_bootstraps_instances() -> None:
     payload = report.model_dump()
     assert set(payload) == {
         "classification",
+        "confirmation",
         "primary_budget_sec",
         "budgets_sec",
         "primary",
@@ -585,6 +649,37 @@ def test_performance_report_pairs_seeds_and_bootstraps_instances() -> None:
         "mean_gap_reduction",
         "mean_gap_reduction_ci95",
     }
+
+
+def test_independent_performance_confirmation_requires_same_direction() -> None:
+    initial = compute_performance_report(
+        performance_paired_panel(), primary_budget_sec=5
+    )
+    assert initial.classification is PerformanceClassification.IMPROVED
+    uncertain_repeat = initial.model_copy(
+        update={"classification": PerformanceClassification.INCONCLUSIVE}
+    )
+
+    unresolved = adjudicate_performance_confirmation(
+        initial,
+        uncertain_repeat,
+        repeat_observation_count=8,
+        repeat_valid_observation_count=8,
+    )
+    assert unresolved.classification is PerformanceClassification.INCONCLUSIVE
+    assert unresolved.confirmation is not None
+    assert unresolved.confirmation.initial_classification is PerformanceClassification.IMPROVED
+    assert unresolved.confirmation.repeat_classification is PerformanceClassification.INCONCLUSIVE
+    assert not unresolved.confirmation.confirmed
+
+    confirmed = adjudicate_performance_confirmation(
+        initial,
+        initial,
+        repeat_observation_count=8,
+        repeat_valid_observation_count=8,
+    )
+    assert confirmed.classification is PerformanceClassification.IMPROVED
+    assert confirmed.confirmation is not None and confirmed.confirmation.confirmed
 
 
 def test_invalid_runs_do_not_change_performance_estimates() -> None:
