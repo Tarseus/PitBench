@@ -172,9 +172,17 @@ diagnostic for order and resource sensitivity.
 
 - [Benchmark motivation and full evidence discussion](benchmark-motivation.md)
 - [Noise-control protocol and calibration evidence](evaluation-noise-calibration.md)
+- [Solver-release positive-control validation](release-control-validation.md)
+
+The release-control study found that the existing Performance rule detects a
+repeatable PyVRP v0.13.4 → v0.14.0 average quality gain on an untouched
+38-instance panel under a fixed 10-second budget. That supports metric
+sensitivity. Because it compares complete release images rather than the same
+Agent patch under two evaluation protocols, it does not close the distinct-value
+claim audited above.
 
 The local raw replay tables, historical cohort re-score, matched-test summary,
 and order-reversed HiGHS observations are retained under
 `report/evaluation-disagreement-calibrated-20261016/`. The repository's
 `.gitignore` excludes `report/`; the findings and test summary needed to
-understand the claim are also recorded in the two linked documents above.
+understand the claim are also recorded in the linked documents above.

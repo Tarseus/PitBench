@@ -38,7 +38,7 @@ the solver's actual outputs.
 
 ## 🎯 Why Combinatorial Optimization (CO)?
 
-**Combinatorial Optimization (CO)** is the algorithmic backbone of modern logistics, supply chains, manufacturing, and scheduling. Developing and accelerating high-performance solvers requires mathematical insight, intricate search heuristics, and low-level systems programming. PitBench evaluates one pinned release per solver across five repositories and seven current solver–problem tasks. Its research motivation is to test whether ordinary coding-agent evaluations misjudge solver modifications; see [Benchmark motivation](docs/benchmark-motivation.md) and the [noise-calibration protocol](docs/evaluation-noise-calibration.md).
+**Combinatorial Optimization (CO)** is the algorithmic backbone of modern logistics, supply chains, manufacturing, and scheduling. Developing and accelerating high-performance solvers requires mathematical insight, intricate search heuristics, and low-level systems programming. PitBench evaluates one pinned release per solver across five repositories and seven current solver–problem tasks. Its research motivation is to test whether ordinary coding-agent evaluations misjudge solver modifications; see [Benchmark motivation](docs/benchmark-motivation.md), the [noise-calibration protocol](docs/evaluation-noise-calibration.md), and the [release-control validation](docs/release-control-validation.md).
 
 Unlike general repository-level coding benchmarks, solver optimization must preserve problem semantics while evaluating a randomized quality-time process:
 
@@ -114,8 +114,8 @@ Unlike general repository-level coding benchmarks, solver optimization must pres
 | `choco_graph_coloring_v6_0_1` | **Choco** v6.0.1 | Graph coloring | Java | Verified optimal coverage and solve time |
 | `ortools_cp_sat_solve_v9_15` | **OR-Tools CP-SAT** v9.15 | Job-shop scheduling | C++ / Python | Verified optimal coverage and solve time |
 
-Older PyVRP task definitions are retained only to reproduce historical runs;
-the current panel uses v0.14.0 alone.
+Historical PyVRP release experiments remain in the local research archive;
+the current task catalog uses v0.14.0 alone.
 
 ---
 

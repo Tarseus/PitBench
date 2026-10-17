@@ -188,3 +188,20 @@ retained in
 The new confirmation gate protects future public time-only directions. A few
 null panels cannot estimate a universal false-positive probability or freeze
 the metric.
+
+## Release-level positive sensitivity control, 2026-10-17
+
+The [predeclared PyVRP release control](../../release-control-validation.md)
+compared v0.13.4 with v0.14.0 on 38 untouched instances, five hidden seeds,
+and the task's 10-second primary budget. All 760 solver runs were independently
+valid. Mean paired normalized-gap benefit was +0.1884 and +0.1958 percentage
+points in two opposite-order rounds; both instance-bootstrap intervals had
+positive lower bounds. The existing Performance code returned `improved` in
+both rounds and its confirmation gate retained that direction. Same-version
+round-to-round drift was much smaller. Fourteen of 38 instances regressed, so
+the result is a stable aggregate release effect, not universal dominance.
+
+This confirms that the metric can detect one meaningful release-level signal
+under a reduced five-seed grid. It does not resolve the Choco optimum-evidence
+review, estimate a benchmark-wide false-positive rate, or replace a complete
+30-seed Agent-patch panel. Performance remains an M6 freeze candidate.
