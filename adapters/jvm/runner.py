@@ -12,11 +12,13 @@ from pathlib import Path
 
 
 def _choco_assembly(repository: Path) -> Path:
-    assemblies = sorted(
-        (repository / "solver" / "target").glob(
-            "choco-solver-*-jar-with-dependencies.jar"
-        )
-    )
+    assemblies = []
+    for target in (repository / "solver" / "target", repository / "target"):
+        if not target.is_dir():
+            continue
+        assemblies.extend(target.glob("choco-solver-*-jar-with-dependencies.jar"))
+        assemblies.extend(target.glob("choco-solver-*-with-dependencies.jar"))
+    assemblies = sorted({path.resolve() for path in assemblies})
     if len(assemblies) != 1:
         raise RuntimeError(
             f"expected one Choco assembly, found {[path.name for path in assemblies]}"
@@ -67,6 +69,11 @@ def _ortools_classpath(repository: Path, output: Path) -> str:
 
 
 def _adapter_output(repository: Path, solver: str) -> Path:
+    if solver == "choco":
+        target = repository / "solver"
+        if (target / "pom.xml").is_file():
+            return target / "target" / "pitbench-adapter"
+        return repository / "target" / "pitbench-adapter"
     if solver == "ortools_cp_sat":
         return repository / "build" / "pitbench-adapter"
     return repository / "solver" / "target" / "pitbench-adapter"
@@ -114,8 +121,9 @@ def _repository_commit(repository: Path) -> str | None:
 def _solver_identity(repository: Path, solver: str) -> dict:
     if solver == "choco":
         assembly = _choco_assembly(repository)
-        match = re.search(
-            r"choco-solver-([0-9][^-]+)-jar-with-dependencies", assembly.name
+        match = re.fullmatch(
+            r"choco-solver-(.+?)-(?:jar-)?with-dependencies\.jar",
+            assembly.name,
         )
         if match is None:
             raise RuntimeError(f"cannot determine Choco version from {assembly.name}")
@@ -146,6 +154,7 @@ import com.google.ortools.sat.CpModelProto;
 import com.google.ortools.sat.ConstraintProto;
 import com.google.ortools.sat.CpSolver;
 import com.google.ortools.sat.CpSolverResponse;
+import com.google.ortools.sat.CpSolverSolutionCallback;
 import com.google.ortools.sat.CpSolverStatus;
 import com.google.ortools.sat.IntVar;
 import com.google.ortools.sat.IntervalVar;
@@ -632,7 +641,28 @@ public final class OrToolsCpSatRunner {
     solver.getParameters().setLinearizationLevel(linearizationLevel);
     solver.getParameters().setSymmetryLevel(symmetryLevel);
     solver.getParameters().setSearchBranching(branching);
-    CpSolverStatus status = solver.solve(model);
+    List<String> trajectory = new ArrayList<>();
+    long solveStarted = System.nanoTime();
+    solver.setBestBoundCallback(bound -> {
+      if (Double.isFinite(bound)) {
+        synchronized (trajectory) {
+          trajectory.add("{\\\"event\\\":\\\"bound\\\",\\\"time_sec\\\":"
+              + (System.nanoTime() - solveStarted) / 1_000_000_000.0
+              + ",\\\"dual_bound\\\":" + bound + "}");
+        }
+      }
+    });
+    CpSolverStatus status = solver.solve(model, new CpSolverSolutionCallback() {
+      @Override
+      public void onSolutionCallback() {
+        synchronized (trajectory) {
+          trajectory.add("{\\\"event\\\":\\\"solution\\\",\\\"time_sec\\\":"
+              + wallTime() + ",\\\"objective\\\":" + objectiveValue()
+              + ",\\\"nodes\\\":" + numBranches()
+              + ",\\\"conflicts\\\":" + numConflicts() + "}");
+        }
+      }
+    });
     CpSolverResponse response = solver.response();
     boolean hasSolution = status == CpSolverStatus.OPTIMAL || status == CpSolverStatus.FEASIBLE;
     String objective = hasSolution && Double.isFinite(response.getObjectiveValue())
@@ -646,6 +676,13 @@ public final class OrToolsCpSatRunner {
     String solution = hasSolution
         ? "{\\\"values\\\":" + jsonLongArray(response) + "}"
         : "{}";
+    trajectory.add("{\\\"event\\\":\\\"final\\\",\\\"time_sec\\\":" + solver.wallTime()
+        + ",\\\"objective\\\":" + objective
+        + ",\\\"dual_bound\\\":"
+        + (Double.isFinite(response.getBestObjectiveBound())
+            ? Double.toString(response.getBestObjectiveBound()) : "null")
+        + ",\\\"nodes\\\":" + response.getNumBranches()
+        + ",\\\"conflicts\\\":" + response.getNumConflicts() + "}");
     System.out.println(
         "{\\\"valid\\\":" + hasSolution
             + ",\\\"has_solution\\\":" + hasSolution
@@ -662,6 +699,7 @@ public final class OrToolsCpSatRunner {
             + ",\\\"symmetry_level\\\":" + solver.getParameters().getSymmetryLevel()
             + ",\\\"search_branching\\\":\\\"" + searchBranching + "\\\"}"
             + ",\\\"solution\\\":" + solution
+            + ",\\\"trajectory\\\":[" + String.join(",", trajectory) + "]"
             + "}");
   }
 }

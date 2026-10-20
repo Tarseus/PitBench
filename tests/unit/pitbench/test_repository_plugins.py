@@ -9,7 +9,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from adapters.jvm.runner import _adapter_source_sha256, _verify_compiled_adapter
+from adapters.jvm.runner import (
+    _adapter_output,
+    _adapter_source_sha256,
+    _choco_assembly,
+    _solver_identity,
+    _verify_compiled_adapter,
+)
 from pitbench.repositories.base import (
     BuildKind,
     CommandSpec,
@@ -19,11 +25,17 @@ from pitbench.repositories.base import (
 )
 from pitbench.repositories.plugins import (
     ChocoRepositoryPlugin,
+    GecodeRepositoryPlugin,
     HighsRepositoryPlugin,
+    PyVRPClassicRepositoryPlugin,
     PyVRPRepositoryPlugin,
 )
 from pitbench.solver_drivers.run import (
+    CbcDriver,
+    GecodeExactDriver,
+    HighsDriver,
     PyVRPDriver,
+    ScipDriver,
     SolverDriver,
     driver_records_trajectory,
 )
@@ -37,14 +49,18 @@ ROOT = Path(__file__).resolve().parents[3]
     ("plugin_name", "driver_name", "class_name", "records_trajectory"),
     [
         ("pyvrp", "pyvrp", "PyVRPRepositoryPlugin", True),
+        ("pyvrp", "pyvrp", "PyVRPDebugOptimizedRepositoryPlugin", True),
         ("vroom", "vroom", "VroomRepositoryPlugin", True),
         ("highs", "highs", "HighsRepositoryPlugin", True),
+        ("scip", "scip", "ScipRepositoryPlugin", True),
+        ("cbc", "cbc", "CbcRepositoryPlugin", True),
         ("choco", "choco", "ChocoRepositoryPlugin", True),
+        ("gecode", "gecode_exact", "GecodeRepositoryPlugin", True),
         (
             "ortools",
             "ortools_cp_sat_exact",
             "OrToolsCpSatExactRepositoryPlugin",
-            False,
+            True,
         ),
     ],
 )
@@ -76,6 +92,54 @@ def test_repository_plugins_resolve_to_runnable_drivers(
     assert completed.returncode == 0, completed.stderr
     assert "--instance" in completed.stdout
     assert "--budget" in completed.stdout
+
+
+def test_fixed_solver_parameters_follow_repository_capability(tmp_path) -> None:
+    parameters = tmp_path / "parameters.json"
+    parameters.write_text('{"search_strategy":"dom_over_wdeg"}\n')
+    run = SolverRunSpec(
+        instance_path=tmp_path / "instance.json",
+        output_path=tmp_path / "result.json",
+        trajectory_path=tmp_path / "trajectory.jsonl",
+        solver_seed=0,
+        budget_sec=5,
+        threads=1,
+        parameters_path=parameters,
+    )
+
+    command = ChocoRepositoryPlugin().run_command(run)
+    assert command.argv[-2:] == ["--parameters", str(parameters)]
+    highs_command = HighsRepositoryPlugin().run_command(run)
+    assert HighsRepositoryPlugin.supports_fixed_solver_parameters
+    assert highs_command.argv[-2:] == ["--parameters", str(parameters)]
+    assert HighsDriver.options_file_content(
+        {"simplex_dual_edge_weight_strategy": 2, "parallel": "off"}
+    ) == "parallel = off\nsimplex_dual_edge_weight_strategy = 2\n"
+    with pytest.raises(ValueError, match="invalid HiGHS option name"):
+        HighsDriver.options_file_content({"invalid option": 1})
+
+
+def test_highs_validation_build_keeps_tests_and_legacy_catch_compatibility():
+    validation = HighsRepositoryPlugin().build_commands(BuildKind.VALIDATION)
+    release = HighsRepositoryPlugin().build_commands(BuildKind.PERFORMANCE)
+
+    assert (
+        "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -DCATCH_CONFIG_NO_POSIX_SIGNALS"
+    ) in validation[0].argv
+    assert "-DBUILD_TESTING=ON" in validation[0].argv
+    assert "-DBUILD_TESTING=OFF" in release[0].argv
+    assert "-DCMAKE_CXX_FLAGS=" in release[0].argv
+    assert validation[1].argv == ["cmake", "--build", "build", "-j1"]
+    assert release[1].argv == [
+        "cmake",
+        "--build",
+        "build",
+        "-j1",
+        "--target",
+        "highs",
+        "highs-bin",
+    ]
+    assert "--target highs highs-bin" in HighsRepositoryPlugin.agent_environment.prebuild
 
 
 def test_solver_driver_registry_rejects_duplicate_names():
@@ -122,7 +186,7 @@ def test_collection_backends_share_validated_interface():
 @pytest.mark.parametrize(
     ("solver", "output", "class_name"),
     [
-        ("choco", "solver/target/pitbench-adapter", "ExactSolverRunner"),
+        ("choco", "target/pitbench-adapter", "ExactSolverRunner"),
         ("ortools_cp_sat", "build/pitbench-adapter", "OrToolsCpSatRunner"),
     ],
 )
@@ -144,6 +208,35 @@ def test_jvm_probe_rejects_missing_or_stale_compiled_adapter(
     _verify_compiled_adapter(tmp_path, solver)
 
 
+def test_choco_identity_accepts_historical_prerelease_jar(tmp_path):
+    jar = (
+        tmp_path
+        / "solver/target/choco-solver-5.0.0-beta.2-jar-with-dependencies.jar"
+    )
+    jar.parent.mkdir(parents=True)
+    jar.touch()
+
+    assert _solver_identity(tmp_path, "choco")["version"] == "5.0.0-beta.2"
+
+
+def test_choco_identity_accepts_single_module_historical_jar(tmp_path):
+    jar = tmp_path / "target/choco-solver-4.0.2-SNAPSHOT-with-dependencies.jar"
+    jar.parent.mkdir(parents=True)
+    jar.touch()
+
+    assert _choco_assembly(tmp_path) == jar.resolve()
+    assert _solver_identity(tmp_path, "choco")["version"] == "4.0.2-SNAPSHOT"
+
+
+def test_choco_adapter_output_matches_maven_layout(tmp_path):
+    assert _adapter_output(tmp_path, "choco") == tmp_path / "target/pitbench-adapter"
+    (tmp_path / "solver").mkdir()
+    (tmp_path / "solver/pom.xml").touch()
+    assert _adapter_output(tmp_path, "choco") == (
+        tmp_path / "solver/target/pitbench-adapter"
+    )
+
+
 def test_choco_builds_official_source_and_generic_jvm_adapter() -> None:
     plugin = ChocoRepositoryPlugin()
 
@@ -160,17 +253,25 @@ def test_choco_builds_official_source_and_generic_jvm_adapter() -> None:
         == performance[1]
         == CommandSpec(argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/choco-maven"])
     )
-    assert validation[2] == CommandSpec(
-        argv=["mvn", "-q", "package", "-DskipTests"],
+    assert validation[2] == performance[2] == CommandSpec(
+        argv=[
+            "sh",
+            "-c",
+            "if [ -d /opt/pitbench-maven ]; then "
+            "cp -a /opt/pitbench-maven/. /tmp/choco-maven/; fi",
+        ]
+    )
+    assert validation[3] == CommandSpec(
+        argv=["mvn", "-q", "package", "-DskipTests", "-Dlicense.skip=true"],
         env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/choco-maven"},
     )
-    assert performance[2] == CommandSpec(
-        argv=["mvn", "-q", "package", "-DskipTests"],
+    assert performance[3] == CommandSpec(
+        argv=["mvn", "-q", "package", "-DskipTests", "-Dlicense.skip=true"],
         env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/choco-maven"},
     )
     assert (
-        validation[3].argv
-        == performance[3].argv
+        validation[4].argv
+        == performance[4].argv
         == [
             "python3",
             "/opt/pitbench-jvm/runner.py",
@@ -181,10 +282,84 @@ def test_choco_builds_official_source_and_generic_jvm_adapter() -> None:
     )
     assert plugin.agent_environment is not None
     assert plugin.agent_environment.image.endswith("eclipse-temurin-17")
+    assert "solver/target/choco-solver-*-jar-with-dependencies.jar" in (
+        plugin.agent_artifact_globs
+    )
+    assert "target/choco-solver-*-with-dependencies.jar" in plugin.agent_artifact_globs
+
+
+def test_classic_pyvrp_uses_shared_offline_poetry_build() -> None:
+    plugin = PyVRPClassicRepositoryPlugin()
+    validation = plugin.build_commands(BuildKind.VALIDATION)
+
+    assert validation == plugin.build_commands(BuildKind.PERFORMANCE)
+    assert validation == plugin.agent_build_commands()
+    assert validation[0].argv == ["rm", "-rf", ".pitbench-venv"]
+    assert validation[1].argv == [
+        "python3",
+        "-m",
+        "venv",
+        "--system-site-packages",
+        ".pitbench-venv",
+    ]
+    assert validation[2].argv == [
+        ".pitbench-venv/bin/python",
+        "-m",
+        "pip",
+        "install",
+        "--no-build-isolation",
+        "--no-deps",
+        "--force-reinstall",
+        "-e",
+        ".",
+    ]
+    assert validation[3].argv == [
+        ".pitbench-venv/bin/python",
+        "-c",
+        "import pathlib, runpy, sys, tomllib; "
+        "sys.modules.setdefault('tomli', tomllib); "
+        "script = pathlib.Path('build_extensions.py'); "
+        "runpy.run_path(str(script), run_name='__main__') "
+        "if script.is_file() else None",
+    ]
+    assert validation[4].argv == [
+        ".pitbench-venv/bin/python",
+        "-c",
+        "import sys, tomllib; "
+        "sys.modules.setdefault('tomli', tomllib); "
+        "import pyvrp; print(pyvrp.__file__)",
+    ]
+    assert plugin.driver_python == ".pitbench-venv/bin/python"
 
 
 def test_highs_driver_uses_python3() -> None:
     assert HighsRepositoryPlugin().driver_python == "python3"
+
+
+@pytest.mark.parametrize(
+    ("driver", "header", "assignment"),
+    [
+        (
+            ScipDriver,
+            "solution status: optimal solution found\nobjective value: -12\n",
+            "x0 1 (obj:-12)\n",
+        ),
+        (
+            CbcDriver,
+            "Optimal - objective value -12\n",
+            "0 x0 1 -12\n",
+        ),
+    ],
+)
+def test_native_mip_solution_parser_restores_implicit_zeros(
+    tmp_path: Path, driver, header: str, assignment: str
+) -> None:
+    solution = tmp_path / "solution.sol"
+    solution.write_text(header + assignment)
+
+    parsed = driver._solution(solution, {"x0", "x1"})
+
+    assert parsed == (-12, {"x0": 1, "x1": 0})
 
 
 def test_choco_driver_uses_python3() -> None:
@@ -197,11 +372,15 @@ def test_vroom_driver_uses_python3() -> None:
     assert VroomRepositoryPlugin().driver_python == "python3"
 
 
-def test_vroom_build_uses_its_source_makefile_without_replacing_flags() -> None:
+def test_vroom_build_uses_its_source_makefile_and_portable_header_flag() -> None:
     from pitbench.repositories.plugins import VroomRepositoryPlugin
 
-    validation = VroomRepositoryPlugin().build_commands(BuildKind.VALIDATION)
-    performance = VroomRepositoryPlugin().build_commands(BuildKind.PERFORMANCE)
+    plugin = VroomRepositoryPlugin()
+    validation = plugin.build_commands(BuildKind.VALIDATION)
+    performance = plugin.build_commands(BuildKind.PERFORMANCE)
+
+    assert plugin.agent_environment is not None
+    assert "CXX=g++ -include vector -include array" in plugin.agent_environment.prebuild
 
     assert validation == [
         CommandSpec(
@@ -209,9 +388,10 @@ def test_vroom_build_uses_its_source_makefile_without_replacing_flags() -> None:
                 "sh",
                 "-lc",
                 "cd src && test -f structures/typedefs.h && exec make -j1 "
+                '"CXX=g++ -include vector -include array" '
                 '"CXXFLAGS=-MMD -MP -I. -Isrc -std=c++20 -Wextra -Wpedantic -Wall '
                 "-O3 -DASIO_STANDALONE -DUSE_ROUTING=true -DNDEBUG "
-                '-D USE_LIBGLPK=true -O1 -g -fsanitize=address,undefined" 2>&1',
+                '-D USE_LIBGLPK=true -DBOOST_LOG_DYN_LINK -O1 -g -fsanitize=address,undefined" 2>&1',
             ]
         )
     ]
@@ -221,9 +401,10 @@ def test_vroom_build_uses_its_source_makefile_without_replacing_flags() -> None:
                 "sh",
                 "-lc",
                 "cd src && test -f structures/typedefs.h && exec make -j1 "
+                '"CXX=g++ -include vector -include array" '
                 '"CXXFLAGS=-MMD -MP -I. -Isrc -std=c++20 -Wextra -Wpedantic -Wall '
                 "-O3 -DASIO_STANDALONE -DUSE_ROUTING=true -DNDEBUG "
-                '-D USE_LIBGLPK=true" 2>&1',
+                '-D USE_LIBGLPK=true -DBOOST_LOG_DYN_LINK" 2>&1',
             ]
         )
     ]
@@ -348,8 +529,34 @@ def test_ortools_runner_uses_the_built_native_library_path(
 
 
 def test_each_target_plugin_has_an_image_definition() -> None:
-    for name in ("pyvrp", "vroom", "highs", "choco", "ortools"):
+    for name in ("pyvrp", "vroom", "highs", "choco", "ortools", "gecode"):
         assert (ROOT / "docker/solver-images" / name / "Dockerfile").is_file()
+
+
+def test_gecode_driver_accepts_fixed_propagation_parameters(tmp_path: Path) -> None:
+    plugin = GecodeRepositoryPlugin()
+    parameters = tmp_path / "parameters.json"
+    parameters.write_text('{"gecode.bin_packing_propagation_level":"full"}\n')
+    command = plugin.run_command(
+        SolverRunSpec(
+            instance_path=tmp_path / "instance.json",
+            output_path=tmp_path / "result.json",
+            trajectory_path=tmp_path / "trajectory.jsonl",
+            solver_seed=0,
+            budget_sec=5,
+            threads=1,
+            parameters_path=parameters,
+        )
+    )
+    assert command.argv[:3] == [
+        "python3",
+        "-m",
+        "pitbench.solver_drivers.run",
+    ]
+    assert command.argv[3] == "gecode_exact"
+    assert command.argv[command.argv.index("--parameters") + 1] == str(parameters)
+    assert plugin.supports_fixed_solver_parameters is True
+    assert GecodeExactDriver.name == "gecode_exact"
 
 
 class _LegacyRoute:
@@ -479,3 +686,15 @@ def test_pyvrp_builds_and_runs_in_per_workspace_virtual_environments(
         "--deselect=tests/search/test_LocalSearch.py::test_debug_operator_logs",
     ]
     assert run.argv[0] == ".pitbench-venv/bin/python"
+
+
+def test_historical_pyvrp_validation_keeps_sanitizers_without_debug_logging() -> None:
+    from pitbench.repositories.plugins import PyVRPDebugOptimizedRepositoryPlugin
+
+    historical = PyVRPDebugOptimizedRepositoryPlugin()
+    validation = historical.build_commands(BuildKind.VALIDATION)
+    current = PyVRPRepositoryPlugin().build_commands(BuildKind.VALIDATION)
+
+    assert validation[1].argv[3:5] == ["--build_type", "debugoptimized"]
+    assert "-Db_sanitize=address,undefined" in validation[1].argv
+    assert current[1].argv[3:5] == ["--build_type", "debug"]

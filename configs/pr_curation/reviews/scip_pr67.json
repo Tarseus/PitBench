@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "repository": "scipopt/scip",
+  "pr_number": 67,
+  "base_commit": "037956062305dcf468f9601f1a46ed5ba7a3b82f",
+  "head_commit": "6e2e5a651ec4fbf7af10d6fd6bf104c5cfa0596e",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Adds a Docker image and publishing workflow; no SCIP solver-engine source changes.",
+  "reviewed_changed_files": [
+    ".github/workflows/build_and_push_docker.yml",
+    "Dockerfile"
+  ],
+  "detail_sha256": "36be76d7fdb4be174f0618cc4cb05d07bb6c8f82dc6ed593ea74989695eaaf5c",
+  "selection_queue_sha256": "966f5bf257f33641ce530125917422beb40ece4759a865cfe3930c288107cc87",
+  "source_evidence_urls": [
+    "https://github.com/scipopt/scip/pull/67"
+  ]
+}

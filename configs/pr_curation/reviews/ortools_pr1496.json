@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "repository": "google/or-tools",
+  "pr_number": 1496,
+  "base_commit": "e671bcdb62e2ca0d1fad688a7d54b93e31da3b76",
+  "head_commit": "c3c8b9c206e2e8939375e89c8765daab11223836",
+  "decision": "reject",
+  "rejection_basis": "duplicate_lineage",
+  "reason": "The source diff exactly reverses the MPVariable and MPConstraint member-order changes from PR #1493; PR #1498 applies the same layout idea again. This reversal is one event in a single memory-layout lineage, not a distinct solver optimization mechanism or historical improvement target.",
+  "related_prs": [1493, 1498],
+  "source_evidence_urls": [
+    "https://github.com/google/or-tools/pull/1493",
+    "https://github.com/google/or-tools/pull/1496",
+    "https://github.com/google/or-tools/pull/1498"
+  ]
+}

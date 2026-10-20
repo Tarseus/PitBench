@@ -1,0 +1,21 @@
+schema_version: '1.0'
+kind: human_pr_source_reference
+task_id: pyvrp_search_20250717
+source_repository: https://github.com/PyVRP/PyVRP.git
+pull_request_url: https://github.com/PyVRP/PyVRP/pull/865
+base_commit: 245cde9997b4cf6dcfbbd1286d80eaf1e9245904
+head_commit: 63de634e0572d2e7e922cfac722cdf2ae4031a65
+base_tree_sha: ab16547f750ef7ca5a13437205cd52ac1eb3accc
+head_tree_sha: 8d54bb4ee3ff7f1a4a828eca1baf6d56603e2ba6
+patch_file: configs/references/pyvrp_pr865_source.patch
+patch_sha256: fed4438c564404943bed2de36c0a1ab232e691e16ebd959a55e5d3d9b2fd58d7
+changed_source_files:
+- pyvrp/PenaltyManager.py
+- pyvrp/search/__init__.py
+- pyvrp/search/neighbourhood.py
+excluded_upstream_files:
+- tests/test_Model.py
+- tests/test_minimise_fleet.py
+evaluation_note: Only the solver-source changes are the reference patch. Upstream
+  test edits are excluded from performance execution. Public five-unused-seed screening
+  improved 10/10 instances in both rounds; hidden confirmation is separate.

@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 693,
+  "base_commit": "9e61176125de0fdc8ee14fd164ecb2bf8278753e",
+  "head_commit": "9c2d23056e3467b42aa8b28cfd8a2c220289f349",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Changes the Codecov CI workflow only; no solver-engine source changes.",
+  "reviewed_changed_files": [
+    ".github/workflows/CI.yml"
+  ],
+  "detail_sha256": "b57f074c70be70d0a351db3ec6f703be86b934f9ba34e5ae13c6472634fe70b8",
+  "selection_queue_sha256": "966f5bf257f33641ce530125917422beb40ece4759a865cfe3930c288107cc87",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/693"
+  ]
+}

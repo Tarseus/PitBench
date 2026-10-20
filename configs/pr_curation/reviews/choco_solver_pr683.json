@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "chocoteam/choco-solver",
+  "pr_number": 683,
+  "base_commit": "a5acb4bbbdb6703c27c641e1b97658a33870582e",
+  "head_commit": "167a5e09fc892569469b89be388ee89e73ee42ac",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Changes only the solver changelog; no executable solver source changed.",
+  "reviewed_changed_files": [
+    "solver/CHANGES.md"
+  ],
+  "detail_sha256": "9c6a6267f3b0ca5ba7d3b698229835281663eff2406e58c1e0b9f133305d0ac7",
+  "selection_queue_sha256": "9fa7126befcaeb0c0a1fd3f32c5f73af1ba2c871a921ebe1600edac37279e3a5",
+  "source_evidence_urls": [
+    "https://github.com/chocoteam/choco-solver/pull/683"
+  ]
+}

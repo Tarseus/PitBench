@@ -1,0 +1,40 @@
+{
+  "schema_version": 2,
+  "repository": "graphhopper/jsprit",
+  "pr_number": 366,
+  "base_commit": "d95b1d2f1467636975ce7acfaf663b2146ad4224",
+  "head_commit": "75e9b6f9ddb076cb488556b3a9b4c9cb1dec28d2",
+  "decision": "reject",
+  "reason": "The patch makes transport-cost interfaces inherit a distance interface and updates examples/tests. It changes API contracts rather than search or cost evaluation work.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "fd67488d50f1448ff07dbc0a976b3e9dfa2fae028450ed32d656d33b98352af7",
+  "changed_file_paths": [
+    "jsprit-core/src/main/java/com/graphhopper/jsprit/core/problem/cost/AbstractForwardVehicleRoutingTransportCosts.java",
+    "jsprit-core/src/main/java/com/graphhopper/jsprit/core/problem/cost/VehicleRoutingTransportCosts.java",
+    "jsprit-core/src/main/java/com/graphhopper/jsprit/core/util/CrowFlyCosts.java",
+    "jsprit-core/src/main/java/com/graphhopper/jsprit/core/util/EuclideanCosts.java",
+    "jsprit-core/src/main/java/com/graphhopper/jsprit/core/util/FastVehicleRoutingTransportCostsMatrix.java",
+    "jsprit-core/src/main/java/com/graphhopper/jsprit/core/util/GreatCircleCosts.java",
+    "jsprit-core/src/main/java/com/graphhopper/jsprit/core/util/ManhattanCosts.java",
+    "jsprit-core/src/main/java/com/graphhopper/jsprit/core/util/VehicleRoutingTransportCostsMatrix.java",
+    "jsprit-core/src/test/java/com/graphhopper/jsprit/core/algorithm/CVRPwithMatrix_IT.java",
+    "jsprit-core/src/test/java/com/graphhopper/jsprit/core/algorithm/CapacityConstraint_IT.java",
+    "jsprit-core/src/test/java/com/graphhopper/jsprit/core/algorithm/VariableDepartureAndWaitingTime_IT.java",
+    "jsprit-core/src/test/java/com/graphhopper/jsprit/core/algorithm/recreate/TestCalculatesServiceInsertion.java",
+    "jsprit-core/src/test/java/com/graphhopper/jsprit/core/algorithm/recreate/TestCalculatesServiceInsertionOnRouteLevel.java",
+    "jsprit-core/src/test/java/com/graphhopper/jsprit/core/algorithm/ruin/distance/TestJobDistanceAvgCosts.java",
+    "jsprit-core/src/test/java/com/graphhopper/jsprit/core/analysis/SolutionAnalyserTest.java",
+    "jsprit-core/src/test/java/com/graphhopper/jsprit/core/problem/VehicleRoutingProblemTest.java",
+    "jsprit-core/src/test/java/com/graphhopper/jsprit/core/problem/constraint/VehicleDependentTraveledDistanceTest.java",
+    "jsprit-core/src/test/java/com/graphhopper/jsprit/core/util/UnassignedJobReasonTrackerTest.java",
+    "jsprit-examples/src/main/java/com/graphhopper/jsprit/examples/BuildAlgorithmFromScratch.java",
+    "jsprit-examples/src/main/java/com/graphhopper/jsprit/examples/MultipleTimeWindowExample2.java",
+    "jsprit-examples/src/main/java/com/graphhopper/jsprit/examples/PickupAndDeliveryExample.java",
+    "jsprit-examples/src/main/java/com/graphhopper/jsprit/examples/VRPWithBackhaulsExample2.java",
+    "jsprit-instances/src/main/java/com/graphhopper/jsprit/instance/reader/Figliozzi.java"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/graphhopper/jsprit/pull/366"
+  ],
+  "rejection_basis": "outside_solver_engine"
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 1164,
+  "base_commit": "954b9f65da58ac43ac66faf5c0eba730f930eefe",
+  "head_commit": "f984039aa5d23d2f03d1c70cca2e0a96094dac7c",
+  "decision": "needs_evidence",
+  "reason": "The PR adds cached removal costs to RelocateAlternative, RelocateShipment, and RelocateWithDepot. Their supports() checks require mutually exclusive groups, shipments with multiple vehicles, or reload depots. The current CVRP benchmark has none of those structures; its generic LocalSearch::update calls can reach only no-op operator updates. Existing CVRP public validity therefore does not establish exposure to the changed cache mechanism. A rich VRP workload, activation counters, and an independent checker for its group/shipment/reload semantics are required.",
+  "missing_evidence": [
+    "workload_activation",
+    "independent_checker",
+    "performance_protocol"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/1164"
+  ]
+}

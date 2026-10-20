@@ -1,0 +1,29 @@
+schema_version: '1.0'
+kind: human_pr_source_reference
+task_id: pyvrp_search_20260728
+source_repository: https://github.com/PyVRP/PyVRP.git
+pull_request_url: https://github.com/PyVRP/PyVRP/pull/1146
+base_commit: b7b597f34281288616303ba409e9876e0a9a36b1
+head_commit: 2ff599f528bc1989e291109b14018e5c424eb1e5
+base_tree_sha: 28bcf63824549911da43b5401079cab57f110f2d
+head_tree_sha: 9117d096c5b92304e0cb3ce9b03007814c28e5d0
+patch_file: configs/references/pyvrp_pr1146_source.patch
+patch_sha256: 76680dbfbb96dc7a9cd5d7e9f92a4b4bb33997e15dc41fe262d756f4873720e6
+changed_source_files:
+- pyvrp/cpp/CostEvaluator.h
+- pyvrp/cpp/search/Exchange.h
+- pyvrp/cpp/search/InsertOptionalClient.cpp
+- pyvrp/cpp/search/InsertOptionalShipment.cpp
+- pyvrp/cpp/search/RelocateAlternative.cpp
+- pyvrp/cpp/search/RelocateAlternative.h
+- pyvrp/cpp/search/RelocateShipment.cpp
+- pyvrp/cpp/search/RelocateWithDepot.cpp
+- pyvrp/cpp/search/RelocateWithDepot.h
+- pyvrp/cpp/search/RemoveOptionalClient.cpp
+- pyvrp/cpp/search/RemoveOptionalShipment.cpp
+- pyvrp/cpp/search/Route.cpp
+- pyvrp/cpp/search/Route.h
+- pyvrp/cpp/search/Solution.cpp
+- pyvrp/cpp/search/SwapTails.cpp
+evaluation_note: The full upstream PR changes only solver source; the reference patch
+  is identical to that source diff.

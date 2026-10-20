@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "coin-or/SHOT",
+  "pr_number": 151,
+  "base_commit": "a96621cae6fdb1c568e99d34f70a31eabdbdd412",
+  "head_commit": "8bc19f5132f0465000d50671c6970998bd65c035",
+  "decision": "reject",
+  "reason": "The patch changes when a single-thread flag is forwarded to the embedded CBC process to avoid console logging. It does not establish an independent solver search or performance target.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "78060650b3037c0561788d4f60756eda068cce081f24a3f31abb149029612f01",
+  "changed_file_paths": [
+    "src/MIPSolver/MIPSolverCbc.cpp"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/coin-or/SHOT/pull/151"
+  ],
+  "rejection_basis": "other"
+}

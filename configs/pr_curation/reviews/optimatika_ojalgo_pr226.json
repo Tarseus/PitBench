@@ -1,0 +1,37 @@
+{
+  "schema_version": 2,
+  "repository": "optimatika/ojAlgo",
+  "pr_number": 226,
+  "base_commit": "25839cbad5e96c08d874c7b6bc76d0e94a7d42c1",
+  "head_commit": "c9f9d591098279b54c611c096c98360d1d76c8cf",
+  "decision": "needs_evidence",
+  "reason": "The diff replaces broad primitive-number utilities across arrays, functions, matrices, and solver tasks; it may reduce arithmetic cost but the source-to-solver call path and active optimization workload are not yet established.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "ec2b64ea4f77d1b07676b4108c75eefe17efce9b17e4b01d4b5b9c3e2766a9ae",
+  "changed_file_paths": [
+    "CHANGELOG.md",
+    "src/org/ojalgo/array/Primitive32Array.java",
+    "src/org/ojalgo/array/Primitive64Array.java",
+    "src/org/ojalgo/array/ReferenceTypeArray.java",
+    "src/org/ojalgo/function/FunctionUtils.java",
+    "src/org/ojalgo/function/UnaryFunction.java",
+    "src/org/ojalgo/function/special/MissingMath.java",
+    "src/org/ojalgo/matrix/store/GenericDenseStore.java",
+    "src/org/ojalgo/matrix/store/PrimitiveDenseStore.java",
+    "src/org/ojalgo/matrix/task/AbstractInverter.java",
+    "src/org/ojalgo/matrix/task/AbstractSolver.java",
+    "src/org/ojalgo/structure/AccessScalar.java",
+    "src/org/ojalgo/structure/Mutate1D.java",
+    "src/org/ojalgo/structure/MutateAnyD.java",
+    "src/org/ojalgo/type/PrimitiveNumber.java",
+    "test/org/ojalgo/function/constant/PrimitiveMathTest.java",
+    "test/org/ojalgo/function/special/MissingMathTest.java"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/optimatika/ojAlgo/pull/226"
+  ],
+  "missing_evidence": [
+    "solver_call_path",
+    "workload_activation"
+  ]
+}

@@ -215,7 +215,13 @@ def _command(
         "budget": str(budget),
         "threads": str(threads),
     }
-    return [part.format_map(values) for part in config["runner"]]
+    command = [part.format_map(values) for part in config["runner"]]
+    fixed_parameters = config.get("fixed_solver_parameters")
+    if fixed_parameters is not None:
+        parameters_path = output.with_suffix(".parameters.json")
+        parameters_path.write_text(json.dumps(fixed_parameters, sort_keys=True) + "\n")
+        command.extend(["--parameters", str(parameters_path)])
+    return command
 
 
 def _public_verification(
@@ -310,9 +316,10 @@ def _feedback(
         "reported_cpu_time_sec": _finite_number(result.get("cpu_time_sec")),
         "reported_wall_time_sec": _finite_number(result.get("wall_time_sec")),
         "public_target": anchor,
-        "solver_behavior": _solver_behavior(config, result, output),
         **checked,
     }
+    if config.get("agent_feedback_mode", "solver_behavior") == "solver_behavior":
+        feedback["solver_behavior"] = _solver_behavior(config, result, output, budget)
     protocol = config["performance_protocol"]
     if protocol == "heuristic_fixed_budget":
         feedback["preview_normalized_gap"] = (
@@ -613,11 +620,7 @@ def diagnose_command(args: argparse.Namespace) -> int:
     budgets = (
         list(config["budgets_sec"])
         if args.all_budgets
-        else [
-            args.budget
-            if args.budget is not None
-            else config["primary_budget_sec"]
-        ]
+        else [args.budget if args.budget is not None else config["primary_budget_sec"]]
     )
     if any(not math.isfinite(budget) or budget <= 0 for budget in budgets):
         raise SystemExit("budget must be a positive finite number")

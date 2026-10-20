@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 783,
+  "base_commit": "46e0df95672ace7ebacd3f85f2bc375fcad797a1",
+  "head_commit": "fa69e7c93a0d7ed8b6e82fe59ab072f3b0a197b9",
+  "decision": "advance",
+  "reason": "The source change replaces a per-location size_t visit-count vector with a packed DynamicBitset in the frequently constructed Solution state. It changes memory per candidate and removes redundant count updates while retaining duplicate-visit detection.",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "solver_phase": "search_state",
+  "solver_entry_points": [
+    "Solution::Solution(const ProblemData&, const std::vector<Route>&)"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_primal",
+    "search_incomplete",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "pyvrp/cpp/Solution.cpp"
+  ],
+  "solver_behavior_hypothesis": "A packed visited bitmap can reduce allocation size and initialization cost each time search constructs a candidate Solution, especially for large instances; bit-addressing or changed duplicate/missing-client accounting could alter feasibility or cost per candidate.",
+  "causal_chain": "The constructor runs over route visits and later checks required clients and mutually-exclusive groups. The PR replaces an integer count per location with one bit per location, detecting duplicates during route traversal and counting missing required clients from unset bits. This reduces memory traffic per candidate and can affect search throughput.",
+  "structural_trigger": "Large CVRP instances with many locations and repeated candidate-Solution construction; compare a small-location case to measure how the per-constructor storage change scales with instance size.",
+  "activation_probe": "On pinned Base and PR builds, count Solution constructor calls and processed locations, record allocation or peak-memory measurements, and independently verify the same generated routing solutions.",
+  "instance_selection_rule": "Freeze public CVRP cases by location count and baseline search cost before hidden evaluation; cover small through large instances with fixed seeds and budgets, and retain timeouts and memory peaks.",
+  "workload_exposure_plan": "Use the shared PyVRP anytime driver to exercise the constructor repeatedly on public CVRP instances and measure paired quality-time and resource behavior on the same problem inputs.",
+  "mathematical_risk": "A bit-index or missing-client check error could accept duplicate visits, omit required clients, or change feasibility for optional and grouped clients.",
+  "independent_check_plan": "Check every returned route against original customer coverage, uniqueness, capacity, optional-client and group rules, and objective; retain all invalid and timeout outcomes.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Measure paired normalized gap and peak memory on held-out CVRP instances stratified by location count and route count across fixed seeds, reporting large-instance gains and any quality or resource regressions.",
+  "overlap_review": "PyVRP #232 changes crossover repair and #376 changes move evaluation, while #511 changes the default local-search portfolio. This constructor representation change is a distinct memory mechanism; one PR and all seeds count as one task.",
+  "overlap_group": "pyvrp_solution_constructor_bitset_2025",
+  "related_prs": [
+    232,
+    376,
+    511
+  ],
+  "resource_risk": "The packed bitmap reduces nominal storage but may add bit-access work or interact with allocator behavior; gains should increase with location count and be measured end to end.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/783"
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 2027,
+  "base_commit": "1fb0fe40ce28ae64ca45bf22ae29da894a0b1244",
+  "head_commit": "21ba8d41f6f5815ec364ad39ab2159baffcadbbd",
+  "decision": "advance",
+  "reason": "The PR adds four bound-derived primal candidates before root-node evaluation: all-zero, integer lower bounds, integer upper bounds, and a coefficient-sign lock point. It records only candidates that pass solver-owned column and row checks, and detects infeasibility when an integer variable has no integer value within its bounds. All-integer multidimensional knapsack instances provide direct trigger coverage and independent optimum records.",
+  "repository_role": "solver_engine",
+  "mechanism": "algorithmic_search",
+  "solver_phase": "primal_heuristic",
+  "solver_entry_points": [
+    "HighsMipSolver::run",
+    "HighsMipSolverData::trivialHeuristics",
+    "HighsMipSolverData::addIncumbent",
+    "HighsMipSolverData::solutionRowFeasible"
+  ],
+  "effect_channels": ["primal_trajectory", "proof_time", "work_per_event"],
+  "correctness_failure_modes": ["invalid_primal", "search_incomplete", "false_infeasibility"],
+  "changed_source_paths": [
+    "src/mip/HighsMipSolver.cpp",
+    "src/mip/HighsMipSolverData.cpp",
+    "src/mip/HighsMipSolverData.h",
+    "src/mip/MipTimer.h"
+  ],
+  "solver_behavior_hypothesis": "On all-integer MIPs, simple bound-derived assignments may produce an independently checked incumbent before root-node processing or reveal an empty integer domain immediately. Early incumbents may improve pruning and proof time; infeasible candidates add row-check work without changing the feasible set.",
+  "causal_chain": "HighsMipSolver::run invokes trivialHeuristics after MIP setup and before root evaluation. The method rounds integer bounds inward, checks for empty integer domains, then tests all-zero, all-lower, all-upper, and a coefficient-sign lock point. Each candidate is passed to the solver's incumbent validation, and row activities use extended-precision accumulation. Accepted candidates update the upper bound before branch-and-bound begins.",
+  "structural_trigger": "Purely integer models where at least one of the four bound-derived candidate assignments satisfies all original rows. Multidimensional knapsack instances exercise all-integer bounds and row-feasibility checks; include cases where candidate points fail and a bound interval contains no integer value.",
+  "activation_probe": "On paired pinned MKnapsack builds record trivialHeuristics calls, attempts and acceptances by candidate source code z/l/u/p, row checks, early integer-bound infeasibility returns, initial upper bounds, root-node counts, and solver statuses. Exclude instrumented timings from performance evidence.",
+  "instance_selection_rule": "Use the existing five visible multidimensional-knapsack instances for activation, stratified by item count and capacity scale. Use the frozen 30-case hidden MKnapsack ID panel with trusted optima and independent DP/certificate checks; retain all seeds, normal timeouts, and failures. This task does not claim a separate structural-shift panel.",
+  "workload_exposure_plan": "Build both pinned source states offline and run the shared HiGHS MIP driver. Trace each candidate source and no-candidate controls on public all-binary knapsack instances. Independently verify every returned assignment against original rows, bounds, integrality, and trusted optimum records.",
+  "mathematical_risk": "A bound-rounding or row-activity error could admit an invalid incumbent or falsely report an empty integer domain. An incorrect objective could corrupt the incumbent upper bound. Verify candidates and final solver statuses against the original integer model.",
+  "independent_check_plan": "Use the independent multidimensional-knapsack checker for each returned assignment and frozen trusted-optimum records for final objective/status checks. Run the upstream MIP-solver regression tests on both pinned states and retain proof and timeout outcomes.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Qualify an open exact-solve task using the 30-case base-only hidden MKnapsack ID ledger with independently checked optima and normal timeouts. Report solved count, incumbent quality, proof time, and valid status; no coding-agent run or agent gain is required for admission.",
+  "overlap_review": "HiGHS #651 changes RENS/RINS effort accounting, and #1844 bounds the work used to complete MIP starts. PR #2027 adds four deterministic bound-derived primal candidates before root evaluation. The mechanisms and source paths differ.",
+  "overlap_group": "highs_trivial_bound_candidate_heuristics_2024",
+  "related_prs": [651, 1844],
+  "resource_risk": "Candidate construction scans bounds and rows before root processing. Models with continuous columns skip the new routine; integer models with no feasible trivial point pay row checks without an incumbent. Retain per-family and no-candidate controls.",
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/2027",
+    "https://api.github.com/repos/ERGO-Code/HiGHS/pulls/2027/files"
+  ]
+}

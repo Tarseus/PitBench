@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 216,
+  "base_commit": "1191d02402f5cb195cb6d59ad3b79293d88465f3",
+  "head_commit": "ce4cd20fb1a3437987390cd812178507c31fe6cc",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Adds an instance-data submodule and benchmarking documentation; no solver-engine source file changed.",
+  "reviewed_changed_files": [
+    ".gitmodules",
+    "docs/source/dev/benchmarking.rst",
+    "instances"
+  ],
+  "detail_sha256": "12d963b62148d097c0a9537e8b531563679a602dbf8e6dea6b1dac91952e7809",
+  "selection_queue_sha256": "9fa7126befcaeb0c0a1fd3f32c5f73af1ba2c871a921ebe1600edac37279e3a5",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/216"
+  ]
+}

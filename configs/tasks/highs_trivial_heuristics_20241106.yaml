@@ -1,0 +1,59 @@
+schema_version: '3.0'
+task_id: highs_trivial_heuristics_20241106
+release:
+  repository: ERGO-Code/HiGHS
+  version: 1.8.0
+  tag: 1fb0fe40ce28ae64ca45bf22ae29da894a0b1244
+  base_commit: 1fb0fe40ce28ae64ca45bf22ae29da894a0b1244
+  released_at: '2024-11-04T14:59:12Z'
+  url: https://github.com/ERGO-Code/HiGHS/commit/1fb0fe40ce28ae64ca45bf22ae29da894a0b1244
+task_type: exact_solver
+problem_family: mip
+optimization_scope: bound_derived_mip_primal_heuristics
+instruction: Improve primal incumbent discovery and exact-solve efficiency in this
+  pinned HiGHS source snapshot while preserving original-model feasibility, valid
+  bounds, and truthful solver statuses. Choose source changes autonomously and use
+  only visible development instances.
+repository:
+  clone_url: https://github.com/ERGO-Code/HiGHS.git
+  plugin: pitbench.repositories.plugins:HighsRepositoryPlugin
+  editable_paths:
+  - highs
+  - build
+  agent_image: pitbench-highs-pr2027-agent:57f4c03f
+  judge_image: sha256:8b02cc2e978b11a5338d3120c4544ed1e171e6f08b4d533feb98de1ef30427d6
+oracle:
+  kind: known_optimum
+  source: private://oracles/highs_trivial_heuristics_20241106.yaml
+  source_sha256: 560e3074af4bceaca78c5de5fd739179a3d1a4236b7e969421d748a8fbb9cd91
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  threads: 1
+  verifier: trusted_optimum
+  solver_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/highs_multidimensional_knapsack_v1_15_1_dev.yaml
+  instance_set_config_sha256: 05f64e21f94fa9bc4f1e516eeb85e603aadd172bb717cf7c5077c2c51daef9d1
+  size: 5
+  randomness:
+    instance_seed: 811100
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/highs_multidimensional_knapsack_v1_15_1/judge_id.yaml
+  instance_set_config_sha256: 671ec7d94db4e548eeaf0901d2a7496dcc2fcc0a0fae2c13f2ebbc0943692bd8
+  size: 30
+problem_variant: multidimensional_knapsack
+formulation_id: multidimensional_knapsack_mip

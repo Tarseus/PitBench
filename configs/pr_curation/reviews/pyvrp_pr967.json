@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 967,
+  "base_commit": "9959c8cf0ba87a0669ec446c6066fe939bf9f951",
+  "head_commit": "1accdf607e4f5cd1fc5057c0df84bb7ba54c9d91",
+  "decision": "advance",
+  "reason": "The PR changes Solution::load so unchanged routes are compared and reused instead of clearing and rebuilding every route. It also adds route equality and adjusts clearing of routes that are no longer loaded. These are repeated solver search-state operations with distinct work and semantic risks.",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "solver_phase": "search_state",
+  "solver_entry_points": [
+    "Solution::load",
+    "Route::operator==",
+    "Route::clear"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "primal_trajectory",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_primal",
+    "search_incomplete",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "pyvrp/cpp/search/Route.cpp",
+    "pyvrp/cpp/search/Route.h",
+    "pyvrp/cpp/search/Solution.cpp",
+    "pyvrp/cpp/search/bindings.cpp",
+    "pyvrp/search/_search.pyi"
+  ],
+  "solver_behavior_hypothesis": "Skipping reconstruction of unchanged routes during repeated load cycles may reduce local-search overhead under a fixed budget, while incorrect equality or clearing could retain stale route state.",
+  "causal_chain": "Solution::load now compares each incoming route with the current node-based route, reuses equal routes, reconstructs changed routes, and clears routes omitted by the new solution. Less rebuilding can increase search throughput; wrong equality or clearing changes the search state.",
+  "structural_trigger": "Repeated CVRP local-search load cycles in which at least one route remains unchanged while another changes or is removed; all-routes-changed cases serve as controls.",
+  "activation_probe": "Count Solution::load calls, true route-equality reuse decisions, and cleared routes in pinned base and PR source states on public CVRP workloads; test mixed route changes and multi-trip equality separately.",
+  "instance_selection_rule": "Freeze the existing PyVRP CVRP development, hidden ID, and generated-shift panels before hidden scoring, with one task-bound private seed for baseline qualification and the full declared seed-budget grid for final judging.",
+  "workload_exposure_plan": "Run pinned base and source-only PR builds through the common CVRP driver, instrument the load reuse branch on a public case, and independently verify all returned routes and objectives.",
+  "mathematical_risk": "An equality check that ignores a route attribute or incorrect clearing can keep stale nodes, duplicate visits, violate capacities, or misstate objective values.",
+  "independent_check_plan": "Verify original CVRP coverage, capacity, and objective for every returned route; run symmetric load/unload tests with unchanged, changed, removed, and multi-trip routes.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Report verified fixed-budget gap trajectories, missing runs, and per-instance regressions for hidden ID and generated-shift CVRP families; do not call the human PR a positive reference without separate paired confirmation.",
+  "overlap_review": "This PR optimizes the load direction. Later PR #1190 starts from a snapshot that already contains this change and separately optimizes unload; both may count only after distinct load-reuse and unload-copy activation probes. PR #966 optimizes trip materialization.",
+  "overlap_group": "pyvrp_load_route_reuse_2025",
+  "related_prs": [1190, 966],
+  "resource_risk": "Route equality scans can outweigh reconstruction when routes change frequently; retained nodes may increase memory or make stale state harder to detect.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/967"
+  ]
+}

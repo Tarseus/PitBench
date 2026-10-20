@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "repository": "crillab/gophersat",
+  "pr_number": 22,
+  "base_commit": "228ddf848cf2c8d90c67d9619a78a0cf7768e2ee",
+  "head_commit": "6f7063df0e5fd5eb53f3d003e60ae2718287aabd",
+  "decision": "reject",
+  "reason": "The patch fixes the identity semantics of empty And/Or expressions and adds tests. It is a logical correctness fix, not a solver-performance mechanism.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "cb682d55ae91d34a6203316cd06f02cc944c09c0b1fb63ea3c2d2d33c8ebc8ce",
+  "changed_file_paths": [
+    "bf/bf.go",
+    "bf/bf_test.go"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/crillab/gophersat/pull/22"
+  ],
+  "rejection_basis": "correctness_only"
+}

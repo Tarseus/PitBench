@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 1992,
+  "base_commit": "5013b8c62fd44a551a13cef3b40a55027c5dfa84",
+  "head_commit": "d4c241f7b8c2587a2ebbd98ad4b85519e453654b",
+  "decision": "advance",
+  "reason": "The source diff changes the LP used to repair an integer candidate that becomes infeasible after transformation: it enables presolve and simplex scaling, limits the repair solve to remaining MIP time, and tracks repair attempts. This is a bounded primal-heuristic mechanism with numerical and budget risks; include it only if public workloads activate repair and independent original-model checks pass.",
+  "repository_role": "solver_engine",
+  "mechanism": "combined",
+  "solver_phase": "primal_heuristic",
+  "solver_entry_points": [
+    "HighsMipSolverData::transformNewIntegerFeasibleSolution",
+    "HighsPrimalHeuristics::solveSubMip",
+    "HighsPrimalHeuristics::flushStatistics",
+    "HighsMipSolver::cleanupSolve"
+  ],
+  "effect_channels": ["work_per_event", "primal_trajectory", "proof_time"],
+  "correctness_failure_modes": ["invalid_primal", "search_incomplete", "numerical_instability", "resource_failure"],
+  "changed_source_paths": [
+    "src/mip/HighsMipSolver.cpp",
+    "src/mip/HighsMipSolverData.cpp",
+    "src/mip/HighsMipSolverData.h",
+    "src/mip/HighsPrimalHeuristics.cpp",
+    "src/mip/HighsPrimalHeuristics.h"
+  ],
+  "solver_behavior_hypothesis": "When a candidate from a transformed MIP is infeasible in original space, enabling presolve and scaling in the fixed-integer repair LP may recover a feasible incumbent with less work or better numerical stability. A repair time limit tied to remaining solve time may bound that work, subject to the explicit 0.1-second floor.",
+  "causal_chain": "HighsMipSolverData detects an original-space infeasible candidate and creates a fixed-integer repair LP. The PR enables presolve and simplex scaling for that LP, supplies a remaining-time budget, and counts repair attempts and feasible repairs through primal-heuristic statistics. Recovered incumbents can improve primal progress and shrink later proof work; repair overhead can also consume the remaining budget.",
+  "structural_trigger": "MIPs where presolve transformations produce integer candidates that fail original-space feasibility and enter transformNewIntegerFeasibleSolution's repair branch. Include models with active presolve/scaling transformations and candidates requiring repair, plus otherwise similar no-repair controls.",
+  "activation_probe": "On both pinned states, count transformNewIntegerFeasibleSolution entries, repair-branch entries, repair LP calls, feasible repair outcomes, simplex iterations, repair wall time, accepted incumbents, and remaining MIP time. Verify that the repair solve honors the configured limit, including the 0.1-second floor, and independently check every emitted solution.",
+  "instance_selection_rule": "Freeze a public MIP panel before hidden runs. Stratify by presolve transformation activity, coefficient scale, and baseline solve difficulty; retain only cases with a documented repair trigger for the mechanism subset and include matched no-repair controls. Reserve distinct generated seeds and MIP families for hidden ID and OOD evaluation.",
+  "workload_exposure_plan": "Use the shared HiGHS MIP driver on the pinned base and PR builds. Collect repair counters from the same source path, retain complete solver logs and traces, and independently verify all solutions against original MPS models. Exposure counts qualify the task only; they are not performance evidence.",
+  "mathematical_risk": "Presolve or scaling in the repair LP may change numerical behavior; fixing rounded integer values can yield no feasible repair; an incorrect repair result can create an invalid primal incumbent; and a time-limit floor may extend work beyond the remaining MIP budget.",
+  "independent_check_plan": "Independently validate each returned assignment against the original MPS rows, bounds, and integrality, recompute its objective, and check reported incumbents and solver statuses. On tractable cases compare optimality claims with independently established optimum values; retain all timeouts and failures.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Use an independently frozen hidden MIP panel with verified optima, paired seeds and fixed budgets. Report verified solve coverage, proof time, objective and gap progress, per-family regressions, and resource failures. Keep at least one held-out structural family where repair triggers are measured before outcomes.",
+  "overlap_review": "HiGHS #651 changes RENS/RINS effort policy; #690 changes cut aging; #693 changes implication storage; and #2861 changes enumeration presolve. This task is limited to repairing transformed integer candidates in original space. It uses a distinct base snapshot and repair-trigger panel; do not split the PR's repair counters into separate tasks.",
+  "overlap_group": "highs_transformed_integer_solution_repair_2024",
+  "related_prs": [651, 690, 693, 2861],
+  "resource_risk": "Presolve and scaling can allocate additional LP state; repair calls can add significant simplex work; and the minimum time allowance can exceed time remaining. Record peak memory, repair iterations, and actual wall time.",
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/1992",
+    "https://api.github.com/repos/ERGO-Code/HiGHS/pulls/1992/files"
+  ]
+}

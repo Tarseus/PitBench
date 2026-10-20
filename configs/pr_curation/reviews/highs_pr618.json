@@ -1,0 +1,53 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 618,
+  "base_commit": "3d5e111a0e35385498b8959f8e50deed946d2fd1",
+  "head_commit": "13b381b53871bbebeaf420c2481b024c2f21e76f",
+  "decision": "advance",
+  "reason": "The PR makes branch-variable reliability directional: an up or down pseudocost may be reused independently at a node instead of requiring both directions to be reliable. This can change strong-branching LP work, selected variables, bounds, and the search tree. A small hash-table clear change is secondary and must remain in the source-only patch.",
+  "repository_role": "solver_engine",
+  "mechanism": "algorithmic_search",
+  "solver_phase": "branching",
+  "solver_entry_points": [
+    "HighsSearch::selectBranchingCandidate",
+    "HighsSearch::branchingVarReliableAtNodeFlags",
+    "HighsSearch::markBranchingVarUpReliableAtNode",
+    "HighsSearch::markBranchingVarDownReliableAtNode"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "search_tree",
+    "dual_trajectory",
+    "proof_time"
+  ],
+  "correctness_failure_modes": [
+    "invalid_bound",
+    "false_infeasibility",
+    "incorrect_optimality",
+    "search_incomplete",
+    "numerical_instability"
+  ],
+  "changed_source_paths": [
+    "src/mip/HighsSearch.cpp",
+    "src/mip/HighsSearch.h",
+    "src/util/HighsHash.h"
+  ],
+  "solver_behavior_hypothesis": "Using reliable up and down pseudocosts independently can avoid unnecessary strong-branch LP solves and change branching choices on MIPs with asymmetric directional evidence, improving proof time on some structures but possibly expanding other search trees.",
+  "causal_chain": "At a fractional candidate, the PR reads a two-bit node-reliability flag and fills up and down estimates separately. That changes which directions require strong-branch evaluation, the resulting branching score, chosen variable, and all downstream node bounds. Hash-table clear behavior also changes the cost of state resets.",
+  "structural_trigger": "Branch nodes with fractional integer candidates whose node-local reliability is known in exactly one direction; nodes with both or neither directions reliable are controls.",
+  "activation_probe": "Count one-direction reliability states, skipped versus executed strong-branch LP evaluations, selected branching variables, and node counts in both pinned variants on public MIPs before hidden scoring.",
+  "instance_selection_rule": "Freeze public and held-out MIP families by branching asymmetry, cut density, and difficulty before hidden scoring; keep fixed CPU-time budgets, seeds, threads, and a family where directional reliability rarely occurs.",
+  "workload_exposure_plan": "Build pinned base and source-only PR images, run the shared exact MIP driver, instrument partial-reliability and strong-branch paths on public binary and general-integer cases, and retain complete original-model solve and bound records.",
+  "mathematical_risk": "A stale or misinterpreted reliability flag can lead to an incorrect branching score, skipped search region, invalid bound, or false optimality/infeasibility status; floating-point LP differences may amplify search errors.",
+  "independent_check_plan": "Verify primal solutions against original MIP models and compare bound/status/optimality claims with independent SCIP solves or mathematical certificates on tractable public cases, including normal timeouts.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Report independently verified solved coverage, proof time, timeout bounds/gaps, and per-family regressions on hidden ID and held-out MIP structures with paired fixed resources and all missing runs retained.",
+  "overlap_review": "Directional branch reliability is separate from PR #690's cut-aging mechanism and later presolve work. Check nearby pseudocost and strong-branching PRs for duplicated source hunks before counting another branching task.",
+  "overlap_group": "highs_directional_branch_reliability_2021",
+  "related_prs": [690, 2861],
+  "resource_risk": "A changed candidate order can enlarge the search tree despite fewer local LP solves; extra flag handling and hash-table resets may also change memory or per-node overhead.",
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/618"
+  ]
+}

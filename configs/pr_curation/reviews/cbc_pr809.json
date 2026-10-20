@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "repository": "coin-or/Cbc",
+  "pr_number": 809,
+  "base_commit": "3c79358307a8493fb2dbb4d98080ff1358abaacc",
+  "head_commit": "9b47ad3809be3a71d9556bae6ea34a5a5d6fe73f",
+  "decision": "reject",
+  "reason": "The patch sets CBC model statuses when bound propagation proves infeasibility. It fixes reported solver-state semantics; it does not target search efficiency or performance.",
+  "review_lane": "mechanism_review",
+  "detail_record_sha256": "d3750c18e1ceb8951ea7076019c50fa76b086977f60874606731f1ecdfb2856e",
+  "changed_file_paths": [],
+  "source_evidence_urls": [
+    "https://github.com/coin-or/Cbc/pull/809"
+  ],
+  "rejection_basis": "correctness_only"
+}

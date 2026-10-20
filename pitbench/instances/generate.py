@@ -280,6 +280,238 @@ def _multidimensional_knapsack_lp(
     destination.write_text(format_multidimensional_knapsack_lp(weights, capacities))
 
 
+def binary_clique_cover_data(
+    config: dict[str, Any], index: int
+) -> tuple[list[list[str]], list[int], list[tuple[str, str]]]:
+    """Build a binary set-packing MIP with a matching clique-cover certificate.
+
+    Each group is a clique encoded by a positively weighted binary row. The
+    planted assignment selects one variable from every group. Extra conflicts
+    are sampled only between non-planted variables, so the clique cover proves
+    the planted solution optimal while retaining a nontrivial independent-set
+    search problem.
+    """
+    seed = _instance_seed(config, index)
+    rng = random.Random(seed)
+    group_count = _choice(config["groups"], index)
+    group_size = _choice(config["group_sizes"], index)
+    coefficient_min = int(config["coefficient_min"])
+    coefficient_max = int(config["coefficient_max"])
+    cross_edge_density = float(_choice(config["cross_edge_density"], index))
+    if (
+        group_count < 2
+        or group_size < 2
+        or coefficient_min <= 0
+        or coefficient_max < coefficient_min
+        or 2 * coefficient_min <= coefficient_max
+        or not 0 <= cross_edge_density < 1
+    ):
+        raise ValueError("invalid binary clique-cover generator settings")
+
+    groups = [
+        [f"x{group * group_size + offset:06d}" for offset in range(group_size)]
+        for group in range(group_count)
+    ]
+    planted = [rng.randrange(group_size) for _ in range(group_count)]
+    planted_names = {
+        group[chosen] for group, chosen in zip(groups, planted, strict=True)
+    }
+    cross_edges = []
+    for first_group in range(group_count):
+        for second_group in range(first_group + 1, group_count):
+            for first in groups[first_group]:
+                for second in groups[second_group]:
+                    if first in planted_names and second in planted_names:
+                        continue
+                    if rng.random() < cross_edge_density:
+                        cross_edges.append((first, second))
+    return groups, planted, cross_edges
+
+
+def binary_clique_cover_fme_extensions(
+    config: dict[str, Any], index: int, groups: list[list[str]], planted: list[int]
+) -> list[dict[str, str]]:
+    """Describe redundant continuous extensions that expose FME presolve.
+
+    Each continuous column ``z`` appears in two positive- and two
+    negative-coefficient inequality rows. The rows share a common binary core,
+    with one cross-shared and two row-specific columns. This keeps the FME
+    nonzero-reduction estimate positive while avoiding identical row supports
+    that other default presolve rules can remove first. Mixed-sign rows with a
+    zero RHS constrain non-witness assignments, while all planted witness
+    variables are outside their supports. The clique-cover lower bound and
+    planted feasible solution therefore continue to certify the same optimum.
+    """
+    pair_count = config.get("fme_auxiliary_pairs", 0)
+    if type(pair_count) is not int or pair_count < 0:
+        raise ValueError("fme_auxiliary_pairs must be a nonnegative integer")
+    rows_per_sign = config.get("fme_rows_per_sign", 2)
+    shared_count = config.get("fme_shared_binary_count", 5)
+    coefficient_max = config.get("fme_coefficient_max", 3)
+    if (
+        type(rows_per_sign) is not int
+        or rows_per_sign != 2
+        or type(shared_count) is not int
+        or shared_count < 5
+        or type(coefficient_max) is not int
+        or coefficient_max < 1
+    ):
+        raise ValueError("invalid FME auxiliary row structure")
+    nonplanted_columns = [
+        column
+        for group, selected in zip(groups, planted, strict=True)
+        for offset, column in enumerate(group)
+        if offset != selected
+    ]
+    support_size = shared_count + 3
+    if pair_count * support_size > len(nonplanted_columns):
+        raise ValueError("FME extensions require disjoint nonplanted binary supports")
+    if pair_count == 0:
+        return []
+    rng = random.Random(f"clique-fme-extension:{_instance_seed(config, index)}")
+    selected = rng.sample(nonplanted_columns, pair_count * support_size)
+    extensions = []
+    for pair in range(pair_count):
+        offset = pair * support_size
+        shared = selected[offset : offset + shared_count]
+        extras = selected[offset + shared_count : offset + support_size]
+        positive_rows = []
+        negative_rows = []
+        for row_index in range(rows_per_sign):
+            positive_columns = [*shared, extras[row_index]]
+            negative_columns = [*shared, extras[0 if row_index == 0 else 2]]
+
+            def signed_row(columns: list[str]) -> dict[str, float]:
+                signs = [-1] * (len(columns) // 2) + [1] * (
+                    len(columns) - len(columns) // 2
+                )
+                rng.shuffle(signs)
+                result = {}
+                for column, sign in zip(columns, signs, strict=True):
+                    magnitude = rng.randint(1, coefficient_max * 10 - 1) / 10
+                    if magnitude.is_integer():
+                        magnitude += 0.1
+                    result[column] = sign * magnitude
+                return result
+
+            positive_coefficients = signed_row(positive_columns)
+            negative_coefficients = signed_row(negative_columns)
+            positive_rows.append(
+                {
+                    "row": f"FMEUP{pair:06d}_{row_index:02d}",
+                    "binary_coefficients": positive_coefficients,
+                    "rhs": 0,
+                }
+            )
+            negative_rows.append(
+                {
+                    "row": f"FMEDN{pair:06d}_{row_index:02d}",
+                    "binary_coefficients": negative_coefficients,
+                    "rhs": 0,
+                }
+            )
+        extensions.append(
+            {
+                "column": f"zFME{pair:06d}",
+                "positive_rows": positive_rows,
+                "negative_rows": negative_rows,
+            }
+        )
+    return extensions
+
+
+def _binary_clique_cover_mps(
+    config: dict[str, Any], index: int, destination: Path
+) -> None:
+    groups, planted, cross_edges = binary_clique_cover_data(config, index)
+    fme_extensions = binary_clique_cover_fme_extensions(
+        config, index, groups, planted
+    )
+    fme_paper_block = config.get("fme_paper_block", False)
+    if type(fme_paper_block) is not bool:
+        raise ValueError("fme_paper_block must be a boolean")
+    rows: list[tuple[str, list[tuple[str, float]], float]] = []
+    for group_index, group in enumerate(groups):
+        values = [
+            random.Random(
+                f"clique-coefficient:{_instance_seed(config, index)}:{group_index}:{name}"
+            ).randint(int(config["coefficient_min"]), int(config["coefficient_max"]))
+            for name in group
+        ]
+        rhs = max(values)
+        rows.append((f"C{group_index:06d}", list(zip(group, values, strict=True)), rhs))
+    for edge_index, (first, second) in enumerate(cross_edges):
+        rows.append((f"E{edge_index:06d}", [(first, 1), (second, 1)], 1))
+    for extension in fme_extensions:
+        rows.extend(
+            (
+                row["row"],
+                [(extension["column"], 1), *row["binary_coefficients"].items()],
+                row["rhs"],
+            )
+            for row in extension["positive_rows"]
+        )
+        rows.extend(
+            (
+                row["row"],
+                [(extension["column"], -1), *row["binary_coefficients"].items()],
+                row["rhs"],
+            )
+            for row in extension["negative_rows"]
+        )
+    if fme_paper_block:
+        rows.extend(
+            [
+                ("FMEPAPER1", [("fme_i", -1), ("fme_x", 1), ("fme_z", -1)], -30),
+                ("FMEPAPER2", [("fme_x", 2), ("fme_y", 1), ("fme_z", 2)], 50),
+                ("FMEPAPER3", [("fme_x", 3), ("fme_y", -1), ("fme_z", 3)], 40),
+            ]
+        )
+
+    lines = [
+        f"NAME          {destination.stem}",
+        "ROWS",
+        " N  OBJ",
+        *(f" L  {row_name}" for row_name, _, _ in rows),
+        "COLUMNS",
+    ]
+    row_by_variable: dict[str, list[tuple[str, int]]] = {
+        name: [] for group in groups for name in group
+    }
+    row_by_variable.update({item["column"]: [] for item in fme_extensions})
+    if fme_paper_block:
+        row_by_variable.update({name: [] for name in ("fme_i", "fme_x", "fme_y", "fme_z")})
+    extension_columns = {item["column"] for item in fme_extensions}
+    for row_name, terms, _ in rows:
+        for name, value in terms:
+            row_by_variable[name].append((row_name, value))
+    for name, terms in row_by_variable.items():
+        if name in extension_columns or name in {"fme_x", "fme_y", "fme_z"}:
+            entries = []
+        elif name == "fme_i":
+            entries = [("OBJ", 1)]
+        else:
+            entries = [("OBJ", -1)]
+        entries.extend(terms)
+        for offset in range(0, len(entries), 2):
+            fields = entries[offset : offset + 2]
+            formatted = " ".join(f"{row} {value}" for row, value in fields)
+            lines.append(f"    {name} {formatted}")
+    lines.extend(["RHS"])
+    for row_name, _, rhs in rows:
+        lines.append(f"    RHS1 {row_name} {rhs}")
+    lines.append("BOUNDS")
+    for group in groups:
+        for name in group:
+            lines.append(f" BV BND1 {name}")
+    for extension in fme_extensions:
+        lines.append(f" FR BND1 {extension['column']}")
+    if fme_paper_block:
+        lines.extend([" LI BND1 fme_i 0", " UI BND1 fme_i 40"])
+    lines.append("ENDATA")
+    destination.write_text("\n".join(lines) + "\n")
+
+
 def mycielski_graph(chromatic_number: int) -> tuple[set[tuple[int, int]], list[int]]:
     """Build the canonical graph M^(k-2)(K2) and its k-coloring."""
 
@@ -366,13 +598,95 @@ def _graph_coloring(config: dict[str, Any], index: int, destination: Path) -> No
     destination.write_text(json.dumps(instance, indent=2) + "\n")
 
 
+def balanced_subset_sum_data(
+    config: dict[str, Any], index: int
+) -> tuple[dict[str, Any], list[int], dict[str, Any]]:
+    """Generate a fixed-cardinality subset-sum objective with an exact DP proof."""
+    rng = random.Random(_instance_seed(config, index))
+    item_count = int(_choice(config["item_counts"], index))
+    maximum = int(config["max_weight"])
+    step = int(config.get("weight_step", 1))
+    if item_count < 2 or maximum < 1 or step < 1 or maximum // step < 1:
+        raise ValueError("invalid balanced subset-sum generator dimensions")
+    cardinality = int(config.get("cardinality", item_count // 2))
+    if not 0 < cardinality < item_count:
+        raise ValueError("invalid balanced subset-sum cardinality")
+    domain_mode = _choice(config.get("domain_modes", ["bounded"]), index)
+    if domain_mode not in {"bounded", "enumerated"}:
+        raise ValueError("invalid balanced subset-sum domain mode")
+    weights = [step * rng.randint(1, maximum // step) for _ in range(item_count)]
+    total = sum(weights)
+    offset = int(_choice(config.get("target_offsets", [0]), index))
+    target = max(0, min(total, total * cardinality // item_count + offset))
+
+    layers = [1] + [0] * cardinality
+    snapshots = [layers.copy()]
+    for position, weight in enumerate(weights):
+        for count in range(min(cardinality, position + 1), 0, -1):
+            layers[count] |= layers[count - 1] << weight
+        snapshots.append(layers.copy())
+    reachable = layers[cardinality]
+    best_sum = min(
+        (value for value in range(total + 1) if (reachable >> value) & 1),
+        key=lambda value: (abs(value - target), value),
+    )
+    selected = []
+    remaining_sum = best_sum
+    remaining_count = cardinality
+    for position in range(item_count - 1, -1, -1):
+        if (snapshots[position][remaining_count] >> remaining_sum) & 1:
+            continue
+        weight = weights[position]
+        if (
+            remaining_count == 0
+            or remaining_sum < weight
+            or not (
+                snapshots[position][remaining_count - 1] >> (remaining_sum - weight)
+            )
+            & 1
+        ):
+            raise ValueError("subset-sum proof reconstruction failed")
+        selected.append(position)
+        remaining_sum -= weight
+        remaining_count -= 1
+    if remaining_count or remaining_sum:
+        raise ValueError("subset-sum proof reconstruction is incomplete")
+    selected.sort()
+    instance = {
+        "name": f"subset_{index:04d}",
+        "problem_kind": "balanced_subset_sum",
+        "weights": weights,
+        "cardinality": cardinality,
+        "target": target,
+        "domain_mode": domain_mode,
+    }
+    basis = {
+        "kind": "fixed_cardinality_subset_sum_dp",
+        "total_weight": total,
+        "cardinality": cardinality,
+        "target": target,
+        "reachable_bitset_sha256": hashlib.sha256(
+            reachable.to_bytes((total + 8) // 8, "little")
+        ).hexdigest(),
+    }
+    return instance, selected, basis
+
+
+def _balanced_subset_sum(config: dict[str, Any], index: int, destination: Path) -> None:
+    instance, _, _ = balanced_subset_sum_data(config, index)
+    instance["name"] = destination.stem
+    destination.write_text(json.dumps(instance, indent=2) + "\n")
+
+
 _GENERATORS = {
     "euclidean_cvrp": ("json", _cvrp),
     "bin_packing": ("json", _bin_packing),
     "repeated_constants_cumulative": ("json", _ortools),
     "single_machine_scheduling_mip": ("lp", _scheduling_lp),
     "multidimensional_knapsack_mip": ("lp", _multidimensional_knapsack_lp),
+    "binary_clique_cover_mip": ("mps", _binary_clique_cover_mps),
     "graph_coloring": ("json", _graph_coloring),
+    "balanced_subset_sum": ("json", _balanced_subset_sum),
 }
 
 
@@ -855,7 +1169,9 @@ def prepare_trusted_optimum_oracle(
         "single_machine_scheduling_mip",
         "bin_packing",
         "multidimensional_knapsack_mip",
+        "binary_clique_cover_mip",
         "graph_coloring",
+        "balanced_subset_sum",
     }:
         raise ValueError("unsupported trusted optimum problem kind")
     private_root = private_root.resolve()
@@ -912,6 +1228,48 @@ def prepare_trusted_optimum_oracle(
                     "dimensions": len(weights),
                     "items": len(weights[0]),
                 }
+            elif generator["kind"] == "binary_clique_cover_mip":
+                groups, planted, _ = binary_clique_cover_data(generator, index)
+                values = {
+                    name: int(offset == planted[group_index])
+                    for group_index, group in enumerate(groups)
+                    for offset, name in enumerate(group)
+                }
+                fme_extensions = binary_clique_cover_fme_extensions(
+                    generator, index, groups, planted
+                )
+                values.update(
+                    {extension["column"]: 0 for extension in fme_extensions}
+                )
+                optimal_objective = -len(groups)
+                problem_kind = "binary_clique_cover"
+                optimality_basis = {
+                    "kind": "binary_clique_cover",
+                    "groups": groups,
+                }
+                if generator.get("fme_paper_block", False):
+                    problem_kind = "binary_clique_cover_fme"
+                    optimal_objective += 12
+                    values.update(
+                        {"fme_i": 12, "fme_x": 0, "fme_y": 14, "fme_z": 18}
+                    )
+                    optimality_basis = {
+                        "kind": "binary_clique_cover_fme",
+                        "groups": groups,
+                        "fme_paper_block": {
+                            "integer_variable": "fme_i",
+                            "continuous_variables": ["fme_x", "fme_y", "fme_z"],
+                            "rows": ["FMEPAPER1", "FMEPAPER2", "FMEPAPER3"],
+                            "lower_bound": 12,
+                            "witness": {"fme_i": 12, "fme_x": 0, "fme_y": 14, "fme_z": 18},
+                        },
+                    }
+                reference_solution = {
+                    "values": values,
+                    "objective": optimal_objective,
+                }
+                if fme_extensions:
+                    optimality_basis["fme_extensions"] = fme_extensions
             elif generator["kind"] == "graph_coloring":
                 instance, colors, basis = graph_coloring_data(generator, index)
                 instance["name"] = instance_id
@@ -920,6 +1278,18 @@ def prepare_trusted_optimum_oracle(
                 optimal_objective = basis["chromatic_number"]
                 problem_kind = "graph_coloring"
                 reference_solution = {"colors": colors}
+                optimality_basis = basis
+            elif generator["kind"] == "balanced_subset_sum":
+                instance, selected, basis = balanced_subset_sum_data(generator, index)
+                instance["name"] = instance_id
+                if json.loads(instance_path.read_text()) != instance:
+                    raise ValueError("balanced subset-sum generated input changed")
+                optimal_objective = abs(
+                    sum(instance["weights"][item] for item in selected)
+                    - instance["target"]
+                )
+                problem_kind = "balanced_subset_sum"
+                reference_solution = {"selected_items": selected}
                 optimality_basis = basis
             else:
                 instance = json.loads(instance_path.read_text())
@@ -1042,7 +1412,11 @@ def prepare_generated_development_panel(
         raise ValueError("development panel generator must be agent-visible")
     config = payload["generator"]
     kind = config["kind"]
-    if kind not in {"multidimensional_knapsack_mip", "graph_coloring"}:
+    if kind not in {
+        "multidimensional_knapsack_mip",
+        "binary_clique_cover_mip",
+        "graph_coloring",
+    }:
         raise ValueError("unsupported generated development panel")
     suffix, generator = _GENERATORS[kind]
     panel_dir = instance_set_config_path.with_suffix("")
@@ -1059,6 +1433,27 @@ def prepare_generated_development_panel(
             _, capacities, selected = multidimensional_knapsack_data(config, index)
             optimum = -sum(capacities)
             solution = {"selected_items": selected}
+        elif kind == "binary_clique_cover_mip":
+            groups, planted, _ = binary_clique_cover_data(config, index)
+            fme_extensions = binary_clique_cover_fme_extensions(
+                config, index, groups, planted
+            )
+            optimum = -len(groups)
+            if config.get("fme_paper_block", False):
+                optimum += 12
+            solution = {
+                "values": {
+                    name: int(offset == planted[group_index])
+                    for group_index, group in enumerate(groups)
+                    for offset, name in enumerate(group)
+                }
+                | {extension["column"]: 0 for extension in fme_extensions},
+                "objective": optimum,
+            }
+            if config.get("fme_paper_block", False):
+                solution["values"].update(
+                    {"fme_i": 12, "fme_x": 0, "fme_y": 14, "fme_z": 18}
+                )
         else:
             _, colors, basis = graph_coloring_data(config, index)
             optimum = basis["chromatic_number"]

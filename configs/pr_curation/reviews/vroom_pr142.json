@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "repository": "VROOM-Project/vroom",
+  "pr_number": 142,
+  "base_commit": "782c69708a4ada3eea5d9b0696a4d51a994266ad",
+  "head_commit": "86c957a90be4ecfbdd79fdebe64df51cc896cbe3",
+  "decision": "needs_evidence",
+  "reason": "The PR reports a TSP heuristic speedup and changes TSP local search, graph, and edge code. PitBench's current VROOM task evaluates CVRP, so the PR title and source paths do not establish that its changed search path runs on the declared solver workload. A TSP workload or a traced CVRP call path is needed before reviewing this as a distinct solver-optimization task.",
+  "missing_evidence": [
+    "solver_call_path",
+    "workload_activation",
+    "performance_protocol"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/VROOM-Project/vroom/pull/142"
+  ]
+}

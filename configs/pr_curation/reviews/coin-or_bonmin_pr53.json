@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "coin-or/Bonmin",
+  "pr_number": 53,
+  "base_commit": "af546f2c822f7cbd21cf5f7318cc66016a9f8087",
+  "head_commit": "dbe6f3b2636ceecc7ff425cc882c9b4ba489943c",
+  "decision": "reject",
+  "reason": "The one-line change corrects a null-conversion expression and does not identify a repeatable solver mechanism, activated workload, or performance metric.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "0a6f5aeaf13a1a6c634dbc33f6b749772252b53f1bf262c96b3a533eb803374a",
+  "changed_file_paths": [
+    "src/Algorithms/BonBabSetupBase.cpp"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/coin-or/Bonmin/pull/53"
+  ],
+  "rejection_basis": "other"
+}

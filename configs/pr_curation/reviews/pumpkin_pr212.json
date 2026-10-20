@@ -1,0 +1,56 @@
+{
+  "schema_version": 2,
+  "repository": "ConSol-Lab/Pumpkin",
+  "pr_number": 212,
+  "base_commit": "a370866149683befbf8d529a54064cadeee20738",
+  "head_commit": "c57adac4b1edd19c491bbab0c8e6bfcdab32b2cf",
+  "decision": "advance",
+  "reason": "The PR replaces the Nogood propagator's per-nogood predicate vectors with an arena allocator, aiming to remove double indirection and repeated allocations in the solver engine.",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "changed_source_paths": [
+    "pumpkin-crates/core/src/containers/keyed_vec.rs",
+    "pumpkin-crates/core/src/engine/constraint_satisfaction_solver.rs",
+    "pumpkin-crates/core/src/propagators/nogoods/arena_allocator.rs",
+    "pumpkin-crates/core/src/propagators/nogoods/mod.rs",
+    "pumpkin-crates/core/src/propagators/nogoods/nogood_id.rs",
+    "pumpkin-crates/core/src/propagators/nogoods/nogood_info.rs",
+    "pumpkin-crates/core/src/propagators/nogoods/nogood_propagator.rs",
+    "pumpkin-solver/src/bin/pumpkin-solver/main.rs"
+  ],
+  "solver_behavior_hypothesis": "Contiguous nogood storage may reduce propagation overhead in conflict-heavy runs, but the default one-gigabyte preallocation could increase peak memory and hurt small instances.",
+  "workload_exposure_plan": "Use exact CP instances that learn and revisit nogoods; record conflicts, propagation work, solve time, and peak memory for matched base and PR builds.",
+  "mathematical_risk": "Incorrect arena indexing or stale nogood references could miss valid propagation, prune feasible assignments, or produce a false infeasibility claim.",
+  "independent_check_plan": "Check satisfying assignments against original constraints and compare satisfiable and unsatisfiable statuses with an independent CP or SAT solver on tractable instances.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Use paired hidden instances from distinct CP model families and sizes under the same time and memory limits, retaining OOM and timeout outcomes.",
+  "overlap_review": "The PR body identifies related PR #209 on a different branch; compare the two source diffs and count only a non-overlapping historical task lineage.",
+  "source_evidence_urls": [
+    "https://github.com/ConSol-Lab/Pumpkin/pull/212",
+    "https://api.github.com/repos/ConSol-Lab/Pumpkin/pulls/212/files"
+  ],
+  "solver_phase": "propagation",
+  "solver_entry_points": [
+    "NogoodPropagator::propagate",
+    "ArenaAllocator::insert"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "proof_time",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "false_infeasibility",
+    "search_incomplete",
+    "resource_failure"
+  ],
+  "causal_chain": "Arena-backed predicate storage removes per-nogood allocation and double indirection during propagation; the default large preallocation may instead raise memory pressure.",
+  "structural_trigger": "Constraint-programming instances that learn and revisit nogoods during exact search.",
+  "activation_probe": "Count learned nogoods, propagator visits, allocator growth, and peak RSS on both source states.",
+  "instance_selection_rule": "Freeze CP model families with and without learned-nogood pressure before hidden outcomes; retain OOM and timeout cases.",
+  "overlap_group": "pumpkin_nogood_storage_2025",
+  "related_prs": [
+    209
+  ],
+  "resource_risk": "The PR defaults to roughly one gigabyte of preallocated predicate storage and may exceed task memory limits."
+}

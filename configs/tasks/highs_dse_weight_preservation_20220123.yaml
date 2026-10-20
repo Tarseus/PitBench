@@ -1,0 +1,65 @@
+schema_version: '3.0'
+task_id: highs_dse_weight_preservation_20220123
+release:
+  repository: ERGO-Code/HiGHS
+  version: 1.1.1
+  tag: 9fcc3c86ea796642493926956946f8c8636cd1c0
+  base_commit: 9fcc3c86ea796642493926956946f8c8636cd1c0
+  released_at: '2022-01-22T13:02:53+00:00'
+  url: https://github.com/ERGO-Code/HiGHS/commit/9fcc3c86ea796642493926956946f8c8636cd1c0
+task_type: exact_solver
+problem_family: mip
+optimization_scope: simplex_dse_weight_maintenance
+instruction: Improve exact MIP solving in this pinned HiGHS 1.1.1 source snapshot
+  while preserving original-model feasibility, valid bounds, objective semantics,
+  and truthful solve statuses. The Judge fixes dual steepest-edge pricing so DSE maintenance
+  is exercised. Choose source changes autonomously and use only visible development
+  instances.
+repository:
+  clone_url: https://github.com/ERGO-Code/HiGHS.git
+  plugin: pitbench.repositories.plugins:HighsRepositoryPlugin
+  editable_paths:
+  - src/simplex
+  - src/lp_data
+  - src/util
+  - build
+  agent_image: pitbench-highs-pr685-agent:local
+  judge_image: sha256:bc8659e3fe398b7419183c04a75c13e68af1d300e4816b95dbfc7dbacffd1423
+oracle:
+  kind: known_optimum
+  source: private://oracles/highs_dse_weight_preservation_20220123.yaml
+  source_sha256: 091dcb2ab56169341400c4c611d0a880c6e395cb04f594fd826324b46f0b076a
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  threads: 1
+  verifier: trusted_optimum
+  solver_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  fixed_solver_parameters:
+    simplex_dual_edge_weight_strategy: 2
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/highs_pr577_dev.yaml
+  instance_set_config_sha256: b905771a958eeff7d652851c099fc0d07337eca97efd0b96d259bdd3c59386fb
+  size: 10
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/highs_pr577_mps/judge_id.yaml
+  instance_set_config_sha256: a2891ab6564bd16c18864d04d1612655531cc1dee24f299f1b66a4095fefdef6
+  size: 30
+- name: judge_shift
+  kind: judge_shift
+  instance_set_config: private://hidden_instances/highs_pr577_mps/judge_shift.yaml
+  instance_set_config_sha256: d7ea0488ac0338523e87a978cd453767f270d117947043677c56a91ceaf5ab8a
+  size: 30

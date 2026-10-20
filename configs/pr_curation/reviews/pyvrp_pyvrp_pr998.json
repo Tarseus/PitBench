@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 998,
+  "base_commit": "ea81aba4b51c15e24a8bcdfde92f1c9b2983132f",
+  "head_commit": "4bb2303675689f490e9643e73644a63577918702",
+  "decision": "advance",
+  "reason": "When callers omit an initial solution, the PR starts local search from a seeded random feasible solution instead of an empty one. This path runs for the benchmark's standard CVRP tasks and changes the search trajectory from the first iteration. A secondary insertion fallback handles optional clients not inserted through the neighbourhood; that branch is not claimed as activated by the all-required CVRP panel.",
+  "repository_role": "solver_engine",
+  "mechanism": "algorithmic_search",
+  "solver_phase": "primal_heuristic",
+  "solver_entry_points": [
+    "pyvrp.solve",
+    "Solution::make_random",
+    "LocalSearch::applyOptionalClientMoves"
+  ],
+  "effect_channels": ["primal_trajectory", "work_per_event"],
+  "correctness_failure_modes": ["invalid_primal", "search_incomplete"],
+  "changed_source_paths": [
+    "pyvrp/cpp/search/LocalSearch.cpp",
+    "pyvrp/solve.py"
+  ],
+  "solver_behavior_hypothesis": "A randomized feasible starting solution can give local search useful route structure earlier than starting from an empty solution. A fallback insertion after a route's start depot can also recover optional clients that the neighbourhood-based insertion scan did not place.",
+  "causal_chain": "When initial_solution is absent, solve constructs Solution.make_random(data, rng) using the solver seed, then runs the same iterated local search from that candidate. In optional-client search, the new fallback tries the first route's start depot after ordinary neighbor insertions fail. The first mechanism changes the initial incumbent and all subsequent search decisions; the second can recover an otherwise uninserted optional client.",
+  "structural_trigger": "Ordinary CVRP inputs with no user-supplied initial_solution activate randomized initialization. Optional-client models additionally activate the first-route fallback only when the client remains unassigned after all neighbour insertion and replacement proposals.",
+  "activation_probe": "On a frozen CVRP panel count Solution.make_random invocations, initial and returned objective, iterations, and route feasibility in paired source probes. Use PR tests or a separate optional-client control to verify the first-route fallback; do not claim that branch is active on all-required CVRP cases.",
+  "instance_selection_rule": "Freeze a public CVRP panel before hidden runs, stratified by customer count, vehicle count, and baseline gap. Include a small model with a known feasible route for validity checks. Use the existing hidden published CVRPLIB X and structurally shifted CVRP panels for base-only opportunity measurement, retaining all seeds, failures, and timeouts.",
+  "workload_exposure_plan": "Use the shared PyVRP driver, which supplies no initial solution, on paired pinned builds. Record initialization source and first-incumbent trajectory on the public panel, independently verify every returned route, and run the upstream optional-client fallback regression tests separately.",
+  "mathematical_risk": "A random constructor could omit or duplicate required clients or violate capacity. The optional-client fallback could overwrite a required visit or violate capacity. Verify original customer coverage, route capacity, and recomputed objective for every returned solution.",
+  "independent_check_plan": "Run the independent original CVRP checker on every public and hidden output. Run the PR's upstream LocalSearch optional-client tests on both source states and retain both statuses; do not infer hidden performance from the historical PR description.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Qualify open optimization room with a one-seed base-only hidden panel at the task's primary budget. Report the historical PR effect separately if measured; admission requires no coding-agent run or Agent gain.",
+  "overlap_review": "PR #988 changes the iterated-local-search acceptance policy after incumbents are found; PR #998 changes how the first feasible route structure is created before ILS begins and adds an optional-client insertion fallback. The entry states and causal mechanisms differ.",
+  "overlap_group": "pyvrp_initial_solution_randomization_2026",
+  "related_prs": [988],
+  "resource_risk": "Random initialization may spend more or less work before the first incumbent, and its seed can change the subsequent search trajectory. Report quality and time-to-target by instance family; retain regressions.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/998",
+    "https://api.github.com/repos/PyVRP/PyVRP/pulls/998/files"
+  ]
+}

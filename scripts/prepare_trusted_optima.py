@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import tempfile
 from pathlib import Path
+
+import yaml
 
 from pitbench.instances.generate import (
     prepare_cp_sat_job_shop_panel,
     prepare_generated_development_panel,
     prepare_trusted_optimum_oracle,
 )
+from pitbench.problem_families.verification import TrustedOptimumOracle
 
 
 def main() -> None:
@@ -18,6 +22,13 @@ def main() -> None:
     parser.add_argument("--task-config", type=Path)
     parser.add_argument("--instance-set-name")
     parser.add_argument("--instance-set-config", type=Path)
+    parser.add_argument(
+        "--instance-set-pair",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="repeat for an oracle covering multiple hidden instance sets",
+    )
     parser.add_argument("--private-root", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--reference-solutions", type=Path)
@@ -92,6 +103,53 @@ def main() -> None:
         )
         count = len(panel["records"]) if "records" in panel else len(panel["instances"])
         print(f"prepared {count} job-shop inputs")
+        return
+    if args.instance_set_pair:
+        required = {
+            "--task-config": args.task_config,
+            "--private-root": args.private_root,
+            "--output": args.output,
+            "--reference-solutions": args.reference_solutions,
+        }
+        missing = [name for name, value in required.items() if value is None]
+        if missing:
+            parser.error(f"multi-set preparation requires {', '.join(missing)}")
+        if args.instance_set_name or args.instance_set_config:
+            parser.error("use either --instance-set-pair or the single-set options")
+        private_root = args.private_root.resolve()
+        output = args.output.resolve()
+        if not output.is_relative_to(private_root):
+            parser.error("multi-set oracle output must remain in private storage")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        records = []
+        seen: set[str] = set()
+        with tempfile.TemporaryDirectory(
+            dir=output.parent, prefix="pitbench-oracle-"
+        ) as temporary:
+            for entry in args.instance_set_pair:
+                name, separator, path = entry.partition("=")
+                if not separator or not name or not path or name in seen:
+                    parser.error(f"invalid or duplicate --instance-set-pair: {entry}")
+                seen.add(name)
+                generated = prepare_trusted_optimum_oracle(
+                    task_config_path=args.task_config,
+                    instance_set_name=name,
+                    instance_set_config_path=Path(path),
+                    private_root=private_root,
+                    output_path=Path(temporary) / f"{name}.yaml",
+                    reference_solution_dir=args.reference_solutions / name,
+                    bin_packing_proof_dir=args.oracle_proof_dir,
+                    proof_solver_commit=args.proof_solver_commit,
+                )
+                records.extend(generated["records"])
+        oracle = TrustedOptimumOracle(task_id=args.task_config.stem, records=records)
+        output.write_text(
+            yaml.safe_dump(oracle.model_dump(mode="json"), sort_keys=False)
+        )
+        print(
+            f"prepared {len(records)} trusted optima; "
+            f"sha256={hashlib.sha256(output.read_bytes()).hexdigest()}"
+        )
         return
     required = {
         "--task-config": args.task_config,

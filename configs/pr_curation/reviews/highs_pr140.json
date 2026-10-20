@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 140,
+  "base_commit": "b555a6a88d71473ae0237b860c9f288bf2c40267",
+  "head_commit": "e5807641084c78955038bd880a3571d2e56183bc",
+  "decision": "reject",
+  "reason": "The source diff replaces abs with fabs in presolve and simplex checks. This corrects floating-point behavior but does not describe a solver performance optimization mechanism. The title's 'better behaviour' is insufficient evidence for an optimization task.",
+  "repository_role": "solver_engine",
+  "mechanism": "other",
+  "changed_source_paths": [
+    "src/presolve/Presolve.cpp",
+    "src/simplex/HPrimal.cpp"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/140"
+  ],
+  "rejection_basis": "correctness_only"
+}

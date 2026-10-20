@@ -1,0 +1,53 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 2522,
+  "base_commit": "eba2504508da8cf94b267c4b6347cf78eb902da4",
+  "head_commit": "d82cb80b0c492c920b413a671a8096b1e827ed25",
+  "decision": "advance",
+  "reason": "The PR adds a Chvatal-Gomory strengthening rule to MIP row presolve. The author reports a small average effect over a broad MIP set, so this is an open solver-engineering opportunity and does not qualify as a positive expert reference.",
+  "repository_role": "solver_engine",
+  "mechanism": "algorithmic_search",
+  "solver_phase": "presolve",
+  "solver_entry_points": [
+    "HPresolve::rowPresolve",
+    "HighsIntegers::integralScale"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "search_tree",
+    "dual_trajectory",
+    "proof_time"
+  ],
+  "correctness_failure_modes": [
+    "invalid_bound",
+    "false_infeasibility",
+    "incorrect_optimality",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "highs/presolve/HPresolve.cpp",
+    "highs/presolve/HPresolve.h"
+  ],
+  "solver_behavior_hypothesis": "On bounded mixed-integer inequalities where scaled coefficient rounding strengthens the row, the new rule may reduce the feasible relaxation and later branch-and-bound work, at a presolve cost; rows with no accepted scalar should behave as controls.",
+  "causal_chain": "The PR searches coefficient scalars, complements or shifts bounded variables, rounds coefficients and rhs while preserving validity, then adds a stronger presolve row. This can tighten the LP relaxation and alter dual bounds, node counts and proof time, while increasing row-processing work.",
+  "structural_trigger": "A MIP inequality row with bounded integer variables and at least one accepted Chvatal-Gomory scalar; ranged rows, unbounded variables, nonintegral rows and rows with no strengthening are controls.",
+  "activation_probe": "On both pinned builds, count eligible rows, scalar candidates, accepted strengthened rows, coefficient/rhs changes and resulting presolve rows; compare root bounds and search nodes on a frozen public trigger/control panel.",
+  "instance_selection_rule": "Freeze binary knapsack and scheduling MIPs by row structure and baseline difficulty before hidden outcomes; include rows that satisfy and fail the rounding preconditions, fixed seeds and budgets, and retain all timeouts.",
+  "workload_exposure_plan": "Use the shared HiGHS exact-MIP driver and direct row probes to show the strengthening rule executes on a public MIP; independently validate original-model solutions, bounds and statuses.",
+  "mathematical_risk": "An invalid complement/shift or floating-point rounding could cut off feasible integer points, create false infeasibility, or invalidate bounds and optimality claims.",
+  "independent_check_plan": "Check returned primal assignments against original constraints and integrality, compare dual bounds with independently proven optima, and test infeasible and normal-timeout statuses on tractable MIPs.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Measure verified solved coverage, proof time and valid timeout-bound progress on held-out knapsack and scheduling MIPs, stratified by whether the row trigger occurs; report regressions and inactive cases.",
+  "overlap_review": "HiGHS #2861 changes enumeration-based presolve, #3213 changes early branching budgets, and #651 changes primal heuristics at other snapshots. This PR\u2019s CG row strengthening is a distinct presolve mechanism and one task across its two source files.",
+  "overlap_group": "highs_chvatal_gomory_presolve_2026",
+  "related_prs": [
+    2861,
+    3213,
+    651
+  ],
+  "resource_risk": "More row scans and stronger-row materialization can increase presolve time and memory; average search improvement may be small or absent when few rows meet the trigger.",
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/2522"
+  ]
+}

@@ -47,7 +47,7 @@ RUN test -n "$BASE_COMMIT" \
     && git -C /workspace/repo reflog expire --expire=now --all \
     && git -C /workspace/repo gc --prune=now
 RUN cd /workspace/repo \
-    && mvn -q package -DskipTests \
+    && mvn -q package -DskipTests -Dlicense.skip=true \
     && python3 /opt/pitbench-jvm/runner.py compile --solver choco
 
 ENV PITBENCH_CHOCO_RUNNER="python3 /opt/pitbench-jvm/runner.py run --solver choco"

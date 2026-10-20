@@ -1,0 +1,24 @@
+schema_version: '1.0'
+kind: human_pr_source_reference
+task_id: pyvrp_search_20260112
+task_track: open_opportunity
+source_repository: https://github.com/PyVRP/PyVRP.git
+pull_request_url: https://github.com/PyVRP/PyVRP/pull/988
+base_commit: b071e951ed0dc5843f9ff5bb2ae6767d87234beb
+head_commit: abed7dc1bb4c3d4ea0e103525c5c851f25b031d8
+base_tree_sha: f7f77d9254802d16ab80001c1597140cc3d513ee
+head_tree_sha: d5a2dfa4ea45d6da259c6e76b2939ff73cf2df1e
+patch_file: configs/references/pyvrp_pr988_source.patch
+patch_sha256: 61b486d239c87118dfc7306a15b01f3269aa51dbee36adceb6dd08290a6e8258
+changed_source_files:
+  - pyvrp/IteratedLocalSearch.py
+  - pyvrp/solve.py
+validation_test_patch_sha256: 26d605de4b4a6b20a22005d35b4f99db42d4e68b28c4a1ead52d409b3c5c3f0e
+evaluation_note: >-
+  The PR changes the ILS search policy and is activated on a public CVRP
+  workload. The same evaluator-owned compatibility test patch passes 9 ILS
+  tests in both source states and is absent from performance builds. A public
+  human-PR screen was inconclusive; no hidden human-PR effect is claimed.
+  The pinned base completed all 38 hidden ID instances at one predeclared
+  seed with independently verified solutions and a 1.541% mean normalized
+  gap, qualifying an open optimization challenge.

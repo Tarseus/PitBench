@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 101,
+  "base_commit": "94e82a858fcb9ea93554720246b1f775bc1da994",
+  "head_commit": "a89b0bb0ef31afe3444b2d11189dfe7e8d142281",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "CMake link flags for the Osi interface only; no solver-engine source file changed.",
+  "reviewed_changed_files": [
+    "CMakeLists.txt",
+    "check/CMakeLists.txt",
+    "src/CMakeLists.txt"
+  ],
+  "detail_sha256": "3abd812e771f7f22a786c3c8de46cfd75abe8e19aeb80da5109360973c660855",
+  "selection_queue_sha256": "9fa7126befcaeb0c0a1fd3f32c5f73af1ba2c871a921ebe1600edac37279e3a5",
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/101"
+  ]
+}

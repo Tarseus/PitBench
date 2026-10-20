@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "repository": "Gecode/gecode",
+  "pr_number": 102,
+  "base_commit": "d7fe45d298863409196288c6104877722199370a",
+  "head_commit": "3b86d0dabc371d5976c5dafef0fc7f6c5f92640b",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Changes CMake configuration and license text only; no solver-engine source file changed.",
+  "reviewed_changed_files": [
+    "CMakeLists.txt",
+    "LICENSE"
+  ],
+  "detail_sha256": "ddf89e977807a2e233381b4bdb42bfcf07234478ee0bb817cfe58ef16d46c9fa",
+  "selection_queue_sha256": "9fa7126befcaeb0c0a1fd3f32c5f73af1ba2c871a921ebe1600edac37279e3a5",
+  "source_evidence_urls": [
+    "https://github.com/Gecode/gecode/pull/102"
+  ]
+}

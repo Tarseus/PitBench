@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "repository": "coin-or/Cbc",
+  "pr_number": 399,
+  "base_commit": "57d79e62a743f1590f2d22c922efc272c277c369",
+  "head_commit": "c32bd3aa48767e93d7b36880b48ff94c615676e1",
+  "decision": "reject",
+  "reason": "This patch replaces repeated Cbc parameter-settings struct definitions with templated base structs and changes default member initialization. It does not alter cut generation, heuristic decisions, search work, or a solver-performance mechanism.",
+  "review_lane": "mechanism_review",
+  "detail_record_sha256": "0bb2383f18722fce9799a8b2ee24974ba956a43f10ba047beb65bc73dcfc8c69",
+  "changed_file_paths": [],
+  "source_evidence_urls": [
+    "https://github.com/coin-or/Cbc/pull/399"
+  ],
+  "rejection_basis": "no_optimization_mechanism"
+}

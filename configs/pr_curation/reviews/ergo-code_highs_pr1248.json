@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 1248,
+  "base_commit": "95e2ac08875b95ac9957b073a099879836fdc100",
+  "head_commit": "d3bdb3ec507a7ec88a9fb5e7cf692618ba06d4b7",
+  "decision": "reject",
+  "reason": "The changed objectiveValue methods support model-solution output and public LP/QP semantics; the patch does not change a solver search or computational hot path.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "b9a8df3edb541ba535b692891d43e9d045e71380cc21d9bb371e5b52ecd69555",
+  "changed_file_paths": [
+    "app/RunHighs.cpp",
+    "src/lp_data/HighsLp.cpp",
+    "src/lp_data/HighsLp.h",
+    "src/lp_data/HighsModelUtils.cpp",
+    "src/lp_data/HighsModelUtils.h",
+    "src/model/HighsHessian.cpp",
+    "src/model/HighsHessian.h"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/1248"
+  ],
+  "rejection_basis": "correctness_only"
+}

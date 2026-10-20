@@ -33,7 +33,8 @@ def test_pinned_source_is_fetched_once_then_reused_without_origin(
     _git(origin, "config", "user.name", "PitBench Test")
     _git(origin, "config", "user.email", "pitbench@example.invalid")
     (origin / "solver.txt").write_text("release source\n")
-    _git(origin, "add", "solver.txt")
+    (origin / "solver-link.txt").symlink_to("solver.txt")
+    _git(origin, "add", "solver.txt", "solver-link.txt")
     _git(origin, "commit", "--quiet", "-m", "release")
     commit = _git(origin, "rev-parse", "HEAD")
     task = SimpleNamespace(
@@ -47,12 +48,14 @@ def test_pinned_source_is_fetched_once_then_reused_without_origin(
     cache = adapter.source_cache_path(tmp_path, task)
     assert cache.is_dir()
     assert _git(first, "rev-parse", "HEAD") == commit
+    assert (first / "solver-link.txt").is_symlink()
     assert (tmp_path / "first.bundle").is_file()
 
     origin.rename(tmp_path / "origin-offline")
     second = tmp_path / "second"
     adapter._materialize_cached_repository(task, second, tmp_path / "second.bundle")
     assert (second / "solver.txt").read_text() == "release source\n"
+    assert (second / "solver-link.txt").is_symlink()
     assert (tmp_path / "second.bundle").is_file()
 
     (cache / "untracked.txt").write_text("unexpected\n")

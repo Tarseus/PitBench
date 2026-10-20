@@ -1,0 +1,61 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 690,
+  "base_commit": "1d77a4e561b498ec737d1e81fcf10a982088517f",
+  "head_commit": "74e769bdca105b2a469e7340637b39361d069980",
+  "decision": "advance",
+  "reason": "The PR changes how MIP LP relaxation cuts age, reset, and leave the LP across branch nodes. It also changes clique-neighbourhood parallelism and some reporting, so the full patch needs a pinned paired build and the cut-aging path must be measured separately from nonactivated changes under a one-thread task.",
+  "repository_role": "solver_engine",
+  "mechanism": "combined",
+  "solver_phase": "cut_generation",
+  "solver_entry_points": [
+    "HighsLpRelaxation::performAging",
+    "HighsLpRelaxation::resetAges",
+    "HighsSeparation::separationRound",
+    "HighsSearch::evaluateNode",
+    "HighsCliqueTable::queryNeighborhood"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "search_tree",
+    "dual_trajectory",
+    "proof_time",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_bound",
+    "false_infeasibility",
+    "incorrect_optimality",
+    "numerical_instability",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "src/lp_data/HighsOptions.h",
+    "src/mip/HighsCliqueTable.cpp",
+    "src/mip/HighsCliqueTable.h",
+    "src/mip/HighsLpRelaxation.cpp",
+    "src/mip/HighsLpRelaxation.h",
+    "src/mip/HighsMipSolver.cpp",
+    "src/mip/HighsMipSolverData.cpp",
+    "src/mip/HighsSearch.cpp",
+    "src/mip/HighsSeparation.cpp"
+  ],
+  "solver_behavior_hypothesis": "Aging unused cuts at more branch nodes and preserving cuts useful to dual LP solutions may change LP size, bound progress, and the search tree, improving proof time on cut-intensive MIPs while risking regressions on other structures.",
+  "causal_chain": "Cut rows now age when an LP basis is valid, reset on dual-use and selected integer-column conditions, and are deleted only at scheduled points. Those choices alter the active LP relaxation and downstream dual bounds and branching decisions. Clique neighbourhood parallelism is a separate patch component that must be reported as inactive if the declared thread count is one.",
+  "structural_trigger": "Integer MIPs that generate cut-pool LP rows and perform multiple node LP resolves; instances without active cut aging or clique queries are explicit controls.",
+  "activation_probe": "Count performAging calls by deleteRows mode, cut-age resets, cut-row deletions, node LP resolves, and clique neighbourhood queries in both pinned states on public MIP cases; record whether the one-thread parallel branch is inactive.",
+  "instance_selection_rule": "Freeze public and held-out MIP families by cut density, integer-column structure, and difficulty before hidden scoring; keep fixed seeds, CPU-time budgets, threads, and a no-cut control family.",
+  "workload_exposure_plan": "Run pinned base and source-only PR builds through the shared exact MIP driver, instrument cut-aging and deletion on public binary and general-integer cases, and retain complete original-model solve and bound traces.",
+  "mathematical_risk": "Incorrect cut-row deletion, stale basis use, or altered clique handling could weaken a valid bound, exclude a feasible integer solution, or produce a false optimality or infeasibility status; numerical tolerances can amplify these failures.",
+  "independent_check_plan": "Verify every primal solution against the original MIP model, compare bound and status claims with an independent exact solver or certificate on tractable cases, and inspect cut validity and basis transitions in targeted regression instances.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Report independently verified solved coverage, proof time, timeout gap/bound progress, and per-family regressions on hidden ID and held-out MIP structures with paired fixed resources and complete missing-run accounting.",
+  "overlap_review": "This 2022 cut-aging lineage differs from PR #693's implication-memory work and PR #2861's enumeration presolve; compare neighboring cut-pool PRs before assigning another group in this source area.",
+  "overlap_group": "highs_mip_cut_aging_2022",
+  "related_prs": [693, 2861],
+  "resource_risk": "More frequent age bookkeeping and clique-neighbourhood parallel setup can increase node overhead or memory, while overly aggressive deletion may enlarge the search tree.",
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/690"
+  ]
+}

@@ -27,6 +27,9 @@ configuration_robustness:
 # Development instances and inspection/benchmark commands are enabled by default.
 # Set [] explicitly for a repository-only condition; add validate when desired.
 agent_tools: [inspect, workspace, bench]
+# For a matched feedback experiment, keep all other settings identical and
+# switch only between outcome_only and solver_behavior.
+agent_feedback_mode: solver_behavior
 
 tasks:
   pyvrp_v0_14_0:

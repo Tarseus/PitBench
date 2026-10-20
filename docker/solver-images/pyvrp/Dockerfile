@@ -18,7 +18,7 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir \
     --index-url "$PYPI_INDEX_URL" \
     docblock matplotlib meson ninja numpy poetry-core pybind11 \
     pydantic pytest pytest-cov pytest-timeout pytest-xdist pyyaml setuptools \
-    tqdm vrplib wheel
+    tomli==2.2.1 tqdm vrplib wheel
 ARG SOURCE_REPOSITORY=https://github.com/PyVRP/PyVRP.git
 ARG BASE_COMMIT
 RUN test -n "$BASE_COMMIT" \

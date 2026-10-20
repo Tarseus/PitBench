@@ -1,0 +1,63 @@
+schema_version: '3.0'
+task_id: vroom_cvrp_regret_insertion_20180813
+release:
+  repository: VROOM-Project/vroom
+  version: 1.3.0-dev historical snapshot
+  tag: 4463af7e80abba19be284db40d3a8c9136f34b5f
+  base_commit: 4463af7e80abba19be284db40d3a8c9136f34b5f
+  released_at: '2018-07-27T18:20:14Z'
+  url: https://github.com/VROOM-Project/vroom/commit/4463af7e80abba19be284db40d3a8c9136f34b5f
+task_type: heuristic_solver
+problem_family: cvrp
+optimization_scope: cvrp_regret_insertion_search
+instruction: Improve CVRP local-search efficiency and fixed-budget solution quality in this pinned VROOM
+  source snapshot. Focus on job additions and route-choice work where public and hidden instances expose
+  those paths. Preserve every customer, vehicle-capacity feasibility, and the original objective semantics.
+  Choose source changes autonomously and use only visible development instances.
+repository:
+  clone_url: https://github.com/VROOM-Project/vroom.git
+  plugin: pitbench.repositories.plugins:VroomRepositoryPlugin
+  editable_paths:
+  - src
+  - bin
+  - lib
+  - obj
+  agent_image: pitbench-vroom-pr146-agent:local
+  judge_image: sha256:18edbd95039a1696292c615f87142eaa382d8bcb78b75d035e7304e79281bc90
+oracle:
+  kind: best_known_solution
+  source: private://calibration/cvrplib_x/oracle.yaml
+  source_sha256: 84833f98c4d1f2480889ed8f5f0b9046402bc899fd06f8a6b7602f186cc8ca13
+  objective_sense: minimize
+evaluation:
+  performance_protocol: heuristic_fixed_budget
+  operational_reliability: false
+  budgets_sec:
+  - 1.0
+  - 10.0
+  - 30.0
+  primary_budget_sec: 30.0
+  solver_seeds:
+  - 0
+  threads: 1
+  verifier: cvrp_independent
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/vroom_v1_15_0_dev.yaml
+  instance_set_config_sha256: 3d6580d476a08880ddf020d18b79e7dbb2c3aa115bef5bb4d63c8da509ace4d7
+  size: 10
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://calibration/cvrplib_x/oracle.yaml
+  instance_set_config_sha256: 84833f98c4d1f2480889ed8f5f0b9046402bc899fd06f8a6b7602f186cc8ca13
+  size: 38
+- name: judge_shift
+  kind: judge_shift
+  instance_set_config: private://instance_sets/pyvrp_cvrp_shift_v1.yaml
+  instance_set_config_sha256: 164b75f46a82ba164393d2b63b692ff4e4cf2a8f37e1579aee64bf4e71f7ecde
+  size: 10
+  randomness:
+    instance_seed: 27100
+    coordinate_seed: 27101
+    demand_seed: 27102

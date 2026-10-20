@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "repository": "coin-or/SYMPHONY",
+  "pr_number": 242,
+  "base_commit": "6d7939898e736f7457e3117d58ecbbd162da337f",
+  "head_commit": "16a88d54cb03eb44f287ce227b60cbbf4c872364",
+  "decision": "reject",
+  "rejection_basis": "correctness_only",
+  "reason": "The source diff repairs state management for automatically detected objective granularity across repeated solves and preserves explicit user settings. It gives no concrete optimization mechanism or solver-performance target; any changed proof time would be a consequence of correcting stale granularity. This is a mathematical-state correctness regression, not a solver optimization task under the current benchmark definition.",
+  "reviewed_changed_files": [
+    "SYMPHONY/include/sym_master.h",
+    "SYMPHONY/src/Master/master.c",
+    "SYMPHONY/src/Master/master_func.c"
+  ],
+  "source_evidence_urls": ["https://github.com/coin-or/SYMPHONY/pull/242"]
+}

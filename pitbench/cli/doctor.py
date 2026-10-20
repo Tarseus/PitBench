@@ -241,12 +241,18 @@ def _private_assets_check(context: _DoctorContext) -> DoctorCheck:
         context.repository_root, context.config.paths.private_root
     )
     try:
+        resolver = PrivateAssetResolver(private_root)
         with tempfile.TemporaryDirectory(prefix="pitbench-doctor-") as generated:
             plan = JudgePlan.from_instance_set_configs(
                 context.task.task,
-                PrivateAssetResolver(private_root),
+                resolver,
                 public_root=context.repository_root,
                 generated_root=Path(generated),
+            )
+        validation_patch = context.task.task.evaluation.validation_test_patch
+        if validation_patch is not None:
+            resolver.resolve(
+                validation_patch.source, validation_patch.source_sha256
             )
     except Exception as error:
         return _check(

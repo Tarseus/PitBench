@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 540,
+  "base_commit": "2b6872e05dead9045afd22d9d107f85ef7ec5e3b",
+  "head_commit": "565d457903eabbe36184c74c5228144bc5d54dc2",
+  "decision": "needs_evidence",
+  "reason": "The performance title covers four mechanisms in one source patch: clique-implication counting, primal-heuristic variable ordering, presolve strengthening, and modular-hash arithmetic. The last two can change mathematical validity, so a timing gain on a generic MIP panel would not identify its cause or establish correctness. A phase-specific activation plan and independent checks are needed before an optimization task can advance.",
+  "missing_evidence": [
+    "solver_call_path",
+    "workload_activation",
+    "independent_checker",
+    "performance_protocol"
+  ],
+  "source_evidence_urls": ["https://github.com/ERGO-Code/HiGHS/pull/540"],
+  "mixed_patch_components": [
+    "HighsCliqueTable::getNumImplications changes the implication count",
+    "HighsPrimalHeuristics::setupIntCols changes variable ordering",
+    "HPresolve::strengthenInequalities changes a numerical reduction guard",
+    "HighsHashHelpers changes modular-hash arithmetic"
+  ],
+  "next_review_condition": "Choose one solver-behavior target, trace its activation on frozen instances, and independently verify original-model solutions plus presolve/bound and status claims for the full patch."
+}

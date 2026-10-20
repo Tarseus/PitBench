@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "repository": "scipopt/scip",
+  "pr_number": 167,
+  "base_commit": "0f180b08f4b2699c5e05299a137ccf49681f837b",
+  "head_commit": "7eb2cc354c2c9f5524fdae1651f38c5ccb832339",
+  "decision": "reject",
+  "reason": "The patch prevents a crash when a nonlinear constraint has no variables. It changes error handling for a degenerate case, not solver optimization.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "eab1a22009565e6c3535eadf0f1e16c5023e120e00019f19cee7cb9858cd1b20",
+  "changed_file_paths": [
+    "CHANGELOG",
+    "src/scip/cons_nonlinear.c"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/scipopt/scip/pull/167"
+  ],
+  "rejection_basis": "correctness_only"
+}

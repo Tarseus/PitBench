@@ -1,0 +1,49 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 1155,
+  "base_commit": "80f42f2891734f5e20dd4c85ffe86800070572f0",
+  "head_commit": "be8eb4f3931787f49e494b1216e9e6847497733a",
+  "decision": "advance",
+  "reason": "The source diff replaces SearchSpace's promising-activity hash set and global flag with a fixed DynamicBitset. This changes a repeatedly queried search-state representation and the indexing of clients and shipments, making it a solver mechanism with measurable work and semantic risks.",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "solver_phase": "search_state",
+  "solver_entry_points": [
+    "SearchSpace::isPromising",
+    "SearchSpace::markPromising",
+    "SearchSpace::markAllPromising",
+    "SearchSpace::unmarkAllPromising"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "primal_trajectory",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_primal",
+    "search_incomplete",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "pyvrp/cpp/search/SearchSpace.cpp",
+    "pyvrp/cpp/search/SearchSpace.h"
+  ],
+  "solver_behavior_hypothesis": "Bit-indexed promising-activity checks may reduce hash work during local search, permitting more iterations within fixed budgets; incorrect client or shipment indexing could suppress useful moves or corrupt search state.",
+  "causal_chain": "Search operators repeatedly mark and query promising activities. The PR maps clients from the front and shipments from the back of a fixed bitset, replacing set insertion and membership plus a global all-promising flag. This can change per-move cost and, if the mapping is wrong, the neighbourhood explored.",
+  "structural_trigger": "Local-search runs that mark and query client activities; shipment-rich instances additionally exercise the reversed shipment index and all-promising transitions.",
+  "activation_probe": "Count isPromising and markPromising calls in pinned base and PR builds on public CVRP cases, and exercise client, shipment, mark-all, and unmark-all state transitions with targeted upstream tests.",
+  "instance_selection_rule": "Freeze the existing PyVRP CVRP development, hidden ID, and generated-shift panels before hidden scoring, using one previously fixed private seed for baseline qualification and the full declared seed-budget grid for final Agent judging.",
+  "workload_exposure_plan": "Run source-only paired builds through the shared PyVRP CVRP driver, trace SearchSpace activity checks on a public instance, and keep a separate shipment-state regression probe because CVRP workloads may not cover the reversed index branch.",
+  "mathematical_risk": "An off-by-one or aliasing error in bit positions can mark the wrong activity, skip feasible improvements, or pass stale search state into route construction; allocation and bitset size can also fail on larger instances.",
+  "independent_check_plan": "Verify visit coverage, capacity, and objective on original CVRP instances for every returned route; compare promising-state transitions against a simple reference set for both clients and shipments.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Report verified fixed-budget gap trajectories, per-instance regressions, missing runs, and peak memory separately on hidden ID and generated-shift CVRP panels. Human PR benefit requires a separate paired confirmation.",
+  "overlap_review": "The bitset representation is distinct from PR #1156's route perturbation and PR #1164's operator cache, but their search-state call paths must be compared before multiple tasks are counted.",
+  "overlap_group": "pyvrp_searchspace_bitset_2026",
+  "related_prs": [1156, 1164],
+  "resource_risk": "A fixed bitset can allocate for every activity even when few are promising; benefits may be offset by initialization or cache costs on small instances.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/1155"
+  ]
+}

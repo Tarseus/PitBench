@@ -1,0 +1,57 @@
+schema_version: '3.0'
+task_id: choco_decision_path_20250326
+release:
+  repository: chocoteam/choco-solver
+  version: 5.0.0-beta.2
+  tag: 1fd78330da44afc9776a3d311e04a1815a790f78
+  base_commit: 1fd78330da44afc9776a3d311e04a1815a790f78
+  released_at: '2025-03-11T13:57:09Z'
+  url: https://github.com/chocoteam/choco-solver/commit/1fd78330da44afc9776a3d311e04a1815a790f78
+task_type: exact_solver
+problem_family: cp
+optimization_scope: exact_search_decision_construction
+instruction: >-
+  Improve the efficiency of exact CP search decisions in this pinned Choco
+  source snapshot while preserving original-instance feasibility, objective
+  values, and optimality claims. Choose source changes autonomously and use
+  only visible development instances.
+repository:
+  clone_url: https://github.com/chocoteam/choco-solver.git
+  plugin: pitbench.repositories.plugins:ChocoRepositoryPlugin
+  editable_paths: [solver]
+  agent_image: pitbench-choco-pr1152-agent:local
+  judge_image: sha256:535760e6779c7b35e737edf8a1bfcb5d02aa0a7ff67dfa63fad91070048648c8
+oracle:
+  kind: known_optimum
+  source: private://oracles/choco_decision_path_20250326.yaml
+  source_sha256: 6563f59f9f51e730262a4b3c4458254f49ecd9bf1a38fa01f494ea88e35f434f
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  budgets_sec: [5.0, 20.0]
+  primary_budget_sec: 20.0
+  solver_seeds: [0, 1, 2, 3, 4]
+  threads: 1
+  verifier: trusted_optimum
+  validation_test_patch:
+    source: private://validation_tests/choco_pr1152_compat.patch
+    source_sha256: 02f3b4407e6cff212e72cffe0c3c690945e7a4c2157ccafcbccc70130bcd131b
+instance_sets:
+  - name: agent_dev
+    kind: agent_dev
+    instance_set_config: configs/instance_sets/choco_v6_0_1_dev.yaml
+    instance_set_config_sha256: 68881374de32fb4eb0653c90af797ab7d8ae6c367f90cbb32b7157816fb225e5
+    size: 5
+    randomness: {instance_seed: 60000}
+  - name: judge_id
+    kind: judge_id
+    instance_set_config: private://hidden_instances/choco_v6_0_1/judge_id_20261014.yaml
+    instance_set_config_sha256: 91a183bdb79ac54c1357b2c6808d05f288a0598627d83383be4cf8537d09edf4
+    size: 30
+    randomness: {instance_seed: 60110}
+  - name: judge_shift
+    kind: judge_shift
+    instance_set_config: private://hidden_instances/choco_graph_coloring_v6_0_1/judge_id.yaml
+    instance_set_config_sha256: 948e6c6ba9c55ee2f9b48576632df4f8a81469915135a1c667f28fabc31999e0
+    size: 30
+    randomness: {instance_seed: 661200}

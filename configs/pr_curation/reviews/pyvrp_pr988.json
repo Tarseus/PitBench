@@ -1,0 +1,46 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 988,
+  "base_commit": "b071e951ed0dc5843f9ff5bb2ae6767d87234beb",
+  "head_commit": "abed7dc1bb4c3d4ea0e103525c5c851f25b031d8",
+  "decision": "advance",
+  "reason": "The PR changes the ILS search policy: each new global best can trigger an additional exhaustive local-search pass before the next acceptance decision. The pinned solve entry point constructs IteratedLocalSearch, so this is a reachable solver mechanism.",
+  "repository_role": "solver_engine",
+  "mechanism": "algorithmic_search",
+  "solver_phase": "local_search",
+  "solver_entry_points": [
+    "IteratedLocalSearch.run",
+    "pyvrp.solve.solve"
+  ],
+  "effect_channels": [
+    "primal_trajectory",
+    "work_per_event"
+  ],
+  "correctness_failure_modes": [
+    "invalid_primal",
+    "search_incomplete",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "pyvrp/IteratedLocalSearch.py",
+    "pyvrp/solve.py"
+  ],
+  "solver_behavior_hypothesis": "Spending more search effort whenever ILS finds a new global best may improve solution quality earlier, but can reduce iteration throughput within a fixed budget.",
+  "causal_chain": "A new-best event now invokes exhaustive local search and replaces the best only if the refined candidate is feasible, changing the sequence of accepted incumbents and time spent per improvement.",
+  "structural_trigger": "CVRP instances and seeds for which the ILS run discovers at least one new global best after initialization.",
+  "activation_probe": "Count new-best events from solver trajectory and confirm execution of the new exhaustive-search branch with Python line coverage on a separate validation run.",
+  "instance_selection_rule": "Use the fixed PyVRP CVRP development, hidden ID, and generated-shift panels with seed and budget choices frozen before reading this PR's hidden effect.",
+  "workload_exposure_plan": "Run base and source-only PR images through the common PyVRP driver on CVRP instances; compare best-cost trajectories and independently verify every returned route.",
+  "mathematical_risk": "An infeasible exhaustive-search result or incorrect best replacement can cause an invalid incumbent, while excessive extra search can cause resource exhaustion or missed progress.",
+  "independent_check_plan": "Check original CVRP capacity, visit coverage, and objective for every solution, and run targeted ILS regression tests in both source states.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Report paired hidden ID and generated-shift CVRP quality trajectories, missing runs, and per-instance regressions under unchanged budgets.",
+  "overlap_review": "The source change is an ILS policy addition; compare nearby local-search PRs before counting another task from the same control path.",
+  "overlap_group": "pyvrp_ils_exhaustive_on_best_2025",
+  "related_prs": [],
+  "resource_risk": "Exhaustive passes may consume most of the fixed runtime after frequent new-best events.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/988"
+  ]
+}

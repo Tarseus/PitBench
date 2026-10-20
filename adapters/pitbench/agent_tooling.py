@@ -19,9 +19,12 @@ def write_agent_tooling(
     task: PitBenchTask,
     task_dir: Path,
     agent_tools: Iterable[AgentTool | str],
+    agent_feedback_mode: str = "solver_behavior",
 ) -> None:
     """Bundle the explicitly enabled public developer tooling into a task."""
     tools = normalize_agent_tools(agent_tools)
+    if agent_feedback_mode not in {"outcome_only", "solver_behavior"}:
+        raise ValueError("unknown agent feedback mode")
     if not tools:
         return
 
@@ -52,6 +55,7 @@ def write_agent_tooling(
 
     config: dict[str, object] = {
         "agent_tools": sorted(tool.value for tool in tools),
+        "agent_feedback_mode": agent_feedback_mode,
     }
     repository = RepositoryPluginRegistry.load(task.repository.plugin)
     if tools & {AgentTool.INSPECT, AgentTool.BENCH}:
@@ -85,6 +89,13 @@ def write_agent_tooling(
                 ],
             }
         )
+        fixed_parameters = task.evaluation.fixed_solver_parameters
+        if fixed_parameters is not None:
+            if not repository.supports_fixed_solver_parameters:
+                raise ValueError(
+                    "repository driver cannot apply fixed solver parameters"
+                )
+            config["fixed_solver_parameters"] = fixed_parameters
         instance_index = yaml.safe_load(
             (task_dir / "dev_instances" / "instance_set_config.yaml").read_text()
         )

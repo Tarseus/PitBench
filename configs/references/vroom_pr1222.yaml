@@ -1,0 +1,24 @@
+schema_version: '1.0'
+kind: human_pr_source_reference
+task_id: vroom_heuristic_20250313
+task_track: open_opportunity
+source_repository: https://github.com/VROOM-Project/vroom.git
+pull_request_url: https://github.com/VROOM-Project/vroom/pull/1222
+base_commit: 9905815687607d675b49fc7faf09a309f69460f9
+head_commit: bd61eea644279ed56ab891adf74f35238545907b
+base_tree_sha: 1413df6288dfc62e382567a17a278498bcb9af17
+head_tree_sha: cae08d1e78ad28a2b7d77bb0b07ffc87f9ba2ede
+patch_file: configs/references/vroom_pr1222_source.patch
+patch_sha256: dadc96bdebfb30aa76b08f666f04457ab5454367eb803492fe276154cc15d97e
+changed_source_files:
+  - src/algorithms/heuristics/heuristics.cpp
+  - src/utils/helpers.h
+bound_check_sha256: fa52a7f704b3ff460ac411c6f9034853b72bd95bfd29e80a02c21fd373462734
+evaluation_note: >-
+  The PR prunes single-job insertion scans using a cost lower bound. The
+  evaluator-only validation build recomputed 1,958,953 pruned insertions on
+  ten public CVRP instances with zero bound violations; this task covers
+  single-job CVRP with explicit depot endpoints, not pickup-delivery. All 38
+  hidden ID baseline instances returned independently valid solutions at one
+  fixed seed, with a 2.693% mean normalized gap. No hidden human-PR gain is
+  claimed; this is an open optimization opportunity.

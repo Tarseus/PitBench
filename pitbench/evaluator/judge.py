@@ -579,11 +579,7 @@ class FixtureJudge:
             optimal_or_bks=case.anchor,
             normalized_gap=gap if case.anchor is not None else None,
             iterations=int(budget * 100 / factor),
-            nodes=(
-                int(budget * 20 / factor)
-                if fixture_reports_search_nodes
-                else None
-            ),
+            nodes=(int(budget * 20 / factor) if fixture_reports_search_nodes else None),
         )
 
 
@@ -613,6 +609,14 @@ class LocalProcessJudge:
         self.base_repository = base_repository
         self.public_root = public_root
         self.resolver = PrivateAssetResolver(private_root)
+        validation_patch = task.evaluation.validation_test_patch
+        self.validation_test_patch = (
+            self.resolver.resolve(
+                validation_patch.source, validation_patch.source_sha256
+            )
+            if validation_patch is not None
+            else None
+        )
         self.evaluation_seeds = evaluation_seeds or _evaluation_seeds(
             task, self.resolver
         )
@@ -681,7 +685,7 @@ class LocalProcessJudge:
     def _workspace(self, state: CodeState, root: Path, build_kind: BuildKind) -> Path:
         root.mkdir(parents=True, exist_ok=True)
         workspace = root / state.value
-        shutil.copytree(self.base_repository, workspace)
+        shutil.copytree(self.base_repository, workspace, symlinks=True)
         patch = self._state_patch(state)
         if patch is not None and patch.stat().st_size:
             applied = subprocess.run(
@@ -693,6 +697,18 @@ class LocalProcessJudge:
             )
             if applied.returncode:
                 raise RuntimeError(f"{state.value} patch failed: {applied.stderr}")
+        if build_kind == BuildKind.VALIDATION and self.validation_test_patch:
+            applied = subprocess.run(
+                ["git", "apply", str(self.validation_test_patch)],
+                cwd=workspace,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if applied.returncode:
+                raise RuntimeError(
+                    f"{state.value} validation test patch failed: {applied.stderr}"
+                )
         for command in self.repository.build_commands(build_kind):
             built = self._run(command, workspace)
             if built.returncode:
@@ -736,7 +752,9 @@ class LocalProcessJudge:
             cases = [*cases, *self.additional_cases]
             if self.solver_seed_limit is not None:
                 cases = [
-                    replace(case, solver_seeds=case.solver_seeds[: self.solver_seed_limit])
+                    replace(
+                        case, solver_seeds=case.solver_seeds[: self.solver_seed_limit]
+                    )
                     if case.solver_seeds
                     else case
                     for case in cases
@@ -917,6 +935,13 @@ class LocalProcessJudge:
         for artifact in (output, output.with_suffix(".solution.json"), trajectory):
             artifact.unlink(missing_ok=True)
         threads = self.task.evaluation.threads
+        parameters_path = None
+        if self.task.evaluation.fixed_solver_parameters is not None:
+            parameters_path = output.with_suffix(".parameters.json")
+            parameters_path.write_text(
+                json.dumps(self.task.evaluation.fixed_solver_parameters, sort_keys=True)
+                + "\n"
+            )
         command = _limit_solver_cpus(
             self.repository.run_command(
                 SolverRunSpec(
@@ -926,6 +951,7 @@ class LocalProcessJudge:
                     solver_seed=seed,
                     budget_sec=budget,
                     threads=threads,
+                    parameters_path=parameters_path,
                 )
             ),
             threads,
@@ -988,9 +1014,7 @@ class LocalProcessJudge:
                     "iterations": parsed.iterations if parsed else None,
                     "nodes": parsed.nodes if parsed else None,
                     "model_variables": parsed.model_variables if parsed else None,
-                    "model_constraints": (
-                        parsed.model_constraints if parsed else None
-                    ),
+                    "model_constraints": (parsed.model_constraints if parsed else None),
                     "peak_rss_bytes": parsed.peak_rss_bytes if parsed else None,
                     "resource_scope": parsed.resource_scope if parsed else None,
                 }
@@ -1039,6 +1063,16 @@ class LocalProcessJudge:
                 RunStatus.OUTPUT_ERROR, "missing solver termination status", parsed
             )
         if parsed.has_solution is False:
+            if (
+                case.anchor is not None
+                and parsed.solver_status is not None
+                and "infeasib" in parsed.solver_status.lower()
+            ):
+                return failure(
+                    RunStatus.INVALID,
+                    "solver reported infeasibility despite a verified feasible reference",
+                    parsed,
+                )
             return failure(
                 RunStatus.NO_SOLUTION,
                 "solver stopped without a candidate solution",
@@ -1046,9 +1080,9 @@ class LocalProcessJudge:
             )
         solution = output.with_suffix(".solution.json")
         try:
-            verified = (
-                case.verifier or self.prepared_verifier or self.family
-            ).verify(case.path, solution)
+            verified = (case.verifier or self.prepared_verifier or self.family).verify(
+                case.path, solution
+            )
         except (
             ValueError,
             KeyError,

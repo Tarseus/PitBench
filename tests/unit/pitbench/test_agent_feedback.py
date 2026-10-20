@@ -18,14 +18,60 @@ from pitbench.agent_tools import AgentTool
 from pitbench.cli.evaluate_config import EvaluationConfig
 from pitbench.instances import materialize_instance_set
 from pitbench.schema.task import PitBenchTask
+from scripts.check_feedback_ablation import compare as compare_feedback_arms
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TOOLS = frozenset({AgentTool.INSPECT, AgentTool.WORKSPACE, AgentTool.BENCH})
 
 
+def test_agent_command_materializes_fixed_solver_parameters(tmp_path: Path) -> None:
+    output = tmp_path / "result.json"
+    command = agent_cli._command(
+        {
+            "runner": ["python3", "solver.py", "--instance", "{instance}"],
+            "fixed_solver_parameters": {"search_strategy": "dom_over_wdeg"},
+        },
+        tmp_path / "instance.json",
+        output,
+        0,
+        5.0,
+        1,
+    )
+
+    assert command[-2:] == ["--parameters", str(output.with_suffix(".parameters.json"))]
+    assert json.loads(output.with_suffix(".parameters.json").read_text()) == {
+        "search_strategy": "dom_over_wdeg"
+    }
+
+
 def test_default_tools_and_explicit_repository_only_condition() -> None:
     assert set(EvaluationConfig().agent_tools) == DEFAULT_TOOLS
     assert EvaluationConfig.model_validate({"agent_tools": []}).agent_tools == []
+    assert EvaluationConfig().agent_feedback_mode == "solver_behavior"
+    assert (
+        EvaluationConfig.model_validate(
+            {"agent_feedback_mode": "outcome_only"}
+        ).agent_feedback_mode
+        == "outcome_only"
+    )
+    with pytest.raises(ValueError, match="agent_feedback_mode"):
+        EvaluationConfig.model_validate({"agent_feedback_mode": "unknown"})
+
+
+def test_feedback_arm_configs_must_match_except_feedback_mode(tmp_path: Path) -> None:
+    outcome = tmp_path / "outcome.yaml"
+    behavior = tmp_path / "behavior.yaml"
+    outcome.write_text(
+        "agent_tools: [inspect, bench]\nagent_feedback_mode: outcome_only\n"
+    )
+    behavior.write_text(
+        "agent_tools: [inspect, bench]\nagent_feedback_mode: solver_behavior\n"
+    )
+
+    assert compare_feedback_arms(outcome, behavior)["matched"] is True
+    behavior.write_text(behavior.read_text() + "judge_cpus: 4\n")
+    with pytest.raises(ValueError, match="other than feedback mode"):
+        compare_feedback_arms(outcome, behavior)
 
 
 @pytest.mark.parametrize(
@@ -33,8 +79,12 @@ def test_default_tools_and_explicit_repository_only_condition() -> None:
     [
         ("vroom_v1_15_0", "paired reduction in normalized gap"),
         ("pyvrp_v0_14_0", "paired reduction in normalized gap"),
+        ("pyvrp_search_20260728", "paired reduction in normalized gap"),
+        ("pyvrp_search_20260806", "paired reduction in normalized gap"),
         ("choco_v6_0_1", "independently verified solved coverage"),
         ("highs_v1_15_1", "independently verified solved coverage"),
+        ("scip_v9_2_4", "independently verified solved coverage"),
+        ("cbc_v2_10_12", "independently verified solved coverage"),
         ("ortools_cp_sat_solve_v9_15", "independently verified solved coverage"),
     ],
 )
@@ -64,8 +114,12 @@ def test_instruction_matches_protocol_and_visible_files(
     [
         "vroom_v1_15_0",
         "pyvrp_v0_14_0",
+        "pyvrp_search_20260728",
+        "pyvrp_search_20260806",
         "choco_v6_0_1",
         "ortools_cp_sat_solve_v9_15",
+        "scip_v9_2_4",
+        "cbc_v2_10_12",
     ],
 )
 def test_public_tooling_has_task_protocol_and_instances(
@@ -88,6 +142,7 @@ def test_public_tooling_has_task_protocol_and_instances(
     )
     config = json.loads((task_dir / "agent_config.json").read_text())
     assert config["primary_budget_sec"] == task.evaluation.primary_budget_sec
+    assert config["agent_feedback_mode"] == "solver_behavior"
     assert config["performance_protocol"] == task.evaluation.performance_protocol.value
     assert len(config["development_targets"]) == development.size
     if task_id == "choco_v6_0_1":
@@ -116,6 +171,7 @@ def test_public_tooling_has_task_protocol_and_instances(
     assert "chmod -R a+rX /opt/pitbench-tooling /pitbench/config.json" in dockerfile
     assert "chmod -R a+rX /pitbench/dev_instances" in dockerfile
     assert "/home/pitbench-agent/.m2/repository" in dockerfile
+
     environment = os.environ.copy()
     environment.update(
         {
@@ -148,6 +204,32 @@ def test_public_tooling_has_task_protocol_and_instances(
     commands = [json.loads(line) for line in bench.stdout.splitlines()]
     assert len(commands) == development.size
     assert all(command["label"] == "agent" for command in commands)
+
+
+def test_public_tooling_records_outcome_only_ablation_mode(tmp_path: Path) -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    task_dir = tmp_path / "outcome"
+    task_dir.mkdir()
+    development = next(
+        item for item in task.instance_sets if item.kind.value == "agent_dev"
+    )
+    materialize_instance_set(
+        ROOT / development.instance_set_config, task_dir / "dev_instances"
+    )
+
+    write_agent_tooling(
+        repository_root=ROOT,
+        task=task,
+        task_dir=task_dir,
+        agent_tools=DEFAULT_TOOLS,
+        agent_feedback_mode="outcome_only",
+    )
+
+    config = json.loads((task_dir / "agent_config.json").read_text())
+    assert config["agent_feedback_mode"] == "outcome_only"
+    assert (
+        config["development_seeds"] == task.evaluation.seed_robustness.development_seeds
+    )
 
 
 def test_highs_development_feedback_uses_public_independent_verifier(
@@ -352,6 +434,7 @@ def test_trajectory_summary_retains_search_progress(tmp_path: Path) -> None:
     assert summary["points"] == 3
     assert summary["best_objective"] == 8
     assert summary["best_updates"] == 2
+    assert summary["observed_objective_points"] == 3
     assert summary["time_to_first_solution_sec"] == 1
     assert summary["time_to_best_sec"] == 2
     assert summary["final_nodes"] == 7
@@ -386,6 +469,218 @@ def test_pairing_does_not_treat_final_only_trajectory_as_search_progress() -> No
     assert comparison["trajectory_artifact_available_for_both"] is True
     assert comparison["progress_trace_available_for_both"] is False
     assert comparison["time_to_best_reduction_sec"] is None
+
+
+def test_bound_progress_does_not_invent_time_to_first_solution(
+    tmp_path: Path,
+) -> None:
+    base_path = tmp_path / "base.jsonl"
+    agent_path = tmp_path / "agent.jsonl"
+    for path, final_time, bound_time in (
+        (base_path, 1.0, 0.5),
+        (agent_path, 0.8, 0.4),
+    ):
+        path.write_text(
+            "\n".join(
+                json.dumps(event)
+                for event in (
+                    {"event": "bound", "time_sec": 0.2, "dual_bound": 3},
+                    {"event": "bound", "time_sec": bound_time, "dual_bound": 5},
+                    {"event": "final", "time_sec": final_time, "objective": 5},
+                )
+            )
+        )
+    base = {
+        "solver_behavior": {
+            "trajectory": agent_diagnostics.trajectory_summary(base_path, "minimize")
+        }
+    }
+    agent = {
+        "solver_behavior": {
+            "trajectory": agent_diagnostics.trajectory_summary(agent_path, "minimize")
+        }
+    }
+
+    assert base["solver_behavior"]["trajectory"]["time_to_first_solution_sec"] is None
+    assert agent["solver_behavior"]["trajectory"]["time_to_best_sec"] is None
+    assert base["solver_behavior"]["trajectory"]["time_to_best_dual_bound_sec"] == 0.5
+
+    comparison = agent_diagnostics.paired_behavior(agent, base)
+
+    assert comparison["progress_trace_available_for_both"] is True
+    assert comparison["objective_progress_available_for_both"] is False
+    assert comparison["time_to_first_solution_reduction_sec"] is None
+    assert comparison["time_to_best_reduction_sec"] is None
+    assert comparison["bound_progress_available_for_both"] is True
+    assert comparison["time_to_best_dual_bound_reduction_sec"] == pytest.approx(0.1)
+    summary = agent_diagnostics.paired_behavior_summary([(base, agent)])
+    assert summary["mean_time_to_best_dual_bound_reduction_sec"] == pytest.approx(0.1)
+
+
+def test_dual_bound_progress_follows_objective_sense(tmp_path: Path) -> None:
+    trajectory = tmp_path / "max.jsonl"
+    trajectory.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in (
+                {"time_sec": 0.1, "dual_bound": 12},
+                {"time_sec": 0.2, "dual_bound": 15},
+                {"time_sec": 0.3, "dual_bound": 10},
+            )
+        )
+    )
+
+    summary = agent_diagnostics.trajectory_summary(trajectory, "maximize")
+
+    assert summary["best_dual_bound"] == 10
+    assert summary["dual_bound_updates"] == 2
+    assert summary["time_to_best_dual_bound_sec"] == 0.3
+
+
+def test_contrastive_checkpoints_reveal_search_crossover_without_final_leakage(
+    tmp_path: Path,
+) -> None:
+    base_output = tmp_path / "base.json"
+    agent_output = tmp_path / "agent.json"
+    for output, records in (
+        (
+            base_output,
+            [
+                {"time_sec": 1, "objective": 100, "dual_bound": 20},
+                {"time_sec": 7, "objective": 80, "dual_bound": 40},
+                {"event": "final", "time_sec": 10, "objective": 70},
+            ],
+        ),
+        (
+            agent_output,
+            [
+                {"time_sec": 1, "objective": 90, "dual_bound": 25},
+                {"time_sec": 7, "objective": 85, "dual_bound": 45},
+                {"event": "final", "time_sec": 10, "objective": 60},
+            ],
+        ),
+    ):
+        output.with_suffix(".trajectory.jsonl").write_text(
+            "\n".join(json.dumps(record) for record in records)
+        )
+    config = {"objective_sense": "minimize"}
+    base = {
+        "instance_id": "one",
+        "budget_sec": 10,
+        "solver_behavior": agent_diagnostics.solver_behavior(
+            config, {}, base_output, 10
+        ),
+    }
+    agent = {
+        "instance_id": "one",
+        "budget_sec": 10,
+        "solver_behavior": agent_diagnostics.solver_behavior(
+            config, {}, agent_output, 10
+        ),
+    }
+
+    checkpoints = agent_diagnostics.paired_behavior(agent, base)[
+        "matched_progress_checkpoints"
+    ]
+    assert [point["candidate_objective_improvement"] for point in checkpoints] == [
+        10,
+        10,
+        -5,
+        -5,
+    ]
+    assert checkpoints[-1]["candidate_dual_bound_improvement"] == 5
+    summary = agent_diagnostics.contrastive_progress_summary([(base, agent)])
+    assert summary[0]["objective"]["better_instances"] == 1
+    assert summary[-1]["objective"]["worse_instances"] == 1
+
+
+def test_final_only_trace_is_not_anytime_progress(tmp_path: Path) -> None:
+    trajectory = tmp_path / "final.jsonl"
+    trajectory.write_text(
+        json.dumps({"event": "final", "time_sec": 10, "objective": 1, "dual_bound": 1})
+    )
+    checkpoints = agent_diagnostics.trajectory_checkpoints(trajectory, "minimize", 10)
+    assert all(point["best_objective"] is None for point in checkpoints)
+    assert all(point["best_dual_bound"] is None for point in checkpoints)
+
+
+def test_gap_integral_reports_only_observed_window(tmp_path: Path) -> None:
+    trajectory = tmp_path / "search.jsonl"
+    trajectory.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in (
+                {"time_sec": 2, "primal_bound": 10, "dual_bound": 0},
+                {"time_sec": 5, "primal_bound": 8, "dual_bound": 2},
+                {"event": "final", "time_sec": 10, "primal_bound": 1, "dual_bound": 1},
+            )
+        )
+    )
+
+    summary = agent_diagnostics.observed_gap_integral(trajectory, "minimize", 10)
+
+    assert summary["observed_duration_sec"] == 8
+    assert summary["observed_fraction_of_budget"] == 0.8
+    assert summary["observed_gap_area_sec"] == pytest.approx(6.75)
+    assert summary["full_budget_observed"] is False
+
+
+def test_gap_integral_missing_bound_remains_unavailable(tmp_path: Path) -> None:
+    trajectory = tmp_path / "primal-only.jsonl"
+    trajectory.write_text(json.dumps({"time_sec": 1, "objective": 5}))
+
+    summary = agent_diagnostics.observed_gap_integral(trajectory, "minimize", 10)
+
+    assert summary["observed_gap_area_sec"] is None
+    assert summary["observed_duration_sec"] == 0
+
+
+def test_gap_integral_uses_maximization_bound_direction(tmp_path: Path) -> None:
+    trajectory = tmp_path / "max.jsonl"
+    trajectory.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in (
+                {"time_sec": 0, "primal_bound": 2, "dual_bound": 10},
+                {"time_sec": 5, "primal_bound": 4, "dual_bound": 8},
+            )
+        )
+    )
+
+    summary = agent_diagnostics.observed_gap_integral(trajectory, "maximize", 10)
+
+    assert summary["observed_gap_area_sec"] == pytest.approx(6.5)
+    assert summary["full_budget_observed"] is True
+
+
+def test_maximization_checkpoint_signs(tmp_path: Path) -> None:
+    base_path = tmp_path / "base.jsonl"
+    agent_path = tmp_path / "agent.jsonl"
+    base_path.write_text(json.dumps({"time_sec": 1, "objective": 10, "dual_bound": 20}))
+    agent_path.write_text(
+        json.dumps({"time_sec": 1, "objective": 12, "dual_bound": 18})
+    )
+    base = {
+        "solver_behavior": {
+            "objective_sense": "maximize",
+            "checkpoints": agent_diagnostics.trajectory_checkpoints(
+                base_path, "maximize", 10
+            ),
+        }
+    }
+    agent = {
+        "solver_behavior": {
+            "objective_sense": "maximize",
+            "checkpoints": agent_diagnostics.trajectory_checkpoints(
+                agent_path, "maximize", 10
+            ),
+        }
+    }
+    first = agent_diagnostics.paired_behavior(agent, base)[
+        "matched_progress_checkpoints"
+    ][0]
+    assert first["candidate_objective_improvement"] == 2
+    assert first["candidate_dual_bound_improvement"] == 2
 
 
 def _feedback_record(
@@ -471,12 +766,40 @@ def test_development_diagnosis_exposes_concentrated_heuristic_gain(
         "worse": 0,
     }
     assert (
-        diagnosis["observed_pattern"]
-        == "favorable_effect_concentrated_in_one_instance"
+        diagnosis["observed_pattern"] == "favorable_effect_concentrated_in_one_instance"
     )
-    assert diagnosis["runtime"]["mean_wall_time_reduction_sec"] == pytest.approx(
-        0.1
+    assert diagnosis["runtime"]["mean_wall_time_reduction_sec"] == pytest.approx(0.1)
+
+
+def test_outcome_only_diagnosis_omits_structured_search_feedback(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "runs"
+    (run_root / "base").mkdir(parents=True)
+    (run_root / "agent").mkdir()
+    base = _feedback_record(instance_id="one", instance_sha256="sha-one", gap=0.2)
+    agent = _feedback_record(instance_id="one", instance_sha256="sha-one", gap=0.1)
+    (run_root / "base/one.feedback.json").write_text(json.dumps(base))
+    (run_root / "agent/one.feedback.json").write_text(json.dumps(agent))
+    common = {
+        "task_id": "ablation",
+        "performance_protocol": "heuristic_fixed_budget",
+        "development_targets": {"one.json": {"sha256": "sha-one"}},
+        "development_seeds": [0],
+        "threads": 1,
+    }
+
+    regular = agent_diagnostics.development_diagnosis(common, run_root, [10.0])
+    limited = agent_diagnostics.development_diagnosis(
+        {**common, "agent_feedback_mode": "outcome_only"}, run_root, [10.0]
     )
+
+    assert regular["observed_pattern"] == limited["observed_pattern"]
+    assert regular["instance_direction_counts"] == limited["instance_direction_counts"]
+    assert "solver_behavior" in regular
+    assert "solver_behavior" not in limited
+    assert "behavior" not in limited["per_instance"][0]
+    assert "contrastive_progress" not in limited["per_instance"][0]
 
 
 def test_behavior_summary_weights_independent_instances_equally() -> None:
@@ -504,6 +827,56 @@ def test_behavior_summary_weights_independent_instances_equally() -> None:
     assert summary["mean_wall_time_reduction_sec"] == 0
 
 
+def test_contrastive_summary_does_not_average_objective_scales() -> None:
+    pairs = []
+    for instance, base_value, candidate_value in (
+        ("small", 10, 9),
+        ("large", 10000, 9000),
+    ):
+        base = _feedback_record(instance_id=instance, instance_sha256=instance, gap=0.1)
+        agent = _feedback_record(
+            instance_id=instance, instance_sha256=instance, gap=0.1
+        )
+        for record, value in ((base, base_value), (agent, candidate_value)):
+            record["solver_behavior"] = {
+                "objective_sense": "minimize",
+                "checkpoints": [
+                    {
+                        "budget_fraction": 1.0,
+                        "time_sec": 10.0,
+                        "best_objective": value,
+                        "best_dual_bound": None,
+                    }
+                ],
+            }
+        pairs.append((base, agent))
+
+    summary = agent_diagnostics.contrastive_progress_summary(pairs)
+
+    assert summary[0]["objective"]["better_instances"] == 2
+    assert summary[0]["objective"]["mean_candidate_improvement"] is None
+
+
+def test_gap_area_summary_keeps_coverage_visible() -> None:
+    base = _feedback_record(instance_id="one", instance_sha256="one", gap=0.1)
+    agent = _feedback_record(instance_id="one", instance_sha256="one", gap=0.1)
+    for record, area, coverage in ((base, 6.0, 0.8), (agent, 5.0, 0.5)):
+        record["solver_behavior"] = {
+            "observed_gap_integral": {
+                "observed_gap_area_sec": area,
+                "mean_gap_on_observed_window": area / (10 * coverage),
+                "observed_fraction_of_budget": coverage,
+            }
+        }
+
+    summary = agent_diagnostics.paired_gap_area_summary([(base, agent)])
+
+    assert summary[0]["base_mean_observed_gap_area_sec"] == 6
+    assert summary[0]["candidate_mean_observed_gap_area_sec"] == 5
+    assert summary[0]["base_mean_covered_fraction"] == 0.8
+    assert summary[0]["candidate_mean_covered_fraction"] == 0.5
+
+
 def test_diagnosis_expands_the_grid_only_for_a_broad_shortlist(tmp_path: Path) -> None:
     run_root = tmp_path / "runs"
     (run_root / "base").mkdir(parents=True)
@@ -526,8 +899,7 @@ def test_diagnosis_expands_the_grid_only_for_a_broad_shortlist(tmp_path: Path) -
         "task_id": "adaptive",
         "performance_protocol": "heuristic_fixed_budget",
         "development_targets": {
-            f"dev_{index:04d}.json": {"sha256": f"broad-{index}"}
-            for index in range(2)
+            f"dev_{index:04d}.json": {"sha256": f"broad-{index}"} for index in range(2)
         },
         "development_seeds": [0, 1],
         "threads": 1,
@@ -538,8 +910,7 @@ def test_diagnosis_expands_the_grid_only_for_a_broad_shortlist(tmp_path: Path) -
     assert diagnosis["observed_pattern"] == "favorable_effect_across_multiple_instances"
     assert diagnosis["missing_declared_runs"] == 2
     assert any(
-        "--all-seeds" in action
-        for action in diagnosis["recommended_next_actions"]
+        "--all-seeds" in action for action in diagnosis["recommended_next_actions"]
     )
 
     for path in (run_root / "agent").glob("*.feedback.json"):
@@ -549,8 +920,7 @@ def test_diagnosis_expands_the_grid_only_for_a_broad_shortlist(tmp_path: Path) -
     no_signal = agent_cli._development_diagnosis(config, run_root, [10.0])
     assert no_signal["observed_pattern"] == "no_detected_solver_outcome_change"
     assert not any(
-        "--all-seeds" in action
-        for action in no_signal["recommended_next_actions"]
+        "--all-seeds" in action for action in no_signal["recommended_next_actions"]
     )
 
 
@@ -609,12 +979,8 @@ def test_diagnose_command_saves_the_printed_report(
     run_root = tmp_path / "runs"
     (run_root / "base").mkdir(parents=True)
     (run_root / "agent").mkdir()
-    base = _feedback_record(
-        instance_id="dev_0000", instance_sha256="one", gap=0.2
-    )
-    agent = _feedback_record(
-        instance_id="dev_0000", instance_sha256="one", gap=0.1
-    )
+    base = _feedback_record(instance_id="dev_0000", instance_sha256="one", gap=0.2)
+    agent = _feedback_record(instance_id="dev_0000", instance_sha256="one", gap=0.1)
     (run_root / "base" / "one.feedback.json").write_text(json.dumps(base))
     (run_root / "agent" / "one.feedback.json").write_text(json.dumps(agent))
     monkeypatch.setenv("PITBENCH_RUNS", str(run_root))
@@ -639,6 +1005,9 @@ def test_diagnose_command_saves_the_printed_report(
     printed = json.loads(capsys.readouterr().out)
     saved = json.loads((run_root / "diagnosis.json").read_text())
     assert saved == printed
+    assert saved["schema_version"] == 2
+    assert "possible_explanations" in saved
+    assert "diagnostic_hypotheses" not in saved
     assert saved["budgets_sec"] == [10.0]
     assert saved["saved_to"] == str(run_root / "diagnosis.json")
 
@@ -761,8 +1130,7 @@ def test_public_bench_pairs_independently_checked_cvrp_results(
     assert records[0]["preview_normalized_gap"] == 0
     assert records[1]["paired_base"] is not None
     assert (
-        str(tmp_path / "pitbench-runs" / "paired-feedback-test")
-        in records[0]["result"]
+        str(tmp_path / "pitbench-runs" / "paired-feedback-test") in records[0]["result"]
     )
     assert records[1]["verified_objective_reduction"] == 0
     assert records[1]["preview_gap_reduction"] == 0
@@ -813,3 +1181,18 @@ def test_proto_feedback_labels_unverified_exact_preview(tmp_path: Path) -> None:
     )
     assert feedback["preview_solved"] is False
     assert feedback["preview_par2_sec"] == 40.0
+
+    config["agent_feedback_mode"] = "outcome_only"
+    limited = agent_cli._feedback(
+        config,
+        {"valid": False, "wall_time_sec": 0.3},
+        10,
+        20.0,
+        instance,
+        output,
+    )
+    assert "solver_behavior" not in limited
+    assert "behavior_comparison" not in agent_diagnostics.paired_feedback(
+        {**limited, "performance_protocol": "exact_verified_solve"},
+        {**limited, "performance_protocol": "exact_verified_solve"},
+    )

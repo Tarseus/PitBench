@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "repository": "chocoteam/choco-solver",
+  "pr_number": 939,
+  "base_commit": "0aecb21d1de75e884b5f4d27ce26a3e299808d8c",
+  "head_commit": "fcce8c6af3859347928d17f6a054d0bc773e2b8b",
+  "decision": "reject",
+  "reason": "The changed ModelAnalyser class adds model inspection/export functionality; it does not affect propagation, search decisions, or solver execution.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "868171ea72499e6cc05652eb6e49b06cfeea6a9874b9a4b33fc488b93833ee67",
+  "changed_file_paths": [
+    "solver/src/main/java/org/chocosolver/solver/Model.java",
+    "solver/src/main/java/org/chocosolver/solver/ModelAnalyser.java"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/chocoteam/choco-solver/pull/939"
+  ],
+  "rejection_basis": "outside_solver_engine"
+}

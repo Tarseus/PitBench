@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "repository": "google/or-tools",
+  "pr_number": 4815,
+  "base_commit": "ba492133fae260377ed3f459ddea2bcf8834584e",
+  "head_commit": "2c0d5106dc146df43d8d9e56e7f7c55625b0a9b6",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Renames Bazel user configuration and adjusts .gitignore only; no solver-engine source changes.",
+  "reviewed_changed_files": [
+    ".bazelrc",
+    ".gitignore"
+  ],
+  "detail_sha256": "ffda8ea690192470c1883d116a4f3aec55c401241886196f490ffa0fe3f2a2a4",
+  "selection_queue_sha256": "966f5bf257f33641ce530125917422beb40ece4759a865cfe3930c288107cc87",
+  "source_evidence_urls": [
+    "https://github.com/google/or-tools/pull/4815"
+  ]
+}

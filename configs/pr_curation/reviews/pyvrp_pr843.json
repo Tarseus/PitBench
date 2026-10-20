@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 843,
+  "base_commit": "e8f253dabdc13067fab6541963a3d93b7dcb1966",
+  "head_commit": "d54b564847a4c328d71c18a6d693f2452e481940",
+  "decision": "needs_evidence",
+  "reason": "The PR skips distance calculation when both unit distance cost is zero and no maximum distance constraint is active. The changed call path is clear, but the current shared CVRP driver sets a distance-based objective, so its public workload does not exercise the fast path. A distance-free objective workload and matching independent verifier are required before this can advance.",
+  "missing_evidence": [
+    "workload_activation",
+    "performance_protocol"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/843"
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "repository": "VROOM-Project/vroom",
+  "pr_number": 577,
+  "base_commit": "f43181ec6332d6a735fdceeed13f6e1c81fd41b0",
+  "head_commit": "5fe9391f86b41b67697f3e528cc5e91563e5f7e5",
+  "decision": "reject",
+  "reason": "The patch reports maximum-task violations and their JSON representation. It changes validation/output diagnostics, not route search or candidate quality.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "4b8f7fdba63659aae3548f2c345dc8127c99b8f20e98f6b4d30fe57083de8a92",
+  "changed_file_paths": [
+    "CHANGELOG.md",
+    "docs/API.md",
+    "src/algorithms/validation/choose_ETA.cpp",
+    "src/structures/typedefs.h",
+    "src/utils/output_json.cpp"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/VROOM-Project/vroom/pull/577"
+  ],
+  "rejection_basis": "correctness_only"
+}

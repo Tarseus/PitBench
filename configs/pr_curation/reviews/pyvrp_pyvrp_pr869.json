@@ -1,0 +1,54 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 869,
+  "base_commit": "24b02d32e1e54392023161d22423e4cd4c5fb5f0",
+  "head_commit": "9444c353b61ba940fdc88975c9864e7dbae848da",
+  "decision": "needs_evidence",
+  "reason": "The source shortcut is solver-specific, but its main early-exit gain requires multiple load dimensions: the existing normalized CVRP task format and independent verifier expose only one load dimension. On one-dimensional instances, the base already checks the nonnegative partial delta before the only load-penalty call. A multi-load CVRP input/verification protocol is needed before this PR can count as an active benchmark task.",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "solver_phase": "local_search",
+  "solver_entry_points": [
+    "CostEvaluator::deltaCost",
+    "CostEvaluator::loadPenalty",
+    "Route::update",
+    "LoadSegment::finalise"
+  ],
+  "effect_channels": [
+    "work_per_event"
+  ],
+  "correctness_failure_modes": [
+    "invalid_primal",
+    "search_incomplete"
+  ],
+  "changed_source_paths": [
+    "pyvrp/cpp/CostEvaluator.h",
+    "pyvrp/cpp/search/Route.cpp"
+  ],
+  "solver_behavior_hypothesis": "For non-exact local-search proposals, a nonnegative accumulated delta cannot become improving after adding nonnegative load penalties. Checking that condition before each dimension's loadPenalty call can skip remaining penalty work. Route::update also avoids constructing/finalizing load segments when the adjacent node is not a reload depot.",
+  "causal_chain": "Route proposal evaluation first computes distance and distance penalties, then load penalties by dimension, and finally duration/time-window terms. The PR performs the existing non-exact early rejection inside the load-dimension loops, before calculating another dimension's excess-load penalty. Its Route::update change only finalizes a LoadSegment at reload-depot boundaries; ordinary CVRP edges merge the existing segment directly.",
+  "structural_trigger": "CVRP instances with many local-search node proposals whose accumulated distance delta is already nonnegative before load penalties, plus routes without reload depots so load-segment finalization can be skipped. Include multi-dimensional load and reload-depot controls where the relevant checks must remain active.",
+  "activation_probe": "On paired pinned builds count candidate delta evaluations, early returns before loadPenalty by dimension, total loadPenalty calls, LoadSegment finalise calls, reload-depot boundaries, and accepted move/objective traces on the public CVRP panel. Instrumented timing is diagnostic only.",
+  "instance_selection_rule": "Freeze a public CVRP activation panel before hidden runs, stratified by customer count, vehicle count, and local-search neighborhood size. Use the existing hidden published CVRPLIB X and versioned structural-shift CVRP panel for base-only opportunity measurement; preserve all seeds, failures, and timeouts.",
+  "workload_exposure_plan": "Use the shared PyVRP driver on the ten visible CVRP instances with paired pinned base and PR images. Trace early delta rejection and load-segment operations; independently verify every returned route against original customer coverage, capacity, and distance objective.",
+  "mathematical_risk": "If a remaining load penalty can be negative, or if exact/non-exact evaluation paths are confused, the early exit could discard an improving move or corrupt objective accounting. A reload boundary skipped by Route::update could corrupt capacity feasibility. Verify load penalties are nonnegative for the rejected branch and exercise reload and multi-load-dimension controls.",
+  "independent_check_plan": "Run the independent original CVRP route checker on all public and hidden solutions. Run upstream CostEvaluator and Route tests on both source states, including multi-load-dimension and reload-depot controls; retain all normal exact-solve status semantics and heuristic timeouts.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Qualify this as an open CVRP optimization task using a one-seed base-only hidden panel at the primary budget. Report the human PR and any coding-agent effects separately; neither is an admission prerequisite.",
+  "overlap_review": "PyVRP #845 skips duration-segment calculations when no temporal constraint or duration cost can matter; #869 skips load-penalty dimensions when the partial candidate delta already rules out an improvement and avoids unnecessary load-segment finalization. They save different proposal work and retain different constraint controls. PR #701 changes cumulative distance storage, and #962 prunes unpromising candidate visits before entering helper calls; neither is the same inner delta/load computation.",
+  "overlap_group": "pyvrp_load_penalty_early_exit_2025",
+  "related_prs": [
+    701,
+    845,
+    962
+  ],
+  "resource_risk": "The new branches avoid per-dimension penalty work but may have a small test cost on proposals that proceed to load checks. The result can vary with candidate ordering and load dimension count; report family-level regressions.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/869",
+    "https://api.github.com/repos/PyVRP/PyVRP/pulls/869/files"
+  ],
+  "missing_evidence": [
+    "workload_activation"
+  ]
+}

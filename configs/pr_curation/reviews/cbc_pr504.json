@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "repository": "coin-or/Cbc",
+  "pr_number": 504,
+  "base_commit": "fe36722c6344a3a5ab318e2108c4770c93efe8eb",
+  "head_commit": "4bd88a26c2adc6aed8faac9c6d3b7d21030aad7c",
+  "decision": "reject",
+  "reason": "The complete source diff only adds null guards around the current branch-and-bound node and removes commented-out code. It does not introduce or improve a branching score, reduce branching work, or expose another solver-efficiency mechanism; this is a robustness/correctness fix, not a solver-optimization task.",
+  "review_lane": "mechanism_review",
+  "detail_record_status": "failed",
+  "detail_record_sha256": "64f8bf4367f4c072f16548f781fc8d270043d9a4eeb541a22033b7a3a624a327",
+  "changed_file_paths": [
+    "Cbc/src/CbcBranchDynamic.cpp"
+  ],
+  "reviewed_patch_path": "report/pr-scale-20261018/source_audit/cbc_pr504_reviewed.patch",
+  "reviewed_patch_sha256": "e05fe88700fe5df326a38f3f743177f3767c35e8f508770198cc1a7206cbfcf9",
+  "source_evidence_urls": [
+    "https://github.com/coin-or/Cbc/pull/504"
+  ],
+  "rejection_basis": "correctness_only"
+}

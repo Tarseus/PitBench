@@ -440,7 +440,7 @@ def calibrate(manifest: dict) -> dict:
                 }
             )
     return {
-        "method": "docs/evaluation-noise-calibration.md",
+        "method": "same-code paired Base/Agent full-grid noise calibration",
         "control_count": len(controls),
         "control_false_direction_count": sum(x["false_direction"] for x in controls),
         "public_control_false_direction_count": sum(

@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 421,
+  "base_commit": "4bfb7048718d94eb04ff1cda908123815263cc3e",
+  "head_commit": "e15e2e87c14b216de42164f9206404aa78c7fb65",
+  "decision": "reject",
+  "rejection_basis": "no_optimization_mechanism",
+  "reason": "The changed Route flag and assertions are enclosed by NDEBUG guards, so they disappear from the release build used for solver performance. The only remaining change removes a test that read stale route statistics. Source review found no active production search, cost, or memory optimization mechanism to benchmark.",
+  "reviewed_changed_files": [
+    "pyvrp/cpp/search/Route.cpp",
+    "pyvrp/cpp/search/Route.h",
+    "pyvrp/search/tests/test_Route.py"
+  ],
+  "source_evidence_urls": ["https://github.com/PyVRP/PyVRP/pull/421"]
+}

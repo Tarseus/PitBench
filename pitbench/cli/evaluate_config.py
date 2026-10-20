@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -72,6 +72,7 @@ class EvaluationConfig(BaseModel):
             AgentTool.BENCH,
         ]
     )
+    agent_feedback_mode: Literal["outcome_only", "solver_behavior"] = "solver_behavior"
     tasks: dict[str, TaskResources] = Field(default_factory=dict)
     agents: dict[str, dict[str, ConfigValue]] = Field(default_factory=dict)
     judge_cpus: float | None = None

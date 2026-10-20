@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "repository": "VROOM-Project/vroom",
+  "pr_number": 1222,
+  "base_commit": "9905815687607d675b49fc7faf09a309f69460f9",
+  "head_commit": "bd61eea644279ed56ab891adf74f35238545907b",
+  "decision": "advance",
+  "reason": "The source PR adds a lower bound on route insertion cost and skips heuristic insertion scans when that bound cannot beat the current best candidate. This is solver-level pruning in VROOM's route-building heuristic.",
+  "repository_role": "solver_engine",
+  "mechanism": "combined",
+  "solver_phase": "primal_heuristic",
+  "solver_entry_points": [
+    "fill_route",
+    "UnassignedCosts::get_insertion_lower_bound"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "primal_trajectory",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_bound",
+    "invalid_primal",
+    "search_incomplete"
+  ],
+  "changed_source_paths": [
+    "src/algorithms/heuristics/heuristics.cpp",
+    "src/utils/helpers.h"
+  ],
+  "solver_behavior_hypothesis": "Safe insertion-cost bounds can reduce full route scans, allowing more heuristic work per fixed budget while preserving the best insertion decision.",
+  "causal_chain": "Cached minimum inbound and outbound edges minus a maximum existing route edge form a lower bound on insertion delta; when it cannot beat the incumbent insertion score, the algorithm bypasses detailed position evaluation.",
+  "structural_trigger": "CVRP route construction with unassigned single jobs and a nonempty candidate route whose insertion positions would otherwise be scanned.",
+  "activation_probe": "Count lower-bound checks and skipped insertion loops in separate validation builds on the fixed public CVRP panel.",
+  "instance_selection_rule": "Use VROOM's fixed public CVRP development and hidden ID panels with declared 1, 5, and 10-second budgets before inspecting this PR's hidden effect.",
+  "workload_exposure_plan": "Run pinned base and source-only PR builds through the common VROOM CVRP driver and retain route quality, runtime, and pruning counters.",
+  "mathematical_risk": "If the purported lower bound exceeds the true insertion delta, a valid better insertion may be pruned; output-route feasibility alone cannot establish bound validity.",
+  "independent_check_plan": "Enumerate all insertion positions on small directed cost matrices and assert the new bound never exceeds the exact minimum insertion cost; independently verify every reported CVRP route and objective.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Report paired hidden CVRP quality and runtime by instance size, preserving failures and regressions under identical budgets.",
+  "overlap_review": "Review adjacent heuristic-bound PRs for shared code or dependent patches before creating another task from this pruning mechanism.",
+  "overlap_group": "vroom_insertion_bound_2025",
+  "related_prs": [],
+  "resource_risk": "Per-route cached arrays scale with the number of jobs and may increase memory or hurt small instances where pruning is rare.",
+  "source_evidence_urls": [
+    "https://github.com/VROOM-Project/vroom/pull/1222"
+  ]
+}

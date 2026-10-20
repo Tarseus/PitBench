@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -39,6 +40,7 @@ from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.instances.generate import (
+    balanced_subset_sum_data,
     first_fit_decreasing_packing,
     materialize_generated_instance_set,
     prepare_cp_sat_job_shop_panel,
@@ -59,8 +61,9 @@ from pitbench.problem_families.verification import (
     TrustedOptimumFamily,
     TrustedOptimumOracle,
     TrustedOptimumRecord,
+    expected_mip_variable_names,
 )
-from pitbench.repositories.base import CommandSpec, RepositoryPlugin
+from pitbench.repositories.base import BuildKind, CommandSpec, RepositoryPlugin
 from pitbench.schema.evaluation import ValidityCode
 from pitbench.schema.observation import (
     CodeState,
@@ -74,6 +77,7 @@ from pitbench.schema.task import (
     InstanceSetSpec,
     PerformanceProtocol,
     PitBenchTask,
+    ValidationTestPatch,
 )
 from pitbench.tasks import TaskCatalog, TaskRecord, TaskValidationError
 
@@ -81,6 +85,23 @@ from pitbench.tasks import TaskCatalog, TaskRecord, TaskValidationError
 
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_native_mip_assignment_uses_existing_independent_checker(
+    tmp_path: Path,
+) -> None:
+    panel = ROOT / "configs/instance_sets/highs_multidimensional_knapsack_v1_15_1_dev"
+    instance = panel / "instances/dev_0000.lp"
+    reference = json.loads((panel / "bks_solutions/dev_0000.solution.json").read_text())
+    names = expected_mip_variable_names(instance)
+    values = {name: int(int(name[1:]) in reference["selected_items"]) for name in names}
+    solution = tmp_path / "solution.json"
+    solution.write_text(json.dumps({"objective": -4542, "values": values}))
+
+    checked = MIPFamily().verify(instance, solution)
+
+    assert checked.feasible is True
+    assert checked.objective == -4542
 
 
 def test_completed_judge_checkpoint_requires_matching_identity_and_hashes(tmp_path):
@@ -307,24 +328,80 @@ def test_current_task_catalog_rejects_multithreaded_solver_runs() -> None:
         )
 
 
-def test_current_catalog_has_one_release_per_solver_and_seven_problem_tasks() -> None:
+def test_catalog_retains_current_releases_and_four_human_references() -> None:
     records = TaskCatalog(ROOT).validate_all()
-
-    assert {record.task.task_id for record in records} == {
+    task_ids = {record.task.task_id for record in records}
+    current_release_ids = {
+        "cbc_v2_10_12",
         "choco_graph_coloring_v6_0_1",
         "choco_v6_0_1",
         "highs_multidimensional_knapsack_v1_15_1",
         "highs_v1_15_1",
         "ortools_cp_sat_solve_v9_15",
         "pyvrp_v0_14_0",
+        "scip_v9_2_4",
         "vroom_v1_15_0",
     }
+    historical_ids = {
+        "pyvrp_search_20250717",
+        "pyvrp_search_20251020",
+        "pyvrp_search_20260728",
+        "pyvrp_search_20260806",
+    }
+    assert len(task_ids) == len(records)
+    assert current_release_ids | historical_ids <= task_ids
     releases_by_repository: dict[str, set[str]] = {}
     for record in records:
+        if record.task.task_id not in current_release_ids:
+            continue
         releases_by_repository.setdefault(record.task.release.repository, set()).add(
             record.task.release.version
         )
     assert all(len(versions) == 1 for versions in releases_by_repository.values())
+    current = next(
+        record.task for record in records if record.task.task_id == "pyvrp_v0_14_0"
+    )
+    historical_commits = {
+        record.task.release.base_commit
+        for record in records
+        if record.task.task_id in historical_ids
+    }
+    assert len(historical_commits) == 4
+    assert current.release.base_commit not in historical_commits
+
+
+@pytest.mark.parametrize(
+    ("task_id", "reference_name", "changed_files"),
+    [
+        ("pyvrp_search_20250717", "pyvrp_pr865", 3),
+        ("pyvrp_search_20251020", "pyvrp_pr919", 3),
+        ("pyvrp_search_20260728", "pyvrp_pr1146", 15),
+        ("pyvrp_search_20260806", "pyvrp_pr1156", 1),
+    ],
+)
+def test_historical_human_reference_is_bound_to_source_only_patch(
+    task_id: str, reference_name: str, changed_files: int
+) -> None:
+    task = PitBenchTask.from_yaml(ROOT / f"configs/tasks/{task_id}.yaml")
+    reference = yaml.safe_load(
+        (ROOT / f"configs/references/{reference_name}.yaml").read_text()
+    )
+    patch_path = ROOT / reference["patch_file"]
+
+    assert reference["task_id"] == task.task_id
+    assert reference["base_commit"] == task.release.base_commit
+    assert (
+        hashlib.sha256(patch_path.read_bytes()).hexdigest() == reference["patch_sha256"]
+    )
+    assert patch_path.read_text().count("diff --git ") == changed_files
+    assert all(
+        file.startswith("pyvrp/")
+        for file in reference.get(
+            "changed_source_files", [reference.get("changed_source_file")]
+        )
+    )
+    assert reference_name.removeprefix("pyvrp_") not in task.task_id
+    assert reference_name.removeprefix("pyvrp_") not in task.instruction
 
 
 def test_removed_performance_decision_is_rejected() -> None:
@@ -682,17 +759,29 @@ def test_normalized_gap_respects_objective_sense_and_anchor_sign(
     ) == pytest.approx(expected_gap)
 
 
-@pytest.mark.parametrize("anchor", [0.0, math.inf, -math.inf, math.nan])
+@pytest.mark.parametrize("anchor", [math.inf, -math.inf, math.nan])
 def test_normalized_gap_rejects_invalid_anchor(anchor: float) -> None:
     with pytest.raises(
         ValueError,
-        match="normalized gap requires a finite nonzero anchor",
+        match="normalized gap requires a finite anchor",
     ):
         ProblemFamilyPlugin.normalized_gap(
             1.0,
             anchor,
             objective_sense="minimize",
         )
+
+
+def test_normalized_gap_uses_unit_scale_for_zero_optimum() -> None:
+    assert ProblemFamilyPlugin.normalized_gap(
+        2.0, 0.0, objective_sense="minimize"
+    ) == 2.0
+    assert ProblemFamilyPlugin.normalized_gap(
+        -2.0, 0.0, objective_sense="maximize"
+    ) == 2.0
+    assert ProblemFamilyPlugin.normalized_gap(
+        0.0, 0.0, objective_sense="minimize"
+    ) == 0.0
 
 
 @pytest.mark.parametrize("objective", [None, math.inf, -math.inf, math.nan])
@@ -952,6 +1041,54 @@ def test_bin_packing_trusted_optimum_accepts_hash_bound_external_proof(
     )
     assert invalid.feasible is False
     assert invalid.infrastructure_error is True
+
+
+def test_balanced_subset_sum_oracle_matches_exhaustive_optimum(tmp_path: Path) -> None:
+    config = {
+        "randomness": {"instance_seed": 71},
+        "item_counts": [8],
+        "max_weight": 12,
+        "cardinality": 4,
+        "domain_modes": ["enumerated"],
+        "target_offsets": [1],
+    }
+    instance, selected, basis = balanced_subset_sum_data(config, 0)
+    optimum = min(
+        abs(sum(instance["weights"][item] for item in subset) - instance["target"])
+        for subset in itertools.combinations(range(8), 4)
+    )
+    instance_path = tmp_path / "instance.json"
+    solution_path = tmp_path / "solution.json"
+    instance_path.write_text(json.dumps(instance))
+    solution_path.write_text(json.dumps({"selected_items": selected}))
+    record = TrustedOptimumRecord(
+        instance_set="judge_id",
+        instance_id="case-1",
+        instance_sha256=hashlib.sha256(instance_path.read_bytes()).hexdigest(),
+        problem_kind="balanced_subset_sum",
+        objective_sense="minimize",
+        optimal_objective=optimum,
+        reference_solution_uri="private://reference.json",
+        reference_solution_sha256=hashlib.sha256(
+            solution_path.read_bytes()
+        ).hexdigest(),
+        optimality_basis=basis,
+        generation_provenance={},
+        verification_provenance=(
+            "pitbench.problem_families.verification:TrustedOptimumFamily"
+        ),
+    )
+
+    assert TrustedOptimumFamily(record, solution_path).verify(
+        instance_path, solution_path
+    ).objective == optimum
+    assert CPFamily().verify(instance_path, solution_path).objective == optimum
+    invalid = record.model_copy(
+        update={"optimality_basis": {**basis, "reachable_bitset_sha256": "0" * 64}}
+    )
+    assert TrustedOptimumFamily(invalid, solution_path).verify(
+        instance_path, solution_path
+    ).infrastructure_error
 
 
 def test_cp_family_verifies_public_normalized_bin_packing_without_private_verifier(
@@ -1347,6 +1484,57 @@ class ScriptRepository(RepositoryPlugin):
         )
 
 
+def test_evaluator_only_test_patch_applies_to_both_validation_states(tmp_path):
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    task.evaluation.seed_robustness = None
+    task.evaluation.solver_seeds = [0]
+    base = tmp_path / "source"
+    (base / "tests").mkdir(parents=True)
+    (base / "tests" / "expectation.txt").write_text("budget=3\n")
+    (base / "solver.txt").write_text("base\n")
+    private = tmp_path / "private"
+    (private / "validation_tests").mkdir(parents=True)
+    test_patch = private / "validation_tests" / "task.patch"
+    test_patch.write_text(
+        "diff --git a/tests/expectation.txt b/tests/expectation.txt\n"
+        "--- a/tests/expectation.txt\n"
+        "+++ b/tests/expectation.txt\n"
+        "@@ -1 +1 @@\n-budget=3\n+budget=5\n"
+    )
+    task.evaluation.validation_test_patch = ValidationTestPatch(
+        source="private://validation_tests/task.patch",
+        source_sha256=hashlib.sha256(test_patch.read_bytes()).hexdigest(),
+    )
+    candidate = tmp_path / "candidate.patch"
+    candidate.write_text(
+        "diff --git a/solver.txt b/solver.txt\n"
+        "--- a/solver.txt\n"
+        "+++ b/solver.txt\n"
+        "@@ -1 +1 @@\n-base\n+agent\n"
+    )
+    judge = LocalProcessJudge(
+        task,
+        base,
+        tmp_path,
+        private,
+        candidate,
+        tmp_path / "output",
+        evaluation_seeds=(0,),
+    )
+    judge.repository = ScriptRepository("pass")
+
+    for state in (CodeState.BASE, CodeState.AGENT):
+        workspace = judge._workspace(
+            state, tmp_path / state.value, BuildKind.VALIDATION
+        )
+        assert (workspace / "tests" / "expectation.txt").read_text() == "budget=5\n"
+    performance = judge._workspace(
+        CodeState.AGENT, tmp_path / "performance", BuildKind.PERFORMANCE
+    )
+    assert (performance / "tests" / "expectation.txt").read_text() == "budget=3\n"
+    assert (performance / "solver.txt").read_text() == "agent\n"
+
+
 @pytest.fixture
 def judge_case(tmp_path):
     task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
@@ -1469,6 +1657,23 @@ def test_failed_parsed_run_retains_resource_measurements(judge_case, tmp_path):
     assert observation.cpu_time_sec == 2.5
     assert observation.peak_rss_bytes == 1234
     assert observation.resource_scope == "single_native_child_lifetime"
+
+
+def test_false_infeasible_claim_fails_qualification(judge_case, tmp_path):
+    judge, case = judge_case
+    judge.repository = ScriptRepository(
+        "p.write_text(json.dumps({'valid': False, 'has_solution': False, "
+        "'solver_status': 'Problem proven infeasible'}))"
+    )
+    case = replace(case, anchor=10)
+
+    observation = judge._run_case(tmp_path, case, CodeState.AGENT, 0, 5)
+
+    assert observation.status is RunStatus.INVALID
+    assert "verified feasible reference" in observation.error
+    assert not evaluator_validity(
+        patch_exists=True, fixture_mode=False, observations=[observation]
+    ).accepted
 
 
 def test_prepared_repository_verifier_takes_precedence_over_family_verifier(
@@ -1741,7 +1946,19 @@ def test_native_status_and_objective_can_be_read_from_solution_file(
     assert "native diagnostic" in capsys.readouterr().err
 
 
-def test_highs_time_limit_does_not_export_fractional_relaxation(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("exit_code", "report"),
+    [
+        (0, "Primal bound 5\nModel status: Time limit reached\n"),
+        (
+            1,
+            "Solving report\n  Status            Time limit reached\n  Primal bound      5\n",
+        ),
+    ],
+)
+def test_highs_time_limit_does_not_export_fractional_relaxation(
+    tmp_path, monkeypatch, exit_code, report
+):
     from pitbench.solver_drivers.run import HighsDriver
 
     raw = "Model status\nTime limit reached\n\n# Columns 1\nx0 0.5\n"
@@ -1755,8 +1972,8 @@ def test_highs_time_limit_does_not_export_fractional_relaxation(tmp_path, monkey
         Path(output).write_text(raw)
         return subprocess.CompletedProcess(
             argv,
-            0,
-            "Primal bound 5\nModel status: Time limit reached\n",
+            exit_code,
+            report,
             "",
         )
 
@@ -1786,6 +2003,66 @@ def test_highs_time_limit_does_not_export_fractional_relaxation(tmp_path, monkey
     assert result["has_solution"] is False
     assert result["valid"] is False
     assert not output.with_suffix(".solution.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("option_exit_code", "option_message"),
+    [
+        (255, "The following argument was not expected: --threads=1\n"),
+        (0, "ERROR:   Error parsing options: Option ‘threads’ does not exist\n"),
+    ],
+)
+def test_highs_driver_retries_only_unsupported_threads_option(
+    tmp_path, monkeypatch, option_exit_code, option_message
+):
+    from pitbench.solver_drivers.run import HighsDriver
+
+    calls = []
+
+    def solve(argv, **kwargs):
+        calls.append(argv)
+        if any(part.startswith("--threads=") for part in argv):
+            return subprocess.CompletedProcess(
+                argv,
+                option_exit_code,
+                option_message,
+                "",
+            )
+        output = next(
+            part.split("=", 1)[1]
+            for part in argv
+            if part.startswith("--solution_file=")
+        )
+        Path(output).write_text("Model status\nOptimal\nObjective 5\n")
+        return subprocess.CompletedProcess(
+            argv, 0, "Solving report\n  Status Optimal\n  Primal bound 5\n", ""
+        )
+
+    monkeypatch.setattr(subprocess, "run", solve)
+    output = tmp_path / "result.json"
+    HighsDriver.main(
+        [
+            "--solver",
+            "highs",
+            "--instance",
+            str(tmp_path / "input.lp"),
+            "--output",
+            str(output),
+            "--trajectory",
+            str(tmp_path / "trajectory.jsonl"),
+            "--seed",
+            "0",
+            "--budget",
+            "5",
+            "--threads",
+            "1",
+        ]
+    )
+    result = json.loads(output.read_text())
+    assert len(calls) == 2
+    assert all(not part.startswith("--threads=") for part in calls[1])
+    assert result["cli_threads_option_fallback"] is True
+    assert result["solver_termination"] == "optimal"
 
 
 # Tests consolidated from tests/unit/pitbench/test_judge_parallel_and_cache.py
@@ -1880,9 +2157,7 @@ def test_evaluator_uses_base_cache_when_available(tmp_path: Path):
     task_id = "test_task"
     (tmp_path / "task.yaml").write_text("task")
     base_cache_file = (
-        tmp_path
-        / "cache"
-        / f"{task_id}-threads-1-task-{'0' * 16}-image-{'0' * 16}-"
+        tmp_path / "cache" / f"{task_id}-threads-1-task-{'0' * 16}-image-{'0' * 16}-"
         f"harness-{'0' * 16}_base.parquet"
     )
     base_obs = [
@@ -2167,10 +2442,19 @@ def test_directional_performance_requires_fresh_opposite_order_confirmation(
         (CodeState.AGENT, CodeState.BASE),
     ]
     assert result.summary.performance is not None
-    assert result.summary.performance.classification is PerformanceClassification.INCONCLUSIVE
+    assert (
+        result.summary.performance.classification
+        is PerformanceClassification.INCONCLUSIVE
+    )
     assert result.summary.performance.confirmation is not None
-    assert result.summary.performance.confirmation.initial_classification is PerformanceClassification.IMPROVED
-    assert result.summary.performance.confirmation.repeat_classification is PerformanceClassification.INCONCLUSIVE
+    assert (
+        result.summary.performance.confirmation.initial_classification
+        is PerformanceClassification.IMPROVED
+    )
+    assert (
+        result.summary.performance.confirmation.repeat_classification
+        is PerformanceClassification.INCONCLUSIVE
+    )
     assert result.summary.performance_confirmation_observation_count == 2
     assert result.artifacts.performance_confirmation_observations is not None
     assert (request.output_dir / "performance-confirmation" / "report.json").is_file()

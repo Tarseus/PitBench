@@ -1,0 +1,67 @@
+{
+  "schema_version": 2,
+  "repository": "VROOM-Project/vroom",
+  "pr_number": 383,
+  "base_commit": "efc5a9d1f8a26a00a4cad7af5f4b94c4eded4313",
+  "head_commit": "30ba96c3836e259f3b2b194f3466b9b8c934e457",
+  "decision": "advance",
+  "reason": "The source diff adds a real UnassignedExchange neighborhood to CVRP and VRPTW local search and changes move selection to prefer feasible priority increases before travel-cost gains. This is a solver search strategy, not a data-model or parameter edit.",
+  "repository_role": "solver_engine",
+  "mechanism": "algorithmic_search",
+  "solver_phase": "local_search",
+  "solver_entry_points": [
+    "LocalSearch::run_ls_step",
+    "cvrp::UnassignedExchange::is_valid",
+    "cvrp::UnassignedExchange::apply",
+    "vrptw::UnassignedExchange::is_valid"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "primal_trajectory",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_primal",
+    "search_incomplete",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "src/algorithms/local_search/local_search.cpp",
+    "src/algorithms/local_search/local_search.h",
+    "src/algorithms/local_search/operator.cpp",
+    "src/algorithms/local_search/operator.h",
+    "src/problems/cvrp/cvrp.cpp",
+    "src/problems/cvrp/operators/unassigned_exchange.cpp",
+    "src/problems/cvrp/operators/unassigned_exchange.h",
+    "src/problems/vrptw/operators/unassigned_exchange.cpp",
+    "src/problems/vrptw/operators/unassigned_exchange.h",
+    "src/problems/vrptw/vrptw.cpp",
+    "src/structures/vroom/solution/route.cpp",
+    "src/structures/vroom/solution/route.h",
+    "src/structures/vroom/solution/solution.cpp",
+    "src/structures/vroom/solution/summary.cpp",
+    "src/structures/vroom/solution/summary.h",
+    "src/utils/helpers.h",
+    "src/utils/output_json.cpp"
+  ],
+  "solver_behavior_hypothesis": "On capacity-constrained instances with unassigned high-priority single jobs, exchanging one assigned job for an unassigned job may raise served priority and improve lexicographic solution quality, but may increase local-search work or travel cost.",
+  "causal_chain": "The new operator enumerates compatible unassigned single jobs against assigned route jobs, tests priority gain and capacity or time-window validity, then replaces a route job and updates the unassigned set. The global move loop now prioritizes a positive priority gain before distance gain, changing search trajectory and runtime.",
+  "structural_trigger": "At least one compatible unassigned single job whose priority exceeds that of a route job, with a feasible replacement in CVRP or VRPTW; instances with all jobs assigned or equal priorities are controls.",
+  "activation_probe": "On pinned Base and PR builds, record unassigned-job counts, compatible exchange candidates, validity rejections, positive-priority moves applied, route cost and served-priority changes; include a control without unassigned jobs.",
+  "instance_selection_rule": "Freeze capacity-constrained CVRP and VRPTW panels with explicit job priorities and unassigned jobs before hidden scoring; stratify by priority skew, compatibility and time windows, and retain no-trigger controls, fixed seeds and all failures.",
+  "workload_exposure_plan": "Use the shared VROOM anytime driver with priority-bearing input instances, trace the new operator on public cases, and independently verify returned original routing solutions and served-job priority.",
+  "mathematical_risk": "An exchange can drop or duplicate a job, violate vehicle capacity or time windows, misstate served priority, or loop excessively if move invalidation is wrong.",
+  "independent_check_plan": "Check each route against the original job set, uniqueness, capacity, time windows, priority total, and travel cost; compare quality-time trajectories across priority and no-priority panels.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Compare paired served-priority and travel-cost trajectories on held-out CVRP and VRPTW instances with shifted priority distributions and capacity tightness, reporting family-level regressions.",
+  "overlap_review": "This 2020 priority-aware unassigned exchange precedes VROOM #978 TSP fix and #1222 insertion bound at distinct snapshots. CVRP and VRPTW operator implementations are one PR and one task, with activation analyzed by family.",
+  "overlap_group": "vroom_priority_unassigned_exchange_2020",
+  "related_prs": [
+    978,
+    1222
+  ],
+  "resource_risk": "Enumerating extra unassigned-route exchanges can increase move checks and memory, while priority-first moves can increase distance or later repair work.",
+  "source_evidence_urls": [
+    "https://github.com/VROOM-Project/vroom/pull/383"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "repository": "PyJobShop/PyJobShop",
+  "pr_number": 316,
+  "base_commit": "8ed7c894a4b7874749fde9eae1a20126242defd5",
+  "head_commit": "2d008e044c7396f5a498be2fbffa2725a42f3be0",
+  "decision": "reject",
+  "reason": "The patch handles objective edge cases across model adapters. It changes model/result semantics and lacks a solver-engine performance mechanism.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "840c9b6db30182ee4508706f4e02c33de23c1a1dcf7a3fb86a9701aa9fe74d48",
+  "changed_file_paths": [
+    "pyjobshop/ProblemData.py",
+    "pyjobshop/solvers/cpoptimizer/Objective.py",
+    "pyjobshop/solvers/ortools/Objective.py",
+    "tests/solvers/test_utils.py",
+    "tests/test_Model.py",
+    "tests/test_ProblemData.py"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/PyJobShop/PyJobShop/pull/316"
+  ],
+  "rejection_basis": "correctness_only"
+}

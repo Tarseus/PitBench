@@ -1,0 +1,59 @@
+schema_version: '3.0'
+task_id: highs_binary_clique_presolve_20260921
+release:
+  repository: ERGO-Code/HiGHS
+  version: 1.15.1
+  tag: fd860f9b111eba744a781b65f575c39afe366394
+  base_commit: fd860f9b111eba744a781b65f575c39afe366394
+  released_at: '2026-09-14T19:29:05Z'
+  url: https://github.com/ERGO-Code/HiGHS/commit/fd860f9b111eba744a781b65f575c39afe366394
+task_type: exact_solver
+problem_family: mip
+optimization_scope: binary_clique_presolve
+instruction: Improve exact MIP solving and proof efficiency in this pinned HiGHS source
+  snapshot while preserving feasibility, valid bounds, objective semantics, and truthful
+  solve statuses. Choose source changes autonomously and use only visible development
+  instances.
+repository:
+  clone_url: https://github.com/ERGO-Code/HiGHS.git
+  plugin: pitbench.repositories.plugins:HighsRepositoryPlugin
+  editable_paths:
+  - highs
+  - build
+  agent_image: pitbench-highs-pr3286-agent:local
+  judge_image: sha256:a47c6cdd91e23dd1572a691c827cf69005b8b56a549206f74f35c8b94e9a59c2
+oracle:
+  kind: known_optimum
+  source: private://oracles/highs_binary_clique_presolve_20260921.yaml
+  source_sha256: 7cec942085d320895d252cf2c91012a38670e3fb6f91c40ef651d5bba9f86265
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  solver_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  threads: 1
+  verifier: trusted_optimum
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/highs_binary_clique_cover_20260921_dev.yaml
+  instance_set_config_sha256: a0cc8e6673dabf3245b61d5194fc289094c3860770545b6f18f013a7a09651e4
+  size: 10
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/highs_binary_clique_cover_20260921_v2/judge_id.yaml
+  instance_set_config_sha256: 93a31e76b2e1d94ae9b6fd645705df3bb4dbe7074eb328f397c1c731610a2356
+  size: 30
+- name: judge_shift
+  kind: judge_shift
+  instance_set_config: private://hidden_instances/highs_binary_clique_cover_20260921_v2/judge_shift.yaml
+  instance_set_config_sha256: a6c2a3dc5b37769364a4abc990bca3340c7a081bbd96035f4c5504bbacedcd91
+  size: 30

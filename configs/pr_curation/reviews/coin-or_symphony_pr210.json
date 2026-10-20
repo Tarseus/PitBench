@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "coin-or/SYMPHONY",
+  "pr_number": 210,
+  "base_commit": "4aa00d36b2a114535750c67836547130443e1711",
+  "head_commit": "1be4afb9123ac9985b871704664cb15039527385",
+  "decision": "reject",
+  "reason": "The patch corrects mapping of CLP termination codes to SYMPHONY status. It changes reporting semantics, not the optimization process.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "59e89d54a975f54725b816f76c84825b3b553f6c619650affda63837d9f647d7",
+  "changed_file_paths": [
+    "SYMPHONY/src/LP/lp_solver.c"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/coin-or/SYMPHONY/pull/210"
+  ],
+  "rejection_basis": "correctness_only"
+}

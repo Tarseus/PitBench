@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "repository": "coin-or/SHOT",
+  "pr_number": 9,
+  "base_commit": "af8c155662c68600ebffe058cb2b8740eacab55b",
+  "head_commit": "6220162837afdf747bd9d1c16bb0467c80c20e6a",
+  "decision": "advance",
+  "reason": "A low-signal audit surfaced a solver reformulation change missed by performance-title and phase-path ranking. The diff inserts each canonical bilinear-variable pair into the auxiliary-variable cache after lookup, preventing duplicate auxiliaries for repeated or reversed bilinear terms. This can change reformulated model size and downstream MINLP solving behavior.",
+  "repository_role": "solver_engine",
+  "mechanism": "combined",
+  "solver_phase": "presolve",
+  "solver_entry_points": [
+    "TaskReformulateProblem::getBilinearAuxiliaryVariable",
+    "TaskReformulateProblem::copySignomialTermsToObjectiveFunction"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "search_tree",
+    "dual_trajectory",
+    "proof_time",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_primal",
+    "invalid_bound",
+    "false_infeasibility",
+    "incorrect_optimality",
+    "numerical_instability"
+  ],
+  "changed_source_paths": [
+    "src/Tasks/TaskReformulateProblem.cpp"
+  ],
+  "solver_behavior_hypothesis": "Reusing one auxiliary for repeated bilinear pairs can reduce reformulated variable and constraint counts, memory, and downstream search/proof work, while changing how shared terms are represented.",
+  "causal_chain": "The reformulator canonicalizes the order of two variables, checks a cache, creates an auxiliary if absent, then now inserts that auxiliary under the canonical key. Repeated products reuse the existing variable rather than creating more auxiliaries, changing model size and potentially LP relaxations and branching.",
+  "structural_trigger": "MINLP instances with the same bilinear variable pair repeated across terms or encountered in reversed order; instances with only unique pairs are controls.",
+  "activation_probe": "Count repeated and reversed pair lookups, cache hits, created auxiliaries, and final reformulated variable/constraint counts in both pinned source states before reading hidden performance.",
+  "instance_selection_rule": "Freeze public and held-out nonconvex MINLP families with repeated bilinear pairs and unique-pair controls, including small independently certifiable cases, before hidden scoring; fix budgets, seeds, and threads.",
+  "workload_exposure_plan": "Build pinned base and source-only PR images, execute SHOT's original-model solve path on repeated-bilinear cases, trace the cache mechanism, and retain full solver statuses and resource usage.",
+  "mathematical_risk": "Incorrect sharing of auxiliaries between distinct products could change the nonlinear model, admit an invalid primal solution, exclude feasible points, or make a bound and optimality status unsound.",
+  "independent_check_plan": "Recompute feasibility and objective on the original nonlinear model for every candidate solution; compare reformulated-variable semantics and proven bounds or statuses with an independent exact solver on tractable cases.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Report independently verified solved coverage, proof time, valid bounds, timeout gaps, and per-family regressions for hidden repeated-pair and held-out bilinear structures, preserving all failures and missing runs.",
+  "overlap_review": "This canonical bilinear-cache insertion is one reformulation lineage; inspect neighboring auxiliary-variable and McCormick reformulation PRs before assigning separate groups.",
+  "overlap_group": "shot_bilinear_aux_dedup_2018",
+  "related_prs": [],
+  "resource_risk": "The map can retain many auxiliary entries on mostly unique-pair instances, so insertion overhead and memory could outweigh reuse; sharing terms may also change numerical conditioning.",
+  "source_evidence_urls": [
+    "https://github.com/coin-or/SHOT/pull/9"
+  ]
+}

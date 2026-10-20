@@ -1,0 +1,56 @@
+schema_version: '3.0'
+task_id: choco_arithmetic_propagation_20260115
+release:
+  repository: chocoteam/choco-solver
+  version: 5.0.0-beta.2
+  tag: f77428e2c0b6a9ae41580d7bfc46d220cd28c59b
+  base_commit: f77428e2c0b6a9ae41580d7bfc46d220cd28c59b
+  released_at: '2025-12-01T15:54:28Z'
+  url: https://github.com/chocoteam/choco-solver/commit/f77428e2c0b6a9ae41580d7bfc46d220cd28c59b
+task_type: exact_solver
+problem_family: cp
+problem_variant: balanced_subset_sum
+formulation_id: balanced_subset_sum_cp
+optimization_scope: integer_arithmetic_propagation_efficiency
+instruction: >-
+  Improve arithmetic constraint propagation and exact CP search performance
+  in this pinned Choco source snapshot. Preserve feasibility, objective
+  values, and valid optimality claims on the original instances. Choose source
+  changes autonomously and use only visible development instances.
+repository:
+  clone_url: https://github.com/chocoteam/choco-solver.git
+  plugin: pitbench.repositories.plugins:ChocoRepositoryPlugin
+  editable_paths: [solver]
+  agent_image: pitbench-choco-pr1178-agent:local
+  judge_image: sha256:6289a1208f425b3587c008256aa6411283f075a984e9acb2e50b20efbf4af6cc
+oracle:
+  kind: known_optimum
+  source: private://oracles/choco_arithmetic_propagation_20260115.yaml
+  source_sha256: ac00fcb6c18b0b45a4e01d1e05e83c8404b7f15b5a2f5f17464a53834e459db6
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  budgets_sec: [5.0, 20.0]
+  primary_budget_sec: 20.0
+  solver_seeds: [0, 1, 2, 3, 4]
+  threads: 1
+  verifier: trusted_optimum
+instance_sets:
+  - name: agent_dev
+    kind: agent_dev
+    instance_set_config: configs/instance_sets/choco_arithmetic_20260115_dev.yaml
+    instance_set_config_sha256: 27079f5243c85786a29286d3ad5c6fcd58a4b01db4daffe47445db3176ed4f6f
+    size: 5
+    randomness: {instance_seed: 81100}
+  - name: judge_id
+    kind: judge_id
+    instance_set_config: private://hidden_instances/choco_arithmetic_20260115/judge_id.yaml
+    instance_set_config_sha256: 3b9acffab64d4ceed83fe8eaa7dd80742e894086819b7fcb4b01fab0068f2acc
+    size: 30
+    randomness: {instance_seed: 81200}
+  - name: judge_shift
+    kind: judge_shift
+    instance_set_config: private://hidden_instances/choco_arithmetic_20260115/judge_shift.yaml
+    instance_set_config_sha256: b74ceae801dc3179ae8ebceb3d7732b5f2bf10c1722612d5ea0c126cff29aa5d
+    size: 30
+    randomness: {instance_seed: 81300}

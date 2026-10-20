@@ -1,0 +1,65 @@
+schema_version: '3.0'
+task_id: highs_transformed_integer_repair_20241031
+release:
+  repository: ERGO-Code/HiGHS
+  version: 1.8.0
+  tag: 5013b8c62fd44a551a13cef3b40a55027c5dfa84
+  base_commit: 5013b8c62fd44a551a13cef3b40a55027c5dfa84
+  released_at: '2024-10-31T16:39:50Z'
+  url: https://github.com/ERGO-Code/HiGHS/commit/5013b8c62fd44a551a13cef3b40a55027c5dfa84
+task_type: exact_solver
+problem_family: mip
+optimization_scope: transformed_integer_solution_repair_efficiency_and_numerical_robustness
+instruction: Improve efficiency and numerical reliability when repairing integer candidates
+  that become infeasible after MIP presolve transformations in this pinned HiGHS source
+  snapshot. Preserve original-model feasibility, valid bounds, search completeness,
+  solver statuses, and the global time budget. Choose source changes autonomously
+  and use only visible development instances.
+repository:
+  clone_url: https://github.com/ERGO-Code/HiGHS.git
+  plugin: pitbench.repositories.plugins:HighsRepositoryPlugin
+  editable_paths:
+  - src
+  - build
+  agent_image: pitbench-highs-pr1992-agent:local
+  judge_image: sha256:632deaa2e858f27a858eda7b7f9baf25205140ea7996d873027b813373800bee
+oracle:
+  kind: known_optimum
+  source: private://oracles/highs_transformed_integer_repair_20241031.yaml
+  source_sha256: bd743216ad0fc359c510ae6d9122130a02519bdaf2ecc6916cfc548bbb5628d9
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 5.0
+  threads: 1
+  verifier: trusted_optimum
+  solver_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/highs_multidimensional_knapsack_v1_15_1_dev.yaml
+  instance_set_config_sha256: 05f64e21f94fa9bc4f1e516eeb85e603aadd172bb717cf7c5077c2c51daef9d1
+  size: 5
+  randomness:
+    instance_seed: 811100
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/highs_multidimensional_knapsack_v1_15_1/judge_id.yaml
+  instance_set_config_sha256: 671ec7d94db4e548eeaf0901d2a7496dcc2fcc0a0fae2c13f2ebbc0943692bd8
+  size: 30
+- name: judge_shift
+  kind: judge_shift
+  instance_set_config: private://hidden_instances/highs_v1_15_1/judge_id.yaml
+  instance_set_config_sha256: f86b8660982b206bbe4aa5adc8044467ed5b2eeee23dea0b5b89329277cc5d22
+  size: 30
+  randomness:
+    instance_seed: 115110

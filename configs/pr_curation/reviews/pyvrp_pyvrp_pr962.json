@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 962,
+  "base_commit": "285a4cadd6b5fe1c6b1a2ac42dd48a46125a6777",
+  "head_commit": "e9e3c959c9ffd84b9c68e9c10a5f1831bcea8e65",
+  "decision": "advance",
+  "reason": "The PR moves the non-promising-node guard ahead of optional-client, group, and reload-depot work in each local-search sweep. On standard CVRP, the required-client/group/depot helpers usually return quickly, so the task measures the real per-node dispatch savings and any changed search trajectory rather than assuming the larger PCVRP gains reported in the PR description.",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "solver_phase": "local_search",
+  "solver_entry_points": [
+    "LocalSearch::search",
+    "SearchSpace::isPromising",
+    "LocalSearch::applyOptionalClientMoves",
+    "LocalSearch::applyGroupMoves",
+    "LocalSearch::applyDepotRemovalMove"
+  ],
+  "effect_channels": ["work_per_event", "primal_trajectory"],
+  "correctness_failure_modes": ["invalid_primal", "search_incomplete"],
+  "changed_source_paths": [
+    "pyvrp/cpp/search/LocalSearch.cpp",
+    "pyvrp/solve.py"
+  ],
+  "solver_behavior_hypothesis": "After a local-search perturbation, most clients are not marked promising. Checking that state before optional-client, group, and depot-removal logic can avoid repeated dispatch and predicate work for unaffected clients, while preserving the existing neighborhood moves for promising clients.",
+  "causal_chain": "The search loop visits clients in randomized order. Previously each visit ran optional-client and group checks, then reload-depot removal checks, before testing isPromising for the more expensive neighbor operators. The PR tests isPromising first and continues immediately for false entries. The solve wrapper also invokes search directly for the empty initial state instead of going through the callable that reloads the solution and resets search state.",
+  "structural_trigger": "CVRP local-search sweeps following perturbations that mark only affected nodes promising, especially large instances with many untouched clients. The public activation probe must count non-promising visits and the skipped pre-check helper calls; optional-client and reload-depot feature branches remain secondary controls unless such inputs are explicitly included.",
+  "activation_probe": "On paired pinned builds count total local-search node visits, promising and non-promising visits, calls to optional-client/group/depot-removal helpers, helper early exits, and accepted moves. Instrumented timing is diagnostic only. Verify the initial empty-solution path preserves the intended search-space state.",
+  "instance_selection_rule": "Freeze a public CVRP panel before hidden runs, stratified by customer count and neighborhood size, and use the standard hidden CVRPLIB X plus structurally shifted CVRP panel for baseline opportunity. Retain optional-client and reload-depot controls as unexercised controls unless a compatible independent checker is added.",
+  "workload_exposure_plan": "Use the shared PyVRP driver with no supplied initial solution on paired base/PR builds. Trace the changed guard after perturbations on the public CVRP panel; independently verify every returned route and retain the optional-client unit regression results separately.",
+  "mathematical_risk": "Skipping local-search operations can reduce solution quality or prevent a move from being discovered. It must not alter required-client coverage, capacity feasibility, or objective accounting. The PR's local-search state reset must not leave promising flags stale.",
+  "independent_check_plan": "Run the independent original CVRP checker over every public and hidden result. Run upstream LocalSearch regression tests on both source states, including optional-client cases where available, and retain all failure/timeout outcomes.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Qualify an open task with a one-seed base-only hidden panel at fixed budgets. Treat historical PR or coding-agent performance as a separate report; no coding-agent result is required for admission.",
+  "overlap_review": "PR #511 changes which local-search operators are in the default portfolio; PR #988 changes ILS acceptance after a best solution is found. PR #962 changes when candidate-node work is entered during a sweep, a distinct mechanism. Its optional-client and reload-depot benefits require separate activation evidence and will not be claimed from the all-required CVRP panel.",
+  "overlap_group": "pyvrp_local_search_nonpromising_guard_2025",
+  "related_prs": [511, 988],
+  "resource_risk": "The change trades optional/group/reload move opportunities on unmarked nodes for more iterations on affected neighborhoods. Check family-stratified quality and regressions; do not use the reported PCVRP speedup as evidence for CVRP.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/962",
+    "https://api.github.com/repos/PyVRP/PyVRP/pulls/962/files"
+  ]
+}

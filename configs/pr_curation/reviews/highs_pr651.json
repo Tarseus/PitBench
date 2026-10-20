@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 651,
+  "base_commit": "7421e44b09563f637dc6422ea461a8832b29e543",
+  "head_commit": "93f640216e10c6102bfb1698f212e18d7c16ca94",
+  "decision": "advance",
+  "reason": "The source diff changes RENS/RINS heuristic search effort, LP-iteration accounting, symmetry handling inside heuristic LP relaxations, and the heuristic effort limit. These are solver search policies and accounting paths, not model or user-parameter edits.",
+  "repository_role": "solver_engine",
+  "mechanism": "algorithmic_search",
+  "solver_phase": "primal_heuristic",
+  "solver_entry_points": [
+    "HighsPrimalHeuristics::RENS",
+    "HighsPrimalHeuristics::RINS",
+    "HighsMipSolverData::moreHeuristicsAllowed",
+    "HighsLpRelaxation::resolveLp"
+  ],
+  "effect_channels": ["work_per_event", "primal_trajectory", "search_tree", "proof_time"],
+  "correctness_failure_modes": ["invalid_primal", "search_incomplete", "invalid_bound", "resource_failure"],
+  "changed_source_paths": [
+    "src/mip/HighsLpRelaxation.cpp",
+    "src/mip/HighsLpRelaxation.h",
+    "src/mip/HighsMipSolverData.cpp",
+    "src/mip/HighsPrimalHeuristics.cpp",
+    "src/mip/HighsSearch.cpp",
+    "src/mip/HighsSearch.h"
+  ],
+  "solver_behavior_hypothesis": "Earlier effort caps and accurate RENS/RINS LP-iteration accounting can save heuristic work when it does not pay off, while the reduced symmetry adjustment in heuristic LPs can change incumbent discovery and later tree size.",
+  "causal_chain": "The PR changes the heuristic-effort denominator, counts local RENS/RINS LP iterations and sub-MIP nodes, limits retry effort relative to global LP work, and disables symmetric branch-column adjustment only in heuristic relaxations. These changes can alter when heuristics run, their cost, the first feasible solution, and proof trajectory.",
+  "structural_trigger": "MIPs on which RENS or RINS creates local search nodes or LP work and the global heuristic-effort test is evaluated; MIPs solved at presolve or without these heuristics are controls.",
+  "activation_probe": "On both pinned source states, count RENS/RINS entries, local LP iterations and nodes, retry exits, heuristic-effort decisions, and symmetry-adjustment calls; compare incumbent and bound timestamps. Include an inactive control.",
+  "instance_selection_rule": "Freeze a public activation panel by MIP family and baseline difficulty before hidden scoring; keep hard knapsack and scheduling cases, a no-heuristic control, fixed seeds and budgets, and all normal timeouts.",
+  "workload_exposure_plan": "Use the shared HiGHS exact-MIP driver and source probes to establish that the reviewed RENS/RINS or effort-limit path executes on a frozen public case; independently check each returned original-model solution.",
+  "mathematical_risk": "Heuristic LP symmetry changes or incomplete iteration accounting could admit an invalid incumbent, misstate a dual bound, or consume the proof budget without completing search.",
+  "independent_check_plan": "Verify returned primal assignments against original constraints, integrality, and objective; compare dual bounds and claimed optimal statuses with independently proven tractable instances; retain infeasibility and timeout outcomes.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Evaluate verified solve coverage, proof time and valid timeout-bound progress on paired held-out knapsack and scheduling MIPs across seeds, stratified by family with severe regressions retained.",
+  "overlap_review": "HiGHS #618 changes branching reliability, while #690 and #693 change cuts and implication storage at later snapshots. This PR is one mixed heuristic-policy change; its six source files and multiple seeds form one task.",
+  "overlap_group": "highs_heuristic_effort_rens_rins_2022",
+  "related_prs": [618, 690, 693],
+  "resource_risk": "Reduced heuristic calls can enlarge the later tree; increased sub-MIP effort or changed incumbent timing can increase total CPU or memory despite local savings.",
+  "source_evidence_urls": ["https://github.com/ERGO-Code/HiGHS/pull/651"]
+}

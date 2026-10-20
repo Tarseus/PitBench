@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "repository": "JeroenGar/sparrow",
+  "pr_number": 7,
+  "base_commit": "d5b0d8e63605f3bb59f784f18d45cb42bad3e6cb",
+  "head_commit": "ae5b4b0b4c05681a54c22154bd67c72e181f262e",
+  "decision": "reject",
+  "rejection_basis": "no_optimization_mechanism",
+  "reason": "The full diff removes unused playground evaluation code, cleans comments and imports, changes logging configuration, and inlines an existing overlap calculation without changing its formula or search policy. The path src/opt/tabu.rs contains only deleted debug comments. No concrete solver optimization mechanism or measurable solver-behavior target remains after source review.",
+  "source_evidence_urls": ["https://github.com/JeroenGar/sparrow/pull/7"]
+}

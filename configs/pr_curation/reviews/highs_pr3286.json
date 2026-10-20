@@ -1,0 +1,59 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 3286,
+  "base_commit": "fd860f9b111eba744a781b65f575c39afe366394",
+  "head_commit": "37cb9e61fdf2366153f2b7006f680c57dce2dcdf",
+  "decision": "advance",
+  "reason": "The source diff adds a presolve pass that normalizes eligible all-binary rows, applies valid bound fixings, and exposes set-packing/set-partitioning relations to clique extraction and merging. This is a distinct exact-solver presolve mechanism. The PR's reported model result is not admission evidence; the candidate still needs pinned builds, activated public workloads, independent original-model correctness, a base-only hidden qualification, and Judge integration.",
+  "repository_role": "solver_engine",
+  "mechanism": "combined",
+  "solver_phase": "presolve",
+  "solver_entry_points": [
+    "HPresolve::normaliseCliqueRows",
+    "HPresolve::prepareProbing",
+    "HighsCliqueTable::extractCliques",
+    "HighsCliqueTable::runCliqueMerging"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "search_tree",
+    "proof_time",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_bound",
+    "false_infeasibility",
+    "incorrect_optimality",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "highs/mip/HighsCliqueTable.cpp",
+    "highs/mip/HighsDomain.h",
+    "highs/presolve/HPresolve.cpp",
+    "highs/presolve/HPresolve.h",
+    "highs/presolve/HPresolveTest.cpp"
+  ],
+  "solver_behavior_hypothesis": "Normalizing eligible binary rows can expose additional clique structure and valid variable fixings to HiGHS presolve. This may reduce the root model and downstream search, at the cost of scanning and transforming rows; rows outside the trigger should remain unaffected.",
+  "causal_chain": "The pass identifies binary rows with manageable coefficient dynamism, scales integral coefficients, complements variables with negative coefficients, tightens trivial bounds, and maps remaining coefficients to signed unit literals when the transformed row is a valid clique relation. Clique extraction and merging then add logical relations and may remove subsumed rows, changing presolved model size, root processing, node count, and proof time.",
+  "structural_trigger": "MIP presolve probing on rows containing only binary variables whose scaled coefficients and bounds permit a valid set-packing or set-partitioning normalization; nonbinary rows, excessive dynamism, nonintegral scaling, ranged rows that cannot be represented safely, and rows without a clique relation are controls.",
+  "activation_probe": "On pinned Base and PR builds, use crafted public binary models to record eligibility, scale factors, variable complementations, fixings, normalized rows, extracted clique literals, merged/deleted rows, and postsolve recovery. Include equivalent nonbinary, high-dynamism, nonintegral, and ranged-row controls. Confirm identical original-model objective, status, and feasible assignments.",
+  "instance_selection_rule": "Freeze public and held-out MIP models by eligible all-binary row structure, clique density, coefficient scale/dynamism, and baseline proof difficulty before hidden results. Include set-packing, set-partitioning, implication-heavy and no-trigger controls; group related generated models together when splitting ID and OOD sets.",
+  "workload_exposure_plan": "Build the exact pre-PR and PR snapshots with the same HiGHS toolchain and settings. Run source counters on trigger and control models, then use the shared exact-MIP driver with presolve enabled and fixed seeds, threads, parameters, and budgets. Retain presolved row/column counts, clique counts, solver statuses, primal solutions, dual bounds, and every timeout.",
+  "mathematical_risk": "Incorrect scaling, rounding, complementation, or postsolve bookkeeping can exclude feasible integer assignments, create false infeasibility, or invalidate objective bounds and optimality statuses. Rounded row bounds must remain valid for the original integer model under the solver's numerical tolerances.",
+  "independent_check_plan": "Independently verify every incumbent against the original MIP, compare reported objectives and optimal statuses with frozen trusted optima or certificates where available, and audit valid dual bounds. Add small exhaustive binary models covering positive/negative coefficients, equalities, ranged rows, nonintegral right-hand sides, trivial fixings, and postsolve reconstruction.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "After activation and correctness gates, measure verified solved coverage, proof time, presolved model reduction, nodes, and peak memory on held-out MIP families stratified by trigger density. Report all normal timeouts, missing runs, and regressions; do not claim a positive PR effect from its public description or author-reported instance.",
+  "overlap_review": "HiGHS #2522 adds Chvatal-Gomory row strengthening, while #2861 adds enumeration-based presolve; both change the presolved MIP through different mathematical mechanisms. This PR normalizes binary rows for clique extraction/merging at a later pinned snapshot. Keep a distinct overlap group and verify same-snapshot inputs and Agent goals before counting it.",
+  "overlap_group": "highs_binary_row_clique_normalization_2026",
+  "related_prs": [
+    2522,
+    2861,
+    3213
+  ],
+  "resource_risk": "The normalization scan, integral scaling, and clique operations can increase presolve time and memory on dense binary models even when little structure is recovered.",
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/3286",
+    "https://github.com/ERGO-Code/HiGHS/commit/37cb9e61fdf2366153f2b7006f680c57dce2dcdf"
+  ]
+}

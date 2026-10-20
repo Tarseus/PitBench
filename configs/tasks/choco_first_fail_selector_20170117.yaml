@@ -1,0 +1,65 @@
+schema_version: '3.0'
+task_id: choco_first_fail_selector_20170117
+release:
+  repository: chocoteam/choco-solver
+  version: 4.0.2-SNAPSHOT
+  tag: 6a17dc66b6a6e34c8141e0c5666662fa62535650
+  base_commit: 6a17dc66b6a6e34c8141e0c5666662fa62535650
+  released_at: '2017-01-17T10:52:27Z'
+  url: https://github.com/chocoteam/choco-solver/commit/6a17dc66b6a6e34c8141e0c5666662fa62535650
+task_type: exact_solver
+problem_family: cp
+problem_variant: balanced_subset_sum
+formulation_id: balanced_subset_sum_cp
+optimization_scope: first_fail_variable_selection_efficiency
+instruction: Improve exact CP search efficiency in this pinned Choco source snapshot
+  by optimizing FirstFail variable selection. Preserve leftmost minimum-domain selection,
+  backtracking correctness, original-instance feasibility, and optimality claims.
+  The task fixes search_strategy=min_dom_lb. Choose source changes autonomously and
+  use only visible development instances.
+repository:
+  clone_url: https://github.com/chocoteam/choco-solver.git
+  plugin: pitbench.repositories.plugins:ChocoRepositoryPlugin
+  editable_paths:
+  - src
+  agent_image: pitbench-choco-pr493-base:agentcheckout
+  judge_image: sha256:e15c02901ad77d09625e25dcdd33c39c83b9d97270d3edca6ffd8382ad14018b
+oracle:
+  kind: known_optimum
+  source: private://oracles/choco_first_fail_selector_20170117.yaml
+  source_sha256: b22943f2eaac14ec18759659a908768c10aa100bd1ba6476a8e0c258f400fa20
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  solver_seeds:
+  - 0
+  threads: 1
+  verifier: trusted_optimum
+  fixed_solver_parameters:
+    search_strategy: min_dom_lb
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/choco_arithmetic_20260115_dev.yaml
+  instance_set_config_sha256: 27079f5243c85786a29286d3ad5c6fcd58a4b01db4daffe47445db3176ed4f6f
+  size: 5
+  randomness:
+    instance_seed: 81100
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/choco_arithmetic_20260115/judge_id.yaml
+  instance_set_config_sha256: 3b9acffab64d4ceed83fe8eaa7dd80742e894086819b7fcb4b01fab0068f2acc
+  size: 30
+  randomness:
+    instance_seed: 81200
+- name: judge_shift
+  kind: judge_shift
+  instance_set_config: private://hidden_instances/choco_arithmetic_20260115/judge_shift.yaml
+  instance_set_config_sha256: b74ceae801dc3179ae8ebceb3d7732b5f2bf10c1722612d5ea0c126cff29aa5d
+  size: 30
+  randomness:
+    instance_seed: 81300

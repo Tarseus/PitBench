@@ -815,6 +815,7 @@ def evaluate_task(
             "agent_image": resources.agent_image,
             "judge_image": resources.judge_image,
             "agent_tools": evaluation_config.agent_tools,
+            "agent_feedback_mode": evaluation_config.agent_feedback_mode,
         }
         judge_cpus_val = resources.judge_cpus or effective_config.judge_cpus
         if judge_cpus_val is not None:
@@ -1511,14 +1512,13 @@ def report_command(
     initial_checkpoint_path = target.parent / "judge-checkpoint.json"
     if performance_report is not None and initial_checkpoint_path.is_file():
         initial_identity = json.loads(initial_checkpoint_path.read_text())["identity"]
-        if (
-            set(initial_identity["code_states"]) != {"base", "agent"}
-            and performance_report.classification
-            in {
-                PerformanceClassification.IMPROVED,
-                PerformanceClassification.REGRESSED,
-            }
-        ):
+        if set(initial_identity["code_states"]) != {
+            "base",
+            "agent",
+        } and performance_report.classification in {
+            PerformanceClassification.IMPROVED,
+            PerformanceClassification.REGRESSED,
+        }:
             performance_report = performance_report.model_copy(
                 update={
                     "classification": PerformanceClassification.INCONCLUSIVE,

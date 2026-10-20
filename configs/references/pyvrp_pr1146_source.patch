@@ -1,0 +1,828 @@
+diff --git a/pyvrp/cpp/CostEvaluator.h b/pyvrp/cpp/CostEvaluator.h
+index ee4c617..3512e2c 100644
+--- a/pyvrp/cpp/CostEvaluator.h
++++ b/pyvrp/cpp/CostEvaluator.h
+@@ -17,6 +17,7 @@ namespace pyvrp
+ template <typename T>
+ concept DeltaCostEvaluatable = requires(T arg, size_t dimension) {
+     { arg.route() };
++    { arg.fixedVehicleCost() } -> std::same_as<Cost>;
+     { arg.distance() } -> std::convertible_to<std::pair<Cost, Distance>>;
+     { arg.duration() } -> std::convertible_to<std::pair<Cost, Duration>>;
+     { arg.excessLoad(dimension) } -> std::same_as<Load>;
+@@ -221,16 +222,9 @@ template <bool exact, typename... Args, template <typename...> class T>
+ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
+ {
+     auto const *route = proposal.route();
+-    if (!route->empty())
+-    {
+-        out -= route->distanceCost();
+-        out -= excessDistPenalty(route->excessDistance());
+-
+-        out -= excessLoadPenalties(route->excessLoad());
++    out -= penalisedCost(*route);
+ 
+-        out -= route->durationCost();
+-        out -= twPenalty(route->timeWarp());
+-    }
++    out += proposal.fixedVehicleCost();
+ 
+     if (route->hasDistanceCost())
+     {
+@@ -271,28 +265,13 @@ bool CostEvaluator::deltaCost(Cost &out,
+                               T<vArgs...> const &vProposal) const
+ {
+     auto const *uRoute = uProposal.route();
+-    if (!uRoute->empty())
+-    {
+-        out -= uRoute->distanceCost();
+-        out -= excessDistPenalty(uRoute->excessDistance());
+-
+-        out -= excessLoadPenalties(uRoute->excessLoad());
+-
+-        out -= uRoute->durationCost();
+-        out -= twPenalty(uRoute->timeWarp());
+-    }
+-
+     auto const *vRoute = vProposal.route();
+-    if (!vRoute->empty())
+-    {
+-        out -= vRoute->distanceCost();
+-        out -= excessDistPenalty(vRoute->excessDistance());
+ 
+-        out -= excessLoadPenalties(vRoute->excessLoad());
++    out -= penalisedCost(*uRoute);
++    out -= penalisedCost(*vRoute);
+ 
+-        out -= vRoute->durationCost();
+-        out -= twPenalty(vRoute->timeWarp());
+-    }
++    out += uProposal.fixedVehicleCost();
++    out += vProposal.fixedVehicleCost();
+ 
+     if (uRoute->hasDistanceCost())
+     {
+diff --git a/pyvrp/cpp/search/Exchange.h b/pyvrp/cpp/search/Exchange.h
+index 6c299c7..4148c7d 100644
+--- a/pyvrp/cpp/search/Exchange.h
++++ b/pyvrp/cpp/search/Exchange.h
+@@ -120,24 +120,25 @@ std::pair<Cost, bool> Exchange<N, M>::evalRelocateMove(
+         auto const *uRoute = U->route();
+         auto const *vRoute = V->route();
+ 
+-        // We're going to incur V's fixed cost if V is currently empty.
+-        if (V->isStartDepot() && vRoute->empty())
+-            deltaCost += vRoute->fixedVehicleCost();
+-
+-        // We lose U's fixed cost if we're moving all U's clients or shipment
+-        // nodes (pickup + delivery).
+-        if (uRoute->numClients() + 2 * uRoute->numShipments() == N)
+-            deltaCost -= uRoute->fixedVehicleCost();
+-
+-        auto const uProposal = Route::Proposal(uRoute->before(U->pos() - 1),
+-                                               uRoute->after(U->pos() + N));
+-
+         auto const vProposal
+             = Route::Proposal(vRoute->before(V->pos()),
+                               uRoute->between(U->pos(), U->pos() + N - 1),
+                               vRoute->after(V->pos() + 1));
+ 
+-        costEvaluator.deltaCost(deltaCost, uProposal, vProposal);
++        // Then U's route is empty after this move, so we can subtract the
++        // current route's cost and only evaluate V's proposal.
++        if (uRoute->numClients() + 2 * uRoute->numShipments() == N)
++        {
++            deltaCost -= costEvaluator.penalisedCost(*uRoute);
++            costEvaluator.deltaCost(deltaCost, vProposal);
++        }
++        else
++        {
++            auto const uProposal = Route::Proposal(uRoute->before(U->pos() - 1),
++                                                   uRoute->after(U->pos() + N));
++
++            costEvaluator.deltaCost(deltaCost, uProposal, vProposal);
++        }
+     }
+     else  // within same route
+     {
+diff --git a/pyvrp/cpp/search/InsertOptionalClient.cpp b/pyvrp/cpp/search/InsertOptionalClient.cpp
+index b1d24f7..de66130 100644
+--- a/pyvrp/cpp/search/InsertOptionalClient.cpp
++++ b/pyvrp/cpp/search/InsertOptionalClient.cpp
+@@ -28,8 +28,7 @@ std::pair<pyvrp::Cost, bool> InsertOptionalClient::evaluate(
+     }
+ 
+     auto *route = V->route();
+-    Cost deltaCost
+-        = Cost(route->empty()) * route->fixedVehicleCost() - uData.prize;
++    Cost deltaCost = -uData.prize;
+ 
+     costEvaluator.deltaCost(deltaCost,
+                             Route::Proposal(route->before(V->pos()),
+diff --git a/pyvrp/cpp/search/InsertOptionalShipment.cpp b/pyvrp/cpp/search/InsertOptionalShipment.cpp
+index 9f23722..b50cc40 100644
+--- a/pyvrp/cpp/search/InsertOptionalShipment.cpp
++++ b/pyvrp/cpp/search/InsertOptionalShipment.cpp
+@@ -21,9 +21,7 @@ std::pair<pyvrp::Cost, bool> InsertOptionalShipment::evaluate(
+     auto const &shipment = data.shipment(U->idx());
+     auto const &route = *V->route();
+ 
+-    Cost const fixedCost = route.empty() ? route.fixedVehicleCost() : 0;
+-
+-    Cost deltaCost = fixedCost - shipment.prize;
++    Cost deltaCost = -shipment.prize;
+     costEvaluator.deltaCost(deltaCost,  // delivery directly after pickup
+                             Route::Proposal(route.before(V->pos()),
+                                             PickupSegment(data, U->idx()),
+@@ -39,7 +37,7 @@ std::pair<pyvrp::Cost, bool> InsertOptionalShipment::evaluate(
+     // Pickup after V, delivery later in the route.
+     for (auto const *node = n(V); !node->isDepot(); node = n(node))
+     {
+-        Cost deltaCost = fixedCost - shipment.prize;
++        Cost deltaCost = -shipment.prize;
+         costEvaluator.deltaCost(
+             deltaCost,
+             Route::Proposal(route.before(V->pos()),
+diff --git a/pyvrp/cpp/search/RelocateAlternative.cpp b/pyvrp/cpp/search/RelocateAlternative.cpp
+index dc914ee..f727181 100644
+--- a/pyvrp/cpp/search/RelocateAlternative.cpp
++++ b/pyvrp/cpp/search/RelocateAlternative.cpp
+@@ -6,9 +6,9 @@
+ 
+ using pyvrp::search::RelocateAlternative;
+ 
+-void RelocateAlternative::evalWithinRoute(Route::Node *U,
+-                                          Route::Node *V,
+-                                          CostEvaluator const &costEvaluator)
++void RelocateAlternative::evalSameRoute(Route::Node *U,
++                                        Route::Node *V,
++                                        CostEvaluator const &costEvaluator)
+ {
+ 
+     auto const *route = U->route();
+@@ -65,9 +65,8 @@ void RelocateAlternative::evalWithinRoute(Route::Node *U,
+         }
+ }
+ 
+-void RelocateAlternative::evalBetweenRoutes(Route::Node *U,
+-                                            Route::Node *V,
+-                                            CostEvaluator const &costEvaluator)
++void RelocateAlternative::evalDifferentRoutes(
++    Route::Node *U, Route::Node *V, CostEvaluator const &costEvaluator)
+ {
+     auto const *uRoute = U->route();
+     auto const *vRoute = V->route();
+@@ -75,32 +74,32 @@ void RelocateAlternative::evalBetweenRoutes(Route::Node *U,
+     auto const &group = data.group(*uData.group);
+     assert(group.mutuallyExclusive);
+ 
+-    Cost fixedCost = 0;
++    Cost removeCost = uData.prize;
+     if (uRoute->numClients() == 1 && uRoute->numShipments() == 0)
+-        fixedCost -= uRoute->fixedVehicleCost();
+-
+-    if (vRoute->empty())
+-        fixedCost += vRoute->fixedVehicleCost();
+-
+-    auto const uProposal = Route::Proposal(uRoute->before(U->pos() - 1),
+-                                           uRoute->after(U->pos() + 1));
++        // This move leaves the route empty, so the cost delta is just the
++        // current route cost.
++        removeCost -= costEvaluator.penalisedCost(*uRoute);
++    else
++        costEvaluator.deltaCost<true>(  // exact evaluation so we get the right
++            removeCost,                 // delta when inserting the alternative
++            Route::Proposal(uRoute->before(U->pos() - 1),
++                            uRoute->after(U->pos() + 1)));
+ 
+     for (auto const client : group)
+     {
+-        auto *alternative = &solution_->clients[client];
+-        if (alternative == U)
++        if (client == U->idx())
+             continue;
+ 
+-        auto const &alternativeData = data.client(client);
+-        Cost deltaCost = fixedCost + uData.prize - alternativeData.prize;
+-        auto const vProposal = Route::Proposal(vRoute->before(V->pos()),
+-                                               ClientSegment(data, client),
+-                                               vRoute->after(V->pos() + 1));
+-        costEvaluator.deltaCost(deltaCost, uProposal, vProposal);
++        auto const &alternative = data.client(client);
++        Cost deltaCost = removeCost - alternative.prize;
++        costEvaluator.deltaCost(deltaCost,
++                                Route::Proposal(vRoute->before(V->pos()),
++                                                ClientSegment(data, client),
++                                                vRoute->after(V->pos() + 1)));
+ 
+         if (deltaCost < 0)
+         {
+-            move_ = {deltaCost, alternative};
++            move_ = {deltaCost, &solution_->clients[client]};
+             return;
+         }
+     }
+@@ -122,9 +121,9 @@ std::pair<pyvrp::Cost, bool> RelocateAlternative::evaluate(
+     move_ = {};
+ 
+     if (U->route() == V->route())
+-        evalWithinRoute(U, V, costEvaluator);
++        evalSameRoute(U, V, costEvaluator);
+     else
+-        evalBetweenRoutes(U, V, costEvaluator);
++        evalDifferentRoutes(U, V, costEvaluator);
+ 
+     return std::make_pair(move_.cost, move_.cost < 0);
+ }
+diff --git a/pyvrp/cpp/search/RelocateAlternative.h b/pyvrp/cpp/search/RelocateAlternative.h
+index e9db6f9..a9538ac 100644
+--- a/pyvrp/cpp/search/RelocateAlternative.h
++++ b/pyvrp/cpp/search/RelocateAlternative.h
+@@ -25,13 +25,15 @@ class RelocateAlternative : public BinaryOperator
+     Move move_;
+     Solution *solution_ = nullptr;
+ 
+-    void evalWithinRoute(Route::Node *U,
+-                         Route::Node *V,
+-                         CostEvaluator const &costEvaluator);
+-
+-    void evalBetweenRoutes(Route::Node *U,
+-                           Route::Node *V,
+-                           CostEvaluator const &costEvaluator);
++    // Evaluates relocation moves when U and V are in the same route.
++    void evalSameRoute(Route::Node *U,
++                       Route::Node *V,
++                       CostEvaluator const &costEvaluator);
++
++    // Evaluates relocation moves when U and V are in different routes.
++    void evalDifferentRoutes(Route::Node *U,
++                             Route::Node *V,
++                             CostEvaluator const &costEvaluator);
+ 
+ public:
+     std::pair<Cost, bool> evaluate(Route::Node *U,
+diff --git a/pyvrp/cpp/search/RelocateShipment.cpp b/pyvrp/cpp/search/RelocateShipment.cpp
+index 9aef42a..cd10cec 100644
+--- a/pyvrp/cpp/search/RelocateShipment.cpp
++++ b/pyvrp/cpp/search/RelocateShipment.cpp
+@@ -27,35 +27,25 @@ std::pair<pyvrp::Cost, bool> RelocateShipment::evaluate(
+     auto const *uPickup = U;
+     auto const *uDelivery = U + 1;
+ 
+-    Cost fixedCost = 0;
+-    if (uRoute->numShipments() == 1 && uRoute->numClients() == 0)
+-        // Then U's route is empty after we relocate U, and we lose the route's
+-        // fixed vehicle cost.
+-        fixedCost -= uRoute->fixedVehicleCost();
+-
+-    if (vRoute->empty())  // will become non-empty after inserting U.
+-        fixedCost += vRoute->fixedVehicleCost();
+-
+     Cost removeCost = 0;
+-    if (n(uPickup) != uDelivery)  // exact when removing U's shipment so we
+-    {                             // have the correct delta cost for this part
+-        auto const uProposal = Route::Proposal(
+-            uRoute->before(uPickup->pos() - 1),
+-            uRoute->between(uPickup->pos() + 1, uDelivery->pos() - 1),
+-            uRoute->after(uDelivery->pos() + 1));
+-
+-        costEvaluator.deltaCost<true>(removeCost, uProposal);
+-    }
++    if (uRoute->numClients() == 0 && uRoute->numShipments() == 1)
++        // This move leaves the route empty, so the cost delta is just the
++        // current route cost.
++        removeCost -= costEvaluator.penalisedCost(*uRoute);
++    else if (n(uPickup) != uDelivery)   // exact evaluation when removing U's so
++        costEvaluator.deltaCost<true>(  // we have the correct delta cost for V
++            removeCost,
++            Route::Proposal(
++                uRoute->before(uPickup->pos() - 1),
++                uRoute->between(uPickup->pos() + 1, uDelivery->pos() - 1),
++                uRoute->after(uDelivery->pos() + 1)));
+     else
+-    {
+-        auto const uProposal
+-            = Route::Proposal(uRoute->before(uPickup->pos() - 1),
+-                              uRoute->after(uDelivery->pos() + 1));
+-
+-        costEvaluator.deltaCost<true>(removeCost, uProposal);
+-    }
++        costEvaluator.deltaCost<true>(
++            removeCost,
++            Route::Proposal(uRoute->before(uPickup->pos() - 1),
++                            uRoute->after(uDelivery->pos() + 1)));
+ 
+-    Cost deltaCost = removeCost + fixedCost;
++    Cost deltaCost = removeCost;
+     costEvaluator.deltaCost(deltaCost,  // delivery directly after pickup
+                             Route::Proposal(vRoute->before(V->pos()),
+                                             uRoute->at(uPickup->pos()),
+@@ -71,7 +61,7 @@ std::pair<pyvrp::Cost, bool> RelocateShipment::evaluate(
+     // Pickup after V, delivery later in the route.
+     for (auto const *node = n(V); !node->isDepot(); node = n(node))
+     {
+-        Cost deltaCost = removeCost + fixedCost;
++        Cost deltaCost = removeCost;
+         costEvaluator.deltaCost(
+             deltaCost,
+             Route::Proposal(vRoute->before(V->pos()),
+diff --git a/pyvrp/cpp/search/RelocateWithDepot.cpp b/pyvrp/cpp/search/RelocateWithDepot.cpp
+index b581bb5..5fa8bba 100644
+--- a/pyvrp/cpp/search/RelocateWithDepot.cpp
++++ b/pyvrp/cpp/search/RelocateWithDepot.cpp
+@@ -7,120 +7,114 @@
+ 
+ using pyvrp::search::RelocateWithDepot;
+ 
+-void RelocateWithDepot::evalDepotBefore(Cost fixedCost,
+-                                        Route::Node *U,
+-                                        Route::Node *V,
+-                                        CostEvaluator const &costEvaluator)
++void RelocateWithDepot::evalSameRoute(Route::Node *U,
++                                      Route::Node *V,
++                                      CostEvaluator const &costEvaluator)
+ {
+-    auto const *uRoute = U->route();
+-    auto const *vRoute = V->route();
+-    auto const &vehType = data.vehicleType(vRoute->vehicleType());
+-
+-    if (uRoute != vRoute)
+-    {
+-        auto const uProposal = Route::Proposal(uRoute->before(U->pos() - 1),
+-                                               uRoute->after(U->pos() + 1));
++    assert(U->route() == V->route());
++    auto const *route = U->route();
++    auto const &vehType = data.vehicleType(route->vehicleType());
+ 
++    if (!V->isReloadDepot())  // depot first, U after
+         for (auto const depot : vehType.reloadDepots)
+         {
+-            auto deltaCost = fixedCost;
+-            costEvaluator.deltaCost(
+-                deltaCost,
+-                uProposal,
+-                Route::Proposal(vRoute->before(V->pos()),
+-                                DepotSegment(data, depot),
+-                                uRoute->at(U->pos()),
+-                                vRoute->after(V->pos() + 1)));
++            Cost deltaCost = 0;
++            if (U->pos() < V->pos())
++                costEvaluator.deltaCost(
++                    deltaCost,
++                    Route::Proposal(route->before(U->pos() - 1),
++                                    route->between(U->pos() + 1, V->pos()),
++                                    DepotSegment(data, depot),
++                                    route->at(U->pos()),
++                                    route->after(V->pos() + 1)));
++            else
++                costEvaluator.deltaCost(
++                    deltaCost,
++                    Route::Proposal(route->before(V->pos()),
++                                    DepotSegment(data, depot),
++                                    route->at(U->pos()),
++                                    route->between(V->pos() + 1, U->pos() - 1),
++                                    route->after(U->pos() + 1)));
+ 
+             if (deltaCost < move_.cost)
+                 move_ = {deltaCost, MoveType::DEPOT_U, depot};
+         }
+-    }
+-    else  // within same route
+-    {
+-        auto const *route = vRoute;
++
++    if (!n(V)->isReloadDepot())  // U first, depot after
+         for (auto const depot : vehType.reloadDepots)
+         {
+-            auto deltaCost = fixedCost;
++            Cost deltaCost = 0;
+             if (U->pos() < V->pos())
+                 costEvaluator.deltaCost(
+                     deltaCost,
+                     Route::Proposal(route->before(U->pos() - 1),
+                                     route->between(U->pos() + 1, V->pos()),
+-                                    DepotSegment(data, depot),
+                                     route->at(U->pos()),
++                                    DepotSegment(data, depot),
+                                     route->after(V->pos() + 1)));
+             else
+                 costEvaluator.deltaCost(
+                     deltaCost,
+                     Route::Proposal(route->before(V->pos()),
+-                                    DepotSegment(data, depot),
+                                     route->at(U->pos()),
++                                    DepotSegment(data, depot),
+                                     route->between(V->pos() + 1, U->pos() - 1),
+                                     route->after(U->pos() + 1)));
+ 
+             if (deltaCost < move_.cost)
+-                move_ = {deltaCost, MoveType::DEPOT_U, depot};
++                move_ = {deltaCost, MoveType::U_DEPOT, depot};
+         }
+-    }
+ }
+ 
+-void RelocateWithDepot::evalDepotAfter(Cost fixedCost,
+-                                       Route::Node *U,
+-                                       Route::Node *V,
+-                                       CostEvaluator const &costEvaluator)
++void RelocateWithDepot::evalDifferentRoutes(Route::Node *U,
++                                            Route::Node *V,
++                                            CostEvaluator const &costEvaluator)
+ {
++    assert(U->route() != V->route());
+     auto const *uRoute = U->route();
+     auto const *vRoute = V->route();
+     auto const &vehType = data.vehicleType(vRoute->vehicleType());
+ 
+-    if (uRoute != vRoute)
+-    {
+-        auto const uProposal = Route::Proposal(uRoute->before(U->pos() - 1),
+-                                               uRoute->after(U->pos() + 1));
+-
++    Cost removeCost = 0;
++    if (uRoute->numClients() == 1 && uRoute->numShipments() == 0)
++        // This move leaves the route empty, so the cost delta is just the
++        // current route cost.
++        removeCost -= costEvaluator.penalisedCost(*uRoute);
++    else
++        costEvaluator.deltaCost<true>(  // exact evaluation when removing U
++            removeCost,                 // so we get the right delta later
++            Route::Proposal(uRoute->before(U->pos() - 1),
++                            uRoute->after(U->pos() + 1)));
++
++    if (!V->isReloadDepot())  // depot first, U after
+         for (auto const depot : vehType.reloadDepots)
+         {
+-            Cost deltaCost = fixedCost;
++            Cost deltaCost = removeCost;
+             costEvaluator.deltaCost(
+                 deltaCost,
+-                uProposal,
+                 Route::Proposal(vRoute->before(V->pos()),
+-                                uRoute->at(U->pos()),
+                                 DepotSegment(data, depot),
++                                uRoute->at(U->pos()),
+                                 vRoute->after(V->pos() + 1)));
+ 
+             if (deltaCost < move_.cost)
+-                move_ = {deltaCost, MoveType::U_DEPOT, depot};
++                move_ = {deltaCost, MoveType::DEPOT_U, depot};
+         }
+-    }
+-    else  // within same route
+-    {
+-        auto const *route = vRoute;
++
++    if (!n(V)->isReloadDepot())  // U first, depot after
+         for (auto const depot : vehType.reloadDepots)
+         {
+-            Cost deltaCost = fixedCost;
+-            if (U->pos() < V->pos())
+-                costEvaluator.deltaCost(
+-                    deltaCost,
+-                    Route::Proposal(route->before(U->pos() - 1),
+-                                    route->between(U->pos() + 1, V->pos()),
+-                                    route->at(U->pos()),
+-                                    DepotSegment(data, depot),
+-                                    route->after(V->pos() + 1)));
+-            else
+-                costEvaluator.deltaCost(
+-                    deltaCost,
+-                    Route::Proposal(route->before(V->pos()),
+-                                    route->at(U->pos()),
+-                                    DepotSegment(data, depot),
+-                                    route->between(V->pos() + 1, U->pos() - 1),
+-                                    route->after(U->pos() + 1)));
++            Cost deltaCost = removeCost;
++            costEvaluator.deltaCost(
++                deltaCost,
++                Route::Proposal(vRoute->before(V->pos()),
++                                uRoute->at(U->pos()),
++                                DepotSegment(data, depot),
++                                vRoute->after(V->pos() + 1)));
+ 
+             if (deltaCost < move_.cost)
+                 move_ = {deltaCost, MoveType::U_DEPOT, depot};
+         }
+-    }
+ }
+ 
+ std::pair<pyvrp::Cost, bool> RelocateWithDepot::evaluate(
+@@ -152,22 +146,10 @@ std::pair<pyvrp::Cost, bool> RelocateWithDepot::evaluate(
+ 
+     move_ = {};
+ 
+-    Cost fixedCost = 0;
+-    if (uRoute != vRoute  // empty after move
+-        && uRoute->numClients() == 1 && uRoute->numShipments() == 0)
+-        fixedCost -= uRoute->fixedVehicleCost();
+-
+-    if (!V->isReloadDepot())
+-        // If V is already a reload depot, there is no point inserting another
+-        // reload depot directly after it. If V is a start depot, however, that
+-        // might be OK to deal with initial vehicle load.
+-        evalDepotBefore(fixedCost, U, V, costEvaluator);
+-
+-    if (!n(V)->isReloadDepot())
+-        // If n(V) is a reload depot, there is no point inserting another reload
+-        // depot directly before it. If n(V) is the end depot, however, that
+-        // might be OK to ensure the vehicle returns empty.
+-        evalDepotAfter(fixedCost, U, V, costEvaluator);
++    if (uRoute == vRoute)
++        evalSameRoute(U, V, costEvaluator);
++    else
++        evalDifferentRoutes(U, V, costEvaluator);
+ 
+     return std::make_pair(move_.cost, move_.cost < 0);
+ }
+diff --git a/pyvrp/cpp/search/RelocateWithDepot.h b/pyvrp/cpp/search/RelocateWithDepot.h
+index f803373..2d877b5 100644
+--- a/pyvrp/cpp/search/RelocateWithDepot.h
++++ b/pyvrp/cpp/search/RelocateWithDepot.h
+@@ -38,19 +38,15 @@ class RelocateWithDepot : public BinaryOperator
+ 
+     Move move_;
+ 
+-    // Evaluates moves where a reload depot is inserted before U, as
+-    // V -> depot -> U.
+-    void evalDepotBefore(Cost fixedCost,
+-                         Route::Node *U,
+-                         Route::Node *V,
+-                         CostEvaluator const &costEvaluator);
++    // Evaluates relocation moves when U and V are in the same route.
++    void evalSameRoute(Route::Node *U,
++                       Route::Node *V,
++                       CostEvaluator const &costEvaluator);
+ 
+-    // Evaluates moves where a reload depot is inserted after U, as
+-    // V -> U -> depot.
+-    void evalDepotAfter(Cost fixedCost,
+-                        Route::Node *U,
+-                        Route::Node *V,
+-                        CostEvaluator const &costEvaluator);
++    // Evaluates relocation moves when U and V are in different routes.
++    void evalDifferentRoutes(Route::Node *U,
++                             Route::Node *V,
++                             CostEvaluator const &costEvaluator);
+ 
+ public:
+     std::pair<Cost, bool> evaluate(Route::Node *U,
+diff --git a/pyvrp/cpp/search/RemoveOptionalClient.cpp b/pyvrp/cpp/search/RemoveOptionalClient.cpp
+index d582c2d..e3dd106 100644
+--- a/pyvrp/cpp/search/RemoveOptionalClient.cpp
++++ b/pyvrp/cpp/search/RemoveOptionalClient.cpp
+@@ -22,12 +22,14 @@ RemoveOptionalClient::evaluate(Route::Node *U,
+         return std::make_pair(0, false);                     // required member
+ 
+     Cost deltaCost = client.prize;
+-    if (route->numClients() == 1 && route->numShipments() == 0)
+-        deltaCost -= route->fixedVehicleCost();
+-
+-    costEvaluator.deltaCost(deltaCost,
+-                            Route::Proposal(route->before(U->pos() - 1),
+-                                            route->after(U->pos() + 1)));
++    if (route->numShipments() == 0 && route->numClients() == 1)
++        // This move leaves the route empty, so the cost delta is just the
++        // current route cost.
++        deltaCost -= costEvaluator.penalisedCost(*route);
++    else
++        costEvaluator.deltaCost(deltaCost,
++                                Route::Proposal(route->before(U->pos() - 1),
++                                                route->after(U->pos() + 1)));
+ 
+     return std::make_pair(deltaCost, deltaCost < 0);
+ }
+diff --git a/pyvrp/cpp/search/RemoveOptionalShipment.cpp b/pyvrp/cpp/search/RemoveOptionalShipment.cpp
+index caa2236..b57a532 100644
+--- a/pyvrp/cpp/search/RemoveOptionalShipment.cpp
++++ b/pyvrp/cpp/search/RemoveOptionalShipment.cpp
+@@ -23,9 +23,10 @@ RemoveOptionalShipment::evaluate(Route::Node *U,
+ 
+     Cost deltaCost = shipment.prize;
+     if (route->numShipments() == 1 && route->numClients() == 0)
+-        deltaCost -= route->fixedVehicleCost();
+-
+-    if (n(pickup) == delivery)
++        // This move leaves the route empty, so the cost delta is just the
++        // current route cost.
++        deltaCost -= costEvaluator.penalisedCost(*route);
++    else if (n(pickup) == delivery)
+         costEvaluator.deltaCost(
+             deltaCost,
+             Route::Proposal(route->before(pickup->pos() - 1),
+diff --git a/pyvrp/cpp/search/Route.cpp b/pyvrp/cpp/search/Route.cpp
+index ffcd2e1..a5e992e 100644
+--- a/pyvrp/cpp/search/Route.cpp
++++ b/pyvrp/cpp/search/Route.cpp
+@@ -441,20 +441,3 @@ std::ostream &operator<<(std::ostream &out, Route::Node const &node)
+ {
+     return out << node.activity();
+ }
+-
+-template <>
+-pyvrp::Cost
+-pyvrp::CostEvaluator::penalisedCost(pyvrp::search::Route const &route) const
+-{
+-    if (route.empty())
+-        return 0;
+-
+-    // clang-format off
+-    return route.distanceCost()
+-         + route.durationCost()
+-         + route.fixedVehicleCost()
+-         + excessLoadPenalties(route.excessLoad())
+-         + twPenalty(route.timeWarp())
+-         + distPenalty(route.excessDistance(), 0);
+-    // clang-format on
+-}
+diff --git a/pyvrp/cpp/search/Route.h b/pyvrp/cpp/search/Route.h
+index 80eb27a..d797df3 100644
+--- a/pyvrp/cpp/search/Route.h
++++ b/pyvrp/cpp/search/Route.h
+@@ -83,14 +83,9 @@ class Route
+ {
+ public:
+     /**
+-     * A simple class that tracks a proposed route structure. This new structure
+-     * can be efficiently evaluated by calling appropriate member functions,
+-     * detailing the newly proposed route's statistics.
+-     *
+-     * .. note::
+-     *
+-     *    The member functions may shortcut if they detect that a particular
+-     *    statistic has no impact on the newly proposed route's cost.
++     * A simple class that tracks a proposed, non-empty route structure. This
++     * new structure can be efficiently evaluated by calling appropriate member
++     * functions, detailing the newly proposed route's statistics.
+      */
+     template <Segment... Segments> class Proposal
+     {
+@@ -107,9 +102,9 @@ public:
+         Route const *route() const;
+ 
+         /**
+-         * Returns whether the proposed route is empty.
++         * Returns the fixed vehicle cost incurred by the proposed route.
+          */
+-        bool empty() const;
++        Cost fixedVehicleCost() const;
+ 
+         /**
+          * Returns the (distance cost, excess distance) attributes of the
+@@ -1161,6 +1156,12 @@ Route::Proposal<Segments...>::Proposal(Segments &&...segments)
+ {
+     static_assert(sizeof...(Segments) > 0, "Proposal cannot be empty.");
+ 
++    [[maybe_unused]] auto const numClients = std::apply(
++        [](auto &&...args) { return (args.numClients() + ...); }, segments_);
++    [[maybe_unused]] auto const numShipments = std::apply(
++        [](auto &&...args) { return (args.numPickups() + ...); }, segments_);
++    assert(numClients + numShipments != 0);  // proposal must not be empty
++
+     [[maybe_unused]] auto &&first = std::get<0>(segments_);
+     [[maybe_unused]] auto &&last = std::get<sizeof...(Segments) - 1>(segments_);
+     assert(first.route() == last.route());  // must start and end at same route
+@@ -1171,28 +1172,21 @@ Route::Proposal<Segments...>::Proposal(Segments &&...segments)
+     assert(last.back().activity() == route[route.size() - 1]->activity());
+ }
+ 
+-template <Segment... Segments> bool Route::Proposal<Segments...>::empty() const
++template <Segment... Segments>
++Route const *Route::Proposal<Segments...>::route() const
+ {
+-    auto const numVisits = std::apply(  // visits to clients and shipments
+-        [](auto &&...args)
+-        { return (args.numClients() + ...) + (args.numPickups() + ...); },
+-        segments_);
+-
+-    return numVisits == 0;
++    return std::get<0>(segments_).route();
+ }
+ 
+ template <Segment... Segments>
+-Route const *Route::Proposal<Segments...>::route() const
++Cost Route::Proposal<Segments...>::fixedVehicleCost() const
+ {
+-    return std::get<0>(segments_).route();
++    return route()->fixedVehicleCost();
+ }
+ 
+ template <Segment... Segments>
+ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
+ {
+-    if (empty())
+-        return std::make_pair(0, 0);
+-
+     auto const &data = route()->data;
+     auto const unitDistanceCost = route()->unitDistanceCost();
+     auto const maxDistance = route()->maxDistance();
+@@ -1227,9 +1221,6 @@ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
+ template <Segment... Segments>
+ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
+ {
+-    if (empty())
+-        return std::make_pair(0, 0);
+-
+     auto const &data = route()->data;
+     auto const unitDurationCost = route()->unitDurationCost();
+     auto const unitOvertimeCost = route()->unitOvertimeCost();
+@@ -1301,9 +1292,6 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
+ template <Segment... Segments>
+ Load Route::Proposal<Segments...>::excessLoad(size_t dimension) const
+ {
+-    if (empty())
+-        return 0;
+-
+     auto const &capacities = route()->capacity();
+     auto const capacity = capacities[dimension];
+ 
+@@ -1347,7 +1335,20 @@ std::ostream &operator<<(std::ostream &out,  // for debugging
+                          pyvrp::search::Route::Node const &node);
+ 
+ template <>  // specialisation for pyvrp::search::Route
+-pyvrp::Cost
+-pyvrp::CostEvaluator::penalisedCost(pyvrp::search::Route const &route) const;
++inline pyvrp::Cost
++pyvrp::CostEvaluator::penalisedCost(pyvrp::search::Route const &route) const
++{
++    if (route.empty())
++        return 0;
++
++    // clang-format off
++    return route.distanceCost()
++         + route.durationCost()
++         + route.fixedVehicleCost()
++         + excessLoadPenalties(route.excessLoad())
++         + twPenalty(route.timeWarp())
++         + distPenalty(route.excessDistance(), 0);
++    // clang-format on
++}
+ 
+ #endif  // PYVRP_SEARCH_ROUTE_H
+diff --git a/pyvrp/cpp/search/Solution.cpp b/pyvrp/cpp/search/Solution.cpp
+index 922dada..d8c1f36 100644
+--- a/pyvrp/cpp/search/Solution.cpp
++++ b/pyvrp/cpp/search/Solution.cpp
+@@ -27,9 +27,7 @@ Cost insertCost(pyvrp::search::Route::Node *U,
+     auto *route = V->route();
+     auto const &client = data.client(U->idx());
+ 
+-    Cost deltaCost
+-        = Cost(route->empty()) * route->fixedVehicleCost() - client.prize;
+-
++    Cost deltaCost = -client.prize;
+     costEvaluator.deltaCost<true>(
+         deltaCost,
+         pyvrp::search::Route::Proposal(
+@@ -295,7 +293,7 @@ bool Solution::insert(Route::Node *pickup,
+         if (empty == end)
+             continue;
+ 
+-        Cost deltaCost = empty->fixedVehicleCost() - shipment.prize;
++        Cost deltaCost = -shipment.prize;
+         costEvaluator.deltaCost<true>(
+             deltaCost,
+             Route::Proposal(empty->before(0),
+diff --git a/pyvrp/cpp/search/SwapTails.cpp b/pyvrp/cpp/search/SwapTails.cpp
+index df19ae9..9e87ef5 100644
+--- a/pyvrp/cpp/search/SwapTails.cpp
++++ b/pyvrp/cpp/search/SwapTails.cpp
+@@ -49,15 +49,6 @@ std::pair<pyvrp::Cost, bool> SwapTails::evaluate(
+ 
+     Cost deltaCost = 0;
+ 
+-    // We're going to incur fixed cost if V's route is currently empty but
+-    // becomes non-empty due to the proposed move.
+-    if (vRoute->empty() && !n(U)->isEndDepot())
+-        deltaCost += vRoute->fixedVehicleCost();
+-
+-    // We lose fixed cost if V's route becomes empty due to the proposed move.
+-    if (!vRoute->empty() && V->isStartDepot() && n(U)->isEndDepot())
+-        deltaCost -= vRoute->fixedVehicleCost();
+-
+     if (!n(U)->isEndDepot() && !n(V)->isEndDepot())
+     {
+         auto const uProposal
+@@ -91,10 +82,17 @@ std::pair<pyvrp::Cost, bool> SwapTails::evaluate(
+                               vRoute->between(V->pos() + 1, vRoute->size() - 2),
+                               uRoute->at(uRoute->size() - 1));
+ 
+-        auto const vProposal = Route::Proposal(vRoute->before(V->pos()),
+-                                               vRoute->at(vRoute->size() - 1));
+-
+-        costEvaluator.deltaCost(deltaCost, uProposal, vProposal);
++        if (V->isStartDepot())  // this move empties V's route, so we subtract
++        {                       // its cost and only evaluate U's proposal
++            deltaCost -= costEvaluator.penalisedCost(*vRoute);
++            costEvaluator.deltaCost(deltaCost, uProposal);
++        }
++        else
++            costEvaluator.deltaCost(
++                deltaCost,
++                uProposal,
++                Route::Proposal(vRoute->before(V->pos()),
++                                vRoute->at(vRoute->size() - 1)));
+     }
+ 
+     return std::make_pair(deltaCost, deltaCost < 0);

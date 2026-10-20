@@ -1,0 +1,49 @@
+{
+  "schema_version": 2,
+  "repository": "chocoteam/choco-solver",
+  "pr_number": 493,
+  "base_commit": "6a17dc66b6a6e34c8141e0c5666662fa62535650",
+  "head_commit": "dc5576918ef0543141de7a8a25f1aa396417c519",
+  "decision": "advance",
+  "reason": "The source diff changes only FirstFail.getVariable. It skips the domain-size query for already instantiated variables while retaining the leftmost minimum-domain scan and trailed cursor. This is a bounded search hot-path efficiency change; source equivalence, activation, and original-problem correctness still need verification.",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "solver_phase": "branching",
+  "solver_entry_points": [
+    "FirstFail.getVariable",
+    "FirstFail.evaluate"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "proof_time",
+    "search_tree"
+  ],
+  "correctness_failure_modes": [
+    "search_incomplete",
+    "incorrect_optimality"
+  ],
+  "changed_source_paths": [
+    "src/main/java/org/chocosolver/solver/search/strategy/selectors/variables/FirstFail.java"
+  ],
+  "solver_behavior_hypothesis": "With evaluation.fixed_solver_parameters.search_strategy=min_dom_lb, FirstFail can reduce selector work by avoiding getDomainSize calls for instantiated variables while preserving the leftmost minimum-domain choice and trailed lastIdx cursor.",
+  "causal_chain": "The balanced subset-sum runner selects variables through Search.minDomLBSearch, which constructs FirstFail. In the PR version, getVariable first advances over instantiated variables without reading their domain sizes, updates the reversible cursor, and scans remaining domains. The fixed strategy exposes this exact path; fewer domain-size reads may reduce branching cost while preserving node order.",
+  "structural_trigger": "Choco min_dom_lb on balanced subset-sum IntVar scopes with many instantiated variables at repeated selector calls, including backtracking across lastIdx values. Cases with short scopes or few fixed variables serve as controls.",
+  "activation_probe": "Hold evaluation.fixed_solver_parameters.search_strategy=min_dom_lb constant in Agent, base/PR, and Judge runs. Count FirstFail.getVariable calls, isInstantiated checks, getDomainSize calls on fixed versus open variables, cursor updates, selected variable IDs, and search nodes; compare traces across backtracking. Use input_order_lb only as a non-triggering diagnostic control.",
+  "instance_selection_rule": "Freeze public and hidden balanced subset-sum cases before outcomes, with evaluation.fixed_solver_parameters={search_strategy:min_dom_lb}. Stratify by variable-scope length and baseline fixed-variable fraction; retain a low-instantiation control and an input_order_lb diagnostic that does not count toward FirstFail activation.",
+  "workload_exposure_plan": "Use the shared Choco exact driver on the existing balanced subset-sum development panel and pinned base/PR builds. Instrument FirstFail call counts and selected-variable traces; independently verify each returned assignment against the original subset-sum constraints and known optimum.",
+  "mathematical_risk": "A cursor update or restore error can skip an uninstantiated variable, alter tie behavior, or make search incomplete and invalidate an optimality claim.",
+  "independent_check_plan": "Independently verify selected items, total sum, fixed cardinality, and objective. On tractable instances compare optimality and infeasibility statuses with the independently established dynamic-programming optima; retain timeouts.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Evaluate exact solve coverage and proof time across the 30-instance hidden balanced subset-sum ID and shifted panels with a fixed search strategy and seed. Report activation strata and regressions; no positive human PR effect is required for the open-opportunity track.",
+  "overlap_review": "Choco #1152 changes cached decision construction and #1154 changes weighted-degree variable choice on later source snapshots. This task fixes min_dom_lb and measures only FirstFail domain scanning on Choco 4.0.2-SNAPSHOT; it uses a distinct base snapshot and balanced subset-sum panel.",
+  "overlap_group": "choco_first_fail_domain_scan_2017",
+  "related_prs": [
+    1152,
+    1154
+  ],
+  "resource_risk": "If selector work is not a material fraction of search time, the task may show no end-to-end gain; a changed cursor could also alter node count or proof time.",
+  "source_evidence_urls": [
+    "https://github.com/chocoteam/choco-solver/pull/493",
+    "https://api.github.com/repos/chocoteam/choco-solver/pulls/493/files"
+  ]
+}

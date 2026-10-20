@@ -1,0 +1,19 @@
+schema_version: '1.0'
+kind: human_pr_source_reference
+task_id: pyvrp_search_20251020
+source_repository: https://github.com/PyVRP/PyVRP.git
+pull_request_url: https://github.com/PyVRP/PyVRP/pull/919
+base_commit: 0f84c35356c5be16255b02aee3475aa2d69cc632
+head_commit: 1ffde66cf6f669b10adbb0ad3a4b04a74672babc
+base_tree_sha: 56ed9170ebe900ae95c529e9967bab4d7ff4e103
+head_tree_sha: a3a05fc062f682530113a5dc1829d2162e74204a
+patch_file: configs/references/pyvrp_pr919_source.patch
+patch_sha256: 0e69dffa245ac2269475af662edd9bd0b636dcddb36c462a3a9675e27717a586
+changed_source_files:
+- pyvrp/cpp/CostEvaluator.h
+- pyvrp/cpp/search/Route.cpp
+- pyvrp/cpp/search/Route.h
+evaluation_note: All upstream changes are solver source. The 38-instance, five-hidden-seed
+  two-order control is formally improved under PitBench Performance, but its roughly
+  0.05 percentage-point effect does not meet the separate strong-reference 0.1 percentage-point
+  screening rule.

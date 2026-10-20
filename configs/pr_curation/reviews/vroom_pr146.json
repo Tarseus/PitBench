@@ -1,0 +1,54 @@
+{
+  "schema_version": 2,
+  "repository": "VROOM-Project/vroom",
+  "pr_number": 146,
+  "base_commit": "4463af7e80abba19be284db40d3a8c9136f34b5f",
+  "head_commit": "d9ed6bbed98c30fa27fdfef58196a1174ec4e2ce",
+  "decision": "advance",
+  "reason": "The diff changes CVRP local search directly. It replaces temporary capacity vectors with expression templates and route references, and replaces a nested regret scan with smallest and second-smallest insertion costs. The first mechanism affects per-event work; the second can affect the selected insertion and subsequent search trajectory.",
+  "repository_role": "solver_engine",
+  "mechanism": "combined",
+  "solver_phase": "local_search",
+  "solver_entry_points": [
+    "cvrp_local_search::try_job_additions",
+    "cvrp_local_search::total_amount",
+    "amount_t arithmetic operators"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "primal_trajectory",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_primal",
+    "search_incomplete",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "src/problems/cvrp/local_search/local_search.cpp",
+    "src/problems/cvrp/local_search/local_search.h",
+    "src/structures/vroom/amount.cpp",
+    "src/structures/vroom/amount.h"
+  ],
+  "solver_behavior_hypothesis": "Avoiding temporary capacity vectors and repeated regret scans may reduce CVRP local-search cost, while the changed insertion ordering could change fixed-budget solution quality.",
+  "causal_chain": "CVRP job addition consults total route amounts and candidate insertion costs; expression templates defer amount arithmetic and a two-minimum scan supplies regret costs, changing allocation count, per-job work, and potentially the chosen route.",
+  "structural_trigger": "CVRP runs that enter job-addition local search with at least two candidate routes; multidimensional capacities increase amount-arithmetic work, and unassigned jobs activate regret selection.",
+  "activation_probe": "On public CVRP cases, count try_job_additions calls, qualifying jobs and routes, capacity-expression evaluations, and route choices in both pinned source states; include cases with and without job additions.",
+  "instance_selection_rule": "Before hidden scoring, freeze public and held-out CVRP instances stratified by vehicle count, capacity dimension, and whether job-addition local search activates; fix seeds, budgets, and thread count.",
+  "workload_exposure_plan": "The pinned 2018 CLI has no internal time-limit option and writes one terminal route. Use the shared driver external wall-clock cutoff and evaluate independently verified final normalized gap at the task budgets. Record solver completion wall time and all no-solution timeouts; do not claim an intermediate incumbent trajectory or PDI. The open-opportunity admission gate is a complete independently checked base-only hidden baseline with measurable final gap; neither the historical PR result nor any coding-agent result is an admission condition.",
+  "mathematical_risk": "Expression-template references or capacity arithmetic can mis-evaluate feasibility; changed regret ordering can alter route assignment, solution quality, or termination behavior.",
+  "independent_check_plan": "Recompute original CVRP visit coverage, vehicle capacities, and objective for every returned route; compare public base and PR trajectories and record crashes or missing solutions.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Use the frozen 38-instance CVRPLIB X ID panel and a shifted CVRP family at declared fixed budgets, one seed for the deterministic pinned solver, and report independently verified final gap and per-instance regressions by vehicle/customer scale. Retain no-solution timeouts and failures. The CLI emits only a terminal route, so completion wall time is descriptive and any target event is only observed when the returned solution meets it; no intermediate trajectory or PDI is claimed.",
+  "overlap_review": "This 2018 CVRP capacity-expression and regret-scan patch is distinct from VROOM #142's TSP heuristic patch and the 2025 insertion-bound patch #1222; inspect intervening amount and insertion PRs before admitting another task in this lineage.",
+  "overlap_group": "vroom_cvrp_amount_regret_2018",
+  "related_prs": [
+    142,
+    1222
+  ],
+  "resource_risk": "Template expansion can increase code size or compilation cost, and retaining route references can expose lifetime errors despite fewer allocations.",
+  "source_evidence_urls": [
+    "https://github.com/VROOM-Project/vroom/pull/146"
+  ],
+  "measurement_scope_note": "The legacy binary exposes only the final route. Fixed-budget terminal gap is the scored anytime outcome for this task family; completion wall time is retained for paired diagnostics but does not establish time-to-first-incumbent."
+}

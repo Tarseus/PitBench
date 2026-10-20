@@ -1,0 +1,49 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 1190,
+  "base_commit": "4da76f9b411e364826b38af9e89a8aa87117ac02",
+  "head_commit": "afd984bdcfc9b853cb6223ddce7e44535085001b",
+  "decision": "advance",
+  "reason": "The source diff changes search-state export: Solution::unload maps current routes to the previously loaded solution and copies unchanged routes instead of rebuilding every route. The pybind11 load binding also retains the source solution to support the new pointer lifetime. Both the fast path and its lifetime rule need solver-level validation.",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "solver_phase": "search_state",
+  "solver_entry_points": [
+    "Solution::load",
+    "Solution::unload",
+    "pyvrp.search._search.Solution"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "primal_trajectory",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_primal",
+    "search_incomplete",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "pyvrp/cpp/search/Solution.cpp",
+    "pyvrp/cpp/search/Solution.h",
+    "pyvrp/cpp/search/bindings.cpp"
+  ],
+  "solver_behavior_hypothesis": "Reusing unchanged routes during repeated local-search export may reduce route construction and copying within a fixed solve budget, but a stale loaded-solution pointer or wrong route map could alter feasible solutions.",
+  "causal_chain": "After load records the source solution, unload indexes source routes by vehicle type, tests equality against each search route, and copies matching routes. Fewer route reconstructions can reduce per-export work; incorrect equality or lifetime management can substitute a wrong route.",
+  "structural_trigger": "Repeated CVRP local-search load/unload cycles with at least one unchanged nonempty route; the fast path cannot activate when every route changes or no prior solution is loaded.",
+  "activation_probe": "On public CVRP cases, count Solution::unload calls and the unchanged-route copy branch in base and PR source states, and separately exercise loaded-solution lifetime and multi-vehicle-type route mapping.",
+  "instance_selection_rule": "Freeze the existing PyVRP CVRP development, hidden ID, and generated-shift panels before hidden scoring; use one previously fixed private seed for baseline qualification and the task's full seed-budget grid for final judging.",
+  "workload_exposure_plan": "Run pinned base and source-only PR images through the common CVRP driver, trace the unload fast path on a public case, and independently check all returned routes and objectives.",
+  "mathematical_risk": "A dangling loadedSolution_ pointer, a vehicle-type offset error, or an overly permissive route equality check can copy the wrong route, omit a customer, or report an incorrect objective.",
+  "independent_check_plan": "Verify original CVRP coverage, capacity, and objective for every solution; run symmetric load/unload round-trip tests with unchanged, changed, and mixed vehicle-type routes while retaining the source solution.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Report verified fixed-budget gap trajectories, missing runs, and per-instance regressions for hidden ID and generated-shift CVRP families; a positive human PR reference needs a separate paired confirmation.",
+  "overlap_review": "PR #967 skips loading unchanged routes and is already in this later base snapshot; #1190 changes the opposite unload direction. Treat these as separate lineages only if distinct load and unload activation probes pass. PR #966 affects trip materialization and #1155 a promising-state bitset.",
+  "overlap_group": "pyvrp_unload_route_reuse_2026",
+  "related_prs": [967, 966, 1155],
+  "resource_risk": "The source solution must stay alive across export; retaining it may increase memory use, and mapping or equality checks may cost more than rebuilding routes when few are unchanged.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/1190"
+  ]
+}

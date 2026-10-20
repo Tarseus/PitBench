@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "repository": "VROOM-Project/vroom",
+  "pr_number": 1194,
+  "base_commit": "31bace492abfd97155faf91c20b4300dfbfcdcec",
+  "head_commit": "2b3074f47d0c914bca42dc795ec076396894fd70",
+  "decision": "needs_evidence",
+  "reason": "The source changes regret tie handling after a documented solution-quality regression on jobs with many skill constraints. It may alter primal search, but the current plain CVRP driver has no job-skill structure to trigger the reported failure mode. A skill-aware frozen workload and an original-problem checker are required before deciding whether this is a solver-optimization task rather than a correctness-only repair.",
+  "missing_evidence": [
+    "workload_activation",
+    "independent_checker",
+    "performance_protocol"
+  ],
+  "reviewed_changed_files": [
+    "src/algorithms/heuristics/heuristics.cpp",
+    "src/structures/vroom/eval.h",
+    "src/structures/vroom/input/input.cpp"
+  ],
+  "source_evidence_urls": ["https://github.com/VROOM-Project/vroom/pull/1194"]
+}

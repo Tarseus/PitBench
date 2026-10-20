@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 845,
+  "base_commit": "27abe0abf5842bd35e4b978d2036ce6151986eeb",
+  "head_commit": "10b4756c25923de5e452848c87f6d20d8e371ee9",
+  "decision": "advance",
+  "reason": "The source PR caches whether the problem contains temporal constraints and whether a route has duration-related costs. Local-search proposal evaluation can then skip DurationSegment merges when duration cannot affect feasibility or cost. On distance-only CVRP inputs this avoids repeated temporal-segment work in candidate move evaluation; temporal constraints, duration costs, or finite maximum duration keep the computation enabled.",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "solver_phase": "local_search",
+  "solver_entry_points": [
+    "ProblemData::hasTimeWindows",
+    "Route::hasDurationCost",
+    "Route::Proposal::duration",
+    "LocalSearch::applyNodeOps"
+  ],
+  "effect_channels": ["work_per_event"],
+  "correctness_failure_modes": ["invalid_primal", "search_incomplete"],
+  "changed_source_paths": [
+    "pyvrp/_pyvrp.pyi",
+    "pyvrp/cpp/ProblemData.cpp",
+    "pyvrp/cpp/ProblemData.h",
+    "pyvrp/cpp/bindings.cpp",
+    "pyvrp/cpp/search/Route.h",
+    "pyvrp/cpp/search/bindings.cpp",
+    "pyvrp/search/_search.pyi"
+  ],
+  "solver_behavior_hypothesis": "A route proposal's duration segment only needs evaluation when time windows, duration costs, or a finite maximum duration can affect feasibility or cost. Distance-only CVRP local search can bypass that work while preserving every accepted move's objective and feasibility semantics.",
+  "causal_chain": "ProblemData records whether any client, depot, or vehicle has temporal constraints. Route::hasDurationCost combines that fact with duration objective weight and finite maximum duration. Route::Proposal::duration returns zero only when all three sources of temporal relevance are absent; local-search operators then avoid merging and finalizing duration segments for each candidate proposal.",
+  "structural_trigger": "Distance-only CVRP instances with many local-search candidate proposals, no client/depot/vehicle time windows, zero duration cost, and unbounded maximum route duration. Time-window and finite-duration controls must retain the full temporal evaluation.",
+  "activation_probe": "On paired pinned builds count route proposal duration evaluations, hasDurationCost false/true decisions, DurationSegment merges/finalizations, and candidate move proposals. Verify the CVRP fast path skips duration work while temporal controls continue through it; exclude instrumented timings from performance evidence.",
+  "instance_selection_rule": "Freeze a public CVRP activation panel before hidden runs, stratified by customer count and baseline neighborhood size, with at least one temporal control. Use the existing hidden published CVRPLIB X panel and structurally shifted CVRP panel for task opportunity measurement; preserve all seeds, failures, and timeouts.",
+  "workload_exposure_plan": "Use the shared PyVRP driver on paired pinned base and PR builds. Instrument duration proposal calls and segment operations on the public CVRP panel and temporal control, then independently verify every returned route against the original instance.",
+  "mathematical_risk": "A false negative in temporal relevance could skip a required time-window or duration feasibility check. A false positive only retains work. Independently verify route assignment, capacity, distance objective, and targeted time-window/duration controls.",
+  "independent_check_plan": "Independently verify every original CVRP customer assignment, route capacity, and objective. Add source-state controls where client time windows, vehicle shift bounds, duration objective weight, or finite maximum duration independently make duration relevant; outputs on those controls must remain feasible under the original temporal model.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Qualify open optimization room using a base-only hidden panel with verified best-known-solution gaps. If a paired historical PR screen is recorded, report it separately and do not require an Agent run or Agent gain for admission.",
+  "overlap_review": "PR #843 skips distance-segment proposal evaluation when distance is irrelevant. PR #845 independently skips duration-segment work when temporal feasibility and duration cost are irrelevant, adds a problem-level temporal-presence summary, and retains temporal evaluation on constrained instances. The two mechanisms save distinct proposal calculations; related PR #843 is recorded for review but does not make this duration task a duplicate.",
+  "overlap_group": "pyvrp_duration_proposal_shortcut_2025",
+  "related_prs": [843],
+  "resource_risk": "The cached temporal-relevance flags add one problem boolean and one predicate per route proposal. Any mistake in flag construction can compromise time-window feasibility, so controls must cover each temporal constraint source.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/845",
+    "https://api.github.com/repos/PyVRP/PyVRP/pulls/845/files"
+  ]
+}

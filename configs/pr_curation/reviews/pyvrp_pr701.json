@@ -1,0 +1,56 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 701,
+  "base_commit": "aacb7dcefe6ecc889af5dfceb203bfe348ee087e",
+  "head_commit": "270cec9ca9fc75d17bc0e0c237bb18f0a8eb2b61",
+  "decision": "advance",
+  "reason": "The PR replaces two per-route DistanceSegment arrays with one cumulative-distance vector and changes route-segment distance reads to prefix subtraction. This is a bounded solver data-structure optimization on the C++ local-search path; route move costs and the search trajectory can change if indices or arithmetic are wrong.",
+  "review_lane": "mechanism_review",
+  "detail_record_sha256": "1fba38c21384cc3f12aaa789cafcc9240f6cbe32aecd3b304990aa1ef5b38a2f",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "solver_phase": "local_search",
+  "solver_entry_points": [
+    "Route::update",
+    "Route::SegmentBefore::distance",
+    "Route::SegmentAfter::distance",
+    "Route::SegmentBetween::distance",
+    "Route::distance"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "peak_memory",
+    "primal_trajectory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_primal",
+    "search_incomplete"
+  ],
+  "changed_source_paths": [
+    "pyvrp/cpp/search/Route.cpp",
+    "pyvrp/cpp/search/Route.h"
+  ],
+  "solver_behavior_hypothesis": "Storing one cumulative route-distance vector instead of separate prefix and suffix DistanceSegment vectors may reduce per-route memory and remove repeated segment merges while preserving O(1) route-segment distance queries.",
+  "causal_chain": "Route::update builds cumulative distances in one forward pass; SegmentBefore and SegmentAfter read prefix values or subtract from the total; SegmentBetween subtracts two prefixes. Local-search operators consume these values when ranking route moves.",
+  "structural_trigger": "CVRP local-search workloads with long routes and many SegmentBefore, SegmentAfter, and SegmentBetween distance queries; short-route cases are controls.",
+  "activation_probe": "Count Route::update calls, segment-distance queries, allocated bytes for route distance summaries, local-search move evaluations, accepted moves, nodes, and incumbent timestamps in paired pinned builds.",
+  "instance_selection_rule": "Freeze CVRP cases by customer count and route-length distribution before hidden outcomes; include long-route high-query cases and short-route controls, with all seeds and timeouts retained.",
+  "workload_exposure_plan": "Use the shared PyVRP source driver on the pinned CVRP instance panel. Instrument paired source builds to verify the cumulative-distance path is read by active local-search operators and independently check every original-instance route.",
+  "mathematical_risk": "An incorrect prefix index or subtraction could produce a wrong route distance, change move acceptance, or leave an invalid objective. Compare every segment query with a direct sum on small routes and independently recompute every returned route objective.",
+  "independent_check_plan": "Run the same public CVRP cases on base and PR; independently verify capacity and route visits and recompute total distance on original instances. Add exhaustive segment-distance comparisons across all intervals in small routes.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Use hidden CVRP panels stratified by customer count and route length under paired fixed budgets and seeds; report verified normalized-gap trajectories, time-to-target, per-family regressions, and memory.",
+  "overlap_review": "PR #700 simplifies the broader Route representation, #687 removes concatenation-scheme indices, and #720 targets LocalSearch load/insert/clear costs for ILS. Keep this task specific to cumulative distance storage and segment-query arithmetic; distinct snapshots and workload mechanisms are required for separate tasks.",
+  "overlap_group": "pyvrp_route_cumulative_distance_storage_2024",
+  "related_prs": [
+    687,
+    700,
+    720
+  ],
+  "resource_risk": "A single cumulative vector lowers stored route-summary data, but interval subtraction can add arithmetic on hot paths and any cache policy must remain coherent after route edits.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/701",
+    "https://api.github.com/repos/PyVRP/PyVRP/pulls/701/files"
+  ]
+}

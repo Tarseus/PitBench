@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 393,
+  "base_commit": "980da2a056f4afa21197e65a17cc615908767d35",
+  "head_commit": "89c140f2f66a2441db6ad5f061589b935d124a67",
+  "decision": "reject",
+  "reason": "The patch changes service-time rounding during instance parsing and updates tests/data. This changes input interpretation, not an optimization mechanism to improve search or execution.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "8f6e3f4d6d489d9e2077272884d70b4a27e18df1cd1cb70620523fec816c61b4",
+  "changed_file_paths": [
+    "instances",
+    "pyvrp/read.py",
+    "pyvrp/tests/data/ServiceTimeSpecification.txt",
+    "pyvrp/tests/test_read.py"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/393"
+  ],
+  "rejection_basis": "correctness_only"
+}

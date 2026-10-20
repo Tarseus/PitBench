@@ -89,7 +89,10 @@ class PitBenchAdapter:
         use_base_cache: bool = False,
         smoke_test: bool = False,
         agent_tools: Iterable[AgentTool | str] = (),
+        agent_feedback_mode: str = "solver_behavior",
     ) -> Path:
+        if agent_feedback_mode not in {"outcome_only", "solver_behavior"}:
+            raise ValueError("unknown agent feedback mode")
         record = self.catalog.validate_one(task_id)
         task = record.task
         tools = normalize_agent_tools(agent_tools)
@@ -113,7 +116,14 @@ class PitBenchAdapter:
                 task_dir / "dev_instances",
             )
         (task_dir / AGENT_TOOLS_METADATA).write_text(
-            json.dumps({"agent_tools": agent_tool_names(tools)}, indent=2) + "\n"
+            json.dumps(
+                {
+                    "agent_tools": agent_tool_names(tools),
+                    "agent_feedback_mode": agent_feedback_mode,
+                },
+                indent=2,
+            )
+            + "\n"
         )
         self._write_task_yaml(
             task,
@@ -136,6 +146,7 @@ class PitBenchAdapter:
                 task=task,
                 task_dir=task_dir,
                 agent_tools=tools,
+                agent_feedback_mode=agent_feedback_mode,
             )
         prepared_image = agent_image or task.repository.agent_image
         submodule_paths = self._submodule_paths(repository) if prepared_image else ()
@@ -164,7 +175,7 @@ class PitBenchAdapter:
         self, task: PitBenchTask, destination: Path, bundle_path: Path
     ) -> None:
         cached_repository = self.ensure_source_cache(task)
-        shutil.copytree(cached_repository, destination)
+        shutil.copytree(cached_repository, destination, symlinks=True)
         self.validate_repository(task, destination)
         GitSnapshot._run(
             ["git", "bundle", "create", str(bundle_path.resolve()), "HEAD"],
@@ -349,9 +360,9 @@ class PitBenchAdapter:
             "the evaluator independently verifies submitted solutions. "
             "Without `--build`, bench executes the current artifact. Check its "
             "fingerprint and build warning before trusting a comparison. Run "
-            "`pitbench diagnose` after paired runs to see per-instance effects, "
-            "search-progress evidence, missing grid cells, and the next decisive "
-            "development experiment.\n"
+            "`pitbench diagnose` after paired runs to see available per-instance "
+            "effects, missing grid cells, and the next development experiment. "
+            "Inspect regressions before revising the code.\n"
             if AgentTool.BENCH in agent_tools
             else "4. Differential Verification: Rebuild the changed solver and "
             "repeat the baseline cases under the same seed and budget. "
@@ -375,7 +386,7 @@ class PitBenchAdapter:
             "- Robustness: The candidate will be evaluated across unseen test instances, multiple random seeds, and perturbed representations. Do not overfit hyperparameters or hardcode behaviors for specific instances.",
             "### Recommended Performance Engineering SOP\n"
             + development
-            + f"2. Diagnose: Inspect both computational cost and solver behavior in `{scope}`: incumbent or bound progress, search work, time to useful solutions, and the instance structures that stall or regress. State a falsifiable optimization hypothesis before editing.\n"
+            + f"2. Diagnose: Inspect both computational cost and solver behavior in `{scope}`: incumbent or bound progress, search work, time to useful solutions, and the instance structures that stall or regress.\n"
             "3. Targeted Optimization: Make a bounded, semantics-preserving change that addresses the diagnosed mechanism. Distinguish implementation throughput from search-policy changes, and do not treat more iterations or lower runtime alone as a solver improvement. Avoid blind parameter guessing or disruptive rewrites.\n"
             + rerun
             + "5. Regression & Cleanup: Run existing repository unit/integration tests"

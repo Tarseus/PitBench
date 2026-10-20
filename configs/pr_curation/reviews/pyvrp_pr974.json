@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 974,
+  "base_commit": "c0d9b692898ead1748d3f54443607d4d314fd87d",
+  "head_commit": "6fc1582f02a280c22c26745e41b0291a82872bec",
+  "decision": "advance",
+  "reason": "The one-file source diff changes how PyVRP computes the proximity matrix used to construct local-search neighbourhoods. In-place accumulation replaces multiple temporary NumPy arrays without intentionally changing the search policy; end-to-end effect must still be measured because a changed neighbour ranking or initialization cost can alter fixed-budget search.",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "solver_phase": "local_search",
+  "solver_entry_points": [
+    "pyvrp.search.neighbourhood._compute_proximity",
+    "pyvrp.search.neighbourhood.compute_neighbours",
+    "pyvrp.solve.solve"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "primal_trajectory",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_primal",
+    "numerical_instability",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "pyvrp/search/neighbourhood.py"
+  ],
+  "solver_behavior_hypothesis": "Accumulating proximity components into one floating-point matrix may reduce neighbourhood-construction allocations and give the solver more useful search time within fixed budgets without changing selected neighbours.",
+  "causal_chain": "Every neighbourhood build converts edge costs to floating point, subtracts prizes, then adds wait and time-warp penalties. Reusing the converted matrix removes intermediate arrays; if values or ties change, nearest-neighbour lists and downstream local-search trajectories may also change.",
+  "structural_trigger": "CVRP instances with at least two clients that construct granular search neighbourhoods; larger matrices increase the temporary-allocation cost, while nonzero prizes or time-window penalties test arithmetic semantics.",
+  "activation_probe": "Trace _compute_proximity and compute_neighbours on public CVRP cases in both pinned source states; compare proximity values and selected-neighbour lists, then verify every returned route on original instances.",
+  "instance_selection_rule": "Use the existing fixed PyVRP CVRP development, hidden ID, and generated-shift panels with one predeclared private seed for baseline qualification; retain the full task seed and budget grid for Agent judging and do not select instances after reading the hidden PR effect.",
+  "workload_exposure_plan": "Run the pinned base and source-only PR image through the shared PyVRP CVRP driver, record neighbourhood-path activation and independent route checks, and keep all failures and resource measurements.",
+  "mathematical_risk": "In-place floating-point accumulation can change proximity ties, propagate a nonfinite value, or mutate a shared array; resulting search changes could produce an invalid route or objective.",
+  "independent_check_plan": "Check original CVRP visit coverage, capacity, and objective for every solution; compare public proximity matrices and neighbour lists between source states, including degenerate ties and penalty-bearing cases.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Report fixed-budget verified gap trajectories, missing runs, and per-instance regressions separately for hidden ID and generated-shift CVRP families; a positive human PR reference requires a separate paired confirmation.",
+  "overlap_review": "The neighbourhood-array mechanism is separate from PR #966 trip materialization, #967 route loading, and #988 ILS policy. Inspect later neighbourhood PRs before assigning them distinct lineages.",
+  "overlap_group": "pyvrp_neighbourhood_array_2025",
+  "related_prs": [966, 967, 988],
+  "resource_risk": "The converted edge-cost matrix remains materialized; allocation savings may be too small to affect end-to-end solving, and NumPy in-place operations may change peak memory only during initialization.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/974"
+  ]
+}

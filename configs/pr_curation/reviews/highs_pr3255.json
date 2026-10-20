@@ -1,0 +1,64 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 3255,
+  "base_commit": "4cc106ed1599ccaf8a20122c6754a217218a24bc",
+  "head_commit": "eb799929acc775cd0a16c79c9b4aed815713177d",
+  "decision": "advance",
+  "reason": "The source adds a one-pass Fourier-Motzkin presolve reduction for eligible continuous columns in MIPs, together with a postsolve reconstruction block. This is a distinct solver-engine mechanism with measurable model-size, root-LP, and search effects. The PR author's reported speedup is not admission evidence; advancement requires pinned builds, a deliberately triggered MIP workload, independent original-model checks, and a base-only hidden qualification.",
+  "repository_role": "solver_engine",
+  "mechanism": "algorithmic_search",
+  "solver_phase": "presolve",
+  "solver_entry_points": [
+    "HPresolve::fourierMotzkin",
+    "HPresolve::presolve",
+    "HighsPostsolveStack::undoFourierMotzkinBlock"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "search_tree",
+    "proof_time",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_bound",
+    "false_infeasibility",
+    "incorrect_optimality",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "highs/lp_data/HConst.h",
+    "highs/lp_data/HighsLp.cpp",
+    "highs/lp_data/HighsLp.h",
+    "highs/lp_data/HighsModelUtils.cpp",
+    "highs/lp_data/HighsOptions.h",
+    "highs/presolve/HPresolve.cpp",
+    "highs/presolve/HPresolve.h",
+    "highs/presolve/HPresolveTest.cpp",
+    "highs/presolve/HighsPostsolveStack.cpp",
+    "highs/presolve/HighsPostsolveStack.h"
+  ],
+  "solver_behavior_hypothesis": "Eliminating eligible zero-cost continuous variables by combining positive- and negative-coefficient inequality rows can reduce the presolved MIP and its root LP. Generated rows and postsolve bookkeeping can instead add work or numerical risk, so no end-to-end gain is assumed.",
+  "causal_chain": "The pass ranks eligible continuous columns by estimated nonzero and row reductions, combines compatible inequality rows, updates the presolved matrix, and records row ancestry and elimination blocks for primal, dual, and basis postsolve. This changes presolved columns/rows/nonzeros and can affect root relaxation work, node count, proof time, and memory.",
+  "structural_trigger": "A MIP containing continuous zero-objective columns with nonzero coefficients of both signs in compatible inequality rows, finite bounds where needed, and coefficient magnitudes within the reduction's supported scale. Equality-only, binary-only, coefficient-extreme, and no-continuous-column models are nontrigger controls. The optional objective reformulation is disabled by default and is not required for the task trigger.",
+  "activation_probe": "On source-pinned Base and PR builds, use generated MIPs with known optima and controlled eligible continuous columns. Record candidate columns, Fourier-Motzkin eliminations, generated/deleted rows, nonzero changes, and postsolve recovery. Include no-trigger and coefficient/range controls; compare original-model feasible solutions, objective, status, and valid bounds.",
+  "instance_selection_rule": "Freeze MIP instances by eligible-column count, sign-balanced row structure, estimated pair growth, binary/continuous ratio, and baseline proof difficulty before hidden results. Group related generated MIPs together across ID/OOD splits; include no-trigger and high-growth controls.",
+  "workload_exposure_plan": "Build the exact pre-PR and PR source snapshots with the same offline toolchain. Use the shared exact-MIP driver and independent original-MPS verification. Preserve all solver statuses, bounds, timeouts, failures, and presolved-model counters. Qualify the open task using a complete base-only hidden baseline; do not run or score a coding agent to decide admission.",
+  "mathematical_risk": "Row-pair signs, bounds, coefficient scaling, row ancestry, or objective reformulation can exclude feasible integer assignments, create false infeasibility, or corrupt primal/dual/basis recovery. Floating-point tolerances and generated-row growth also create numerical and resource risks.",
+  "independent_check_plan": "Check each returned incumbent against the original MPS, compare reported objective and optimal status with frozen trusted optima, and audit bound validity. Add small exhaustive mixed binary/continuous models covering positive/negative coefficients, finite and infinite bounds, ranged rows, duplicate generated rows, objective-zero candidates, and postsolve reconstruction.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Use ID and structurally shifted MIP families at fixed budgets. Report independently verified solved coverage, PAR-2 proof time, final gap for time-limited runs, presolved model reduction, and per-family regressions. The open-opportunity gate requires a complete independently checked Base-only baseline with measurable gap or time-limit room; neither a positive human-PR result nor an Agent result is required.",
+  "overlap_review": "This continuous-column Fourier-Motzkin projection differs from HiGHS #3286's binary-row normalization and clique extraction, #2522's Chvatal-Gomory cuts, and #2861's enumeration presolve. HiGHS #3250 handles parallel-row bookkeeping and is a related control, not the target mechanism. This review uses a distinct source snapshot and improvement scope.",
+  "overlap_group": "highs_fourier_motzkin_presolve_2026",
+  "related_prs": [
+    2522,
+    2861,
+    3250,
+    3286
+  ],
+  "resource_risk": "Pairing positive and negative rows can grow generated nonzeros rapidly; the heap, row ancestry, and postsolve blocks can increase memory even when the presolved model shrinks.",
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/3255",
+    "https://github.com/ERGO-Code/HiGHS/commit/eb799929acc775cd0a16c79c9b4aed815713177d"
+  ]
+}

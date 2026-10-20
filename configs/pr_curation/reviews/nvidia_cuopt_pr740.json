@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "repository": "NVIDIA/cuopt",
+  "pr_number": 740,
+  "base_commit": "a0da8b6f9ac21504fa2b8c2bc84ff3873ff136b5",
+  "head_commit": "93389b23332652bf6dfc73e8b74dbf1c157c2137",
+  "decision": "reject",
+  "reason": "The patch fixes a stream synchronization race in the linear-programming/Cython boundary. This is a concurrency correctness repair, not a combinatorial search optimization task.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "89453d9cd68aecc607789d101b3090428a68509ccd9b8fea8b99e792a5fcbcb1",
+  "changed_file_paths": [
+    "cpp/src/linear_programming/utilities/cython_solve.cu",
+    "python/cuopt/cuopt/routing/utils.py",
+    "python/cuopt/cuopt/tests/routing/test_pickup_delivery.py"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/NVIDIA/cuopt/pull/740"
+  ],
+  "rejection_basis": "correctness_only"
+}

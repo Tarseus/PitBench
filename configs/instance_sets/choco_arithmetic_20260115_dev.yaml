@@ -1,0 +1,11 @@
+schema_version: '1.0'
+visibility: agent
+format: json
+generator:
+  kind: balanced_subset_sum
+  count: 5
+  item_counts: [20, 30, 40]
+  max_weight: 50
+  domain_modes: [enumerated, bounded]
+  target_offsets: [0, 3, -3]
+  randomness: {instance_seed: 81100}

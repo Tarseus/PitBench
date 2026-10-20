@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "google/or-tools",
+  "pr_number": 386,
+  "base_commit": "821aaa579c859b64b2b8fe47bd91da6f82e1386c",
+  "head_commit": "e7f9ce8391ad8f8b813346a457adfd07c08cae6e",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Adds a Bazel build dependency; no solver-engine algorithm source file changed.",
+  "reviewed_changed_files": [
+    "ortools/sat/BUILD"
+  ],
+  "detail_sha256": "d1c26063f7281ff1d76c6a4c19c2195f05272e335347886d3635e0332aa3763a",
+  "selection_queue_sha256": "9fa7126befcaeb0c0a1fd3f32c5f73af1ba2c871a921ebe1600edac37279e3a5",
+  "source_evidence_urls": [
+    "https://github.com/google/or-tools/pull/386"
+  ]
+}

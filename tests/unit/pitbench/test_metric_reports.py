@@ -217,14 +217,10 @@ def test_missing_exact_run_or_evaluator_evidence_is_infrastructure_missing(
     )
 
 
-def test_verified_optimal_result_above_published_bks_receives_par2() -> None:
+def test_verified_optimal_result_above_feasible_reference_fails_qualification() -> None:
     assert compute_exact_run_outcome(
         exact_observation(objective=43.0, reported_objective=43.0)
-    ) == ExactRunOutcome(
-        kind=ExactRunOutcomeKind.SOLVER_ORIGIN_UNSOLVED,
-        solved=False,
-        penalized_runtime_sec=20.0,
-    )
+    ) == ExactRunOutcome(kind=ExactRunOutcomeKind.QUALIFICATION_FAILURE)
 
 
 def test_verified_optimal_result_below_published_bks_is_an_oracle_discrepancy() -> None:
@@ -324,8 +320,9 @@ def test_one_lost_exact_solve_in_full_panel_is_inconclusive() -> None:
 
     assert report.primary.base.solved_run_count == 900
     assert report.primary.agent.solved_run_count == 899
-    assert report.primary.paired.mean_verified_solved_coverage_reduction == pytest.approx(
-        -1 / 900
+    assert (
+        report.primary.paired.mean_verified_solved_coverage_reduction
+        == pytest.approx(-1 / 900)
     )
     interval = report.primary.paired.mean_verified_solved_coverage_reduction_ci95
     assert interval is not None
@@ -668,8 +665,14 @@ def test_independent_performance_confirmation_requires_same_direction() -> None:
     )
     assert unresolved.classification is PerformanceClassification.INCONCLUSIVE
     assert unresolved.confirmation is not None
-    assert unresolved.confirmation.initial_classification is PerformanceClassification.IMPROVED
-    assert unresolved.confirmation.repeat_classification is PerformanceClassification.INCONCLUSIVE
+    assert (
+        unresolved.confirmation.initial_classification
+        is PerformanceClassification.IMPROVED
+    )
+    assert (
+        unresolved.confirmation.repeat_classification
+        is PerformanceClassification.INCONCLUSIVE
+    )
     assert not unresolved.confirmation.confirmed
 
     confirmed = adjudicate_performance_confirmation(
@@ -955,11 +958,11 @@ def test_report_command_dispatches_exact_performance(tmp_path: Path) -> None:
     task_payload["task_id"] = "exact-performance"
     task_payload["evaluation"].update(
         {
-                "operational_reliability": False,
-                "budgets_sec": [10],
-                "primary_budget_sec": 10,
-                "seed_robustness": None,
-                "solver_seeds": [0],
+            "operational_reliability": False,
+            "budgets_sec": [10],
+            "primary_budget_sec": 10,
+            "seed_robustness": None,
+            "solver_seeds": [0],
         }
     )
     task_config_path = tmp_path / "task-config.yaml"
@@ -1222,9 +1225,7 @@ def test_representation_iqr_is_invariant_to_order_shift_and_single_tail_outlier(
 def test_representation_report_uses_equal_instance_weights():
     records = representation_panel(
         scales={
-            ("base", instance_index): (
-                11 / 14.5 if instance_index == 9 else 1 / 14.5
-            )
+            ("base", instance_index): (11 / 14.5 if instance_index == 9 else 1 / 14.5)
             for instance_index in range(10)
         }
     )
@@ -1249,16 +1250,12 @@ def test_representation_report_preserves_base_agent_change_direction():
     assert report.by_budget["5"].agent.mean_iqr == pytest.approx(
         3.0, rel=1e-12, abs=1e-12
     )
-    assert report.by_budget["5"].change == pytest.approx(
-        2.0, rel=1e-12, abs=1e-12
-    )
+    assert report.by_budget["5"].change == pytest.approx(2.0, rel=1e-12, abs=1e-12)
 
     swapped = [
         {
             **record,
-            "code_state": (
-                "agent" if record["code_state"] == "base" else "base"
-            ),
+            "code_state": ("agent" if record["code_state"] == "base" else "base"),
         }
         for record in records
     ]
@@ -1565,7 +1562,15 @@ def test_vroom_driver_records_child_lifetime_resources(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "pitbench.solver_drivers.run.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
-            args[0], 0, json.dumps({"routes": [], "summary": {"cost": 0}}), ""
+            args[0],
+            0,
+            json.dumps(
+                {
+                    "routes": [{"steps": [{"type": "job", "id": 1}]}],
+                    "summary": {"cost": 2000},
+                }
+            ),
+            "",
         ),
     )
     monkeypatch.setattr(
@@ -1600,6 +1605,102 @@ def test_vroom_driver_records_child_lifetime_resources(tmp_path, monkeypatch):
     assert result["cpu_time_sec"] == 2.5
     assert result["peak_rss_bytes"] == 1234
     assert result["resource_scope"] == "single_native_child_lifetime"
+    assert result["objective"] == 2.0
+    assert result["solver_internal_objective"] == 2000.0
+
+
+def test_vroom_request_uses_declared_cvrp_distance_metric() -> None:
+    instance = {
+        "depot": 0,
+        "coordinates": [[0, 0], [1, 1]],
+        "demands": [0, 1],
+        "capacity": 1,
+        "distance_metric": "EUC_2D",
+    }
+    assert VroomDriver._request(instance)["matrix"][0][1] == 1
+    instance["distance_metric"] = "EXACT_2D"
+    assert VroomDriver._request(instance)["matrix"][0][1] == 1414
+
+
+def test_vroom_legacy_cli_is_feature_detected(monkeypatch) -> None:
+    help_text = "-l,\t use libosrm rather than osrm-routed\n"
+    monkeypatch.setattr(
+        "pitbench.solver_drivers.run.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, help_text, ""),
+    )
+
+    assert VroomDriver._uses_legacy_cli("vroom") is True
+
+
+def test_vroom_current_cli_is_not_misclassified_as_legacy(monkeypatch) -> None:
+    help_text = "-l, --limit arg stop solving process after limit seconds\n"
+    monkeypatch.setattr(
+        "pitbench.solver_drivers.run.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, help_text, ""),
+    )
+
+    assert VroomDriver._uses_legacy_cli("vroom") is False
+
+
+def test_vroom_legacy_driver_uses_output_file_and_job_key(tmp_path, monkeypatch):
+    instance = tmp_path / "instance.json"
+    instance.write_text(
+        json.dumps(
+            {
+                "depot": 0,
+                "coordinates": [[0, 0], [1, 0]],
+                "demands": [0, 1],
+                "capacity": 1,
+            }
+        )
+    )
+    output = tmp_path / "result.json"
+    trajectory = tmp_path / "trajectory.jsonl"
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        if command[-1] == "-h":
+            return subprocess.CompletedProcess(
+                command, 0, "-l, use libosrm rather than osrm-routed", ""
+            )
+        output_index = command.index("-o")
+        Path(command[output_index + 1]).write_text(
+            json.dumps(
+                {
+                    "code": 0,
+                    "summary": {"cost": 2000},
+                    "routes": [{"steps": [{"type": "job", "job": 1}]}],
+                }
+            )
+        )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("pitbench.solver_drivers.run.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "pitbench.solver_drivers.run.process_resources",
+        lambda **kwargs: {
+            "cpu_time_sec": 0.1,
+            "peak_rss_bytes": 1234,
+            "resource_scope": "single_native_child_lifetime",
+        },
+    )
+
+    VroomDriver.main(
+        [
+            "--solver", "vroom", "--instance", str(instance), "--output", str(output),
+            "--trajectory", str(trajectory), "--seed", "0", "--budget", "1",
+            "--threads", "1",
+        ]
+    )
+
+    solve_command, solve_options = calls[1]
+    assert "-o" in solve_command and "-l" not in solve_command
+    assert solve_options["timeout"] == 1
+    result = json.loads(output.read_text())
+    solution = json.loads(output.with_suffix(".solution.json").read_text())
+    assert result["objective"] == 2.0
+    assert solution == {"routes": [[1]]}
 
 
 def test_vroom_driver_preserves_timeout_failure_reason(tmp_path, monkeypatch):
@@ -1722,3 +1823,89 @@ def test_external_runner_preserves_solver_cpu_and_child_peak(
     assert json.loads(output.with_suffix(".solution.json").read_text()) == {
         "bins": [[0]]
     }
+
+
+def test_external_runner_writes_solver_progress_outside_result(
+    tmp_path: Path, monkeypatch
+) -> None:
+    events = [
+        {"event": "bound", "time_sec": 0.2, "dual_bound": 4.0},
+        {"event": "solution", "time_sec": 0.4, "objective": 6.0, "nodes": 8},
+        {
+            "event": "final",
+            "time_sec": 1.0,
+            "objective": 6.0,
+            "dual_bound": 6.0,
+            "nodes": 12,
+        },
+    ]
+    response = {
+        "valid": True,
+        "has_solution": True,
+        "objective": 6.0,
+        "solution": {"values": [1, 2]},
+        "trajectory": events,
+    }
+    monkeypatch.setenv("PITBENCH_TEST_RUNNER", "test-runner")
+    monkeypatch.setattr(
+        "pitbench.solver_drivers.external_runner.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0, stdout=json.dumps(response), stderr=""
+        ),
+    )
+    output = tmp_path / "result.json"
+    trajectory = tmp_path / "trajectory.jsonl"
+    trajectory.write_text('{"event":"stale"}\n')
+
+    execute_external_runner(
+        environment_key="PITBENCH_TEST_RUNNER",
+        instance=tmp_path / "instance.pb",
+        output=output,
+        trajectory=trajectory,
+        seed=0,
+        budget=1,
+        threads=1,
+    )
+
+    assert [json.loads(line) for line in trajectory.read_text().splitlines()] == events
+    assert "trajectory" not in json.loads(output.read_text())
+    assert json.loads(output.with_suffix(".solution.json").read_text()) == {
+        "values": [1, 2]
+    }
+
+
+def test_external_runner_removes_stale_solution_on_normal_no_solution(
+    tmp_path: Path, monkeypatch
+) -> None:
+    response = {
+        "valid": False,
+        "has_solution": False,
+        "objective": None,
+        "solver_status": "Time limit",
+        "solver_termination": "time_limit",
+    }
+    monkeypatch.setenv("PITBENCH_TEST_RUNNER", "test-runner")
+    monkeypatch.setattr(
+        "pitbench.solver_drivers.external_runner.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(response),
+            stderr="",
+        ),
+    )
+    output = tmp_path / "result.json"
+    solution = output.with_suffix(".solution.json")
+    solution.write_text('{"stale":true}')
+
+    execute_external_runner(
+        environment_key="PITBENCH_TEST_RUNNER",
+        instance=tmp_path / "instance.json",
+        output=output,
+        trajectory=tmp_path / "trajectory.jsonl",
+        seed=0,
+        budget=1,
+        threads=1,
+    )
+
+    assert not solution.exists()
+    assert json.loads(output.read_text())["solver_termination"] == "time_limit"

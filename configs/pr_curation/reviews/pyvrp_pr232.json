@@ -1,0 +1,52 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 232,
+  "base_commit": "561fc780babf76c0777a66b555b60a96689be712",
+  "head_commit": "ed2d4370240f69feac611dff390a4f72d7896e16",
+  "decision": "advance",
+  "reason": "The PR primarily replaces exhaustive route selection in crossover greedy repair with a nearest-centroid route choice, reducing insertion evaluations per unplanned client. This task evaluates that CVRP solver path. The same PR also changes time-window insertion-cost accounting, which this CVRP task does not claim to measure.",
+  "repository_role": "solver_engine",
+  "mechanism": "algorithmic_search",
+  "solver_phase": "primal_heuristic",
+  "solver_entry_points": [
+    "crossover::greedyRepair",
+    "crossover::deltaCost"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "primal_trajectory",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_primal",
+    "search_incomplete",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "pyvrp/cpp/TimeWindowSegment.h",
+    "pyvrp/cpp/crossover/crossover.cpp",
+    "pyvrp/cpp/crossover/crossover.h",
+    "pyvrp/cpp/crossover/selective_route_exchange.cpp",
+    "pyvrp/cpp/educate/Exchange.h"
+  ],
+  "solver_behavior_hypothesis": "Restricting greedy repair to a nearby route can reduce the number of insertion evaluations per unplanned client, but can miss a better route and worsen the search population or final route cost.",
+  "causal_chain": "The old repair scans insertion positions in every nonempty route; the PR computes route centroids, chooses one nearby route per unplanned client, and scans only that route. For time-window cases it also changes the insertion penalty estimate. This changes crossover cost and offspring quality, which can redirect later evolutionary search.",
+  "structural_trigger": "A CVRP crossover repair with at least one unplanned client and at least two nonempty routes; a single-route case or no unplanned clients is the control. The separate time-window delta-cost branch is outside this task.",
+  "activation_probe": "Count greedy-repair entries, unplanned clients, nonempty candidate routes, insertion evaluations, selected route and resulting child objective in paired pinned builds; include a no-repair or single-route control and a separate time-window trigger.",
+  "instance_selection_rule": "Freeze CVRP public cases by location count, active route count and baseline difficulty before hidden scoring; retain multi-route/unplanned triggers and single-route or no-unplanned controls, fixed seeds and budgets, and all failures.",
+  "workload_exposure_plan": "Use the shared PyVRP anytime driver on frozen CVRP cases, trace crossover greedyRepair when multiple routes and unplanned clients are present, and independently verify original routing solutions.",
+  "mathematical_risk": "The route restriction can select a different feasible insertion and worsen cost; route updates could also duplicate or omit clients or violate capacity. The time-window penalty branch is not exercised by this CVRP task and is not part of its claim.",
+  "independent_check_plan": "Verify every returned CVRP route against original customer coverage, uniqueness, capacity and objective, then compare paired quality-time trajectories across location counts and route counts.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Measure paired normalized gap at declared budgets on held-out CVRP instances stratified by location count and route count, including severe quality and runtime regressions.",
+  "overlap_review": "This 2023 centroid-based CVRP greedy-repair change precedes PyVRP #511 and later search-state changes. The PR also contains a separate time-window cost branch, which this CVRP task leaves unmeasured and explicitly does not claim. The source PR remains one task.",
+  "overlap_group": "pyvrp_crossover_greedy_repair_2023",
+  "related_prs": [
+    511
+  ],
+  "resource_risk": "Cheaper crossover can increase the number of generations, while lower-quality repaired offspring can require more search or degrade final quality despite fewer insertion evaluations.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/232"
+  ]
+}

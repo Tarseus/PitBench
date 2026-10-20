@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 577,
+  "base_commit": "ff73913f6373c423da0a2115280cf31cc681a948",
+  "head_commit": "907485abc4116652f3a5429b3a4c495723699397",
+  "decision": "advance",
+  "reason": "The PR changes MIP row aggregation and mod-k cut separation, fixes aggregation bookkeeping and short-circuit behavior, changes conflict-cut bound handling, and limits clique-table work. These are solver-engine mechanisms. The PR author's claimed dual-bound gains are not treated as admission evidence; advancement depends on pinned source, builds, workload activation, and independent correctness checks.",
+  "repository_role": "solver_engine",
+  "mechanism": "combined",
+  "solver_phase": "cut_generation",
+  "solver_entry_points": [
+    "HighsCutGeneration",
+    "HighsPathSeparator",
+    "HighsCliqueTable",
+    "HighsModkSeparator"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "dual_trajectory",
+    "proof_time",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_bound",
+    "false_infeasibility",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "src/mip/HighsCliqueTable.cpp",
+    "src/mip/HighsCliqueTable.h",
+    "src/mip/HighsCutGeneration.cpp",
+    "src/mip/HighsCutGeneration.h",
+    "src/mip/HighsDomain.h",
+    "src/mip/HighsMipSolver.cpp",
+    "src/mip/HighsMipSolverData.cpp",
+    "src/mip/HighsModkSeparator.cpp",
+    "src/mip/HighsPathSeparator.cpp",
+    "src/mip/HighsTransformedLp.cpp"
+  ],
+  "solver_behavior_hypothesis": "On MIPs with integer rows eligible for mod-k separation and repeated clique merging, the changed row eligibility and clique-table bounds can alter cut generation, search work, and resource use. Mixed binary/continuous rows may also exercise the path separator changes, but that submechanism must be measured separately.",
+  "causal_chain": "The patch changes aggregation candidate processing and path-cut separation, prevents duplicate row participation, ensures all intended cut generators execute despite earlier successes, and bounds clique merging work. These changes can alter generated cuts, LP bounds, search-tree size, separation work, memory use, and proof time.",
+  "structural_trigger": "MIP relaxations with integer rows eligible for mod-k separation and nontrivial clique merging. Binary multidimensional knapsack provides dense integer rows; single-machine scheduling MIPs provide mixed integer/continuous rows. Instances with no eligible rows or clique candidates are controls. Path-separator activation is a separate submechanism and must not be inferred from separator-round counts.",
+  "activation_probe": "On exact base and PR commits, use function-level counters for HighsModkSeparator::separateLpSolution, HighsCliqueTable::runCliqueMerging, HighsPathSeparator::separateLpSolution, and HighsCutGeneration::generateConflict. Retain the raw GDB trace, model hash, conversion provenance, solver status, and counters. Require nonzero mod-k and clique counts; record path-separator counts independently, including zero.",
+  "instance_selection_rule": "Freeze public trigger/control cases from the existing multidimensional-knapsack and single-machine-scheduling panels before outcome comparison. Stratify by integer-row density, continuous-variable presence, and baseline proof difficulty. Current activation evidence covers one instance from each family; expand the panel before task readiness, retain every status and timeout, and require held-out hidden instances from both families when their mechanism trigger is present.",
+  "workload_exposure_plan": "Build the exact base and PR commits offline with the same pinned parent image. Convert the frozen LP source instances to MPS with the same HiGHS 1.15.1 writer because the historical HiGHS 1.0 parser rejects the current LP serialization; hash and retain both original LP and converted MPS. Run both builds with identical inputs and settings, and retain per-mechanism counters and solver logs. Do not use coding-agent outcomes or the PR author's performance claims as task-admission evidence.",
+  "mathematical_risk": "Incorrect aggregation, row membership, coefficient rounding, or transformed-LP bookkeeping could generate an invalid cut, exclude feasible solutions, corrupt a bound, or report false infeasibility. Clique-table work limits could also alter search behavior or cause resource failures.",
+  "independent_check_plan": "Check every returned incumbent against the original MIP and independently recompute its objective. On tractable instances compare statuses and bounds with trusted optima; test infeasible cases and preserve normal timeouts. Validate generated cuts against original-model feasible points on small enumerated models where possible.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "If expanded public activation and correctness gates pass, evaluate fixed-budget solved coverage, proof time, valid dual-bound progress, node count, separation work and peak memory on held-out knapsack and scheduling MIPs, stratified by observed mod-k/clique activation. Report path-separator inactivity where it persists, all regressions, and all timeouts.",
+  "overlap_review": "Existing HiGHS tasks cover Chvatal-Gomory presolve, cut aging, enumeration, branching and primal heuristics at other source snapshots. This candidate targets row aggregation and path/mod-k cut separation at the 2021 snapshot; confirm source-lineage and mechanism overlap during pinned-source review.",
+  "overlap_group": "highs_mip_row_aggregation_cut_separation_2021",
+  "related_prs": [],
+  "resource_risk": "Aggregation scans and clique merging may increase separation time or memory; working limits may reduce cut strength. Measure both event counts and end-to-end solver outcomes, including pathological cases.",
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/577"
+  ]
+}

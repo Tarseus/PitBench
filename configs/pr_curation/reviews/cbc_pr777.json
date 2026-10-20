@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "repository": "coin-or/Cbc",
+  "pr_number": 777,
+  "base_commit": "5c17b1505a48495c99ea26baa8ce9233cbd8405c",
+  "head_commit": "4944fa79c9c896d8cff4dbb6d821aae8edd63518",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Updates CI workflows for action versions and platforms; no solver-engine source changes.",
+  "reviewed_changed_files": [
+    ".github/workflows/linux-ci.yml",
+    ".github/workflows/windows-ci.yml",
+    ".github/workflows/windows-msvs-ci.yml"
+  ],
+  "detail_sha256": "fe30b570990ac8003dfca5db6cad7fbcf434f54512f25bfc43e518d54df4a600",
+  "selection_queue_sha256": "966f5bf257f33641ce530125917422beb40ece4759a865cfe3930c288107cc87",
+  "source_evidence_urls": [
+    "https://github.com/coin-or/Cbc/pull/777"
+  ]
+}

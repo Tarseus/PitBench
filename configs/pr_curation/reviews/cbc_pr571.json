@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "repository": "coin-or/Cbc",
+  "pr_number": 571,
+  "base_commit": "11e6a79d2b78b5236324fad897946effde4618e2",
+  "head_commit": "b98c1f5fa6bb6904252ddef6e19ac377955c621c",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Regenerates Autotools scripts and Makefile templates; no solver-engine source file changed.",
+  "reviewed_changed_files": [
+    "Makefile.in",
+    "ar-lib",
+    "compile",
+    "config.guess",
+    "config.sub",
+    "configure",
+    "depcomp",
+    "ltmain.sh",
+    "missing",
+    "src/Makefile.in",
+    "src/OsiCbc/Makefile.in",
+    "test/Makefile.in"
+  ],
+  "detail_sha256": "102050ec6bb2dcc23be05fe9c9304e3da76090fe40ff3cc7a901472a97ed8b71",
+  "selection_queue_sha256": "9fa7126befcaeb0c0a1fd3f32c5f73af1ba2c871a921ebe1600edac37279e3a5",
+  "source_evidence_urls": [
+    "https://github.com/coin-or/Cbc/pull/571"
+  ]
+}

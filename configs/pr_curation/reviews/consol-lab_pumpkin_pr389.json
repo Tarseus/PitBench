@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "ConSol-Lab/Pumpkin",
+  "pr_number": 389,
+  "base_commit": "37d28b3e1db0c34079f042871d32706663d9ffcc",
+  "head_commit": "b3acdcf4bf376c0ac31b34e94474567329be7c31",
+  "decision": "reject",
+  "reason": "The patch corrects an off-by-one truth test in variable-state checking. It restores logical semantics and has no separate solver-performance objective.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "aab74d3068c15b60f122c109cac8468d3b5933d911d2d340c41a0dc4bbdbaccc",
+  "changed_file_paths": [
+    "pumpkin-crates/checking/src/variable_state.rs"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/ConSol-Lab/Pumpkin/pull/389"
+  ],
+  "rejection_basis": "correctness_only"
+}

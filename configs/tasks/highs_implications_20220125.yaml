@@ -1,0 +1,67 @@
+schema_version: '3.0'
+task_id: highs_implications_20220125
+release:
+  repository: ERGO-Code/HiGHS
+  version: 1.1.1
+  tag: 1d77a4e561b498ec737d1e81fcf10a982088517f
+  base_commit: 1d77a4e561b498ec737d1e81fcf10a982088517f
+  released_at: '2022-01-25T17:36:41Z'
+  url: https://github.com/ERGO-Code/HiGHS/commit/1d77a4e561b498ec737d1e81fcf10a982088517f
+task_type: exact_solver
+problem_family: mip
+optimization_scope: binary_implication_propagation_efficiency
+instruction: Improve binary-implication propagation and MIP solver efficiency in this
+  pinned HiGHS source snapshot while preserving original-model feasibility, valid
+  bounds, and solver statuses. Choose the source change autonomously; use only visible
+  development instances.
+repository:
+  clone_url: https://github.com/ERGO-Code/HiGHS.git
+  plugin: pitbench.repositories.plugins:HighsRepositoryPlugin
+  editable_paths:
+  - src/mip
+  - src/util
+  - build
+  agent_image: pitbench-highs-pr690-agent:local
+  judge_image: sha256:086fb0f993dc2df4a59f5c38905f58829c8b6e6a9a376c15a5cb5e54b5980528
+oracle:
+  kind: known_optimum
+  source: private://oracles/highs_implications_20220125.yaml
+  objective_sense: minimize
+  source_sha256: 4fc2eeba0f50d07fea7605cb70316377d4baa5fc9f17e590341c6e379a42f8af
+evaluation:
+  performance_protocol: exact_verified_solve
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  threads: 1
+  verifier: trusted_optimum
+  solver_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/highs_implications_20220125_dev.yaml
+  instance_set_config_sha256: ca22ca3af12c39222d2eb848d4b0a300fb570babc0b8c1f4982bfe7dc6075352
+  size: 5
+  randomness:
+    instance_seed: 913100
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/highs_implications_20220125/judge_id.yaml
+  instance_set_config_sha256: 64c5ee8d1f93ffa2e38db58c8a08d4a376bb0cfd43a8e065760d6cc7b435c43b
+  size: 30
+  randomness:
+    instance_seed: 913200
+- name: judge_shift
+  kind: judge_shift
+  instance_set_config: private://hidden_instances/highs_v1_15_1/judge_id.yaml
+  instance_set_config_sha256: f86b8660982b206bbe4aa5adc8044467ed5b2eeee23dea0b5b89329277cc5d22
+  size: 30
+  randomness:
+    instance_seed: 115110

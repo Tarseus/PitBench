@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "chocoteam/choco-solver",
+  "pr_number": 808,
+  "base_commit": "103345efc9d189ffd747d993e15c6afcfb970eb4",
+  "head_commit": "3f61b3fa94c309bbc63cbd6fd8b1c3dc43a51a09",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Updates only the Maven Javadoc plugin in pom.xml; no search or propagation source changes.",
+  "reviewed_changed_files": [
+    "pom.xml"
+  ],
+  "detail_sha256": "01e1348d79667613adb018b14b8409ea11668ab5e0df8dfa68fd2b25964c90ca",
+  "selection_queue_sha256": "966f5bf257f33641ce530125917422beb40ece4759a865cfe3930c288107cc87",
+  "source_evidence_urls": [
+    "https://github.com/chocoteam/choco-solver/pull/808"
+  ]
+}

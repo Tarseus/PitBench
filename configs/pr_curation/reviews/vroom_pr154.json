@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "repository": "VROOM-Project/vroom",
+  "pr_number": 154,
+  "base_commit": "4da0419f013b4dcc74d9a7377539ba775d57446d",
+  "head_commit": "8800be8a2862fd1382d0723be5590c1fb7c028ee",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Adds Travis CI configuration and a changelog entry; no solver-engine source file changed.",
+  "reviewed_changed_files": [
+    ".travis.yml",
+    "CHANGELOG.md"
+  ],
+  "detail_sha256": "27a33a628e92774aa9139839a6a19647c18af5703c9cc81a2c7938e168f72bf4",
+  "selection_queue_sha256": "9fa7126befcaeb0c0a1fd3f32c5f73af1ba2c871a921ebe1600edac37279e3a5",
+  "source_evidence_urls": [
+    "https://github.com/VROOM-Project/vroom/pull/154"
+  ]
+}

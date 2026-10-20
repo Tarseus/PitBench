@@ -1,0 +1,58 @@
+schema_version: '3.0'
+task_id: gecode_binpacking_dff_20260711
+release:
+  repository: Gecode/gecode
+  version: 6.3.0-86-g744e5efe
+  tag: 744e5efef8efd067a75b6aa5ff8f90fad1c46c5c
+  base_commit: 744e5efef8efd067a75b6aa5ff8f90fad1c46c5c
+  released_at: '2026-07-11T05:34:45Z'
+  url: https://github.com/Gecode/gecode/commit/744e5efef8efd067a75b6aa5ff8f90fad1c46c5c
+task_type: exact_solver
+problem_family: cp
+problem_variant: bin_packing
+formulation_id: gecode_binpacking_propagator
+optimization_scope: dff_binpacking_propagation_and_proof_efficiency
+instruction: Improve exact bin-packing propagation and proof efficiency in this pinned
+  Gecode source snapshot. Preserve the feasibility and objective semantics of the
+  original bin-packing constraints. Use only visible development instances and leave
+  the propagation level fixed at full.
+repository:
+  clone_url: https://github.com/Gecode/gecode.git
+  plugin: pitbench.repositories.plugins:GecodeRepositoryPlugin
+  editable_paths:
+  - gecode/int
+  agent_image: pitbench-gecode:744e5efef8ef
+  judge_image: sha256:12c85e4a745d2ba51ae1cb332323ef28bab7082550aea91cc8c9132666f99d0f
+oracle:
+  kind: known_optimum
+  source: private://oracles/gecode_binpacking_dff_20260711.yaml
+  source_sha256: 6bad56944dbf66f39521f48646f069ff199563f3ba7304841748c0d2ebecd187
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  solver_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  threads: 1
+  verifier: trusted_optimum
+  fixed_solver_parameters:
+    gecode.bin_packing_propagation_level: full
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/gecode_binpacking_dff_20260711_dev.yaml
+  instance_set_config_sha256: 68881374de32fb4eb0653c90af797ab7d8ae6c367f90cbb32b7157816fb225e5
+  size: 5
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/gecode_binpacking_dff_20260711/judge_id.yaml
+  instance_set_config_sha256: 7982359145db570830071284700367335711d668a73fd1f5b28d78d098c33de7
+  size: 30

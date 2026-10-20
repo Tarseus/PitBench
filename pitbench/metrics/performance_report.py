@@ -124,11 +124,7 @@ def compute_exact_run_outcome(
         return ExactRunOutcome(kind=ExactRunOutcomeKind.ORACLE_DISCREPANCY)
 
     if observation.objective > observation.optimal_or_bks:
-        return ExactRunOutcome(
-            kind=ExactRunOutcomeKind.SOLVER_ORIGIN_UNSOLVED,
-            solved=False,
-            penalized_runtime_sec=2 * observation.budget_sec,
-        )
+        return ExactRunOutcome(kind=ExactRunOutcomeKind.QUALIFICATION_FAILURE)
 
     measured_time_sec = (
         observation.cpu_time_sec
@@ -423,7 +419,9 @@ def _paired_exact_performance(
         raise ValueError("exact expected run grid does not pair Base and Agent")
 
     reductions_by_instance: dict[tuple[str, str], list[float]] = defaultdict(list)
-    coverage_reductions_by_instance: dict[tuple[str, str], list[float]] = defaultdict(list)
+    coverage_reductions_by_instance: dict[tuple[str, str], list[float]] = defaultdict(
+        list
+    )
     complete = True
     for pair_key in sorted(expected_by_state[CodeState.BASE]):
         base_expected = expected_by_state[CodeState.BASE][pair_key]
@@ -559,9 +557,7 @@ def compute_exact_performance_report(
     primary = by_budget[f"{primary_budget_sec:g}"]
     base_coverage = primary.base.verified_solved_coverage
     agent_coverage = primary.agent.verified_solved_coverage
-    coverage_interval = (
-        primary.paired.mean_verified_solved_coverage_reduction_ci95
-    )
+    coverage_interval = primary.paired.mean_verified_solved_coverage_reduction_ci95
     paired_interval = primary.paired.mean_penalized_runtime_reduction_ci95
     classification = classify_exact_performance(
         coverage_difference=(
@@ -580,9 +576,7 @@ def compute_exact_performance_report(
             else None
         ),
         complete=(
-            primary.base.complete
-            and primary.agent.complete
-            and primary.paired.complete
+            primary.base.complete and primary.agent.complete and primary.paired.complete
         ),
     )
 
@@ -817,14 +811,10 @@ def _format_exact_performance_report(report: ExactPerformanceReport) -> str:
             reduction += f" [{interval.lower:.6g}s, {interval.upper:.6g}s]"
         coverage_reduction = "-"
         if paired.mean_verified_solved_coverage_reduction is not None:
-            coverage_reduction = (
-                f"{paired.mean_verified_solved_coverage_reduction:.3%}"
-            )
+            coverage_reduction = f"{paired.mean_verified_solved_coverage_reduction:.3%}"
         if paired.mean_verified_solved_coverage_reduction_ci95 is not None:
             interval = paired.mean_verified_solved_coverage_reduction_ci95
-            coverage_reduction += (
-                f" [{interval.lower:.3%}, {interval.upper:.3%}]"
-            )
+            coverage_reduction += f" [{interval.lower:.3%}, {interval.upper:.3%}]"
 
         def coverage(state: ExactStatePerformance) -> str:
             if state.verified_solved_coverage is None:

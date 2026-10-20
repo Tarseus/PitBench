@@ -1,0 +1,339 @@
+diff --git a/pyvrp/cpp/CostEvaluator.h b/pyvrp/cpp/CostEvaluator.h
+index 168aa57..c1981c3 100644
+--- a/pyvrp/cpp/CostEvaluator.h
++++ b/pyvrp/cpp/CostEvaluator.h
+@@ -40,10 +40,8 @@ concept PrizeCostEvaluatable = CostEvaluatable<T> && requires(T arg) {
+ template <typename T>
+ concept DeltaCostEvaluatable = requires(T arg, size_t dimension) {
+     { arg.route() };
+-    { arg.distance() } -> std::same_as<Distance>;
+-    {
+-        arg.duration()
+-    } -> std::convertible_to<std::tuple<Duration, Duration, Duration>>;
++    { arg.distance() } -> std::convertible_to<std::pair<Cost, Distance>>;
++    { arg.duration() } -> std::convertible_to<std::pair<Cost, Duration>>;
+     { arg.excessLoad(dimension) } -> std::same_as<Load>;
+ };
+ 
+@@ -111,6 +109,11 @@ public:
+     [[nodiscard]] inline Cost distPenalty(Distance distance,
+                                           Distance maxDistance) const;
+ 
++    /**
++     * Computes the excess distance penalty for the given excess distance.
++     */
++    [[nodiscard]] inline Cost excessDistPenalty(Distance excessDistance) const;
++
+     /**
+      * Computes a smoothed objective (penalised cost) for a given solution.
+      */
+@@ -225,6 +228,11 @@ Cost CostEvaluator::twPenalty([[maybe_unused]] Duration timeWarp) const
+ Cost CostEvaluator::distPenalty(Distance distance, Distance maxDistance) const
+ {
+     auto const excessDistance = std::max<Distance>(distance - maxDistance, 0);
++    return excessDistPenalty(excessDistance);
++}
++
++Cost CostEvaluator::excessDistPenalty(Distance excessDistance) const
++{
+     return static_cast<Cost>(excessDistance.get() * distPenalty_);
+ }
+ 
+@@ -270,7 +278,7 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
+     if (!route->empty())
+     {
+         out -= route->distanceCost();
+-        out -= distPenalty(route->distance(), route->maxDistance());
++        out -= excessDistPenalty(route->excessDistance());
+ 
+         if constexpr (!skipLoad)
+             out -= excessLoadPenalties(route->excessLoad());
+@@ -279,9 +287,12 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
+         out -= twPenalty(route->timeWarp());
+     }
+ 
+-    auto const distance = proposal.distance();
+-    out += route->unitDistanceCost() * static_cast<Cost>(distance);
+-    out += distPenalty(distance, route->maxDistance());
++    if (route->hasDistanceCost())
++    {
++        auto const [cost, excess] = proposal.distance();
++        out += cost;
++        out += excessDistPenalty(excess);
++    }
+ 
+     if constexpr (!skipLoad)
+     {
+@@ -296,10 +307,12 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
+         }
+     }
+ 
+-    auto const [duration, overtime, timeWarp] = proposal.duration();
+-    out += route->unitDurationCost() * static_cast<Cost>(duration);
+-    out += route->unitOvertimeCost() * static_cast<Cost>(overtime);
+-    out += twPenalty(timeWarp);
++    if (route->hasDurationCost())
++    {
++        auto const [cost, timeWarp] = proposal.duration();
++        out += cost;
++        out += twPenalty(timeWarp);
++    }
+ 
+     return true;
+ }
+@@ -320,7 +333,7 @@ bool CostEvaluator::deltaCost(Cost &out,
+     if (!uRoute->empty())
+     {
+         out -= uRoute->distanceCost();
+-        out -= distPenalty(uRoute->distance(), uRoute->maxDistance());
++        out -= excessDistPenalty(uRoute->excessDistance());
+ 
+         if constexpr (!skipLoad)
+             out -= excessLoadPenalties(uRoute->excessLoad());
+@@ -333,7 +346,7 @@ bool CostEvaluator::deltaCost(Cost &out,
+     if (!vRoute->empty())
+     {
+         out -= vRoute->distanceCost();
+-        out -= distPenalty(vRoute->distance(), vRoute->maxDistance());
++        out -= excessDistPenalty(vRoute->excessDistance());
+ 
+         if constexpr (!skipLoad)
+             out -= excessLoadPenalties(vRoute->excessLoad());
+@@ -342,13 +355,19 @@ bool CostEvaluator::deltaCost(Cost &out,
+         out -= twPenalty(vRoute->timeWarp());
+     }
+ 
+-    auto const uDist = uProposal.distance();
+-    out += uRoute->unitDistanceCost() * static_cast<Cost>(uDist);
+-    out += distPenalty(uDist, uRoute->maxDistance());
++    if (uRoute->hasDistanceCost())
++    {
++        auto const [cost, excess] = uProposal.distance();
++        out += cost;
++        out += excessDistPenalty(excess);
++    }
+ 
+-    auto const vDist = vProposal.distance();
+-    out += vRoute->unitDistanceCost() * static_cast<Cost>(vDist);
+-    out += distPenalty(vDist, vRoute->maxDistance());
++    if (vRoute->hasDistanceCost())
++    {
++        auto const [cost, excess] = vProposal.distance();
++        out += cost;
++        out += excessDistPenalty(excess);
++    }
+ 
+     if constexpr (!skipLoad)
+     {
+@@ -377,15 +396,19 @@ bool CostEvaluator::deltaCost(Cost &out,
+         if (out >= 0)
+             return false;
+ 
+-    auto const [uDuration, uOvertime, uTimeWarp] = uProposal.duration();
+-    out += uRoute->unitDurationCost() * static_cast<Cost>(uDuration);
+-    out += uRoute->unitOvertimeCost() * static_cast<Cost>(uOvertime);
+-    out += twPenalty(uTimeWarp);
++    if (uRoute->hasDurationCost())
++    {
++        auto const [cost, timeWarp] = uProposal.duration();
++        out += cost;
++        out += twPenalty(timeWarp);
++    }
+ 
+-    auto const [vDuration, vOvertime, vTimeWarp] = vProposal.duration();
+-    out += vRoute->unitDurationCost() * static_cast<Cost>(vDuration);
+-    out += vRoute->unitOvertimeCost() * static_cast<Cost>(vOvertime);
+-    out += twPenalty(vTimeWarp);
++    if (vRoute->hasDurationCost())
++    {
++        auto const [cost, timeWarp] = vProposal.duration();
++        out += cost;
++        out += twPenalty(timeWarp);
++    }
+ 
+     return true;
+ }
+diff --git a/pyvrp/cpp/search/Route.cpp b/pyvrp/cpp/search/Route.cpp
+index cb2d183..0a9e54a 100644
+--- a/pyvrp/cpp/search/Route.cpp
++++ b/pyvrp/cpp/search/Route.cpp
+@@ -355,14 +355,17 @@ void Route::update()
+         }
+     }
+ 
+-    // Full route distance and duration costs are separately cached as well
+-    // because these are requested *a lot*.
+-    auto const distance = cumDist.back();
+-    distanceCost_ = unitDistanceCost() * static_cast<Cost>(distance);
+-
+-    auto const duration = durAfter[0].duration();
+-    auto const overtime = std::max<Duration>(duration - shiftDuration(), 0);
+-    durationCost_ = unitDurationCost() * static_cast<Cost>(duration)
++    // These cost components are separately cached as well because they are
++    // requested *a lot*.
++    distance_ = cumDist.back();
++    excessDistance_ = std::max<Distance>(distance_ - maxDistance(), 0);
++    distanceCost_ = unitDistanceCost() * static_cast<Cost>(distance_);
++
++    duration_ = durAfter[0].duration();
++    timeWarp_ = durAfter[0].timeWarp(maxDuration());
++
++    auto const overtime = std::max<Duration>(duration_ - shiftDuration(), 0);
++    durationCost_ = unitDurationCost() * static_cast<Cost>(duration_)
+                     + unitOvertimeCost() * static_cast<Cost>(overtime);
+ 
+ #ifndef NDEBUG
+diff --git a/pyvrp/cpp/search/Route.h b/pyvrp/cpp/search/Route.h
+index 41f7a47..694dfca 100644
+--- a/pyvrp/cpp/search/Route.h
++++ b/pyvrp/cpp/search/Route.h
+@@ -9,7 +9,6 @@
+ #include <cassert>
+ #include <concepts>
+ #include <iosfwd>
+-#include <tuple>
+ #include <utility>
+ 
+ namespace pyvrp::search
+@@ -97,15 +96,16 @@ public:
+         Route const *route() const;
+ 
+         /**
+-         * Returns the travel distance of the proposed route.
++         * Returns the (distance cost, excess distance) attributes of the
++         * proposed route.
+          */
+-        Distance distance() const;
++        std::pair<Cost, Distance> distance() const;
+ 
+         /**
+-         * Returns a tuple of (duration, overtime, time warp) attributes of the
+-         * proposed route.
++         * Returns the (duration cost, time warp) attributes of the proposed
++         * route.
+          */
+-        std::tuple<Duration, Duration, Duration> duration() const;
++        std::pair<Cost, Duration> duration() const;
+ 
+         /**
+          * Returns the excess load of the proposed route.
+@@ -303,8 +303,12 @@ private:
+     ProblemData::VehicleType const &vehicleType_;
+     size_t const idx_;
+ 
+-    Cost distanceCost_;  // Separately cached distance cost component
+-    Cost durationCost_;  // Separately cached duration cost component
++    Distance distance_;  // Separately cached cost components
++    Cost distanceCost_;
++    Distance excessDistance_;
++    Duration duration_;
++    Cost durationCost_;
++    Duration timeWarp_;
+ 
+     std::vector<Node> depots_;  // start, end, and reload depots (in that order)
+ 
+@@ -876,7 +880,7 @@ std::vector<Load> const &Route::excessLoad() const
+ Distance Route::excessDistance() const
+ {
+     assert(!dirty);
+-    return std::max<Distance>(distance() - maxDistance(), 0);
++    return excessDistance_;
+ }
+ 
+ std::vector<Load> const &Route::capacity() const
+@@ -893,7 +897,7 @@ Cost Route::fixedVehicleCost() const { return vehicleType_.fixedCost; }
+ Distance Route::distance() const
+ {
+     assert(!dirty);
+-    return cumDist.back();
++    return distance_;
+ }
+ 
+ Cost Route::distanceCost() const
+@@ -913,7 +917,7 @@ bool Route::hasDistanceCost() const
+ Duration Route::duration() const
+ {
+     assert(!dirty);
+-    return durAfter[0].duration();
++    return duration_;
+ }
+ 
+ Duration Route::overtime() const
+@@ -953,7 +957,7 @@ Distance Route::maxDistance() const { return vehicleType_.maxDistance; }
+ Duration Route::timeWarp() const
+ {
+     assert(!dirty);
+-    return durAfter[0].timeWarp(maxDuration());
++    return timeWarp_;
+ }
+ 
+ size_t Route::profile() const { return vehicleType_.profile; }
+@@ -1027,18 +1031,18 @@ Route const *Route::Proposal<Segments...>::route() const
+ }
+ 
+ template <Segment... Segments>
+-Distance Route::Proposal<Segments...>::distance() const
++std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
+ {
+-    if (empty() || !route()->hasDistanceCost())
+-        // Then distance does not factor into the penalised cost of this route,
+-        // and we do not have to evaluate it.
+-        return 0;
++    if (empty())
++        return std::make_pair(0, 0);
+ 
+     auto const &data = route()->data;
++    auto const unitDistanceCost = route()->unitDistanceCost();
++    auto const maxDistance = route()->maxDistance();
+     auto const profile = route()->profile();
+     auto const &matrix = data.distanceMatrix(profile);
+ 
+-    auto const fn = [&matrix, profile](auto &&segment, auto &&...args)
++    auto const fn = [&](auto &&segment, auto &&...args)
+     {
+         auto distance = segment.distance(profile);
+         auto last = segment.last();
+@@ -1053,22 +1057,24 @@ Distance Route::Proposal<Segments...>::distance() const
+         };
+ 
+         merge(merge, std::forward<decltype(args)>(args)...);
+-        return distance;
++
++        auto const excess = std::max<Distance>(distance - maxDistance, 0);
++        auto const cost = unitDistanceCost * static_cast<Cost>(distance);
++        return std::make_pair(cost, excess);
+     };
+ 
+     return std::apply(fn, segments_);
+ }
+ 
+ template <Segment... Segments>
+-std::tuple<Duration, Duration, Duration>
+-Route::Proposal<Segments...>::duration() const
++std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
+ {
+-    if (empty() || !route()->hasDurationCost())
+-        // Then duration does not factor into the penalised cost of this route,
+-        // and we do not have to evaluate it.
+-        return std::make_tuple(0, 0, 0);
++    if (empty())
++        return std::make_pair(0, 0);
+ 
+     auto const &data = route()->data;
++    auto const unitDurationCost = route()->unitDurationCost();
++    auto const unitOvertimeCost = route()->unitOvertimeCost();
+     auto const shiftDuration = route()->shiftDuration();
+     auto const maxDuration = route()->maxDuration();
+     auto const profile = route()->profile();
+@@ -1121,8 +1127,10 @@ Route::Proposal<Segments...>::duration() const
+ 
+         auto const duration = ds.duration();
+         auto const overtime = std::max<Duration>(duration - shiftDuration, 0);
++        auto const cost = unitDurationCost * static_cast<Cost>(duration)
++                          + unitOvertimeCost * static_cast<Cost>(overtime);
+         auto const timeWarp = ds.timeWarp(maxDuration);
+-        return std::make_tuple(duration, overtime, timeWarp);
++        return std::make_pair(cost, timeWarp);
+     };
+ 
+     return std::apply(fn, detail::reverse(segments_));

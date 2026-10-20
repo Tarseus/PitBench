@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "repository": "ConSol-Lab/Pumpkin",
+  "pr_number": 105,
+  "base_commit": "2f6df0c403bce7951c41ee0e275b9bdbef1cf9c4",
+  "head_commit": "43ff4dd3925ee28d0e3e43edd4b739b7e165e17e",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Updates a release manifest, changelog, and drcp-format package version; no solver-engine source file changed.",
+  "reviewed_changed_files": [
+    ".release-please-manifest.json",
+    "drcp-format/CHANGELOG.md",
+    "drcp-format/Cargo.toml"
+  ],
+  "detail_sha256": "0068c7592665492f4928732b0df4f20c67f5c798ca0f0c1917bc5775263264f7",
+  "selection_queue_sha256": "9fa7126befcaeb0c0a1fd3f32c5f73af1ba2c871a921ebe1600edac37279e3a5",
+  "source_evidence_urls": [
+    "https://github.com/ConSol-Lab/Pumpkin/pull/105"
+  ]
+}

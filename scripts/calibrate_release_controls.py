@@ -1,4 +1,4 @@
-"""Run paired solver-image controls through a task's shared driver and verifier.
+"""Run paired controls or one-state qualification through the shared solver stack.
 
 This is a calibration experiment, not a new PitBench task type. The manifest
 selects releases, data, and budget; solver behavior stays in the repository
@@ -22,7 +22,7 @@ import yaml
 
 from pitbench.problem_families.base import ProblemFamilyPlugin, ProblemFamilyRegistry
 from pitbench.repositories.base import RepositoryPluginRegistry
-from pitbench.schema.task import PitBenchTask
+from pitbench.schema.task import PerformanceProtocol, PitBenchTask
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -69,7 +69,12 @@ def _inputs(manifest: dict[str, Any]) -> tuple[PitBenchTask, list[dict], list[in
         raise ValueError("release control requires one thread and one CPU per run")
     if manifest["budget_sec"] not in task.evaluation.budgets_sec:
         raise ValueError("release-control budget is outside the task protocol")
-    for label in ("old", "new"):
+    labels = (
+        ("old",)
+        if manifest.get("run_mode") == "baseline_qualification"
+        else ("old", "new")
+    )
+    for label in labels:
         reference = manifest[label]["image"]
         if _image_id(reference) != reference:
             raise ValueError(f"{label} image identity does not match manifest")
@@ -119,6 +124,18 @@ def _run_solver(
         )
         for token in runner_template
     ]
+    parameters_path = None
+    if task.evaluation.fixed_solver_parameters is not None:
+        parameters_path = artifact_dir / f"{label}.parameters.json"
+        parameters_path.write_text(
+            json.dumps(task.evaluation.fixed_solver_parameters, sort_keys=True) + "\n"
+        )
+        arguments.extend(
+            [
+                "--parameters",
+                "/output/" + str(parameters_path.relative_to(output_dir)),
+            ]
+        )
     command = [
         "docker",
         "run",
@@ -134,7 +151,7 @@ def _run_solver(
         "--user",
         f"{os.getuid()}:{os.getgid()}",
         "--mount",
-        f"type=bind,src={output_dir / 'harness'},dst=/opt,readonly",
+        f"type=bind,src={output_dir / 'harness' / 'pitbench'},dst=/opt/pitbench,readonly",
         "--mount",
         f"type=bind,src={instance['path'].parent},dst=/instances,readonly",
         "--mount",
@@ -191,6 +208,9 @@ def _run_solver(
         "stdout_path": str(stdout_path),
         "stderr_path": str(stderr_path),
     }
+    if parameters_path is not None:
+        record["fixed_solver_parameters_path"] = str(parameters_path)
+        record["fixed_solver_parameters_sha256"] = _sha256(parameters_path)
     if exit_code != 0 or not output.is_file():
         record.update(status="execution_failure", error=stderr[-2000:])
         return record
@@ -217,6 +237,7 @@ def _run_solver(
             solver_cpu_time_sec=solver.get("cpu_time_sec"),
             solver_wall_time_sec=solver.get("wall_time_sec"),
             solver_iterations=solver.get("iterations"),
+            solver_termination=solver.get("solver_termination"),
         )
         if solver.get("valid") is not True:
             record["status"] = "invalid"
@@ -266,6 +287,134 @@ def _run_pair(
     }
 
 
+def _run_baseline(
+    *,
+    manifest: dict[str, Any],
+    task: PitBenchTask,
+    instance: dict[str, Any],
+    seed: int,
+    attempt: int,
+    output_dir: Path,
+    runner_template: list[str],
+) -> dict[str, Any]:
+    run = _run_solver(
+        manifest=manifest,
+        task=task,
+        instance=instance,
+        seed=seed,
+        round_index=0,
+        attempt=attempt,
+        label="old",
+        output_dir=output_dir,
+        runner_template=runner_template,
+    )
+    return {
+        "instance_id": instance["id"],
+        "instance_path": str(instance["path"]),
+        "target": instance["target"],
+        "solver_seed": seed,
+        "budget_sec": manifest["budget_sec"],
+        "attempt": attempt,
+        "base": run,
+    }
+
+
+def _execute_baseline(
+    *,
+    manifest: dict[str, Any],
+    task: PitBenchTask,
+    instances: list[dict],
+    seeds: list[int],
+    output_dir: Path,
+    runner_template: list[str],
+) -> None:
+    exact = (
+        task.evaluation.performance_protocol == PerformanceProtocol.EXACT_VERIFIED_SOLVE
+    )
+
+    def acceptable(row: dict[str, Any]) -> bool:
+        base = row["base"]
+        return base["status"] == "completed" or (
+            exact
+            and base["status"] == "no_solution"
+            and base.get("reported", {}).get("solver_termination") == "time_limit"
+        )
+
+    record_path = output_dir / "baseline_runs.jsonl"
+    previous: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    if record_path.is_file():
+        for line in record_path.read_text().splitlines():
+            row = json.loads(line)
+            previous.setdefault((row["instance_id"], row["solver_seed"]), []).append(
+                row
+            )
+    jobs = []
+    for instance in instances:
+        for seed in seeds:
+            key = (instance["id"], seed)
+            if any(acceptable(row) for row in previous.get(key, [])):
+                continue
+            jobs.append(
+                {
+                    "manifest": manifest,
+                    "task": task,
+                    "instance": instance,
+                    "seed": seed,
+                    "attempt": len(previous.get(key, [])) + 1,
+                    "output_dir": output_dir,
+                    "runner_template": runner_template,
+                }
+            )
+    print(
+        json.dumps(
+            {
+                "expected_baseline_runs": len(instances) * len(seeds),
+                "completed_prior_runs": len(instances) * len(seeds) - len(jobs),
+                "remaining_runs": len(jobs),
+                "parallel_runs": manifest["parallel_pairs"],
+            }
+        ),
+        flush=True,
+    )
+    failed = 0
+    with ThreadPoolExecutor(max_workers=manifest["parallel_pairs"]) as pool:
+        futures = {pool.submit(_run_baseline, **job): job for job in jobs}
+        with record_path.open("a") as stream:
+            for finished, future in enumerate(as_completed(futures), 1):
+                try:
+                    row = future.result()
+                except Exception as error:
+                    job = futures[future]
+                    row = {
+                        "instance_id": job["instance"]["id"],
+                        "solver_seed": job["seed"],
+                        "budget_sec": manifest["budget_sec"],
+                        "attempt": job["attempt"],
+                        "base": {
+                            "status": "orchestration_failure",
+                            "error": str(error),
+                        },
+                    }
+                stream.write(json.dumps(row, allow_nan=False) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+                if not acceptable(row):
+                    failed += 1
+                if finished % 10 == 0 or finished == len(jobs):
+                    print(
+                        json.dumps(
+                            {
+                                "finished_runs": finished,
+                                "remaining_runs": len(jobs) - finished,
+                                "failed_runs": failed,
+                            }
+                        ),
+                        flush=True,
+                    )
+    if failed:
+        raise SystemExit(f"{failed} baseline runs failed; raw records retained")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -277,21 +426,25 @@ def main() -> None:
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("schema_version") != 1 or manifest.get("rounds", 0) < 1:
         raise ValueError("unsupported or empty release-control manifest")
+    run_mode = manifest.get("run_mode", "paired_control")
+    if run_mode not in {"paired_control", "baseline_qualification"}:
+        raise ValueError("unknown release-control run mode")
+    baseline_mode = run_mode == "baseline_qualification"
+    if baseline_mode and manifest["rounds"] != 1:
+        raise ValueError("baseline qualification requires exactly one round")
     task, instances, seeds = _inputs(manifest)
     runner = RepositoryPluginRegistry.load(task.repository.plugin).agent_run_template()
     if args.check:
-        print(
-            json.dumps(
-                {
-                    "task_id": task.task_id,
-                    "instance_count": len(instances),
-                    "selected_seeds": seeds,
-                    "expected_pairs": len(instances) * len(seeds) * manifest["rounds"],
-                    "runner_template": runner,
-                },
-                indent=2,
-            )
+        summary = {
+            "task_id": task.task_id,
+            "instance_count": len(instances),
+            "selected_seeds": seeds,
+            "runner_template": runner,
+        }
+        summary["expected_baseline_runs" if baseline_mode else "expected_pairs"] = (
+            len(instances) * len(seeds) * manifest["rounds"]
         )
+        print(json.dumps(summary, indent=2))
         return
     output_dir.mkdir(parents=True, exist_ok=True)
     harness_root = output_dir / "harness" / "pitbench"
@@ -317,12 +470,27 @@ def main() -> None:
         "selected_seeds": seeds,
         "expected_pairs": len(instances) * len(seeds) * manifest["rounds"],
     }
+    if task.evaluation.fixed_solver_parameters is not None:
+        identity["fixed_solver_parameters"] = task.evaluation.fixed_solver_parameters
+    if baseline_mode:
+        identity["run_mode"] = "baseline_qualification"
+        identity["expected_baseline_runs"] = len(instances) * len(seeds)
     identity_path = output_dir / "identity.json"
     if identity_path.is_file():
         if json.loads(identity_path.read_text()) != identity:
             raise ValueError("output directory belongs to another protocol identity")
     else:
         identity_path.write_text(json.dumps(identity, indent=2) + "\n")
+    if baseline_mode:
+        _execute_baseline(
+            manifest=manifest,
+            task=task,
+            instances=instances,
+            seeds=seeds,
+            output_dir=output_dir,
+            runner_template=runner,
+        )
+        return
     record_path = output_dir / "pairs.jsonl"
     previous: dict[tuple[int, str, int], list[dict[str, Any]]] = {}
     if record_path.is_file():

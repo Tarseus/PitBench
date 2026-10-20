@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "repository": "VROOM-Project/vroom",
+  "pr_number": 112,
+  "base_commit": "da628ea1cd42168f9ee85fa05c1d665620f23b4e",
+  "head_commit": "8b16c133497666f155391103c14e8fbd3df69d5a",
+  "decision": "advance",
+  "reason": "The PR replaces full heap rebuild/pop operations with nth_element plus pop_back in the sequential and parallel CVRP clustering loops, where each loop selects one highest-scoring candidate. The selected maximum is equivalent under the comparator, but nth_element reorders the remaining candidates and may change tie outcomes; build, activation, and original-route checks are required.",
+  "repository_role": "solver_engine",
+  "mechanism": "combined",
+  "solver_phase": "primal_heuristic",
+  "solver_entry_points": [
+    "clustering::sequential_clustering",
+    "clustering::parallel_clustering",
+    "clustering::update_cost"
+  ],
+  "effect_channels": ["work_per_event", "primal_trajectory", "search_tree"],
+  "correctness_failure_modes": ["invalid_primal", "search_incomplete"],
+  "changed_source_paths": [
+    "src/problems/cvrp/heuristics/clustering.cpp",
+    "src/structures/typedefs.h"
+  ],
+  "solver_behavior_hypothesis": "Selecting only the highest-scoring candidate with nth_element may reduce the work of repeated clustering candidate selection compared with rebuilding and popping a heap, while preserving the selected maximum. The reorder of unselected candidates can affect ties and later cluster trajectories.",
+  "causal_chain": "Each candidate receives a comparator score from regret and insertion cost. The prior code rebuilds a heap to take the front element and then pops it; the PR partitions candidates so a maximum is placed at the final position, reads back(), and removes it. The selection loop is repeated as clusters accept or reject jobs, so candidate-list length and vehicle count determine how often this cost is paid. Different permutations of tied candidates may alter subsequent assignments and route quality.",
+  "structural_trigger": "CVRP cases with many jobs and vehicle candidate lists that require repeated sequential or parallel clustering selections. Include long candidate vectors and a small-job/low-vehicle control; record actual candidate lengths and removals.",
+  "activation_probe": "On both pinned states, count sequential and parallel clustering entries, heap/nth-element selections, candidate vector lengths, candidates removed, selected candidate IDs and score ties. Compare selected IDs and cluster assignments under the same input; use timing only as a diagnostic, not an admission gate.",
+  "instance_selection_rule": "Freeze a public CVRP activation panel before hidden outcomes, stratified by customer count, vehicle count, and baseline candidate-list size. Include high-candidate cases and a small control. Use separate held-out CVRPLIB ID and clustered-shift cases for hidden evaluation; retain all seeds and normal failures.",
+  "workload_exposure_plan": "Use the shared VROOM CVRP driver on the pinned base and PR builds with the same instance, seed, and budget. Instrument the two clustering paths to confirm actual candidate selection and retain source traces. Independently verify every returned route against original customers, capacities, and distance objective.",
+  "mathematical_risk": "A comparator or boundary error can select a non-maximum candidate; tie reordering can change cluster assignment, route feasibility, objective, or later local-search quality.",
+  "independent_check_plan": "Check every original CVRP customer is assigned exactly once, each route respects capacity, and recompute total distance from the original instance. Retain all unassigned, error, and timeout outcomes; compare exact selected candidates on tie-free cases.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Use paired base-only-qualified CVRPLIB ID and structurally shifted cases under fixed budgets and seeds. Report verified normalized-gap trajectories, time-to-target, per-family regressions, and timeouts; make no positive human PR claim unless measured independently.",
+  "overlap_review": "VROOM #978 changes route-level TSP local search after assignment, while #1222 adds an insertion-cost lower bound. This task is restricted to candidate selection during the earlier CVRP clustering stage, has a distinct 2018 base snapshot, and does not split either neighboring PR mechanism.",
+  "overlap_group": "vroom_cvrp_clustering_candidate_selection_2018",
+  "related_prs": [978, 1222],
+  "resource_risk": "nth_element can reorder candidates and may cost more than heap operations for short vectors. Comparator ties can change assignments and quality; record vector length strata and retain regressions.",
+  "source_evidence_urls": [
+    "https://github.com/VROOM-Project/vroom/pull/112",
+    "https://api.github.com/repos/VROOM-Project/vroom/pulls/112/files"
+  ]
+}

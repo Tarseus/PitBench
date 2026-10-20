@@ -31,6 +31,7 @@ class SolverRunSpec(BaseModel):
     solver_seed: int
     budget_sec: float
     threads: int
+    parameters_path: Path | None = None
 
 
 class NormalizedSolverOutput(BaseModel):
@@ -75,6 +76,7 @@ class RepositoryPlugin(ABC):
     representations: dict[str, tuple[str, ...]] = {}
     collector_environment: dict[str, str] = {}
     judge_environment_requirements: dict[str, str] = {}
+    supports_fixed_solver_parameters = False
 
     @abstractmethod
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
@@ -111,6 +113,10 @@ class RepositoryPlugin(ABC):
                 str(run.threads),
             ]
         )
+        if run.parameters_path is not None:
+            if not self.supports_fixed_solver_parameters:
+                raise ValueError("repository driver cannot apply fixed solver parameters")
+            argv.extend(["--parameters", str(run.parameters_path)])
         return CommandSpec(argv=argv, timeout_sec=run.budget_sec + 60)
 
     def parse_output(self, path: Path) -> NormalizedSolverOutput:

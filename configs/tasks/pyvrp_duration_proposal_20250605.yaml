@@ -1,0 +1,64 @@
+schema_version: '3.0'
+task_id: pyvrp_duration_proposal_20250605
+release:
+  repository: PyVRP/PyVRP
+  version: 0.12.0a0
+  tag: 27abe0abf5842bd35e4b978d2036ce6151986eeb
+  base_commit: 27abe0abf5842bd35e4b978d2036ce6151986eeb
+  released_at: '2025-06-05T10:39:01Z'
+  url: https://github.com/PyVRP/PyVRP/commit/27abe0abf5842bd35e4b978d2036ce6151986eeb
+task_type: heuristic_solver
+problem_family: cvrp
+optimization_scope: local_search_duration_proposal_efficiency
+instruction: Improve local-search route proposal efficiency in this pinned PyVRP source
+  snapshot while preserving CVRP feasibility, objective semantics, and route-search
+  behavior when temporal constraints or duration costs are present. Choose source
+  changes autonomously and use only visible development instances.
+repository:
+  clone_url: https://github.com/PyVRP/PyVRP.git
+  plugin: pitbench.repositories.plugins:PyVRPClassicRepositoryPlugin
+  editable_paths:
+  - pyvrp
+  agent_image: pitbench-pyvrp-pr845-agent:973b7016
+  judge_image: sha256:70043b65a3451477b6aeace269400829807dddf2bb12e21ebc96e146049b5327
+oracle:
+  kind: best_known_solution
+  source: private://calibration/cvrplib_x/oracle.yaml
+  objective_sense: minimize
+evaluation:
+  performance_protocol: heuristic_fixed_budget
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 10.0
+  primary_budget_sec: 10.0
+  threads: 1
+  verifier: cvrp_independent
+  solver_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/pyvrp_cvrp_v1_dev.yaml
+  instance_set_config_sha256: 39d756151d1813b65f586618224e46fc208413d0e7d8bcf0e86e9f574df81901
+  size: 10
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://calibration/cvrplib_x/oracle.yaml
+  instance_set_config_sha256: 84833f98c4d1f2480889ed8f5f0b9046402bc899fd06f8a6b7602f186cc8ca13
+  size: 38
+  randomness:
+    instance_seed: 17
+- name: judge_shift
+  kind: judge_shift
+  instance_set_config: private://instance_sets/pyvrp_cvrp_shift_v1.yaml
+  instance_set_config_sha256: 164b75f46a82ba164393d2b63b692ff4e4cf2a8f37e1579aee64bf4e71f7ecde
+  size: 10
+  randomness:
+    instance_seed: 27100
+    coordinate_seed: 27101
+    demand_seed: 27102

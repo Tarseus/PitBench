@@ -1,0 +1,69 @@
+{
+  "schema_version": 2,
+  "repository": "chocoteam/choco-solver",
+  "pr_number": 1154,
+  "base_commit": "2693dd252d24bf569546ae50a86779c591cf4e2c",
+  "head_commit": "62c81080b3d71c7d0cd80401bbd5ce3525473ccc",
+  "decision": "advance",
+  "reason": "The source diff replaces weighted search-selector storage and update paths, specializes DomOverWDeg and ActivityBased, and changes conflict-history bookkeeping. It targets solver variable selection and per-decision work, with a small parser call-site adjustment retained in the same source patch.",
+  "repository_role": "solver_engine",
+  "mechanism": "combined",
+  "solver_phase": "branching",
+  "solver_entry_points": [
+    "Search.domOverWDegSearch",
+    "Search.activityBasedSearch",
+    "DomOverWDeg.getVariable",
+    "ActivityBased.getVariable",
+    "PropagationEngine.execute"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "search_tree",
+    "proof_time",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "search_incomplete",
+    "incorrect_optimality",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "parsers/src/main/java/org/chocosolver/parser/xcsp/XCSPParser.java",
+    "solver/src/main/java/org/chocosolver/solver/propagation/PropagationEngine.java",
+    "solver/src/main/java/org/chocosolver/solver/propagation/PropagationInsight.java",
+    "solver/src/main/java/org/chocosolver/solver/search/strategy/Search.java",
+    "solver/src/main/java/org/chocosolver/solver/search/strategy/SearchParams.java",
+    "solver/src/main/java/org/chocosolver/solver/search/strategy/selectors/variables/AbstractCriterionBasedVariableSelector.java",
+    "solver/src/main/java/org/chocosolver/solver/search/strategy/selectors/variables/ActivityBased.java",
+    "solver/src/main/java/org/chocosolver/solver/search/strategy/selectors/variables/ConflictHistorySearch.java",
+    "solver/src/main/java/org/chocosolver/solver/search/strategy/selectors/variables/DomOverWDeg.java",
+    "solver/src/main/java/org/chocosolver/solver/search/strategy/selectors/variables/DomOverWDegRef.java",
+    "solver/src/main/java/org/chocosolver/solver/search/strategy/selectors/variables/PickOnDom.java",
+    "solver/src/main/java/org/chocosolver/solver/search/strategy/selectors/variables/PickOnFil.java",
+    "solver/src/main/java/org/chocosolver/util/objects/ArrayVal.java",
+    "solver/src/main/java/org/chocosolver/util/objects/IVal.java",
+    "solver/src/main/java/org/chocosolver/util/objects/IdentityToDouble.java",
+    "solver/src/main/java/org/chocosolver/util/objects/MapVal.java",
+    "solver/src/main/java/org/chocosolver/util/objects/ValueSortedMap.java"
+  ],
+  "solver_behavior_hypothesis": "Specialized weight storage and selector updates may reduce per-decision overhead, while changed weighted scores can alter variable order, search tree size and proof time.",
+  "causal_chain": "The PR removes generic watched-variable and value-map layers, adds identity-indexed weight storage, and rewrites DomOverWDeg and ActivityBased updates on conflicts and restarts. These values determine the next CP variable, so both local cost and global search trajectory can change.",
+  "structural_trigger": "A CP task using dom-over-weighted-degree or activity-based variable selection that experiences propagation failures and repeated decisions; input-order search and trivially solved cases are controls.",
+  "activation_probe": "On both pinned source states, trace weighted-selector calls, conflict/restart updates, chosen variable sequence, decisions, failures and nodes; verify the corresponding input-order control does not use the changed selectors.",
+  "instance_selection_rule": "Freeze public balanced subset-sum and graph-coloring cases by generator, size and baseline difficulty before hidden scoring; retain weighted-search triggers and input-order controls, fixed seeds and budgets, and all timeouts.",
+  "workload_exposure_plan": "Use the shared Choco exact driver and its configured search_strategy parameter; demonstrate direct DomOverWDeg or ActivityBased activation on a visible public panel and independently check original-problem solutions.",
+  "mathematical_risk": "A selector may choose an instantiated or absent variable, lose search completeness, or corrupt conflict weights and incorrectly claim optimality or exhaust resources.",
+  "independent_check_plan": "Verify each original CP solution, objective and integrality; compare optimality claims with independent dynamic-programming or graph certificates on tractable cases; retain contradictory and timeout statuses.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Compare independently verified solve coverage, proof time and normal timeouts on paired held-out subset-sum and graph-coloring families across fixed seeds, reporting strategy and family regressions.",
+  "overlap_review": "Choco #1152 changes search-decision path construction at an earlier snapshot, while #1178 changes arithmetic propagation later. This PR is one mixed selector-storage and scoring change; its classes and search strategies are one task, not separate PR counts.",
+  "overlap_group": "choco_criterion_weighted_search_2025",
+  "related_prs": [
+    1152,
+    1178
+  ],
+  "resource_risk": "Faster score updates may still expand the search tree or increase retained weight-state memory; different variable order can worsen exact proof time.",
+  "source_evidence_urls": [
+    "https://github.com/chocoteam/choco-solver/pull/1154"
+  ]
+}

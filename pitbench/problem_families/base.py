@@ -45,12 +45,13 @@ class ProblemFamilyPlugin(ABC):
             raise ValueError("normalized gap requires an objective sense")
         if anchor is None:
             return None
-        if not math.isfinite(anchor) or anchor == 0:
-            raise ValueError("normalized gap requires a finite nonzero anchor")
+        if not math.isfinite(anchor):
+            raise ValueError("normalized gap requires a finite anchor")
         if objective is None or not math.isfinite(objective):
             return None
         objective_sense_direction = 1 if objective_sense == "minimize" else -1
-        return objective_sense_direction * (objective - anchor) / abs(anchor)
+        scale = abs(anchor) if anchor != 0 else 1.0
+        return objective_sense_direction * (objective - anchor) / scale
 
 
 class ProblemFamilyRegistry:

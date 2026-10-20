@@ -1,0 +1,93 @@
+schema_version: '1.0'
+visibility: agent
+format: mps
+instances:
+- id: dev_0000
+  instance_file: highs_binary_clique_cover_20260921_dev/instances/dev_0000.mps
+  instance_file_sha256: a1f1a6455014f81242d838da89306fadf9edf77402d701ad3a5c9adf44b03b05
+  bks: -8
+  bks_solution_file: highs_binary_clique_cover_20260921_dev/bks_solutions/dev_0000.solution.json
+  bks_solution_file_sha256: 922e44c1d6b4bf4d0d80bd85b22cb0aa5f4d99ce2d30d4c9bf2f0dd450713383
+  proven_optimal: true
+- id: dev_0001
+  instance_file: highs_binary_clique_cover_20260921_dev/instances/dev_0001.mps
+  instance_file_sha256: 2dcd1f509b4873a1696872e9a5b6fc23281a2f82d0889b3ceb2ee1e22248ffc1
+  bks: -12
+  bks_solution_file: highs_binary_clique_cover_20260921_dev/bks_solutions/dev_0001.solution.json
+  bks_solution_file_sha256: 056d716c17b0bc0d8f1c88c329d45459553d3220619e859542a05a933f58a7ba
+  proven_optimal: true
+- id: dev_0002
+  instance_file: highs_binary_clique_cover_20260921_dev/instances/dev_0002.mps
+  instance_file_sha256: a490bc95334fddb0454bd8812f9a9be39c4471c7ce11cf364e7bd23d2fbb76ab
+  bks: -16
+  bks_solution_file: highs_binary_clique_cover_20260921_dev/bks_solutions/dev_0002.solution.json
+  bks_solution_file_sha256: 0d80d7b065570edafe37aee7fc070d574025d40bbf5d7f8e0ec716ed927c1e2f
+  proven_optimal: true
+- id: dev_0003
+  instance_file: highs_binary_clique_cover_20260921_dev/instances/dev_0003.mps
+  instance_file_sha256: 7895ce9914e928805f733887b15f29f4a3bbdeebbfcd036730b0600dd17a742a
+  bks: -8
+  bks_solution_file: highs_binary_clique_cover_20260921_dev/bks_solutions/dev_0003.solution.json
+  bks_solution_file_sha256: 3c57117fad8bb9e787cb2a45595a48039a56c457edf2d5fe6ddef32c63e0f234
+  proven_optimal: true
+- id: dev_0004
+  instance_file: highs_binary_clique_cover_20260921_dev/instances/dev_0004.mps
+  instance_file_sha256: 9a81226d679c0d9475f3025f6a1f4f3688218f46bc6ad5f7681f0a8a5742e263
+  bks: -12
+  bks_solution_file: highs_binary_clique_cover_20260921_dev/bks_solutions/dev_0004.solution.json
+  bks_solution_file_sha256: 4a779340cc93008b918cf11a7505b93bddb83dc65981239045d42386013b1898
+  proven_optimal: true
+- id: dev_0005
+  instance_file: highs_binary_clique_cover_20260921_dev/instances/dev_0005.mps
+  instance_file_sha256: 3d8b95ae22a29bd54ad857fe82c28a13a4cb930a38ba6edc87ef141a602f8d6c
+  bks: -16
+  bks_solution_file: highs_binary_clique_cover_20260921_dev/bks_solutions/dev_0005.solution.json
+  bks_solution_file_sha256: f7a2ba3b1b8733865ffa48d4c008923342e6ec8399e6d3f17539f4dbf5804971
+  proven_optimal: true
+- id: dev_0006
+  instance_file: highs_binary_clique_cover_20260921_dev/instances/dev_0006.mps
+  instance_file_sha256: 9faa93ad75307c12831882c655c03c866116a59cae4155190a466965e79ef59e
+  bks: -8
+  bks_solution_file: highs_binary_clique_cover_20260921_dev/bks_solutions/dev_0006.solution.json
+  bks_solution_file_sha256: 6c15be8c0741ba14f51809dd1fdb1e05168c41b62a929066cb1b07ac18629d45
+  proven_optimal: true
+- id: dev_0007
+  instance_file: highs_binary_clique_cover_20260921_dev/instances/dev_0007.mps
+  instance_file_sha256: bb3baeb0db0a6cf5b84652ddf9a9a0e8515ebf6fee245a763eac6c9694c5f16b
+  bks: -12
+  bks_solution_file: highs_binary_clique_cover_20260921_dev/bks_solutions/dev_0007.solution.json
+  bks_solution_file_sha256: 0957bdcf257504ede1f4faa38972dd6ffa190f8fc8deeb670ebbf97f4e16e462
+  proven_optimal: true
+- id: dev_0008
+  instance_file: highs_binary_clique_cover_20260921_dev/instances/dev_0008.mps
+  instance_file_sha256: 5fab9c1c56eb4eb5b0ddd0377e68b6af5171cc8c0a111fbbdcde09981a1e6f4e
+  bks: -16
+  bks_solution_file: highs_binary_clique_cover_20260921_dev/bks_solutions/dev_0008.solution.json
+  bks_solution_file_sha256: 079679bb9ced4798ab19f70c87b2f909e1c4c8c6b5c28d7b6537fc79f0b13972
+  proven_optimal: true
+- id: dev_0009
+  instance_file: highs_binary_clique_cover_20260921_dev/instances/dev_0009.mps
+  instance_file_sha256: 79f151bf624914c99903ee4e11ff8fa2f0f86507af6e061c934fc7e208a8f59b
+  bks: -8
+  bks_solution_file: highs_binary_clique_cover_20260921_dev/bks_solutions/dev_0009.solution.json
+  bks_solution_file_sha256: e12874e7de6532ac5377b33be444f0e7b6c3f19c7f1fc7e690e359dd50e46084
+  proven_optimal: true
+selection:
+  source_generator: binary_clique_cover_mip
+  kind: binary_clique_cover_mip
+  count: 10
+  groups:
+  - 8
+  - 12
+  - 16
+  group_sizes:
+  - 4
+  - 5
+  - 6
+  coefficient_min: 120
+  coefficient_max: 190
+  cross_edge_density:
+  - 0.04
+  - 0.08
+  randomness:
+    instance_seed: 328600

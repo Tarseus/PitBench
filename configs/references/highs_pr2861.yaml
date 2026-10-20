@@ -1,0 +1,28 @@
+schema_version: '1.0'
+kind: human_pr_source_reference
+task_id: highs_enumeration_20260219
+task_track: open_opportunity
+source_repository: https://github.com/ERGO-Code/HiGHS.git
+pull_request_url: https://github.com/ERGO-Code/HiGHS/pull/2861
+base_commit: f453037bd202196a506b6cd0f20baf5b55090450
+head_commit: 789e17fa9844c02ff7c88339f057aea219ec83c2
+base_tree_sha: 0427e17c8c38f58fe88edc624d228db88521a68c
+head_tree_sha: a1f47ea085d39110356ddf46f075b5a4063af937
+patch_file: configs/references/highs_pr2861_source.patch
+patch_sha256: 3b0262cb932c8182b92e019748c947e9988ccda22fe75f850e751db6937ded13
+changed_source_files:
+  - highs/mip/HighsCliqueTable.cpp
+  - highs/mip/HighsCliqueTable.h
+  - highs/presolve/HPresolve.cpp
+  - highs/presolve/HPresolve.h
+bound_check_sha256: 97bcfd353ee7b41ee8bbd6d3c4ab3980dd879b755da17e479e9ad321378e3011
+status_check_sha256: 91c2bbbaa5f3ede05141513a38bd15453539c1e7266770458ffbe4bad981b8e0
+evaluation_note: >-
+  The PR changes enumeration-presolve row scoring and overlap suppression.
+  A public knapsack MIP activated the new scoring path 7,963 times and removed
+  5,502 overlapping rows in the validation build. Three small models had
+  independently enumerated optima; across 46 frozen base/PR observations,
+  reported bounds and solve statuses had zero discrepancies with trusted
+  optima. The hidden baseline solved 13 of 30 instances within the fixed
+  20-second budget and timed out normally on 17. No hidden human-PR gain is
+  claimed; this is an exact-solver open optimization opportunity.

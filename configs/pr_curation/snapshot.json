@@ -1,0 +1,388 @@
+{
+  "distinct_merged_prs": 26817,
+  "stage_counts": {
+    "discovered": 26774,
+    "intent_reviewed": 0,
+    "source_verified": 2,
+    "build_verified": 2,
+    "workload_verified": 1,
+    "correctness_verified": 0,
+    "performance_confirmed": 0,
+    "task_ready": 38
+  },
+  "discovered_selection_counts": {
+    "advance": 0,
+    "needs_evidence": 9,
+    "reject": 48,
+    "unreviewed": 26717
+  },
+  "structured_selection_review_counts": {
+    "advance": 39,
+    "needs_evidence": 9,
+    "reject": 48
+  },
+  "task_ready_by_repository": {
+    "ERGO-Code/HiGHS": 12,
+    "Gecode/gecode": 1,
+    "PyVRP/PyVRP": 17,
+    "VROOM-Project/vroom": 4,
+    "chocoteam/choco-solver": 4
+  },
+  "task_ready_by_track": {
+    "expert_reference": 4,
+    "open_opportunity": 34
+  },
+  "task_ready_by_mechanism": {
+    "algorithmic_search": 12,
+    "combined": 10,
+    "computational_efficiency": 12,
+    "legacy_unlabeled": 4
+  },
+  "task_ready_by_solver_phase": {
+    "branching": 5,
+    "cut_generation": 2,
+    "legacy_unlabeled": 4,
+    "local_search": 8,
+    "numerical_kernel": 1,
+    "presolve": 3,
+    "primal_heuristic": 7,
+    "propagation": 3,
+    "search_state": 5
+  },
+  "task_ready_by_overlap_group": {
+    "choco_arithmetic_propagation_2026": 1,
+    "choco_criterion_weighted_search_2025": 1,
+    "choco_first_fail_domain_scan_2017": 1,
+    "choco_strategy_decision_path_2025": 1,
+    "gecode_binpacking_dff_propagation_2024": 1,
+    "highs_binary_row_clique_normalization_2026": 1,
+    "highs_chvatal_gomory_presolve_2026": 1,
+    "highs_directional_branch_reliability_2021": 1,
+    "highs_early_strong_branch_budget_2026": 1,
+    "highs_enumeration_presolve_2025": 1,
+    "highs_heuristic_effort_rens_rins_2022": 1,
+    "highs_implications_storage_2021": 1,
+    "highs_mip_cut_aging_2022": 1,
+    "highs_mip_row_aggregation_cut_separation_2021": 1,
+    "highs_simplex_dse_weight_preservation_2022": 1,
+    "highs_transformed_integer_solution_repair_2024": 1,
+    "highs_trivial_bound_candidate_heuristics_2024": 1,
+    "legacy_unlabeled": 4,
+    "pyvrp_crossover_greedy_repair_2023": 1,
+    "pyvrp_default_operator_portfolio_2024": 1,
+    "pyvrp_duration_proposal_shortcut_2025": 1,
+    "pyvrp_ils_exhaustive_on_best_2025": 1,
+    "pyvrp_initial_solution_randomization_2026": 1,
+    "pyvrp_load_route_reuse_2025": 1,
+    "pyvrp_local_search_nonpromising_guard_2025": 1,
+    "pyvrp_neighbourhood_array_2025": 1,
+    "pyvrp_route_cumulative_distance_storage_2024": 1,
+    "pyvrp_searchspace_bitset_2026": 1,
+    "pyvrp_solution_constructor_bitset_2025": 1,
+    "pyvrp_trip_allocation_2025": 1,
+    "pyvrp_unload_route_reuse_2026": 1,
+    "vroom_cvrp_amount_regret_2018": 1,
+    "vroom_cvrp_clustering_candidate_selection_2018": 1,
+    "vroom_insertion_bound_2025": 1,
+    "vroom_tspfix_local_search_2023": 1
+  },
+  "hidden_reference_screen_counts": {
+    "inconclusive": 2
+  },
+  "target_validated_pr_tasks": 1001,
+  "remaining_task_ready_prs": 963,
+  "claim_boundary": "Only task_ready rows count toward the target; discovered and screened PRs are source candidates, not benchmark tasks.",
+  "schema_version": 1,
+  "selection_protocol_version": 2,
+  "as_of_utc": "2026-10-20",
+  "source": "GitHub REST closed pull-request collections, filtered to merged_at != null",
+  "published_comparator": {
+    "name": "FormulaCode ICML 2026",
+    "task_count": 957,
+    "source_url": "https://proceedings.mlr.press/v306/sehgal26a.html"
+  },
+  "repository_inventory_count": 69,
+  "repository_inventory_meaning": "Repositories with at least one merged PR in the discovery registry; this is not a count of distinct solver implementations or benchmark tasks.",
+  "repository_source_review": {
+    "task_backed_solver_repositories": [
+      "ERGO-Code/HiGHS",
+      "Gecode/gecode",
+      "PyVRP/PyVRP",
+      "VROOM-Project/vroom",
+      "chocoteam/choco-solver",
+      "coin-or/Cbc",
+      "google/or-tools",
+      "scipopt/scip"
+    ],
+    "domain_approved_solver_repositories_without_tasks": [
+      "ConSol-Lab/Pumpkin",
+      "NVIDIA/cuopt",
+      "TimefoldAI/timefold-solver",
+      "coin-or/Bonmin",
+      "coin-or/SHOT",
+      "coin-or/SYMPHONY",
+      "graphhopper/jsprit",
+      "optimatika/ojAlgo",
+      "reinterpretcat/vrp"
+    ],
+    "known_component_or_framework_sources": {
+      "coin-or/Cgl": "Cut-generation library used by COIN-OR solvers, including Cbc.",
+      "coin-or/CoinUtils": "Shared COIN-OR utilities, not a separate solver.",
+      "coin-or/Osi": "COIN-OR solver interface, not a separate solver.",
+      "scipopt/papilo": "Presolving library in the SCIP ecosystem.",
+      "MiniZinc/libminizinc": "MiniZinc modeling/compiler library, not a separate optimization engine.",
+      "N-Wouda/ALNS": "Adaptive large-neighborhood-search framework for building solvers.",
+      "ai4co/rl4co": "Reinforcement-learning framework for combinatorial optimization.",
+      "ai4co/routefinder": "RouteFinder research implementation in the AI4CO ecosystem.",
+      "PyJobShop/PyJobShop": "Job-shop modeling and solving interface built on other engines."
+    },
+    "shared_project_lineage": [
+      {
+        "repositories": [
+          "apache/incubator-kie-optaplanner",
+          "TimefoldAI/timefold-solver"
+        ],
+        "relationship": "Timefold Solver is a fork of OptaPlanner; these repositories are not independent solver lineages."
+      }
+    ],
+    "remaining_source_repositories_pending_review": 42,
+    "independent_solver_count": null,
+    "review_basis": "Task configuration identities and public project descriptions/READMEs; remaining sources need domain, engine, and lineage review before counting distinct solvers."
+  },
+  "task_definition": "One unique pre-PR solver source snapshot, reviewed solver-engine optimization mechanism, frozen solver workload and metric, independent correctness checks, and hidden baseline evidence. Agent outcomes and candidate performance do not determine admission.",
+  "validated_pr_task_target": 1001,
+  "validated_pr_tasks_now": 38,
+  "validated_pr_task_gap": 963,
+  "scale_parity_status": "not_reached",
+  "registry_sha256": "8ad6728ea2331c03403080097a90bd732d06d2a3a83be00801409d6609b5188d",
+  "task_ready_prs": [
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "pr_number": 577,
+      "task_id": "highs_mip_row_aggregation_20210916",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "pr_number": 618,
+      "task_id": "highs_directional_branch_20211127",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "pr_number": 651,
+      "task_id": "highs_heuristic_effort_20220112",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "pr_number": 685,
+      "task_id": "highs_dse_weight_preservation_20220123",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "pr_number": 690,
+      "task_id": "highs_cut_aging_20220125",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "pr_number": 693,
+      "task_id": "highs_implications_20220125",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "pr_number": 1992,
+      "task_id": "highs_transformed_integer_repair_20241031",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "pr_number": 2027,
+      "task_id": "highs_trivial_heuristics_20241106",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "pr_number": 2522,
+      "task_id": "highs_chvatal_gomory_20250901",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "pr_number": 2861,
+      "task_id": "highs_enumeration_20260219",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "pr_number": 3213,
+      "task_id": "highs_early_branch_budget_20260817",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "pr_number": 3286,
+      "task_id": "highs_binary_clique_presolve_20260921",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "Gecode/gecode",
+      "pr_number": 224,
+      "task_id": "gecode_binpacking_dff_20260711",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 232,
+      "task_id": "pyvrp_solution_constructor_20230602",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 511,
+      "task_id": "pyvrp_default_operators_20240305",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 701,
+      "task_id": "pyvrp_route_distance_storage_20241117",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 783,
+      "task_id": "pyvrp_solution_constructor_20250513",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 845,
+      "task_id": "pyvrp_duration_proposal_20250605",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 865,
+      "task_id": "pyvrp_search_20250717",
+      "task_track": null
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 919,
+      "task_id": "pyvrp_search_20251020",
+      "task_track": null
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 962,
+      "task_id": "pyvrp_nonpromising_pruning_20251218",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 966,
+      "task_id": "pyvrp_search_20251219",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 967,
+      "task_id": "pyvrp_search_20251221",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 974,
+      "task_id": "pyvrp_search_20251223",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 988,
+      "task_id": "pyvrp_search_20260112",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 998,
+      "task_id": "pyvrp_random_initial_solution_20260116",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 1146,
+      "task_id": "pyvrp_search_20260728",
+      "task_track": null
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 1155,
+      "task_id": "pyvrp_search_20260803",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 1156,
+      "task_id": "pyvrp_search_20260806",
+      "task_track": null
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 1190,
+      "task_id": "pyvrp_search_20260826",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "VROOM-Project/vroom",
+      "pr_number": 112,
+      "task_id": "vroom_pr112_clustering_20180509",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "VROOM-Project/vroom",
+      "pr_number": 146,
+      "task_id": "vroom_cvrp_regret_insertion_20180813",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "VROOM-Project/vroom",
+      "pr_number": 978,
+      "task_id": "vroom_tspfix_20230918",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "VROOM-Project/vroom",
+      "pr_number": 1222,
+      "task_id": "vroom_heuristic_20250313",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "chocoteam/choco-solver",
+      "pr_number": 493,
+      "task_id": "choco_first_fail_selector_20170117",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "chocoteam/choco-solver",
+      "pr_number": 1152,
+      "task_id": "choco_decision_path_20250326",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "chocoteam/choco-solver",
+      "pr_number": 1154,
+      "task_id": "choco_weighted_search_20250327",
+      "task_track": "open_opportunity"
+    },
+    {
+      "repository": "chocoteam/choco-solver",
+      "pr_number": 1178,
+      "task_id": "choco_arithmetic_propagation_20260115",
+      "task_track": "open_opportunity"
+    }
+  ]
+}

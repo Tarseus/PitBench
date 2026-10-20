@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "repository": "google/or-tools",
+  "pr_number": 4960,
+  "base_commit": "af5487d1b1f46761dabac8ce7a59cf97e43d6025",
+  "head_commit": "ec75d5211e3b1d3dc616a3344416a858923d4812",
+  "decision": "reject",
+  "reason": "The patch migrates compilation settings to C++20 across the repository. It has no pinned optimization mechanism or solver-behavior target.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "cd0e25104d7761d3f6c05ee4f903cf5812533af49caadfa6c95dee6d9e9fdf03",
+  "changed_file_paths": [
+    ".bazelrc",
+    "CMakeLists.txt",
+    "bazel/README.md",
+    "cmake/dependencies/CMakeLists.txt",
+    "ortools/base/BUILD.bazel",
+    "ortools/base/array.h",
+    "ortools/base/filesystem.cc",
+    "ortools/cpp/CMakeLists.txt.in",
+    "ortools/math_opt/elemental/BUILD.bazel",
+    "ortools/math_opt/elemental/arrays.h",
+    "ortools/math_opt/elemental/arrays_test.cc",
+    "ortools/math_opt/elemental/attr_storage.h",
+    "ortools/math_opt/elemental/attributes.h",
+    "ortools/math_opt/elemental/attributes_test.cc",
+    "ortools/math_opt/elemental/derived_data_test.cc",
+    "ortools/math_opt/elemental/elemental.cc",
+    "ortools/math_opt/elemental/elemental_differencer.cc",
+    "ortools/math_opt/elemental/elemental_export_model.cc",
+    "ortools/math_opt/elemental/elemental_to_string.cc",
+    "ortools/math_opt/elemental/elements.h",
+    "ortools/math_opt/elemental/python/elemental.cc",
+    "ortools/routing/filter_committables.h",
+    "ortools/sat/colab/README.md",
+    "ortools/third_party_solvers/xpress_environment.cc"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/google/or-tools/pull/4960"
+  ],
+  "rejection_basis": "outside_solver_engine"
+}

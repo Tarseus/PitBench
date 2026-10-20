@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "coin-or/Cbc",
+  "pr_number": 407,
+  "base_commit": "420edcd34e270da1615f06ac48f07c23869d4907",
+  "head_commit": "db68f4d4afa694b8fe174eecec0ec1f9e5900334",
+  "decision": "reject",
+  "reason": "The patch removes duplicate hashCut/hashCut2 and same/same2 implementations and redirects calls to the equivalent shared functions. It consolidates duplicate code without changing cut generation, duplicate semantics, or an identified runtime optimization.",
+  "review_lane": "mechanism_review",
+  "detail_record_sha256": "343ced3620d6d9260d5ee6f554914a5bef9dd71b2b4bd5faf98092694203310f",
+  "changed_file_paths": [
+    "src/CbcCountRowCut.cpp"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/coin-or/Cbc/pull/407"
+  ],
+  "rejection_basis": "no_optimization_mechanism"
+}

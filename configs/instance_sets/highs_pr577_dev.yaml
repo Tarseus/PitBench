@@ -1,0 +1,115 @@
+schema_version: '1.0'
+visibility: agent
+format: mps
+instances:
+- id: knapsack_dev_0000
+  instance_file: highs_pr577_dev/instances/knapsack_dev_0000.mps
+  instance_file_sha256: 3620c27cd3b7d298bf74d6bf1dc7d359766fcd0f4e1e8bbdaf6dfce92fdc393e
+  bks: -4542
+  bks_solution_file: highs_multidimensional_knapsack_v1_15_1_dev/bks_solutions/dev_0000.solution.json
+  bks_solution_file_sha256: 18d3f27f8325449458b8d7254208bcd5fdaf8f1bb908023cf1ce7276fda33716
+  proven_optimal: true
+  source_family: multidimensional_knapsack
+  source_instance_id: dev_0000
+  source_instance_file_sha256: ec84ee67a22460c6a454d0527f3e9c3a88a5d9af096ef34e01bfc75211ed5afe
+- id: knapsack_dev_0001
+  instance_file: highs_pr577_dev/instances/knapsack_dev_0001.mps
+  instance_file_sha256: 1aa1945a07eb467dcf4efa1e30014b90a3b2d708a0da2c1a3f696526558c72a6
+  bks: -5031
+  bks_solution_file: highs_multidimensional_knapsack_v1_15_1_dev/bks_solutions/dev_0001.solution.json
+  bks_solution_file_sha256: e0a397260c4e2955c45be6a822df3a315960dcb7b31f635e7f1ba3673eff56c5
+  proven_optimal: true
+  source_family: multidimensional_knapsack
+  source_instance_id: dev_0001
+  source_instance_file_sha256: 83da60949e686ee5d30fa7750f8624afa0b06c50b94fe12149e247bccc011f7f
+- id: knapsack_dev_0002
+  instance_file: highs_pr577_dev/instances/knapsack_dev_0002.mps
+  instance_file_sha256: b3ae58bf5cdfa6f350daffe186d946f264ad231c0e4d3446accb87855a1e9de1
+  bks: -5422
+  bks_solution_file: highs_multidimensional_knapsack_v1_15_1_dev/bks_solutions/dev_0002.solution.json
+  bks_solution_file_sha256: 81ab8f0433f6a3d31d1f453528d85ec325ebdee4d181f531ef49c4ecda494e9b
+  proven_optimal: true
+  source_family: multidimensional_knapsack
+  source_instance_id: dev_0002
+  source_instance_file_sha256: 4169d842d97a3c95b4f4e8d5c9142496e39e128312e8015d15757c64d2725621
+- id: knapsack_dev_0003
+  instance_file: highs_pr577_dev/instances/knapsack_dev_0003.mps
+  instance_file_sha256: adb3ad79808d39b19188b51f9631c703c83e296d18a59c9222967da9ac2d864b
+  bks: -4775
+  bks_solution_file: highs_multidimensional_knapsack_v1_15_1_dev/bks_solutions/dev_0003.solution.json
+  bks_solution_file_sha256: 6a5c5542710736f36328508506597210509f4c9edc52f2600ed8f2859a8303df
+  proven_optimal: true
+  source_family: multidimensional_knapsack
+  source_instance_id: dev_0003
+  source_instance_file_sha256: 32f676eaa2c10e3f3c9e216f68583f4049482745a98dffdfb3fcf7826363c396
+- id: knapsack_dev_0004
+  instance_file: highs_pr577_dev/instances/knapsack_dev_0004.mps
+  instance_file_sha256: 4eb0d32e29d9bc7dcd52100a923182a5c75f3d37f29dbf60b42c574782dd8fce
+  bks: -4933
+  bks_solution_file: highs_multidimensional_knapsack_v1_15_1_dev/bks_solutions/dev_0004.solution.json
+  bks_solution_file_sha256: dea582dfaaecc720e6eb79d0f84a0b81ab7b993b4461ef4fb46506a28a04837e
+  proven_optimal: true
+  source_family: multidimensional_knapsack
+  source_instance_id: dev_0004
+  source_instance_file_sha256: c78a9110a1a4ce845858573600b60f41e81aef2ce64545a853cbd13d010e2c9e
+- id: schedule_dev_0000
+  instance_file: highs_pr577_dev/instances/schedule_dev_0000.mps
+  instance_file_sha256: 0620d0a9dc621e4b56599b958caec67b58e03a7546d85aed85b4cdbe55dfac77
+  bks: 276
+  bks_solution_file: highs_v1_15_1_dev/bks_solutions/dev_0000.solution.json
+  bks_solution_file_sha256: 9bf3cfce0ae45972b0df705ed253b8854535e9c8420acf30891f3e606ca55c75
+  proven_optimal: true
+  source_family: single_machine_scheduling
+  source_instance_id: dev_0000
+  source_instance_file_sha256: 7e5b0fa3eee2b41f49782c0cbd067e81d35886a2b70971c0b5d28cb0511497d8
+- id: schedule_dev_0001
+  instance_file: highs_pr577_dev/instances/schedule_dev_0001.mps
+  instance_file_sha256: 3a8e311f07caf6b4f1b64b53fdeaf81414de11953c30550dd40b5f20d23f2654
+  bks: 508
+  bks_solution_file: highs_v1_15_1_dev/bks_solutions/dev_0001.solution.json
+  bks_solution_file_sha256: e443bee1f37c9694b8ed7bb44b0f81dc83200bb0ca5e86b79c12de96ce654dff
+  proven_optimal: true
+  source_family: single_machine_scheduling
+  source_instance_id: dev_0001
+  source_instance_file_sha256: a4e34d8a5f4f0eeaa833af7b03352ef60ffab8dee1618ed76320beb87d064cd5
+- id: schedule_dev_0002
+  instance_file: highs_pr577_dev/instances/schedule_dev_0002.mps
+  instance_file_sha256: ea02a1731e8aecc8355737e6d89e5fa5c7ebeb59c89df855525b8cd0cd834911
+  bks: 368
+  bks_solution_file: highs_v1_15_1_dev/bks_solutions/dev_0002.solution.json
+  bks_solution_file_sha256: a41f08ebb872b1ada8526b9944e99c7213a16f71a62329b19516cc94d78c3342
+  proven_optimal: true
+  source_family: single_machine_scheduling
+  source_instance_id: dev_0002
+  source_instance_file_sha256: 2a896d9755b22cce463140e3c106d3df67833cbda448979d578def15214bebbd
+- id: schedule_dev_0003
+  instance_file: highs_pr577_dev/instances/schedule_dev_0003.mps
+  instance_file_sha256: f231b359eaf40f15765e463ede89183476da7bdfa2316632b711b9d5b4c7330d
+  bks: 358
+  bks_solution_file: highs_v1_15_1_dev/bks_solutions/dev_0003.solution.json
+  bks_solution_file_sha256: 21542720a9bbde273f0a7b7a9dd1c5fde1eaeab0efd08f15b8a4697b7872d37d
+  proven_optimal: true
+  source_family: single_machine_scheduling
+  source_instance_id: dev_0003
+  source_instance_file_sha256: a66c25a0638673684c750e7e2953412c50e8ea26c44f4f7399639632b7a33238
+- id: schedule_dev_0004
+  instance_file: highs_pr577_dev/instances/schedule_dev_0004.mps
+  instance_file_sha256: 635dbc3bfa5e6a243739765c9e7e5a1a8a0a876fc4fd112d4b47248717c3eae2
+  bks: 218
+  bks_solution_file: highs_v1_15_1_dev/bks_solutions/dev_0004.solution.json
+  bks_solution_file_sha256: df1af61953bd2ea0035f0505997c892f8424f319ffa8566bec8a9c95cef3fe2c
+  proven_optimal: true
+  source_family: single_machine_scheduling
+  source_instance_id: dev_0004
+  source_instance_file_sha256: 51d331df4ca8dfb56d7a84f65a7533be51010efea51bb3ea9b91883882a449e1
+selection:
+  source_generator: historical_mixed_mip_panels
+  families:
+  - multidimensional_knapsack_mip
+  - single_machine_scheduling_mip
+  mps_conversion: HiGHS 1.15.1 MPS writer; model coefficients and variable domains
+    retained.
+  activation_panel: One fixed representative from each family was instrumented on
+    both pinned source states; only mod-k and clique merge paths are claimed active.
+  instance_representation: HiGHS 1.15.1 MPS serialization of the original frozen LP
+    inputs; the pinned HiGHS 1.0 parser consumes MPS integer markers correctly.

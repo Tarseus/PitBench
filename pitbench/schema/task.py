@@ -83,6 +83,18 @@ class RepositorySpec(BaseModel):
         return values
 
 
+class ValidationTestPatch(BaseModel):
+    source: str
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("source")
+    @classmethod
+    def require_private_asset(cls, value: str) -> str:
+        if not value.startswith("private://validation_tests/"):
+            raise ValueError("validation test patch must be an evaluator-owned asset")
+        return value
+
+
 class OracleReference(BaseModel):
     kind: Literal[
         "known_optimum",
@@ -248,6 +260,7 @@ class EvaluationProtocol(BaseModel):
     performance_protocol: PerformanceProtocol
     budgets_sec: list[float]
     primary_budget_sec: float = Field(gt=0)
+    fixed_solver_parameters: dict[str, str | int | float | bool] | None = None
     solver_seeds: list[int] | None = None
     seed_robustness: SeedRobustnessConfig | None = None
     representation_robustness: RepresentationRobustnessConfig | None = None
@@ -256,6 +269,7 @@ class EvaluationProtocol(BaseModel):
     threads: int = Field(default=1, gt=0)
     exact_time_basis: ExactTimeBasis = ExactTimeBasis.CPU_TIME
     verifier: str
+    validation_test_patch: ValidationTestPatch | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -268,6 +282,8 @@ class EvaluationProtocol(BaseModel):
     def validate_grid(self) -> Self:
         if not self.budgets_sec or any(value <= 0 for value in self.budgets_sec):
             raise ValueError("evaluation budgets must be positive")
+        if self.fixed_solver_parameters is not None and not self.fixed_solver_parameters:
+            raise ValueError("fixed solver parameters must not be empty")
         if self.primary_budget_sec not in self.budgets_sec:
             raise ValueError("primary budget must belong to evaluation budgets")
         if (self.solver_seeds is None) == (self.seed_robustness is None):

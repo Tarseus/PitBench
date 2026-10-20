@@ -1,0 +1,15 @@
+schema_version: '1.0'
+kind: human_pr_source_reference
+task_id: pyvrp_search_20260806
+source_repository: https://github.com/PyVRP/PyVRP.git
+pull_request_url: https://github.com/PyVRP/PyVRP/pull/1156
+base_commit: 5a8c327692d044cff09786ed470413fe941269e7
+head_commit: 8370d425be2dd36ed89075ec09dd10efa71a92f3
+patch_file: configs/references/pyvrp_pr1156_source.patch
+patch_sha256: 9cea99c0d74e1bbbc32f5318f2edba7efe10e1281b5d5968064ea4b14daf4ff6
+changed_source_file: pyvrp/cpp/search/PerturbationManager.cpp
+base_source_sha256: b4fb915c0f8972709a70c6eacc52a8eb1194581ae59673ff633743b3e5ed6287
+head_source_sha256: b7d4fbb219dafeec3bd1eb01675b7500f4d6ddea9e66b9698d9e8bcc7408c7a4
+upstream_full_patch_sha256: 6304021d4c9af75ee863764ed1783c3d02d1547434736dc9f2868655d0764625
+evaluation_note: The expert reference uses only the source edit. The upstream PR also
+  changed tests; those test edits are excluded from candidate performance execution.

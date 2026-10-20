@@ -14,11 +14,28 @@ import java.util.regex.Pattern;
 import org.chocosolver.solver.Model;
 import org.chocosolver.solver.Solution;
 import org.chocosolver.solver.Solver;
+import org.chocosolver.solver.constraints.Constraint;
+import org.chocosolver.solver.constraints.ternary.PropXplusYeqZ;
 import org.chocosolver.solver.search.strategy.Search;
 import org.chocosolver.solver.variables.IntVar;
 
 public final class ExactSolverRunner {
     private ExactSolverRunner() {}
+
+    private static void setSolverSeed(Model model, long solverSeed) {
+        try {
+            model.getClass().getMethod("setSeed", long.class).invoke(model, solverSeed);
+        } catch (NoSuchMethodException unsupported) {
+            if (solverSeed != 0) {
+                throw new IllegalArgumentException(
+                    "this Choco version does not support solver seeds other than zero",
+                    unsupported
+                );
+            }
+        } catch (ReflectiveOperationException error) {
+            throw new IllegalStateException("failed to configure Choco solver seed", error);
+        }
+    }
 
     private static int integerField(String input, String name) {
         Pattern pattern = Pattern.compile("\\\"" + name + "\\\"\\s*:\\s*(\\d+)");
@@ -108,6 +125,119 @@ public final class ExactSolverRunner {
         return json.append(']').toString();
     }
 
+    private static String selectedItemsJson(Solution solution, IntVar[] picks) {
+        StringBuilder json = new StringBuilder("[");
+        boolean first = true;
+        for (int item = 0; item < picks.length; item++) {
+            if (solution.getIntVal(picks[item]) == 1) {
+                if (!first) {
+                    json.append(',');
+                }
+                json.append(item);
+                first = false;
+            }
+        }
+        return json.append(']').toString();
+    }
+
+    private static void runBalancedSubsetSum(
+        String instance,
+        long solverSeed,
+        double budgetSec,
+        String searchStrategy
+    ) {
+        int[] weights = integerArray(instance, "weights");
+        int cardinality = integerField(instance, "cardinality");
+        int target = integerField(instance, "target");
+        String domainMode = stringField(instance, "domain_mode", "bounded");
+        if (weights.length < 2 || cardinality <= 0 || cardinality >= weights.length
+            || !(domainMode.equals("bounded") || domainMode.equals("enumerated"))) {
+            throw new IllegalArgumentException("invalid balanced subset-sum instance");
+        }
+        long totalLong = 0;
+        for (int weight : weights) {
+            if (weight <= 0) {
+                throw new IllegalArgumentException("subset-sum weights must be positive");
+            }
+            totalLong += weight;
+        }
+        if (totalLong > Integer.MAX_VALUE || target > totalLong) {
+            throw new IllegalArgumentException("invalid subset-sum sum or target");
+        }
+        int total = (int) totalLong;
+        boolean bounded = domainMode.equals("bounded");
+        Model model = new Model("PitBench balanced subset sum");
+        IntVar[] picks = model.boolVarArray("pick", weights.length);
+        IntVar[] prefix = new IntVar[weights.length + 1];
+        prefix[0] = model.intVar("sum_0", 0);
+        for (int item = 0; item < weights.length; item++) {
+            IntVar contribution = model.intVar(
+                "weight_" + item, new int[] {0, weights[item]}
+            );
+            model.times(picks[item], weights[item], contribution).post();
+            prefix[item + 1] = model.intVar(
+                "sum_" + (item + 1), 0, total, bounded
+            );
+            new Constraint(
+                "prefix_sum", new PropXplusYeqZ(prefix[item], contribution, prefix[item + 1])
+            ).post();
+        }
+        model.sum(picks, "=", cardinality).post();
+        IntVar difference = model.intVar("difference", -total, total, bounded);
+        model.arithm(difference, "+", model.intVar(target), "=", prefix[weights.length]).post();
+        IntVar deviation = model.intVar("deviation", 0, total, bounded);
+        model.absolute(deviation, difference).post();
+        setSolverSeed(model, solverSeed);
+
+        Solver solver = model.getSolver();
+        switch (searchStrategy) {
+            case "input_order_lb":
+                solver.setSearch(Search.inputOrderLBSearch(picks));
+                break;
+            case "min_dom_lb":
+                solver.setSearch(Search.minDomLBSearch(picks));
+                break;
+            case "dom_over_wdeg":
+                solver.setSearch(Search.domOverWDegSearch(picks));
+                break;
+            case "activity_based":
+                solver.setSearch(Search.activityBasedSearch(picks));
+                break;
+            default:
+                throw new IllegalArgumentException("unsupported search_strategy: " + searchStrategy);
+        }
+        solver.limitTime((long) Math.ceil(budgetSec * 1000.0));
+        long cpuStart = processCpuTime();
+        Solution solution = solver.findOptimalSolution(deviation, false);
+        long cpuEnd = processCpuTime();
+        boolean hasSolution = solution != null;
+        boolean timedOut = solver.isStopCriterionMet();
+        String termination = hasSolution && !timedOut
+            ? "optimal" : timedOut ? "time_limit" : "other";
+        String solverStatus = hasSolution && !timedOut
+            ? "Optimal" : timedOut ? "Time limit" : "No solution";
+        String cpuTime = cpuStart >= 0 && cpuEnd >= cpuStart
+            ? Double.toString((cpuEnd - cpuStart) / 1_000_000_000.0) : "null";
+        String objective = hasSolution
+            ? Integer.toString(solution.getIntVal(deviation)) : "null";
+        String solutionJson = hasSolution
+            ? "{\"selected_items\":" + selectedItemsJson(solution, picks) + "}"
+            : "{}";
+        System.out.println(
+            "{\"valid\":" + hasSolution
+                + ",\"has_solution\":" + hasSolution
+                + ",\"objective\":" + objective
+                + ",\"solver_status\":\"" + solverStatus + "\""
+                + ",\"solver_termination\":\"" + termination + "\""
+                + ",\"solver_runtime_sec\":" + solver.getTimeCount()
+                + ",\"cpu_time_sec\":" + cpuTime
+                + ",\"nodes\":" + solver.getNodeCount()
+                + ",\"effective_parameters\":{\"search_strategy\":\""
+                + searchStrategy + "\"}"
+                + ",\"solution\":" + solutionJson + "}"
+        );
+    }
+
     private static void runGraphColoring(
         String instance,
         long solverSeed,
@@ -132,7 +262,7 @@ public final class ExactSolverRunner {
         }
         IntVar maximumColor = model.intVar("maximumColor", 0, vertexCount - 1, true);
         model.max(maximumColor, colors).post();
-        model.setSeed(solverSeed);
+        setSolverSeed(model, solverSeed);
         Solver solver = model.getSolver();
         switch (searchStrategy) {
             case "input_order_lb":
@@ -202,6 +332,10 @@ public final class ExactSolverRunner {
         String parameters = args.length == 5 ? args[4] : "{}";
         String searchStrategy = stringField(parameters, "search_strategy", "input_order_lb");
         String instance = Files.readString(instancePath);
+        if (stringField(instance, "problem_kind", "bin_packing").equals("balanced_subset_sum")) {
+            runBalancedSubsetSum(instance, solverSeed, budgetSec, searchStrategy);
+            return;
+        }
         if (stringField(instance, "problem_kind", "bin_packing").equals("graph_coloring")) {
             runGraphColoring(instance, solverSeed, budgetSec, searchStrategy);
             return;
@@ -262,7 +396,7 @@ public final class ExactSolverRunner {
             true
         );
         model.max(maximumBin, itemBins).post();
-        model.setSeed(solverSeed);
+        setSolverSeed(model, solverSeed);
 
         Solver solver = model.getSolver();
         switch (searchStrategy) {

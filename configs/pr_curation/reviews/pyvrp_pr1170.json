@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 1170,
+  "base_commit": "852e7c35f4606d50dae01eacbe0a4dfdf8b8194c",
+  "head_commit": "13fdd8af389fe53d7d3c6cf115e94fa568e217d6",
+  "decision": "needs_evidence",
+  "reason": "The changed loop is inside Solution::insert for a pickup-delivery shipment and builds PickupSegment and DeliverySegment proposals. The current PyVRP benchmark and the cited public screen use CVRP instances without shipments, so their successful solves do not show that this incremental segment path executes or that pickup-delivery feasibility is preserved. The source-only patch remains verified, but this task needs a shipment-bearing workload, an independent original-problem checker, and a fixed-budget protocol before it can advance.",
+  "missing_evidence": [
+    "solver_call_path",
+    "workload_activation",
+    "independent_checker",
+    "performance_protocol"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/1170"
+  ]
+}

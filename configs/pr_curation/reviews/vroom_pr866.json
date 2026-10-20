@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "VROOM-Project/vroom",
+  "pr_number": 866,
+  "base_commit": "6671ffb2283f6a29bea62c1b779912df76a535a5",
+  "head_commit": "3aac5e748429723f2caa72eb5a209f256c9876fe",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Clarifies API documentation for max_load; no executable solver source changes.",
+  "reviewed_changed_files": [
+    "docs/API.md"
+  ],
+  "detail_sha256": "72eff01ec6cb05771898f6fac135027e66dab98368ffd4d95890eae8cade9486",
+  "selection_queue_sha256": "966f5bf257f33641ce530125917422beb40ece4759a865cfe3930c288107cc87",
+  "source_evidence_urls": [
+    "https://github.com/VROOM-Project/vroom/pull/866"
+  ]
+}

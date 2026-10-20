@@ -1,0 +1,60 @@
+schema_version: '3.0'
+task_id: highs_mip_row_aggregation_20210916
+release:
+  repository: ERGO-Code/HiGHS
+  version: 1.0.0
+  tag: ff73913f6373c423da0a2115280cf31cc681a948
+  base_commit: ff73913f6373c423da0a2115280cf31cc681a948
+  released_at: '2021-09-08T00:42:03+01:00'
+  url: https://github.com/ERGO-Code/HiGHS/commit/ff73913f6373c423da0a2115280cf31cc681a948
+task_type: exact_solver
+problem_family: mip
+optimization_scope: mip_row_aggregation_modk_cut_and_clique_merge_efficiency
+instruction: Improve exact MIP solving in this pinned HiGHS 1.0 source snapshot while
+  preserving original-model feasibility, valid bounds, objective semantics, and truthful
+  solve statuses. Choose source changes autonomously and use only the visible development
+  instances.
+repository:
+  clone_url: https://github.com/ERGO-Code/HiGHS.git
+  plugin: pitbench.repositories.plugins:HighsRepositoryPlugin
+  editable_paths:
+  - src
+  - build
+  agent_image: pitbench-highs-pr577-agent:local
+  judge_image: sha256:7a59b407475ba34d441203f56aa52bd05da99489e5c9a3301c2716180fcb938d
+oracle:
+  kind: known_optimum
+  source: private://oracles/highs_mip_row_aggregation_20210916.yaml
+  source_sha256: eed78302af1378d3a890b410705ee711f26c4edcdcba6a12ed76eda6d38f87db
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  threads: 1
+  verifier: trusted_optimum
+  solver_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/highs_pr577_dev.yaml
+  instance_set_config_sha256: b905771a958eeff7d652851c099fc0d07337eca97efd0b96d259bdd3c59386fb
+  size: 10
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/highs_pr577_mps/judge_id.yaml
+  instance_set_config_sha256: a2891ab6564bd16c18864d04d1612655531cc1dee24f299f1b66a4095fefdef6
+  size: 30
+- name: judge_shift
+  kind: judge_shift
+  instance_set_config: private://hidden_instances/highs_pr577_mps/judge_shift.yaml
+  instance_set_config_sha256: d7ea0488ac0338523e87a978cd453767f270d117947043677c56a91ceaf5ab8a
+  size: 30

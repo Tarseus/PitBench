@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 2861,
+  "base_commit": "f453037bd202196a506b6cd0f20baf5b55090450",
+  "head_commit": "789e17fa9844c02ff7c88339f057aea219ec83c2",
+  "decision": "advance",
+  "reason": "The PR changes enumeration-presolve row scoring, removes similar binary rows, and changes propagation work. These are solver search and reduction decisions, not merely local code cleanup.",
+  "repository_role": "solver_engine",
+  "mechanism": "algorithmic_search",
+  "changed_source_paths": [
+    "highs/mip/HighsCliqueTable.cpp",
+    "highs/mip/HighsCliqueTable.h",
+    "highs/presolve/HPresolve.cpp",
+    "highs/presolve/HPresolve.h"
+  ],
+  "solver_behavior_hypothesis": "Scoring rows by implication potential and suppressing overlapping rows may spend the enumeration budget on stronger reductions, changing the MIP search trajectory and total solve behavior.",
+  "workload_exposure_plan": "Use binary MIP instances whose presolve enters enumeration; record reductions and full solve outcomes on the same original models for base and PR builds.",
+  "mathematical_risk": "An invalid enumeration reduction or clique implication can exclude feasible integer solutions or produce an invalid bound.",
+  "independent_check_plan": "Check primal solutions against original MIP models and compare proven statuses and bounds with an independent solver on tractable cases.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Use paired held-out binary MIP families with fixed limits and seeds; report solved rate, time, gap trajectory, and regressions by family.",
+  "overlap_review": "The PR touches presolve and clique-table files also used by later PRs; compare changed hunks and choose disjoint historical baselines before creating additional tasks from the same series.",
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/2861"
+  ],
+  "solver_phase": "presolve",
+  "solver_entry_points": [
+    "HPresolve::enumerateSolutions",
+    "HPresolve::computeProbingScore"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "search_tree",
+    "dual_trajectory",
+    "proof_time"
+  ],
+  "correctness_failure_modes": [
+    "invalid_bound",
+    "false_infeasibility",
+    "search_incomplete"
+  ],
+  "causal_chain": "Implication-based row scoring and overlap suppression redirect a bounded enumeration budget toward different reductions, which can change the downstream MIP tree and proof time.",
+  "structural_trigger": "Binary MIP rows eligible for enumeration presolve, with enough candidate overlap for row suppression.",
+  "activation_probe": "Count calls to enumerateSolutions, candidate and removed rows, reductions, and presolve time before scoring any hidden effect.",
+  "instance_selection_rule": "Freeze binary MIP families by structural row criteria and include control families before running hidden paired comparisons.",
+  "overlap_group": "highs_enumeration_presolve_2025",
+  "related_prs": [],
+  "resource_risk": "Extra row scoring and overlap comparisons can increase presolve cost or memory on instances with many candidate rows."
+}

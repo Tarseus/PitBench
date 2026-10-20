@@ -1,0 +1,341 @@
+{
+  "schema_version": 1,
+  "selection_review_schema_version": 2,
+  "target_validated_pr_tasks": 1001,
+  "target_basis": "PitBench objective is to exceed 1,000 fully validated PR tasks; FormulaCode's published 957 is a scale comparator, not an admission rule.",
+  "task_unit_definition": "One unique pre-PR solver source snapshot, reviewed source-level optimization mechanism, frozen solver workload and metric, independent correctness checks, and hidden baseline evidence. Human PR gain is required only for the separate expert_reference track; open_opportunity tasks require independently verified improvement room and report the human PR outcome separately.",
+  "search_queries": [
+    "performance in:title,body",
+    "optimization in:title",
+    "optimize in:title",
+    "speed in:title",
+    "faster in:title",
+    "efficiency in:title",
+    "heuristic in:title",
+    "presolve in:title",
+    "branching in:title",
+    "cut in:title"
+  ],
+  "repositories": [
+    {
+      "repository": "ai4co/rl4co",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "ai4co/routefinder",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "apache/incubator-kie-optaplanner",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "arminbiere/cadical",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "arminbiere/kissat",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "arminbiere/lingeling",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "arminbiere/satch",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "audemard/glucose",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "bitwuzla/bitwuzla",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "Boolector/boolector",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "chocoteam/choco-solver",
+      "scope_status": "task_backed"
+    },
+    {
+      "repository": "coin-or/Bonmin",
+      "scope_status": "approved_source",
+      "domain_review_evidence_url": "https://api.github.com/repos/coin-or/Bonmin",
+      "domain_review_note": "Mixed-integer nonlinear programming solver."
+    },
+    {
+      "repository": "coin-or/Cbc",
+      "scope_status": "task_backed"
+    },
+    {
+      "repository": "coin-or/Cgl",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "coin-or/Clp",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "coin-or/CoinUtils",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "coin-or/Osi",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "coin-or/SHOT",
+      "scope_status": "approved_source",
+      "domain_review_evidence_url": "https://api.github.com/repos/coin-or/SHOT",
+      "domain_review_note": "Mixed-integer nonlinear optimization solver."
+    },
+    {
+      "repository": "coin-or/SYMPHONY",
+      "scope_status": "approved_source",
+      "domain_review_evidence_url": "https://api.github.com/repos/coin-or/SYMPHONY",
+      "domain_review_note": "Mixed-integer linear programming solver and development framework; PRs must touch the solver engine."
+    },
+    {
+      "repository": "ConSol-Lab/Pumpkin",
+      "scope_status": "approved_source",
+      "domain_review_evidence_url": "https://api.github.com/repos/ConSol-Lab/Pumpkin",
+      "domain_review_note": "Lazy Clause Generation constraint programming solver written in Rust."
+    },
+    {
+      "repository": "corail-research/SeaPearl.jl",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "crillab/gophersat",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "cvc5/cvc5",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "dreal/dreal4",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "dylanede/cassowary-rs",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "scope_status": "task_backed"
+    },
+    {
+      "repository": "Gecode/gecode",
+      "scope_status": "approved_source",
+      "domain_review_evidence_url": "https://api.github.com/repos/Gecode/gecode",
+      "domain_review_note": "Generic Constraint Development Environment; constraint solver engine."
+    },
+    {
+      "repository": "go-air/gini",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "google/network-opt",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "google/or-tools",
+      "scope_status": "task_backed"
+    },
+    {
+      "repository": "graphhopper/jsprit",
+      "scope_status": "approved_source",
+      "domain_review_evidence_url": "https://api.github.com/repos/graphhopper/jsprit",
+      "domain_review_note": "Java toolkit solving rich vehicle routing problems; PRs must touch the search engine rather than only integration code."
+    },
+    {
+      "repository": "huub-solver/huub",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "inamiy/Cassowary",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "JeroenGar/jagua-rs",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "JeroenGar/sparrow",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "jix/varisat",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "minion/minion",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "MiniZinc/libminizinc",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "MiniZinc/minizinc",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "msakai/toysolver",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "msoos/cryptominisat",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "muhos/ParaFROST",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "N-Wouda/ALNS",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "niklasso/minisat",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "nucleic/kiwi",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "NVIDIA/cuopt",
+      "scope_status": "approved_source",
+      "domain_review_evidence_url": "https://api.github.com/repos/NVIDIA/cuopt",
+      "domain_review_note": "GPU accelerated decision optimization; solver source, with individual PRs still requiring engine-level review."
+    },
+    {
+      "repository": "optimatika/ojAlgo",
+      "scope_status": "approved_source",
+      "domain_review_evidence_url": "https://api.github.com/repos/optimatika/ojAlgo",
+      "domain_review_note": "Java LP/QP/MIP solvers plus linear algebra; PRs must touch optimization solver code."
+    },
+    {
+      "repository": "potassco/clasp",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "potassco/clingo",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "pothitos/naxos",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "PyJobShop/PyJobShop",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "python-constraint/python-constraint",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "scope_status": "task_backed"
+    },
+    {
+      "repository": "qcappart/hybrid-cp-rl-solver",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "radsz/jacop",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "reinterpretcat/vrp",
+      "scope_status": "approved_source",
+      "domain_review_evidence_url": "https://api.github.com/repos/reinterpretcat/vrp",
+      "domain_review_note": "Vehicle routing problem solver."
+    },
+    {
+      "repository": "sambayless/monosat",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "sarsko/CreuSAT",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "sat-group/open-wbo",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "scipopt/papilo",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "scipopt/scip",
+      "scope_status": "task_backed"
+    },
+    {
+      "repository": "scipopt/soplex",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "scipopt/ug",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "shnarazk/splr",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "slothy-optimizer/slothy",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "SRI-CSL/yices2",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "stp/stp",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "szeider/mcp-solver",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "TimefoldAI/timefold-solver",
+      "scope_status": "approved_source",
+      "domain_review_evidence_url": "https://api.github.com/repos/TimefoldAI/timefold-solver",
+      "domain_review_note": "Scheduling and routing solver; shares project lineage with OptaPlanner and is not an independent lineage count."
+    },
+    {
+      "repository": "uuverifiers/eldarica",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "uuverifiers/princess",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "VROOM-Project/vroom",
+      "scope_status": "task_backed"
+    },
+    {
+      "repository": "Wikunia/ConstraintSolver.jl",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "yorak/VeRyPy",
+      "scope_status": "pending_domain_review"
+    },
+    {
+      "repository": "Z3Prover/z3",
+      "scope_status": "pending_domain_review"
+    }
+  ]
+}

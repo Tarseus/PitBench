@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "repository": "TimefoldAI/timefold-solver",
+  "pr_number": 536,
+  "base_commit": "90bce17f3835bad3cf73e9bda0508e63a834fec7",
+  "head_commit": "81fa553aff529614c6bd3383ea9d2e6daee2ab07",
+  "decision": "reject",
+  "reason": "The patch avoids an exception while scoring an uninitialized solution. It changes correctness/error handling rather than search behavior or computational efficiency.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "0b64aa21db1b45be78466e66cc8a0878bb7ccbf90bff8a734b0edcd6f6880aed",
+  "changed_file_paths": [
+    "core/core-impl/src/main/java/ai/timefold/solver/core/impl/score/director/AbstractScoreDirector.java",
+    "core/core-impl/src/main/java/ai/timefold/solver/core/impl/score/director/InnerScoreDirector.java",
+    "core/core-impl/src/main/java/ai/timefold/solver/core/impl/solver/Fitter.java",
+    "core/core-impl/src/test/java/ai/timefold/solver/core/impl/solver/DefaultSolverTest.java"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/TimefoldAI/timefold-solver/pull/536"
+  ],
+  "rejection_basis": "correctness_only"
+}

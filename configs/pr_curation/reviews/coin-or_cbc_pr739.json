@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "coin-or/Cbc",
+  "pr_number": 739,
+  "base_commit": "42de27a3ec2ad1c5ebe977ebdc9ddd205e69f728",
+  "head_commit": "947ff152a458a3f177f025a0f033ac752afa7c62",
+  "decision": "reject",
+  "reason": "The patch prevents signed-integer overflow in a source calculation. It is a correctness fix without a separate solver-performance mechanism.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "7e1951ba466f8c257fbd054cf34ce1cf7ef7af0ba63521afa30ddb69fc9caeff",
+  "changed_file_paths": [
+    "src/CbcModel.cpp"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/coin-or/Cbc/pull/739"
+  ],
+  "rejection_basis": "correctness_only"
+}

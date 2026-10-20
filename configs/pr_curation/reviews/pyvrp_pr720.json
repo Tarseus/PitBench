@@ -1,0 +1,32 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 720,
+  "base_commit": "a7126bb016d12ee62cb0d022d66322f70fd3f9de",
+  "head_commit": "e78bbe266377fe6b9bb2a83f68afd7103053ec5d",
+  "decision": "needs_evidence",
+  "missing_evidence": [
+    "solver_call_path",
+    "workload_activation"
+  ],
+  "reason": "The PR changes LocalSearch solution loading and Route insertion, but its author reports the large effect for ILS while the pinned base's public Model.solve path constructs GeneticAlgorithm. The current PitBench PyVRP driver uses Model.solve, so a representative ILS workload and runnable entry point must be established before this PR can advance.",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "solver_phase": "local_search",
+  "solver_entry_points": [
+    "LocalSearch::loadSolution",
+    "Route::insert",
+    "Route::clear"
+  ],
+  "changed_source_paths": [
+    "pyvrp/cpp/search/LocalSearch.cpp",
+    "pyvrp/cpp/search/Route.cpp",
+    "pyvrp/cpp/search/Route.h",
+    "pyvrp/cpp/search/bindings.cpp"
+  ],
+  "workload_gap": "A pinned ILS execution path and independently verified CVRP workload are not yet available for this historical base.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/720",
+    "https://api.github.com/repos/PyVRP/PyVRP/pulls/720/files"
+  ]
+}

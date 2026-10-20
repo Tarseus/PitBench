@@ -1,0 +1,104 @@
+schema_version: '3.0'
+task_id: pyvrp_search_20260803
+release:
+  repository: PyVRP/PyVRP
+  version: 0.14.0a0
+  tag: 80f42f2891734f5e20dd4c85ffe86800070572f0
+  base_commit: 80f42f2891734f5e20dd4c85ffe86800070572f0
+  released_at: '2026-08-03T11:53:44Z'
+  url: https://github.com/PyVRP/PyVRP/commit/80f42f2891734f5e20dd4c85ffe86800070572f0
+task_type: heuristic_solver
+problem_family: cvrp
+optimization_scope: local_search_and_search_efficiency
+instruction: Improve routing search performance in this pinned PyVRP source snapshot
+  while preserving buildability, feasibility, objective semantics, and solution format
+  compatibility. Choose the source change autonomously; use only visible development
+  instances.
+repository:
+  clone_url: https://github.com/PyVRP/PyVRP.git
+  plugin: pitbench.repositories.plugins:PyVRPDebugOptimizedRepositoryPlugin
+  editable_paths:
+  - pyvrp
+  agent_image: pitbench-pyvrp-pr1155-agent:local
+  judge_image: sha256:f566c5a6c57e74aa836479eef19476e4679434814428cbbf16ef9b7b10a60c8d
+oracle:
+  kind: best_known_solution
+  source: private://calibration/cvrplib_x/oracle.yaml
+  objective_sense: minimize
+evaluation:
+  performance_protocol: heuristic_fixed_budget
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 10.0
+  primary_budget_sec: 10.0
+  representation_robustness:
+    instance_set: agent_dev
+    solver_seed: 0
+    relabeling_generation_seed: 20260907
+    relabelings_per_instance: 30
+  seed_robustness:
+    development_seeds:
+    - 3687993774
+    - 3799101943
+    - 2024317593
+    - 603286818
+    - 323182937
+    - 1688034243
+    - 686358246
+    - 3321626164
+    - 264305458
+    - 3402058414
+    - 1457906957
+    - 1890054919
+    - 251278272
+    - 879304733
+    - 2479629513
+    - 1226370639
+    - 3283797925
+    - 2931562165
+    - 3537754413
+    - 3663967696
+    - 3833187198
+    - 774434508
+    - 3062745665
+    - 1852073310
+    - 1040828950
+    - 2106353719
+    - 1705732003
+    - 1395251669
+    - 1260062517
+    - 4256231868
+    evaluation_seeds_file: private://seed_robustness/pyvrp_search_20260803.yaml
+    evaluation_seeds_file_sha256: 0c89096bc84a11ec9f059658d3bf1a7200e16436d127acbf9eb63e1550f147cf
+    seed_selection:
+      seed_min: 0
+      seed_max: 4294967295
+      seed_count: 30
+  threads: 1
+  verifier: cvrp_independent
+  validation_test_patch:
+    source: private://validation_tests/pyvrp_search_20260803.patch
+    source_sha256: 17bd5acfbd085c350bb96bb284651cc4e96f1bb42658edfd61a35f1ba75e1e85
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/pyvrp_cvrp_v1_dev.yaml
+  instance_set_config_sha256: 39d756151d1813b65f586618224e46fc208413d0e7d8bcf0e86e9f574df81901
+  size: 10
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://calibration/cvrplib_x/oracle.yaml
+  instance_set_config_sha256: 84833f98c4d1f2480889ed8f5f0b9046402bc899fd06f8a6b7602f186cc8ca13
+  size: 38
+  randomness:
+    instance_seed: 17
+- name: judge_shift
+  kind: judge_shift
+  instance_set_config: private://instance_sets/pyvrp_cvrp_shift_v1.yaml
+  instance_set_config_sha256: 164b75f46a82ba164393d2b63b692ff4e4cf2a8f37e1579aee64bf4e71f7ecde
+  size: 10
+  randomness:
+    instance_seed: 27100
+    coordinate_seed: 27101
+    demand_seed: 27102

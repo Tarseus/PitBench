@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 16,
+  "base_commit": "3d8edc9461bd5aef5a8639dfe96a6a561553b737",
+  "head_commit": "c51963f992a68564979e631f5bc45d8be2937dc2",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Adds MIP test instances and changes the test CMake list only; no solver-engine source changes.",
+  "reviewed_changed_files": [
+    "check/CMakeLists.txt",
+    "check/instances/cycle.mps",
+    "check/instances/greenbea.mps",
+    "check/instances/greenbeb.mps"
+  ],
+  "detail_sha256": "af7f0f34da31096304f65bb15e266095b0b2bb2b617544b42f01d0821a9883bd",
+  "selection_queue_sha256": "966f5bf257f33641ce530125917422beb40ece4759a865cfe3930c288107cc87",
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/16"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "repository": "Gecode/gecode",
+  "pr_number": 252,
+  "base_commit": "b94715d155db87b2048a6fb88734c308f772caad",
+  "head_commit": "3d31de0023fb77305e2ec36342a741c90f687f6e",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Changes CMake reporting, README, and test harness output only; no Gecode solver-engine source changes.",
+  "reviewed_changed_files": [
+    "CMakeLists.txt",
+    "README.md",
+    "test/test.cpp"
+  ],
+  "detail_sha256": "e9e1e3660d380509767d79a1fd0747d3bcb89ef6ca8166f765b3b19456da458f",
+  "selection_queue_sha256": "966f5bf257f33641ce530125917422beb40ece4759a865cfe3930c288107cc87",
+  "source_evidence_urls": [
+    "https://github.com/Gecode/gecode/pull/252"
+  ]
+}

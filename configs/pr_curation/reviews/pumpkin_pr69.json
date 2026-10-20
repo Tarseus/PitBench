@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "repository": "ConSol-Lab/Pumpkin",
+  "pr_number": 69,
+  "base_commit": "419100c73bc003dd7b64cd2ad8045793106ae435",
+  "head_commit": "9711157748ada5f99c73b672edfb89e6635ce68e",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Changes release workflow, README, and changelog only; no Pumpkin solver-engine source changes.",
+  "reviewed_changed_files": [
+    ".github/workflows/post-release-pumpkin-solver.yml",
+    "README.md",
+    "pumpkin-solver/CHANGELOG.md"
+  ],
+  "detail_sha256": "c018f85c2fb4b711e55f084e1170cdd81b146caa5b778b8949a356eda80e4e7f",
+  "selection_queue_sha256": "966f5bf257f33641ce530125917422beb40ece4759a865cfe3930c288107cc87",
+  "source_evidence_urls": [
+    "https://github.com/ConSol-Lab/Pumpkin/pull/69"
+  ]
+}

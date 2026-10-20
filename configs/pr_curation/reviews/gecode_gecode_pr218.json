@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "repository": "Gecode/gecode",
+  "pr_number": 218,
+  "base_commit": "879654d47fbf976a8d18f80ca72fae118c9972f2",
+  "head_commit": "8dd3af41bc7d6fe74710c0650d337d6c2d0d12fa",
+  "decision": "reject",
+  "reason": "The patch avoids undefined access when constructing argument arrays from an empty vector and adds regression tests. This is a correctness fix, not an optimization task.",
+  "review_lane": "low_signal_audit",
+  "detail_record_sha256": "1b1f065ac8591af125065c94546da0d756f73d8c4e75f86508934c1b21326171",
+  "changed_file_paths": [
+    "changelog.in",
+    "gecode/kernel/data/array.hpp",
+    "test/array.cpp"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/Gecode/gecode/pull/218"
+  ],
+  "rejection_basis": "correctness_only"
+}

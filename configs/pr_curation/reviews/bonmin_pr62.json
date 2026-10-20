@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "repository": "coin-or/Bonmin",
+  "pr_number": 62,
+  "base_commit": "127a108e4bd42e3a00b7c5c31595f062e090f901",
+  "head_commit": "36916bc9ae1f6105c0fd7cb975d3bdacbf07ede5",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Migrates CI and generated README configuration; no Bonmin algorithm source changes.",
+  "reviewed_changed_files": [
+    ".ci/.travis.pre",
+    ".ci/appveyor.pre",
+    ".coin-or/Dependencies",
+    ".coin-or/config.yml",
+    ".coin-or/generate_readme",
+    ".github/workflows/linux-ci.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/windows-ci.yml",
+    ".travis.yml",
+    "LICENSE",
+    "README.md",
+    "appveyor.yml"
+  ],
+  "detail_sha256": "7815ebb1c9c65e3df17b3f55a6997fd20757b9f50c03477e98afb220b65b5ce4",
+  "selection_queue_sha256": "966f5bf257f33641ce530125917422beb40ece4759a865cfe3930c288107cc87",
+  "source_evidence_urls": [
+    "https://github.com/coin-or/Bonmin/pull/62"
+  ]
+}

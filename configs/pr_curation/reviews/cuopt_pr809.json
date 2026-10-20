@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "repository": "NVIDIA/cuopt",
+  "pr_number": 809,
+  "base_commit": "38852b7976c9f028f70fa8850a07fb231ee478c8",
+  "head_commit": "8b61872de8f33d19ee9eb80a098cee61ed58acdd",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Removes Python 3.10 support through CI, packaging, and documentation files; no C++ optimization engine source changes.",
+  "reviewed_changed_files": [
+    ".github/workflows/pr.yaml",
+    "CONTRIBUTING.md",
+    "README.md",
+    "conda/environments/all_cuda-129_arch-aarch64.yaml",
+    "conda/environments/all_cuda-129_arch-x86_64.yaml",
+    "conda/environments/all_cuda-131_arch-aarch64.yaml",
+    "conda/environments/all_cuda-131_arch-x86_64.yaml",
+    "dependencies.yaml",
+    "docs/cuopt/source/system-requirements.rst",
+    "python/cuopt/cuopt/linear_programming/pyproject.toml",
+    "python/cuopt/pyproject.toml",
+    "python/cuopt_self_hosted/pyproject.toml",
+    "python/cuopt_server/pyproject.toml",
+    "python/libcuopt/pyproject.toml"
+  ],
+  "detail_sha256": "59d1c9991b076054c550224b3135716b358e260a4e2cf6a442ca1b47953a5739",
+  "selection_queue_sha256": "966f5bf257f33641ce530125917422beb40ece4759a865cfe3930c288107cc87",
+  "source_evidence_urls": [
+    "https://github.com/NVIDIA/cuopt/pull/809"
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 966,
+  "base_commit": "1e46138e71502850584a4c270c98573578dccc5e",
+  "head_commit": "b60e92d3e3bdb4c9c1d2e1f9a24780cb5157c8b3",
+  "decision": "advance",
+  "reason": "The PR changes Trip construction and LocalSearch solution export in the solver engine, removing temporary vectors and a copy during repeated search-state materialization.",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "solver_phase": "search_state",
+  "solver_entry_points": [
+    "Trip::Trip",
+    "LocalSearch::exportSolution"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "primal_trajectory",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_primal",
+    "search_incomplete"
+  ],
+  "changed_source_paths": [
+    "pyvrp/cpp/Trip.cpp",
+    "pyvrp/cpp/search/LocalSearch.cpp"
+  ],
+  "solver_behavior_hypothesis": "Reducing temporary allocation and copying during trip and solution creation may let the solver execute more search iterations per fixed time budget and find better CVRP solutions.",
+  "causal_chain": "Trip construction now reuses one load segment per dimension, while LocalSearch moves completed trip vectors into routes; this may lower allocation and copy cost per exported solution without changing the search policy.",
+  "structural_trigger": "CVRP runs with nonempty routes whose search repeatedly constructs trips and exports local-search solutions.",
+  "activation_probe": "Count Trip constructor and LocalSearch::exportSolution calls, record allocations or peak RSS, and pair end-to-end solve trajectories.",
+  "instance_selection_rule": "Use the fixed PyVRP CVRP development, hidden ID, and generated-shift panels selected before observing this PR's effect; retain all instances and seeds.",
+  "workload_exposure_plan": "Run the pinned pre-PR source and source-only PR patch on the existing CVRP panels with identical budgets, seeds, and independent route verification.",
+  "mathematical_risk": "A changed load calculation or moved trip vector could produce incorrect route capacity, incomplete search state, or an invalid reported objective.",
+  "independent_check_plan": "Verify every returned route and objective against the original CVRP instance; compare load and route-cost invariants on targeted constructor cases.",
+  "metric_family": "anytime",
+  "hidden_generalization_plan": "Compare paired hidden ID and generated-shift CVRP panels, including convergence, failures, and instance-level regressions at the predeclared budgets.",
+  "overlap_review": "Compare PR #968 and nearby search-loading changes before treating them as independent task lineages.",
+  "overlap_group": "pyvrp_trip_allocation_2025",
+  "related_prs": [
+    968
+  ],
+  "resource_risk": "Repeating the visits loop per load dimension may trade memory savings for more traversal work on multi-dimensional instances.",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/966",
+    "https://api.github.com/repos/PyVRP/PyVRP/pulls/966/files"
+  ]
+}

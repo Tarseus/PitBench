@@ -1,0 +1,21 @@
+schema_version: '1.0'
+kind: human_pr_source_reference
+task_id: pyvrp_search_20251219
+task_track: open_opportunity
+source_repository: https://github.com/PyVRP/PyVRP.git
+pull_request_url: https://github.com/PyVRP/PyVRP/pull/966
+base_commit: 1e46138e71502850584a4c270c98573578dccc5e
+head_commit: b60e92d3e3bdb4c9c1d2e1f9a24780cb5157c8b3
+base_tree_sha: 44a732e98d20fbb36fb581274c833604acb18665
+head_tree_sha: b752c4c6dcdadb278691c36062d21221ecf72c32
+patch_file: configs/references/pyvrp_pr966_source.patch
+patch_sha256: e594f310b7ccc2ef4ac131a561d89d3a9765faae3bb1b28126087d19992caee5
+changed_source_files:
+  - pyvrp/cpp/Trip.cpp
+  - pyvrp/cpp/search/LocalSearch.cpp
+evaluation_note: >-
+  The source PR changes trip construction and local-search solution export.
+  Its 38-instance, five-hidden-seed, two-order reference control was complete
+  and independently verified but inconclusive in both orders. The task is an
+  open optimization challenge because the pinned base has a measurable
+  remaining verified CVRP gap; this PR is not a positive expert reference.

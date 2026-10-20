@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 693,
+  "base_commit": "1d77a4e561b498ec737d1e81fcf10a982088517f",
+  "head_commit": "7b102ff864ea8b28604d888682330edc793153ad",
+  "decision": "advance",
+  "reason": "The PR changes the MIP implication cache from one growing vector with offsets to per-literal vectors, targeting a stated memory-movement bottleneck in solver search.",
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "changed_source_paths": [
+    "src/mip/HighsImplications.cpp",
+    "src/mip/HighsImplications.h"
+  ],
+  "solver_behavior_hypothesis": "Reducing relocation of cached implications should lower MIP probing and separation overhead; search decisions and total solve time must be measured end to end.",
+  "workload_exposure_plan": "Use MIP instances with binary implications and active probing, record implication counts and solver time, and compare the same original models on base and PR builds.",
+  "mathematical_risk": "Incorrect cache indexing or reuse may create invalid implications, cuts, or bounds and can change feasibility or optimality claims.",
+  "independent_check_plan": "Check returned solutions against original MIP models and compare status, primal values, and valid dual bounds with an independent reference on tractable instances.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Evaluate paired held-out MIP instances from multiple structural families with fixed budgets, seeds, and failure accounting.",
+  "overlap_review": "This PR shares the exact pre-PR commit with cut-aging PR #690. Its implication-cache representation is a different code path, but the same generic Agent instruction and MIP workload would be a duplicate task. Require a distinct implication-focused goal and an independently triggered frozen workload before counting it.",
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/693"
+  ],
+  "solver_phase": "propagation",
+  "solver_entry_points": [
+    "HighsImplications::computeImplications",
+    "HighsImplications::runProbing"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "search_tree",
+    "peak_memory"
+  ],
+  "correctness_failure_modes": [
+    "invalid_bound",
+    "false_infeasibility",
+    "incorrect_optimality"
+  ],
+  "causal_chain": "Per-literal implication vectors avoid relocating a global cache; this can lower probing overhead, but altered cache access can also change reductions and search.",
+  "structural_trigger": "Binary MIP instances that create and reuse many literal implications during probing.",
+  "activation_probe": "Count computeImplications calls, stored implication entries, and probing time on the base and PR builds.",
+  "instance_selection_rule": "Choose binary MIP structural families and a non-triggering control before observing hidden performance; retain every selected instance.",
+  "overlap_group": "highs_implications_storage_2021",
+  "related_prs": [690],
+  "same_snapshot_distinction": "PR #693 may count separately from #690 only with an implication-cache search goal and a frozen binary-implication workload whose activation differs from cut aging; identical Agent input or only a new task ID does not qualify.",
+  "resource_risk": "Per-literal vectors may increase allocator overhead or peak memory even if cache movement falls."
+}

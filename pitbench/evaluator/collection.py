@@ -176,7 +176,10 @@ class NuisanceCollection:
             if (
                 manifest["config"] != config
                 or manifest["solver"] != identity
-                or manifest["task_configuration"] != task.model_dump(mode="json")
+                or type(task)
+                .model_validate(manifest["task_configuration"])
+                .model_dump(mode="json")
+                != task.model_dump(mode="json")
                 or manifest["repository"]
                 != (str(repository.resolve()) if repository else None)
                 or manifest.get("candidate_patch_sha256") != candidate_patch_sha256

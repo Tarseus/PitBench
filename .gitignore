@@ -23,9 +23,6 @@ __pycache__/
 .DS_Store
 /.vscode/
 
-# Local review notes
-/docs/local/
-/docs/main-review-components.md
 /papers/
 /report/
 

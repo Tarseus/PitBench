@@ -26,6 +26,7 @@ class PyVRPRepositoryPlugin(RepositoryPlugin):
     collection_backend = "pitbench.evaluator.collection:PyVRPCollectionBackend"
     representations = {"customer_relabeling": ("judge", "isolated")}
     _PYTHON = ".pitbench-venv/bin/python"
+    validation_build_type = "debug"
     driver_name = "pyvrp"
     driver_python = _PYTHON
     # This test pins the exact local-search trace and move count. Those are
@@ -59,7 +60,7 @@ class PyVRPRepositoryPlugin(RepositoryPlugin):
                         "buildtools/build_extensions.py",
                         "--clean",
                         "--build_type",
-                        "debug",
+                        self.validation_build_type,
                         "--additional",
                         "-Doptimization=1",
                         "-Ddebug=true",
@@ -123,12 +124,88 @@ class PyVRPRepositoryPlugin(RepositoryPlugin):
         ]
 
 
+class PyVRPClassicRepositoryPlugin(PyVRPRepositoryPlugin):
+    """Build Poetry/Meson source snapshots with the prepared historic toolchain."""
+
+    name = "pyvrp_classic"
+    driver_python = ".pitbench-venv/bin/python"
+    agent_python = ".pitbench-venv/bin/python"
+    collection_backend = None
+
+    def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
+        del kind
+        return [
+            CommandSpec(argv=["rm", "-rf", ".pitbench-venv"]),
+            CommandSpec(
+                argv=[
+                    "python3",
+                    "-m",
+                    "venv",
+                    "--system-site-packages",
+                    ".pitbench-venv",
+                ]
+            ),
+            CommandSpec(
+                argv=[
+                    self.driver_python,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--no-build-isolation",
+                    "--no-deps",
+                    "--force-reinstall",
+                    "-e",
+                    ".",
+                ]
+            ),
+            CommandSpec(
+                argv=[
+                    self.driver_python,
+                    "-c",
+                    (
+                        "import pathlib, runpy, sys, tomllib; "
+                        "sys.modules.setdefault('tomli', tomllib); "
+                        "script = pathlib.Path('build_extensions.py'); "
+                        "runpy.run_path(str(script), run_name='__main__') "
+                        "if script.is_file() else None"
+                    ),
+                ]
+            ),
+            CommandSpec(
+                argv=[
+                    self.driver_python,
+                    "-c",
+                    (
+                        "import sys, tomllib; "
+                        "sys.modules.setdefault('tomli', tomllib); "
+                        "import pyvrp; print(pyvrp.__file__)"
+                    ),
+                ]
+            ),
+        ]
+
+    def agent_build_commands(self) -> list[CommandSpec]:
+        return self.build_commands(BuildKind.PERFORMANCE)
+
+
+class PyVRPDebugOptimizedRepositoryPlugin(PyVRPRepositoryPlugin):
+    """Use sanitizer validation without old debug-only logging compilation."""
+
+    validation_build_type = "debugoptimized"
+
+
 class VroomRepositoryPlugin(RepositoryPlugin):
     agent_environment = AgentEnvironment(
         image="ubuntu:24.04",
-        system_packages="build-essential libssl-dev libasio-dev libglpk-dev pkg-config",
+        system_packages=(
+            "build-essential libboost-log-dev libboost-system-dev "
+            "libboost-thread-dev libssl-dev libasio-dev libglpk-dev pkg-config"
+        ),
         python_packages="",
-        prebuild="RUN make -C /workspace/repo/src -j1\n",
+        prebuild=(
+            "RUN make -C /workspace/repo/src -j1 "
+            "'CXX=g++ -include vector -include array'\n"
+        ),
     )
     agent_python = "python3"
     driver_python = "python3"
@@ -147,7 +224,7 @@ class VroomRepositoryPlugin(RepositoryPlugin):
         make_flags = (
             "-MMD -MP -I. -Isrc -std=c++20 -Wextra -Wpedantic -Wall "
             "-O3 -DASIO_STANDALONE -DUSE_ROUTING=true -DNDEBUG "
-            "-D USE_LIBGLPK=true"
+            "-D USE_LIBGLPK=true -DBOOST_LOG_DYN_LINK"
         )
         if kind == BuildKind.VALIDATION:
             make_flags += " -O1 -g -fsanitize=address,undefined"
@@ -157,6 +234,7 @@ class VroomRepositoryPlugin(RepositoryPlugin):
                     "sh",
                     "-lc",
                     "cd src && test -f structures/typedefs.h && exec make -j1 "
+                    + '"CXX=g++ -include vector -include array" '
                     + f'"CXXFLAGS={make_flags}" 2>&1',
                 ]
             ),
@@ -164,11 +242,16 @@ class VroomRepositoryPlugin(RepositoryPlugin):
 
 
 class HighsRepositoryPlugin(RepositoryPlugin):
+    supports_fixed_solver_parameters = True
     agent_environment = AgentEnvironment(
         image="ubuntu:24.04",
         system_packages="build-essential cmake",
         python_packages="",
-        prebuild="RUN cd /workspace/repo && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j1\n",
+        prebuild=(
+            "RUN cd /workspace/repo && cmake -S . -B build "
+            "-DCMAKE_BUILD_TYPE=Release && cmake --build build -j1 "
+            "--target highs highs-bin\n"
+        ),
     )
     agent_python = "python3"
     name = "highs"
@@ -181,7 +264,11 @@ class HighsRepositoryPlugin(RepositoryPlugin):
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         build_type = "Debug" if kind == BuildKind.VALIDATION else "Release"
-        flags = "-fsanitize=address,undefined" if kind == BuildKind.VALIDATION else ""
+        flags = (
+            "-fsanitize=address,undefined -DCATCH_CONFIG_NO_POSIX_SIGNALS"
+            if kind == BuildKind.VALIDATION
+            else ""
+        )
         return [
             CommandSpec(
                 argv=[
@@ -192,9 +279,83 @@ class HighsRepositoryPlugin(RepositoryPlugin):
                     "build",
                     f"-DCMAKE_BUILD_TYPE={build_type}",
                     f"-DCMAKE_CXX_FLAGS={flags}",
+                    (
+                        "-DBUILD_TESTING=ON"
+                        if kind == BuildKind.VALIDATION
+                        else "-DBUILD_TESTING=OFF"
+                    ),
                 ]
             ),
-            CommandSpec(argv=["cmake", "--build", "build", "-j1"]),
+            CommandSpec(
+                argv=(
+                    ["cmake", "--build", "build", "-j1"]
+                    if kind == BuildKind.VALIDATION
+                    else [
+                        "cmake",
+                        "--build",
+                        "build",
+                        "-j1",
+                        "--target",
+                        "highs",
+                        "highs-bin",
+                    ]
+                )
+            ),
+        ]
+
+
+class ScipRepositoryPlugin(RepositoryPlugin):
+    name = "scip"
+    driver_name = "scip"
+    driver_python = "python3"
+    driver_solver = "./build/bin/scip"
+    agent_python = "python3"
+    agent_requirement = "file:build/bin/scip"
+    agent_artifact_globs = ("build/bin/scip",)
+    agent_build_paths = ("build",)
+
+    def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
+        build_type = "Debug" if kind == BuildKind.VALIDATION else "Release"
+        return [
+            CommandSpec(
+                argv=[
+                    "cmake",
+                    "-S",
+                    ".",
+                    "-B",
+                    "build",
+                    "-G",
+                    "Ninja",
+                    f"-DCMAKE_BUILD_TYPE={build_type}",
+                    "-DSHARED=OFF",
+                    "-DAUTOBUILD=ON",
+                ]
+            ),
+            CommandSpec(argv=["cmake", "--build", "build", "-j2"]),
+        ]
+
+
+class CbcRepositoryPlugin(RepositoryPlugin):
+    name = "cbc"
+    driver_name = "cbc"
+    driver_python = "python3"
+    driver_solver = "./build/Cbc/src/cbc"
+    agent_python = "python3"
+    agent_requirement = "file:build/Cbc/src/cbc"
+    agent_artifact_globs = ("build/Cbc/src/cbc",)
+    agent_build_paths = ("build",)
+
+    def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
+        del kind
+        return [
+            CommandSpec(
+                argv=[
+                    "sh",
+                    "-lc",
+                    "mkdir -p build && cd build && "
+                    "../configure --disable-shared --enable-static && make -j2",
+                ]
+            )
         ]
 
 
@@ -209,20 +370,38 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
     name = "choco"
     driver_python = "python3"
     agent_requirement = "env:PITBENCH_CHOCO_RUNNER"
-    agent_artifact_globs = ("solver/target/*-jar-with-dependencies.jar",)
-    agent_build_paths = ("target", "parsers/target", "examples/target")
+    agent_artifact_globs = (
+        "solver/target/choco-solver-*-jar-with-dependencies.jar",
+        "target/choco-solver-*-with-dependencies.jar",
+        "target/choco-solver-*-jar-with-dependencies.jar",
+    )
+    agent_build_paths = (
+        "target",
+        "solver/target",
+        "parsers/target",
+        "examples/target",
+    )
     judge_environment_requirements = {"MAVEN_CONFIG": "/tmp/choco-maven"}
     collection_backend = "pitbench.evaluator.collection:ChocoCollectionBackend"
     driver_name = "choco"
+    supports_fixed_solver_parameters = True
     representations = {"item_relabeling": ("judge",)}
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         del kind
-        goals = ["package", "-DskipTests"]
+        goals = ["package", "-DskipTests", "-Dlicense.skip=true"]
         return [
             CommandSpec(argv=["mkdir", "-p", "/tmp/choco-maven"]),
             CommandSpec(
                 argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/choco-maven"]
+            ),
+            CommandSpec(
+                argv=[
+                    "sh",
+                    "-c",
+                    "if [ -d /opt/pitbench-maven ]; then "
+                    "cp -a /opt/pitbench-maven/. /tmp/choco-maven/; fi",
+                ]
             ),
             CommandSpec(
                 argv=["mvn", "-q", *goals],
@@ -318,6 +497,96 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
                 env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/ortools-maven"},
             ),
         ]
+
+
+class GecodeRepositoryPlugin(RepositoryPlugin):
+    """Build Gecode and the shared native CP adapter in one solver checkout."""
+
+    agent_environment = AgentEnvironment(
+        image="ubuntu:24.04",
+        system_packages="build-essential cmake",
+        python_packages="",
+        prebuild="",
+    )
+    name = "gecode"
+    driver_name = "gecode_exact"
+    driver_python = "python3"
+    agent_python = "python3"
+    agent_requirement = "env:PITBENCH_GECODE_RUNNER"
+    agent_artifact_globs = ("build/pitbench-exact", "build/libgecode*.so")
+    agent_build_paths = ("build",)
+    supports_fixed_solver_parameters = True
+    collector_environment = {
+        "PITBENCH_GECODE_RUNNER": (
+            "python3 /opt/pitbench-adapters/exact_solver_runner.py --engine gecode"
+        ),
+        "PITBENCH_EXACT_SOLVER": "build/pitbench-exact",
+    }
+
+    def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
+        build_type = "Debug" if kind == BuildKind.VALIDATION else "Release"
+        commands = [
+            CommandSpec(
+                argv=[
+                    "cmake",
+                    "-S",
+                    ".",
+                    "-B",
+                    "build",
+                    f"-DCMAKE_BUILD_TYPE={build_type}",
+                    "-DBUILD_TESTING=ON",
+                    "-DGECODE_BUILD_SHARED=ON",
+                    "-DGECODE_BUILD_STATIC=OFF",
+                ]
+            ),
+            CommandSpec(
+                argv=[
+                    "cmake",
+                    "--build",
+                    "build",
+                    "--target",
+                    "gecodeint_shared",
+                    "gecodesearch_shared",
+                    "-j2",
+                ]
+            ),
+        ]
+        if kind == BuildKind.VALIDATION:
+            commands.append(
+                CommandSpec(
+                    argv=[
+                        "cmake",
+                        "--build",
+                        "build",
+                        "--target",
+                        "gecode-test",
+                        "-j2",
+                    ]
+                )
+            )
+            commands.append(
+                CommandSpec(
+                    argv=[
+                        "build/bin/gecode-test",
+                        "-test",
+                        "Int::BinPacking",
+                    ]
+                )
+            )
+        commands.append(
+            CommandSpec(
+                argv=[
+                    "sh",
+                    "-lc",
+                    "g++ -std=c++17 -O3 -I. -Ibuild "
+                    "/opt/pitbench-adapters/ExactSolverRunner.cpp "
+                    "-o build/pitbench-exact -Lbuild "
+                    "-Wl,-rpath,$PWD/build -lgecodeint -lgecodesearch "
+                    "-lgecodekernel -lgecodesupport -pthread",
+                ]
+            )
+        )
+        return commands
 
 
 class OrToolsCpSatExactRepositoryPlugin(OrToolsRepositoryPlugin):

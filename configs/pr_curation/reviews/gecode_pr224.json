@@ -1,0 +1,55 @@
+{
+  "schema_version": 2,
+  "repository": "Gecode/gecode",
+  "pr_number": 224,
+  "base_commit": "744e5efef8efd067a75b6aa5ff8f90fad1c46c5c",
+  "head_commit": "c17ceb2c5579e6c6e921ac0c934eb5ba6437f3aa",
+  "decision": "advance",
+  "reason": "The PR adds optional bin-packing propagation based on a portfolio of dual-feasible-function lower bounds, with propagation-level controls and overflow-oriented tests. It changes a core CP propagator and has a specific exact-solve workload; the extra propagation may reduce search while increasing work per propagation.",
+  "review_lane": "mechanism_review",
+  "detail_record_sha256": "0a056461071c623d2e18d9ea80ac0b185a9d2fa1f8c38efc9942d11f3996e687",
+  "repository_role": "solver_engine",
+  "mechanism": "algorithmic_search",
+  "solver_phase": "propagation",
+  "solver_entry_points": [
+    "Gecode::Int::BinPacking::Pack::propagate",
+    "Gecode::Int::BinPacking::Pack::calc_reductions",
+    "Gecode::Int::BinPacking::Pack::calc_dff_lower_bound"
+  ],
+  "effect_channels": [
+    "work_per_event",
+    "search_tree",
+    "proof_time"
+  ],
+  "correctness_failure_modes": [
+    "false_infeasibility",
+    "search_incomplete"
+  ],
+  "changed_source_paths": [
+    "gecode/int.hh",
+    "gecode/int/bin-packing.cpp",
+    "gecode/int/bin-packing.hh",
+    "gecode/int/bin-packing/propagate.cpp",
+    "gecode/int/bin-packing/propagate.hpp"
+  ],
+  "solver_behavior_hypothesis": "Dual-feasible-function (DFF) lower bounds at stronger propagation levels may detect infeasible bin packing states earlier and reduce search, at the cost of evaluating several reductions and up to 256 lambda samples per DFF.",
+  "causal_chain": "Pack::propagate derives reduced weights and capacities, evaluates DFF lower bounds for configured lambda ranges, and returns ES_FAILED when a lower bound exceeds the number of bins; IPL_BASIC, IPL_DEF, IPL_ADVANCED, and IPL_FULL expose different amounts of this work.",
+  "structural_trigger": "Bin-packing constraints with multiple bins and item-weight distributions where DFF bounds are stronger than the aggregate-capacity bound; compare propagation levels and include cases where the added DFF work does not prune.",
+  "activation_probe": "Instrument Pack::propagate, calc_reductions, each DFF evaluator, lambda samples, ES_FAILED returns, domain reductions, failures, nodes, and propagator runtime on paired base and PR builds at each declared propagation level.",
+  "instance_selection_rule": "Freeze bin count, item count, capacity slack, and weight-distribution strata before hidden scoring; include DFF-triggering, non-triggering, feasible, and infeasible cases, and keep every timeout or resource failure.",
+  "workload_exposure_plan": "Build the pinned Gecode base and PR source states, run the bin-packing constraint on generated exact instances with fixed propagation levels, and record activation plus independently checked outcomes.",
+  "mathematical_risk": "An invalid DFF, reduction, or overflow calculation could report infeasibility for a packable instance or fail to preserve a complete search. Validate all reduced weights and capacities and compare exact feasibility against an independent exhaustive bin-packing checker on small cases.",
+  "independent_check_plan": "For small cases, enumerate all item-to-bin assignments in an evaluator-owned checker and compare feasibility with Gecode at each propagation level; independently validate every returned packing and recompute bin loads on larger cases.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Use hidden bin-packing families stratified by item count, bin count, capacity slack, and weight skew. Report verified solves, proof time, nodes, propagator work, and memory by stratum under a fixed time and memory budget.",
+  "overlap_review": "The PR body identifies #202 as its predecessor; keep the rebased merged implementation as one lineage. Distinguish any future bin-packing task by source snapshot and DFF mechanism, not merely by another weight distribution.",
+  "overlap_group": "gecode_binpacking_dff_propagation_2024",
+  "related_prs": [
+    202
+  ],
+  "resource_risk": "Evaluating multiple DFF families over lambda samples can add substantial per-node propagation time and scratch memory, especially when bounds rarely prune.",
+  "source_evidence_urls": [
+    "https://github.com/Gecode/gecode/pull/224",
+    "https://api.github.com/repos/Gecode/gecode/pulls/224/files"
+  ]
+}

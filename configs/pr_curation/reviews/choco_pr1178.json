@@ -1,0 +1,40 @@
+{
+  "schema_version": 2,
+  "repository": "chocoteam/choco-solver",
+  "pr_number": 1178,
+  "base_commit": "f77428e2c0b6a9ae41580d7bfc46d220cd28c59b",
+  "head_commit": "4818ebf6c3ee50d6ed22b30fe36d6812c3052e92",
+  "decision": "advance",
+  "reason": "The PR changes active CP propagation in PropXplusYeqZ and PropAbsolute: it chooses range versus arc-consistency filtering from current domain structure and removes intervals in bulk outside LCG. These changes can alter propagation work and the search tree, beyond a local formatting or build change.",
+  "repository_role": "solver_engine",
+  "mechanism": "combined",
+  "solver_phase": "propagation",
+  "solver_entry_points": [
+    "PropXplusYeqZ::propagate",
+    "PropXplusYeqZ::isAC",
+    "PropAbsolute::propagate",
+    "PropAbsolute::removeInterval"
+  ],
+  "effect_channels": ["work_per_event", "search_tree", "proof_time", "peak_memory"],
+  "correctness_failure_modes": ["invalid_bound", "false_infeasibility", "search_incomplete", "numerical_instability"],
+  "changed_source_paths": [
+    "solver/src/main/java/org/chocosolver/solver/constraints/binary/PropAbsolute.java",
+    "solver/src/main/java/org/chocosolver/solver/constraints/ternary/PropXplusYeqZ.java",
+    "solver/src/main/java/org/chocosolver/solver/variables/IntVar.java"
+  ],
+  "solver_behavior_hypothesis": "Dynamic domain structure may avoid expensive arc-consistency scans or repeated value removals while preserving all valid integer-domain deductions. Different deductions may change downstream search and exact proof time.",
+  "causal_chain": "PropXplusYeqZ now treats fixed or bounded variables as range-only when enough operands qualify and checks whether the domain product is below the arc-consistency threshold. PropAbsolute uses interval removal when LCG explanations are unnecessary. Both alter propagation events and possible branching trajectories.",
+  "structural_trigger": "Integer CP models with active x+y=z or absolute-value constraints, mixed enumerated and bounded domains, and enough propagation events to reach both the range-only and arc-consistency branches; models without those constraints are controls.",
+  "activation_probe": "Count calls and domain-shape decisions in both propagators, arc-consistency versus range filtering, interval versus per-value removals, contradictions, nodes, and inactive paths on paired pinned builds.",
+  "instance_selection_rule": "Freeze additive and absolute-value CP model families by domain representation, variable count, and difficulty before hidden scoring; include a nontriggering CP control and retain all selected cases, seeds, and timeouts.",
+  "workload_exposure_plan": "Use the shared Choco driver with original-model independent solution checks. Add a configuration-backed arithmetic CP panel only if source-level traces prove the changed propagators execute; ordinary bin-packing or coloring activity alone cannot qualify this PR.",
+  "mathematical_risk": "A wrong range-only decision or interval deletion can remove feasible integer assignments, miss a contradiction, or make an invalid optimality or infeasibility claim; LCG explanation handling must remain valid.",
+  "independent_check_plan": "Check every returned assignment against original additive and absolute-value constraints and objective values; compare optimal and infeasible claims with independent exact proofs on tractable cases, and run targeted propagation regressions for enumerated and bounded domains.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Evaluate paired held-out arithmetic CP instances across domain structures and sizes at fixed CPU budgets and seeds, with per-family solved coverage, proof time, valid incumbent quality, and regression accounting.",
+  "overlap_review": "Adjacent Choco PR #1152 targets decision-path overhead at a different pre-PR commit. This PR is one propagation change bundle and must not be split into separate tasks solely by its two propagators or test seeds.",
+  "overlap_group": "choco_arithmetic_propagation_2026",
+  "related_prs": [1152],
+  "resource_risk": "Bulk removal may increase explanation or allocation work under LCG, and a weaker filtering choice can enlarge the search tree even if a propagation call gets faster.",
+  "source_evidence_urls": ["https://github.com/chocoteam/choco-solver/pull/1178"]
+}

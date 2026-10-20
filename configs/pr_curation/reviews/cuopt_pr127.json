@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "repository": "NVIDIA/cuopt",
+  "pr_number": 127,
+  "base_commit": "d8bdad5c1099524014464a0f4a69b590b929e816",
+  "head_commit": "4488636f66ff948af4ca10ea1a9235bfc19d0ddb",
+  "decision": "reject",
+  "rejection_basis": "outside_solver_engine",
+  "reason": "Changes Conda packaging recipes only; no solver-engine source file changed.",
+  "reviewed_changed_files": [
+    "conda/recipes/cuopt/conda_build_config.yaml",
+    "conda/recipes/cuopt/recipe.yaml",
+    "conda/recipes/libcuopt/conda_build_config.yaml",
+    "conda/recipes/libcuopt/recipe.yaml"
+  ],
+  "detail_sha256": "1d74d2c7a3eedd2fd676d9ff9cb864f5e34379833445fa57b472bff78f0661dc",
+  "selection_queue_sha256": "9fa7126befcaeb0c0a1fd3f32c5f73af1ba2c871a921ebe1600edac37279e3a5",
+  "source_evidence_urls": [
+    "https://github.com/NVIDIA/cuopt/pull/127"
+  ]
+}

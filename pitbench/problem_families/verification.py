@@ -79,6 +79,41 @@ def validate_bin_packing_optimum_record(
     return objective
 
 
+def _check_balanced_subset_sum_solution(
+    instance: dict, solution: dict
+) -> VerificationResult:
+    weights = instance.get("weights")
+    cardinality = instance.get("cardinality")
+    target = instance.get("target")
+    selected = solution.get("selected_items")
+    if (
+        instance.get("problem_kind") != "balanced_subset_sum"
+        or not isinstance(weights, list)
+        or len(weights) < 2
+        or any(type(weight) is not int or weight <= 0 for weight in weights)
+        or type(cardinality) is not int
+        or not 0 < cardinality < len(weights)
+        or type(target) is not int
+        or not 0 <= target <= sum(weights)
+        or instance.get("domain_mode") not in {"bounded", "enumerated"}
+        or not isinstance(selected, list)
+        or len(selected) != cardinality
+        or any(
+            type(item) is not int or not 0 <= item < len(weights) for item in selected
+        )
+        or len(set(selected)) != len(selected)
+    ):
+        return VerificationResult(
+            feasible=False, detail="invalid balanced subset-sum instance or solution"
+        )
+    objective = abs(sum(weights[item] for item in selected) - target)
+    return VerificationResult(
+        feasible=True,
+        objective=objective,
+        detail="original balanced subset-sum constraints verified",
+    )
+
+
 class TrustedOptimumRecord(BaseModel):
     instance_set: str
     instance_id: str
@@ -89,7 +124,10 @@ class TrustedOptimumRecord(BaseModel):
         "job_shop_scheduling",
         "bin_packing",
         "multidimensional_knapsack",
+        "binary_clique_cover",
+        "binary_clique_cover_fme",
         "graph_coloring",
+        "balanced_subset_sum",
     ]
     objective_sense: Literal["minimize", "maximize"]
     optimal_objective: int
@@ -249,15 +287,38 @@ class ProcessVerifierFamily(ProblemFamilyPlugin):
             )
 
 
-def _parse_highs_primal_solution(
+def _parse_mip_primal_solution(
     solution: dict,
+    variable_names: list[str] | None = None,
 ) -> tuple[dict[str, Decimal], Decimal]:
+    structured = solution.get("values")
+    if structured is not None:
+        if not isinstance(structured, dict) or not structured:
+            raise ValueError("invalid MIP variable assignment")
+        try:
+            values = {
+                name: Decimal(str(value))
+                for name, value in structured.items()
+                if isinstance(name, str) and type(value) in {int, float, str}
+            }
+            objective = Decimal(str(solution["objective"]))
+        except (KeyError, InvalidOperation) as error:
+            raise ValueError("invalid MIP objective or assignment") from error
+        if (
+            len(values) != len(structured)
+            or not objective.is_finite()
+            or any(not value.is_finite() for value in values.values())
+        ):
+            raise ValueError("nonfinite or invalid MIP solution")
+        return values, objective
     raw_solution = solution.get("raw_solution")
     if not isinstance(raw_solution, str):
-        raise ValueError("missing raw HiGHS solution")
+        raise ValueError("missing raw MIP solution")
     values: dict[str, Decimal] = {}
-    objective = None
+    objective = solution.get("objective")
     reading_columns = False
+    legacy_column_values = []
+    legacy_solution_available = False
     for line in raw_solution.splitlines():
         fields = line.split()
         if fields[:2] == ["#", "Columns"]:
@@ -265,7 +326,12 @@ def _parse_highs_primal_solution(
                 break
             reading_columns = True
             continue
+        if fields[:1] == ["Columns"]:
+            reading_columns = True
+            continue
         if reading_columns and line.startswith("#"):
+            break
+        if reading_columns and fields[:1] == ["Rows"]:
             break
         try:
             if fields[:1] == ["Objective"] and len(fields) == 2:
@@ -273,10 +339,31 @@ def _parse_highs_primal_solution(
             if reading_columns and len(fields) == 2:
                 if fields[0] in values:
                     raise ValueError("duplicate variable in primal solution")
-                values[fields[0]] = Decimal(fields[1])
+                try:
+                    values[fields[0]] = Decimal(fields[1])
+                except InvalidOperation:
+                    if variable_names is None:
+                        raise ValueError(
+                            "legacy column solution needs the original variable order"
+                        )
+                    values.clear()
+                    raise
+            elif reading_columns and len(fields) == 1:
+                legacy_column_values.append(Decimal(fields[0]))
         except InvalidOperation as error:
             raise ValueError("non-numeric primal solution") from error
-    if objective is None or not objective.is_finite():
+    if not values and legacy_column_values:
+        if variable_names is None or len(legacy_column_values) != len(variable_names):
+            raise ValueError("legacy primal column count differs from the model")
+        values = dict(zip(variable_names, legacy_column_values, strict=True))
+        legacy_solution_available = True
+    if legacy_solution_available and "T Primal solution" not in raw_solution:
+        raise ValueError("legacy solution does not contain a primal assignment")
+    try:
+        objective = Decimal(str(objective))
+    except InvalidOperation as error:
+        raise ValueError("missing or nonfinite primal objective") from error
+    if not objective.is_finite():
         raise ValueError("missing or nonfinite primal objective")
     if any(not value.is_finite() for value in values.values()):
         raise ValueError("nonfinite primal variable")
@@ -288,7 +375,15 @@ def _check_scheduling_solution(
     processing_times: list[int],
 ) -> VerificationResult:
     try:
-        values, reported_objective = _parse_highs_primal_solution(solution)
+        variable_names = [f"s{index}" for index in range(len(processing_times))]
+        variable_names.extend(
+            f"z{first}_{second}"
+            for first in range(len(processing_times))
+            for second in range(first + 1, len(processing_times))
+        )
+        values, reported_objective = _parse_mip_primal_solution(
+            solution, variable_names
+        )
     except (TypeError, ValueError) as error:
         return VerificationResult(feasible=False, detail=str(error))
     job_count = len(processing_times)
@@ -392,6 +487,176 @@ def _public_scheduling_processing_times(instance_path: Path) -> list[int] | None
     return [processing[index] for index in range(job_count)]
 
 
+def _read_mps_numeric_model(instance_path: Path) -> dict | None:
+    """Read the free-format MPS subset used by HiGHS without solver bindings."""
+    try:
+        lines = instance_path.read_text().splitlines()
+    except OSError:
+        return None
+
+    section = None
+    objective_sense = "minimize"
+    row_types: dict[str, str] = {}
+    columns: list[str] = []
+    seen_columns: set[str] = set()
+    coefficients: dict[str, dict[str, float]] = {}
+    cost: dict[str, float] = {}
+    rhs: dict[str, float] = {}
+    column_lower: dict[str, float] = {}
+    column_upper: dict[str, float] = {}
+    integer_columns: set[str] = set()
+    integer_marker = False
+    rhs_set = None
+    bound_set = None
+    unsupported = False
+
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("*"):
+            continue
+        fields = line.split()
+        token = fields[0].upper()
+        if token in {"ROWS", "COLUMNS", "RHS", "RANGES", "BOUNDS", "ENDATA"}:
+            section = token
+            if token == "ENDATA":
+                break
+            if token == "RANGES":
+                unsupported = True
+            continue
+        if token in {"OBJSENSE", "OBJNAME"}:
+            section = token
+            continue
+
+        if section == "OBJSENSE":
+            if token in {"MIN", "MINIMIZE"}:
+                objective_sense = "minimize"
+            elif token in {"MAX", "MAXIMIZE"}:
+                objective_sense = "maximize"
+            else:
+                unsupported = True
+            continue
+        if section == "OBJNAME":
+            continue
+        if section == "ROWS":
+            if len(fields) != 2 or fields[0].upper() not in {"N", "L", "G", "E"}:
+                return None
+            row_types[fields[1]] = fields[0].upper()
+            continue
+        if section == "COLUMNS":
+            if len(fields) >= 3 and fields[1].strip("'").upper() == "MARKER":
+                marker = fields[-1].strip("'").upper()
+                if marker == "INTORG":
+                    integer_marker = True
+                elif marker == "INTEND":
+                    integer_marker = False
+                else:
+                    return None
+                continue
+            if len(fields) < 3 or (len(fields) - 1) % 2:
+                return None
+            column = fields[0]
+            if column not in seen_columns:
+                seen_columns.add(column)
+                columns.append(column)
+                if integer_marker:
+                    integer_columns.add(column)
+            for index in range(1, len(fields), 2):
+                row, raw_value = fields[index], fields[index + 1]
+                value = float(raw_value)
+                if row not in row_types:
+                    return None
+                if row_types[row] == "N":
+                    cost[column] = cost.get(column, 0.0) + value
+                else:
+                    row_coefficients = coefficients.setdefault(row, {})
+                    row_coefficients[column] = row_coefficients.get(column, 0.0) + value
+            continue
+        if section == "RHS":
+            if len(fields) < 3 or (len(fields) - 1) % 2:
+                return None
+            if rhs_set is None:
+                rhs_set = fields[0]
+            if fields[0] != rhs_set:
+                continue
+            for index in range(1, len(fields), 2):
+                row, value = fields[index], float(fields[index + 1])
+                if row in row_types and row_types[row] == "N":
+                    unsupported = True
+                elif row in row_types:
+                    rhs[row] = value
+            continue
+        if section == "BOUNDS":
+            if len(fields) not in {3, 4}:
+                return None
+            bound_type, current_set, column = fields[:3]
+            bound_type = bound_type.upper()
+            if bound_set is None:
+                bound_set = current_set
+            if current_set != bound_set:
+                continue
+            value = float(fields[3]) if len(fields) == 4 else None
+            lower = column_lower.get(column, 0.0)
+            upper = column_upper.get(column, math.inf)
+            if bound_type == "BV":
+                lower, upper = 0.0, 1.0
+                integer_columns.add(column)
+            elif bound_type == "LI" and value is not None:
+                lower = value
+                integer_columns.add(column)
+            elif bound_type == "UI" and value is not None:
+                upper = value
+                integer_columns.add(column)
+            elif bound_type == "LO" and value is not None:
+                lower = value
+            elif bound_type == "UP" and value is not None:
+                upper = value
+            elif bound_type == "FX" and value is not None:
+                lower = upper = value
+            elif bound_type == "FR":
+                lower, upper = -math.inf, math.inf
+            elif bound_type == "MI":
+                lower = -math.inf
+            elif bound_type == "PL":
+                upper = math.inf
+            else:
+                return None
+            column_lower[column], column_upper[column] = lower, upper
+
+    if unsupported or not columns:
+        return None
+    objective_rows = [name for name, kind in row_types.items() if kind == "N"]
+    if len(objective_rows) != 1:
+        return None
+    rows = [name for name, kind in row_types.items() if kind != "N"]
+    row_lower, row_upper = {}, {}
+    for row in rows:
+        sense = row_types[row]
+        value = rhs.get(row, 0.0)
+        if sense == "L":
+            row_lower[row], row_upper[row] = -math.inf, value
+        elif sense == "G":
+            row_lower[row], row_upper[row] = value, math.inf
+        else:
+            row_lower[row] = row_upper[row] = value
+    for column in columns:
+        column_lower.setdefault(column, 0.0)
+        column_upper.setdefault(column, math.inf)
+        cost.setdefault(column, 0.0)
+    return {
+        "columns": columns,
+        "rows": rows,
+        "coefficients": coefficients,
+        "cost": cost,
+        "offset": 0.0,
+        "row_lower": row_lower,
+        "row_upper": row_upper,
+        "column_lower": column_lower,
+        "column_upper": column_upper,
+        "integer_columns": integer_columns,
+        "objective_sense": objective_sense,
+    }
+
+
 def _check_bin_packing_solution(
     solution: dict,
     *,
@@ -406,7 +671,49 @@ def _check_bin_packing_solution(
 def _public_multidimensional_knapsack_data(
     instance_path: Path,
 ) -> tuple[list[list[int]], list[int]] | None:
-    """Accept only the canonical LP emitted by the shared instance generator."""
+    """Accept the canonical knapsack LP, including whitespace-only line wraps."""
+
+    if instance_path.suffix.lower() == ".mps":
+        model = _read_mps_numeric_model(instance_path)
+        if model is None:
+            return None
+        row_count, item_count = len(model["rows"]), len(model["columns"])
+        expected_columns = [f"x{item}" for item in range(item_count)]
+        if (
+            row_count != 3
+            or item_count not in {60, 65, 70}
+            or model["columns"] != expected_columns
+            or model["rows"] != [f"c{row}" for row in range(row_count)]
+            or model["objective_sense"] != "minimize"
+            or model["offset"] != 0
+            or any(model["column_lower"][name] != 0 for name in expected_columns)
+            or any(model["column_upper"][name] != 1 for name in expected_columns)
+            or model["integer_columns"] != set(expected_columns)
+            or any(
+                not math.isinf(model["row_lower"][name]) or model["row_lower"][name] > 0
+                for name in model["rows"]
+            )
+            or any(
+                value <= 0 or not float(value).is_integer()
+                for value in model["row_upper"].values()
+            )
+        ):
+            return None
+        weights = []
+        for row in model["rows"]:
+            values = model["coefficients"].get(row, {})
+            if set(values) != set(expected_columns) or any(
+                value <= 0 or not float(value).is_integer() for value in values.values()
+            ):
+                return None
+            weights.append([int(values[column]) for column in expected_columns])
+        capacities = [int(model["row_upper"][row]) for row in model["rows"]]
+        expected_cost = [
+            -sum(row[item] for row in weights) for item in range(item_count)
+        ]
+        if [model["cost"][name] for name in expected_columns] != expected_cost:
+            return None
+        return weights, capacities
 
     try:
         source = instance_path.read_text()
@@ -416,29 +723,47 @@ def _public_multidimensional_knapsack_data(
     if len(lines) < 8 or lines[:1] != ["Minimize"] or "Subject To" not in lines:
         return None
     subject = lines.index("Subject To")
-    if subject != 2 or "Binary" not in lines:
+    if subject < 2 or "Binary" not in lines:
         return None
     binary = lines.index("Binary")
     weights: list[list[int]] = []
     capacities: list[int] = []
-    for dimension, line in enumerate(lines[subject + 1 : binary]):
-        match = re.fullmatch(r" c(\d+): (.+) <= (\d+)", line)
-        if match is None or int(match.group(1)) != dimension:
+    constraint_text = " ".join(lines[subject + 1 : binary])
+    row_matches = list(
+        re.finditer(
+            r"(?:^|\s)c(\d+):\s*(.*?)(?=\s+c\d+:|$)",
+            constraint_text,
+        )
+    )
+    if not row_matches:
+        return None
+    for dimension, row_match in enumerate(row_matches):
+        match = re.fullmatch(r"\s*(.*?)\s*<=\s*(\d+)\s*", row_match.group(2))
+        if match is None or int(row_match.group(1)) != dimension:
             return None
-        terms = match.group(2).split(" + ")
+        terms = match.group(1).split(" + ")
         row: list[int] = []
         for item, term in enumerate(terms):
-            parsed = re.fullmatch(r"(\d+) x(\d+)", term)
+            normalized_term = " ".join(term.split())
+            parsed = re.fullmatch(r"(\d+) x(\d+)", normalized_term)
             if parsed is None or int(parsed.group(2)) != item:
                 return None
             row.append(int(parsed.group(1)))
         weights.append(row)
-        capacities.append(int(match.group(3)))
+        capacities.append(int(match.group(2)))
     try:
         canonical = format_multidimensional_knapsack_lp(weights, capacities)
     except ValueError:
         return None
-    return (weights, capacities) if source == canonical else None
+
+    def normalize_whitespace(value: str) -> str:
+        return re.sub(r"\s+", " ", value).strip()
+
+    return (
+        (weights, capacities)
+        if normalize_whitespace(source) == normalize_whitespace(canonical)
+        else None
+    )
 
 
 def _check_multidimensional_knapsack_solution(
@@ -447,7 +772,9 @@ def _check_multidimensional_knapsack_solution(
     capacities: list[int],
 ) -> VerificationResult:
     try:
-        values, reported_objective = _parse_highs_primal_solution(solution)
+        values, reported_objective = _parse_mip_primal_solution(
+            solution, [f"x{item}" for item in range(len(weights[0]))]
+        )
     except (TypeError, ValueError) as error:
         return VerificationResult(feasible=False, detail=str(error))
     item_count = len(weights[0])
@@ -483,6 +810,22 @@ def _check_multidimensional_knapsack_solution(
         objective=float(objective),
         detail="independent multidimensional knapsack verification passed",
     )
+
+
+def expected_mip_variable_names(instance_path: Path) -> set[str]:
+    """Return the complete assignment keys for PitBench's canonical MIP models."""
+    processing = _public_scheduling_processing_times(instance_path)
+    if processing is not None:
+        count = len(processing)
+        return {f"s{index}" for index in range(count)} | {
+            f"z{first}_{second}"
+            for first in range(count)
+            for second in range(first + 1, count)
+        }
+    knapsack = _public_multidimensional_knapsack_data(instance_path)
+    if knapsack is not None:
+        return {f"x{index}" for index in range(len(knapsack[0][0]))}
+    raise ValueError("unsupported or noncanonical MIP instance")
 
 
 def _job_shop_basis(
@@ -719,6 +1062,286 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
                 return self._oracle_error("invalid knapsack reference optimum")
             return None
 
+        if self.record.problem_kind in {
+            "binary_clique_cover",
+            "binary_clique_cover_fme",
+        }:
+            model = _read_mps_numeric_model(instance_path)
+            groups = basis.get("groups")
+            has_fme_paper_block = (
+                self.record.problem_kind == "binary_clique_cover_fme"
+            )
+            fme_paper_block = basis.get("fme_paper_block")
+            if (
+                model is None
+                or basis.get("kind")
+                != (
+                    "binary_clique_cover_fme"
+                    if has_fme_paper_block
+                    else "binary_clique_cover"
+                )
+                or has_fme_paper_block != (fme_paper_block is not None)
+                or not isinstance(groups, list)
+                or not groups
+                or any(
+                    not isinstance(group, list)
+                    or not group
+                    or any(not isinstance(name, str) for name in group)
+                    for group in groups
+                )
+            ):
+                return self._oracle_error("invalid binary clique-cover proof basis")
+            columns = model["columns"]
+            flattened = [name for group in groups for name in group]
+            fme_extensions = basis.get("fme_extensions", [])
+            if not isinstance(fme_extensions, list):
+                return self._oracle_error("invalid FME extension proof list")
+            binary_columns = set(flattened)
+            auxiliary_columns = {
+                extension.get("column")
+                for extension in fme_extensions
+                if isinstance(extension, dict)
+            }
+            if (
+                len(auxiliary_columns) != len(fme_extensions)
+                or any(
+                    not isinstance(extension, dict)
+                    or not isinstance(extension.get("column"), str)
+                    or not extension.get("column")
+                    or not isinstance(extension.get("positive_rows"), list)
+                    or not isinstance(extension.get("negative_rows"), list)
+                    or len(extension["positive_rows"]) < 2
+                    or len(extension["negative_rows"]) < 2
+                    for extension in fme_extensions
+                )
+            ):
+                return self._oracle_error("invalid FME extension proof entries")
+            if (
+                len(flattened) != len(set(flattened))
+                or binary_columns.intersection(auxiliary_columns)
+                or binary_columns.union(auxiliary_columns) != set(columns)
+                or binary_columns != set(model["integer_columns"])
+                or any(
+                    model["column_lower"][name] != 0
+                    or model["column_upper"][name] != 1
+                    for name in binary_columns
+                )
+                or any(model["cost"].get(name, 0.0) > 1e-9 for name in columns)
+            ):
+                return self._oracle_error(
+                    "binary clique-cover basis does not partition binary columns"
+                )
+            extension_rows: set[str] = set()
+            for extension in fme_extensions:
+                column = extension["column"]
+                if (
+                    model["column_lower"].get(column) != -math.inf
+                    or model["column_upper"].get(column) != math.inf
+                    or not math.isclose(
+                        model["cost"].get(column, 0.0),
+                        0.0,
+                        rel_tol=0,
+                        abs_tol=1e-12,
+                    )
+                ):
+                    return self._oracle_error(
+                        "invalid FME auxiliary-column bounds or rows"
+                    )
+                positive_support: set[str] = set()
+                negative_support: set[str] = set()
+                for direction, entries, sign, support in (
+                    ("positive", extension["positive_rows"], 1.0, positive_support),
+                    ("negative", extension["negative_rows"], -1.0, negative_support),
+                ):
+                    for entry in entries:
+                        if (
+                            not isinstance(entry, dict)
+                            or not isinstance(entry.get("row"), str)
+                            or not entry["row"]
+                            or entry["row"] in extension_rows
+                            or entry["row"] not in model["coefficients"]
+                            or not isinstance(entry.get("binary_coefficients"), dict)
+                            or not entry["binary_coefficients"]
+                            or type(entry.get("rhs")) not in {int, float}
+                            or not math.isfinite(entry["rhs"])
+                        ):
+                            return self._oracle_error(
+                                f"invalid FME {direction}-row declaration"
+                            )
+                        row_name = entry["row"]
+                        binary_coefficients = entry["binary_coefficients"]
+                        if any(
+                            name not in binary_columns
+                            or type(value) not in {int, float}
+                            or not math.isfinite(value)
+                            or value == 0
+                            for name, value in binary_coefficients.items()
+                        ):
+                            return self._oracle_error(
+                                "FME row has an invalid binary coefficient"
+                            )
+                        expected_coefficients = {column: sign}
+                        expected_coefficients.update(binary_coefficients)
+                        # The zero-RHS extension can restrict other binary
+                        # assignments, but the trusted witness sets every
+                        # supported binary to zero. Combined with the clique
+                        # lower bound, that witness certifies the same optimum.
+                        if not math.isclose(entry["rhs"], 0, rel_tol=0, abs_tol=1e-9):
+                            return self._oracle_error(
+                                "FME extension row has a nonzero RHS"
+                            )
+                        actual_coefficients = {
+                            name: value
+                            for name, value in model["coefficients"][row_name].items()
+                            if abs(value) > 1e-12
+                        }
+                        if (
+                            actual_coefficients != expected_coefficients
+                            or not math.isinf(
+                                model["row_lower"].get(row_name, math.nan)
+                            )
+                            or model["row_lower"].get(row_name, math.nan) > 0
+                            or not math.isclose(
+                                model["row_upper"].get(row_name, math.nan),
+                                0,
+                                rel_tol=0,
+                                abs_tol=1e-9,
+                            )
+                        ):
+                            return self._oracle_error(
+                                "FME extension row differs from its proof record"
+                            )
+                        support.update(binary_coefficients)
+                        extension_rows.add(row_name)
+                if len(positive_support.intersection(negative_support)) < 5:
+                    return self._oracle_error(
+                        "FME extension lacks a nonzero-reduction shared support"
+                    )
+                reference_values = reference_solution.get("values", {})
+                if any(
+                    reference_values.get(name) != 0
+                    for name in positive_support.union(negative_support)
+                ):
+                    return self._oracle_error(
+                        "FME extension does not preserve the clique-cover witness"
+                    )
+            for row_name, coefficients in model["coefficients"].items():
+                if row_name in extension_rows:
+                    continue
+                if set(coefficients).intersection(auxiliary_columns):
+                    return self._oracle_error(
+                        "FME auxiliary column occurs outside its extension rows"
+                    )
+            clique_rows_by_support: dict[
+                frozenset[str], list[tuple[dict[str, float], float]]
+            ] = {}
+            for row_name, coefficients in model["coefficients"].items():
+                if row_name in extension_rows:
+                    continue
+                row_upper = model["row_upper"][row_name]
+                if not math.isfinite(row_upper) or any(
+                    value < -1e-9 for value in coefficients.values()
+                ):
+                    continue
+                support = frozenset(
+                    name for name, value in coefficients.items() if abs(value) > 1e-12
+                )
+                clique_rows_by_support.setdefault(support, []).append(
+                    (coefficients, row_upper)
+                )
+            for group in groups:
+                witnesses = clique_rows_by_support.get(frozenset(group), [])
+                if not any(
+                    all(
+                        coefficients.get(first, 0.0) + coefficients.get(second, 0.0)
+                        > row_upper + 1e-9
+                        for first_index, first in enumerate(group)
+                        for second in group[first_index + 1 :]
+                    )
+                    for coefficients, row_upper in witnesses
+                ):
+                    return self._oracle_error(
+                        "clique-cover group has an unproved variable pair"
+                    )
+            upper_bound = model["offset"] - sum(
+                max([0.0] + [max(-model["cost"].get(name, 0.0), 0.0) for name in group])
+                for group in groups
+            )
+            try:
+                _, reference_objective = _parse_mip_primal_solution(
+                    reference_solution, model["columns"]
+                )
+            except (InvalidOperation, TypeError, ValueError) as error:
+                return self._oracle_error(f"invalid clique-cover reference: {error}")
+            reference_check = MIPFamily._verify_numeric_model_solution(
+                instance_path, reference_solution
+            )
+            if (
+                not math.isclose(
+                    upper_bound,
+                    self.record.optimal_objective,
+                    rel_tol=0,
+                    abs_tol=1e-6,
+                )
+                or not reference_check.feasible
+                or reference_check.objective is None
+                or not math.isclose(
+                    reference_objective,
+                    self.record.optimal_objective,
+                    rel_tol=0,
+                    abs_tol=1e-6,
+                )
+                or not math.isclose(
+                    reference_check.objective,
+                    self.record.optimal_objective,
+                    rel_tol=0,
+                    abs_tol=1e-6,
+                )
+            ):
+                return self._oracle_error(
+                    "binary clique-cover bound and feasible reference differ"
+                )
+            return None
+
+        if self.record.problem_kind == "balanced_subset_sum":
+            try:
+                instance = json.loads(instance_path.read_text())
+            except (OSError, json.JSONDecodeError) as error:
+                return self._oracle_error(f"invalid subset-sum instance: {error}")
+            weights = instance.get("weights")
+            cardinality = instance.get("cardinality")
+            target = instance.get("target")
+            checked = _check_balanced_subset_sum_solution(instance, reference_solution)
+            if not checked.feasible:
+                return self._oracle_error(checked.detail)
+            layers = [1] + [0] * cardinality
+            for position, weight in enumerate(weights):
+                for count in range(min(cardinality, position + 1), 0, -1):
+                    layers[count] |= layers[count - 1] << weight
+            total = sum(weights)
+            reachable = layers[cardinality]
+            optimum = min(
+                abs(value - target)
+                for value in range(total + 1)
+                if (reachable >> value) & 1
+            )
+            expected_basis = {
+                "kind": "fixed_cardinality_subset_sum_dp",
+                "total_weight": total,
+                "cardinality": cardinality,
+                "target": target,
+                "reachable_bitset_sha256": hashlib.sha256(
+                    reachable.to_bytes((total + 8) // 8, "little")
+                ).hexdigest(),
+            }
+            if (
+                basis != expected_basis
+                or checked.objective != optimum
+                or self.record.optimal_objective != optimum
+            ):
+                return self._oracle_error("invalid subset-sum DP optimum record")
+            return None
+
         if self.record.problem_kind == "graph_coloring":
             from pitbench.instances.generate import mycielski_graph
 
@@ -842,11 +1465,15 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
             if model is None:
                 return self._oracle_error("invalid knapsack instance")
             return _check_multidimensional_knapsack_solution(solution, *model)
+        if self.record.problem_kind == "binary_clique_cover":
+            return MIPFamily._verify_numeric_model_solution(instance_path, solution)
         instance = json.loads(instance_path.read_text())
         if self.record.problem_kind == "graph_coloring":
             return VerificationResult.model_validate(
                 check_graph_coloring(instance, solution)
             )
+        if self.record.problem_kind == "balanced_subset_sum":
+            return _check_balanced_subset_sum_solution(instance, solution)
         return _check_bin_packing_solution(
             solution,
             weights=instance["weights"],
@@ -858,9 +1485,98 @@ class MIPFamily(ExternalVerifierFamily):
     name = "mip"
     fixture_reports_search_nodes = True
 
+    @staticmethod
+    def _verify_numeric_model_solution(
+        instance_path: Path, solution: dict
+    ) -> VerificationResult:
+        try:
+            model = _read_mps_numeric_model(instance_path)
+            if model is None:
+                raise ValueError("unsupported or invalid MPS model")
+            variable_names = model["columns"]
+            values, objective = _parse_mip_primal_solution(solution, variable_names)
+            if set(values) != set(variable_names):
+                raise ValueError("MPS primal solution variable set mismatch")
+            tolerance = 1e-6
+            bound_violation = max(
+                [0.0]
+                + [
+                    model["column_lower"][name] - float(values[name])
+                    for name in variable_names
+                ]
+                + [
+                    float(values[name]) - model["column_upper"][name]
+                    for name in variable_names
+                ]
+            )
+            integer_violation = max(
+                [0.0]
+                + [
+                    abs(float(values[name]) - round(float(values[name])))
+                    for name in model["integer_columns"]
+                ]
+            )
+            row_violation = 0.0
+            for row_name in model["rows"]:
+                activity = math.fsum(
+                    coefficient * float(values[column])
+                    for column, coefficient in model["coefficients"][row_name].items()
+                )
+                row_violation = max(
+                    row_violation,
+                    model["row_lower"][row_name] - activity,
+                    activity - model["row_upper"][row_name],
+                )
+            checked_objective = (
+                math.fsum(
+                    coefficient * float(values[column])
+                    for column, coefficient in model["cost"].items()
+                )
+                + model["offset"]
+            )
+        except (KeyError, OSError, TypeError, ValueError, InvalidOperation) as error:
+            return VerificationResult(feasible=False, detail=str(error))
+        feasible = max(bound_violation, integer_violation, row_violation) <= tolerance
+        detail = {
+            "max_bound_violation": bound_violation,
+            "max_integrality_violation": integer_violation,
+            "max_row_violation": row_violation,
+            "objective": checked_objective,
+            "tolerance": tolerance,
+        }
+        if not feasible:
+            return VerificationResult(
+                feasible=False,
+                objective=checked_objective,
+                detail=json.dumps(detail, sort_keys=True),
+            )
+        if checked_objective is None or not math.isclose(
+            float(objective), float(checked_objective), rel_tol=0, abs_tol=tolerance
+        ):
+            return VerificationResult(
+                feasible=False,
+                objective=checked_objective,
+                detail="reported MIP objective differs from independent MPS arithmetic",
+            )
+        return VerificationResult(
+            feasible=True,
+            objective=float(checked_objective),
+            detail="independent sparse MPS feasibility and objective check passed",
+        )
+
     def verify(self, instance_path: Path, solution_path: Path) -> VerificationResult:
         if self.verifier is not None:
             return super().verify(instance_path, solution_path)
+        if instance_path.suffix.lower() == ".mps":
+            try:
+                solution = json.loads(solution_path.read_text())
+            except (OSError, json.JSONDecodeError) as error:
+                return VerificationResult(feasible=False, detail=str(error))
+            if not isinstance(solution, dict):
+                return VerificationResult(
+                    feasible=False, detail="invalid MIP solution container"
+                )
+            return self._verify_numeric_model_solution(instance_path, solution)
         processing_times = _public_scheduling_processing_times(instance_path)
         if processing_times is not None:
             try:
@@ -953,7 +1669,7 @@ class IntegerBoundaryFamily(ProblemFamilyPlugin):
     def verify(self, instance_path: Path, solution_path: Path) -> VerificationResult:
         model = json.loads(instance_path.with_suffix(".model.json").read_text())
         solution = json.loads(solution_path.read_text())
-        values, objective = _parse_highs_primal_solution(solution)
+        values, objective = _parse_mip_primal_solution(solution)
         expected = {f"x{index}" for index in range(len(model["costs"]))}
         if set(values) != expected:
             raise ValueError("incomplete primal solution output")
@@ -1029,6 +1745,8 @@ class CPFamily(ExternalVerifierFamily):
                 return VerificationResult.model_validate(
                     check_graph_coloring(instance, solution)
                 )
+            if instance.get("problem_kind") == "balanced_subset_sum":
+                return _check_balanced_subset_sum_solution(instance, solution)
             weights = instance["weights"]
             capacity = instance["capacity"]
         except (

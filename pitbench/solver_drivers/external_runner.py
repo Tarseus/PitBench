@@ -31,6 +31,8 @@ def execute(
     started = time.perf_counter()
     configured = os.environ.get(environment_key)
     try:
+        if trajectory is not None:
+            trajectory.unlink(missing_ok=True)
         if not configured:
             raise RuntimeError(
                 f"judge image does not provide required {environment_key} runner"
@@ -55,15 +57,22 @@ def execute(
             raise RuntimeError(completed.stderr.strip() or "external runner failed")
         response = json.loads(completed.stdout)
         solution = response.pop("solution", {})
-        write_solution(output, solution)
+        events = response.pop("trajectory", None)
+        solution_path = output.with_suffix(".solution.json")
+        if response.get("has_solution") is False:
+            solution_path.unlink(missing_ok=True)
+        else:
+            write_solution(output, solution)
         if trajectory is not None:
-            append_trajectory(
-                trajectory,
-                {
-                    "time_sec": time.perf_counter() - started,
-                    "objective": response.get("objective"),
-                },
-            )
+            if events is None:
+                events = [
+                    {
+                        "time_sec": time.perf_counter() - started,
+                        "objective": response.get("objective"),
+                    }
+                ]
+            for event in events:
+                append_trajectory(trajectory, event)
         write_result(
             output,
             started=started,
