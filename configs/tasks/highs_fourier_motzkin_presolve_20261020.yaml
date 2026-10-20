@@ -1,0 +1,59 @@
+schema_version: '3.0'
+task_id: highs_fourier_motzkin_presolve_20261020
+release:
+  repository: ERGO-Code/HiGHS
+  version: 1.15.1
+  tag: 4cc106ed1599ccaf8a20122c6754a217218a24bc
+  base_commit: 4cc106ed1599ccaf8a20122c6754a217218a24bc
+  released_at: '2026-09-14T19:29:05Z'
+  url: https://github.com/ERGO-Code/HiGHS/commit/4cc106ed1599ccaf8a20122c6754a217218a24bc
+task_type: exact_solver
+problem_family: mip
+optimization_scope: continuous_column_fourier_motzkin_presolve
+instruction: Improve exact MIP solving and proof efficiency in this pinned HiGHS source
+  snapshot while preserving feasibility, valid bounds, objective semantics, and truthful
+  solve statuses. Choose source changes autonomously and use only visible development
+  instances.
+repository:
+  clone_url: https://github.com/ERGO-Code/HiGHS.git
+  plugin: pitbench.repositories.plugins:HighsRepositoryPlugin
+  editable_paths:
+  - highs
+  - build
+  agent_image: pitbench-highs-pr3255-agent:local
+  judge_image: sha256:ea21eed096801799cde003e63dff4646f2a78b158750d6f7b5eda96ec52d14b9
+oracle:
+  kind: known_optimum
+  source: private://oracles/highs_fourier_motzkin_presolve_20261020.yaml
+  source_sha256: a0a39c3baea36e607c0d86414f3ebc7f954fa9971462df6544e4f3c072488fc7
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  solver_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  threads: 1
+  verifier: trusted_optimum
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/highs_fourier_motzkin_presolve_20261020_dev.yaml
+  instance_set_config_sha256: a149bd7bbfd2711245cf4a0b78d9cb55497b9d8fa522ff314e887efa4aab5acc
+  size: 8
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/highs_fourier_motzkin_presolve_20261020/judge_id.yaml
+  instance_set_config_sha256: cd817df8ff74c709232fec4604ed3bb676c813d030e34a8ca92d3a39734f9988
+  size: 30
+- name: judge_shift
+  kind: judge_shift
+  instance_set_config: private://hidden_instances/highs_fourier_motzkin_presolve_20261020/judge_shift.yaml
+  instance_set_config_sha256: 49c7614f5ee10f25a936202988d3b9561a2f1a87a54fa500bbac724431d6ac3a
+  size: 30

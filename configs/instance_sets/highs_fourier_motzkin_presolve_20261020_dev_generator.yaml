@@ -1,0 +1,34 @@
+schema_version: '1.0'
+visibility: agent
+format: mps
+generator:
+  kind: binary_clique_cover_mip
+  count: 8
+  groups:
+  - 300
+  - 300
+  - 300
+  - 300
+  - 600
+  - 600
+  - 900
+  - 1500
+  group_sizes:
+  - 8
+  coefficient_min: 120
+  coefficient_max: 190
+  cross_edge_density:
+  - 0.003
+  - 0.003
+  - 0.003
+  - 0.003
+  - 0.002
+  - 0.002
+  - 0.0015
+  - 0.001
+  cross_edge_sampler: geometric_skip_v1
+  fme_auxiliary_pairs: 100
+  fme_rows_per_sign: 2
+  fme_shared_binary_count: 6
+  randomness:
+    instance_seed: 325510

@@ -214,6 +214,35 @@ def test_binary_clique_cover_fme_extension_keeps_a_checkable_optimum(
     ).infrastructure_error
 
 
+def test_binary_clique_cover_geometric_edge_sampler_is_seeded_and_respects_witness() -> None:
+    generator = {
+        "kind": "binary_clique_cover_mip",
+        "count": 1,
+        "groups": [12],
+        "group_sizes": [8],
+        "coefficient_min": 120,
+        "coefficient_max": 190,
+        "cross_edge_density": [0.08],
+        "cross_edge_sampler": "geometric_skip_v1",
+        "randomness": {"instance_seed": 910017},
+    }
+    groups, planted, edges = binary_clique_cover_data(generator, 0)
+    repeated = binary_clique_cover_data(generator, 0)
+    group_by_column = {
+        column: group_index
+        for group_index, group in enumerate(groups)
+        for column in group
+    }
+    witness = {
+        group[selected] for group, selected in zip(groups, planted, strict=True)
+    }
+
+    assert repeated == (groups, planted, edges)
+    assert edges
+    assert all(group_by_column[first] != group_by_column[second] for first, second in edges)
+    assert all(not (first in witness and second in witness) for first, second in edges)
+
+
 def _knapsack_solution(selected: list[int], item_count: int, objective: int) -> dict:
     raw = (
         f"Model status\nOptimal\nObjective {objective}\n"

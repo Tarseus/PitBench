@@ -1,0 +1,92 @@
+schema_version: '1.0'
+visibility: agent
+format: mps
+instances:
+- id: dev_0000
+  instance_file: highs_fourier_motzkin_presolve_20261020_dev/instances/dev_0000.mps
+  instance_file_sha256: 18d2c6da0e2696683d25814c253d153710b0cb381d49651581c8cdcd8f860af8
+  bks: -300
+  bks_solution_file: highs_fourier_motzkin_presolve_20261020_dev/bks_solutions/dev_0000.solution.json
+  bks_solution_file_sha256: bd2f308260ab85bbbe84016c605acc884537cb02fd73df28067a2ba701351ec8
+  proven_optimal: true
+- id: dev_0001
+  instance_file: highs_fourier_motzkin_presolve_20261020_dev/instances/dev_0001.mps
+  instance_file_sha256: 296b23820ff826536f8369215ec52b72e3fc18ecc2cd59f2a28f06e14c335976
+  bks: -300
+  bks_solution_file: highs_fourier_motzkin_presolve_20261020_dev/bks_solutions/dev_0001.solution.json
+  bks_solution_file_sha256: 47834c0eb86e49a433c35d7ecd39f90f0c32bca0e4c4afe9491dee970a558af4
+  proven_optimal: true
+- id: dev_0002
+  instance_file: highs_fourier_motzkin_presolve_20261020_dev/instances/dev_0002.mps
+  instance_file_sha256: 954494df14d1b34093fb0fedfb9669d44909f287442979713d8cef88e02eec01
+  bks: -300
+  bks_solution_file: highs_fourier_motzkin_presolve_20261020_dev/bks_solutions/dev_0002.solution.json
+  bks_solution_file_sha256: fdb62690a0f0b67cfd981a8aa3de3cae49c485d21f2aa85e7c9baf9ae9b39189
+  proven_optimal: true
+- id: dev_0003
+  instance_file: highs_fourier_motzkin_presolve_20261020_dev/instances/dev_0003.mps
+  instance_file_sha256: 9020197a406a63c6ec633c1ce44c0f54c2e3532dc41ec24799d7f7e5b787c5b3
+  bks: -300
+  bks_solution_file: highs_fourier_motzkin_presolve_20261020_dev/bks_solutions/dev_0003.solution.json
+  bks_solution_file_sha256: 1d96f4e6fafe908ae37c3133192da9580ddd0c3bef53daccd0c86b95e4e68a11
+  proven_optimal: true
+- id: dev_0004
+  instance_file: highs_fourier_motzkin_presolve_20261020_dev/instances/dev_0004.mps
+  instance_file_sha256: a3ac245b2d63383067437999648eea0cc05723e911b49c95bbfa7217c892a58f
+  bks: -600
+  bks_solution_file: highs_fourier_motzkin_presolve_20261020_dev/bks_solutions/dev_0004.solution.json
+  bks_solution_file_sha256: 86a915f51fc4c966ecc638ca5b7702a33bbda526b81ecc8e5af200494534555b
+  proven_optimal: true
+- id: dev_0005
+  instance_file: highs_fourier_motzkin_presolve_20261020_dev/instances/dev_0005.mps
+  instance_file_sha256: 02dcfa7d6464f439b221063b5d33c9b6a79b5a0c198696942ccf4719ab7f30f0
+  bks: -600
+  bks_solution_file: highs_fourier_motzkin_presolve_20261020_dev/bks_solutions/dev_0005.solution.json
+  bks_solution_file_sha256: 39af30d193ce8b5026134d58df3a109a16ba149f1dd1677a9465b1389c3fa6f0
+  proven_optimal: true
+- id: dev_0006
+  instance_file: highs_fourier_motzkin_presolve_20261020_dev/instances/dev_0006.mps
+  instance_file_sha256: 6848eae9356f120718e9afd1190d8af5a85d4c4f02ab629c2d4f3ac4b425d836
+  bks: -900
+  bks_solution_file: highs_fourier_motzkin_presolve_20261020_dev/bks_solutions/dev_0006.solution.json
+  bks_solution_file_sha256: 444301b0e48ce2deaee5944d5788a860a8352e22ec1c04d16f4917c38ca82d4f
+  proven_optimal: true
+- id: dev_0007
+  instance_file: highs_fourier_motzkin_presolve_20261020_dev/instances/dev_0007.mps
+  instance_file_sha256: 37480bdfd2a37d2b497c853354f84a47b11eacdf6036a067c4220013d416ac93
+  bks: -1500
+  bks_solution_file: highs_fourier_motzkin_presolve_20261020_dev/bks_solutions/dev_0007.solution.json
+  bks_solution_file_sha256: d9a93e594ab7c12d8f62f6ae59907b7eebe94ea08709c16f3619ad50e625c83d
+  proven_optimal: true
+selection:
+  source_generator: binary_clique_cover_mip
+  kind: binary_clique_cover_mip
+  count: 8
+  groups:
+  - 300
+  - 300
+  - 300
+  - 300
+  - 600
+  - 600
+  - 900
+  - 1500
+  group_sizes:
+  - 8
+  coefficient_min: 120
+  coefficient_max: 190
+  cross_edge_density:
+  - 0.003
+  - 0.003
+  - 0.003
+  - 0.003
+  - 0.002
+  - 0.002
+  - 0.0015
+  - 0.001
+  cross_edge_sampler: geometric_skip_v1
+  fme_auxiliary_pairs: 100
+  fme_rows_per_sign: 2
+  fme_shared_binary_count: 6
+  randomness:
+    instance_seed: 325510

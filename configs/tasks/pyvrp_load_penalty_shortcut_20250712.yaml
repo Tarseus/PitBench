@@ -1,0 +1,64 @@
+schema_version: '3.0'
+task_id: pyvrp_load_penalty_shortcut_20250712
+release:
+  repository: PyVRP/PyVRP
+  version: 0.12.0a0
+  tag: 24b02d32e1e54392023161d22423e4cd4c5fb5f0
+  base_commit: 24b02d32e1e54392023161d22423e4cd4c5fb5f0
+  released_at: '2025-07-12T11:20:32Z'
+  url: https://github.com/PyVRP/PyVRP/commit/24b02d32e1e54392023161d22423e4cd4c5fb5f0
+task_type: heuristic_solver
+problem_family: cvrp
+optimization_scope: local_search_load_penalty_early_exit_efficiency
+instruction: Improve local-search cost evaluation efficiency in this pinned PyVRP
+  source snapshot while preserving capacity feasibility, objective semantics, and
+  reload behavior. Choose source changes autonomously and use only visible development
+  instances.
+repository:
+  clone_url: https://github.com/PyVRP/PyVRP.git
+  plugin: pitbench.repositories.plugins:PyVRPClassicRepositoryPlugin
+  editable_paths:
+  - pyvrp
+  agent_image: pitbench-pyvrp-pr869-agent:0de007c7
+  judge_image: sha256:d7904f22c14da61da142dcea5d08fe3aea4d855bb8c8ed27501bb2675c51a827
+oracle:
+  kind: best_known_solution
+  source: private://calibration/cvrplib_x/oracle.yaml
+  objective_sense: minimize
+evaluation:
+  performance_protocol: heuristic_fixed_budget
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 10.0
+  primary_budget_sec: 10.0
+  threads: 1
+  verifier: cvrp_independent
+  solver_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/pyvrp_cvrp_v1_dev.yaml
+  instance_set_config_sha256: 39d756151d1813b65f586618224e46fc208413d0e7d8bcf0e86e9f574df81901
+  size: 10
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://calibration/cvrplib_x/oracle.yaml
+  instance_set_config_sha256: 84833f98c4d1f2480889ed8f5f0b9046402bc899fd06f8a6b7602f186cc8ca13
+  size: 38
+  randomness:
+    instance_seed: 17
+- name: judge_shift
+  kind: judge_shift
+  instance_set_config: private://instance_sets/pyvrp_cvrp_shift_v4.yaml
+  instance_set_config_sha256: e5f77f7ab5f64602516dcb65b4bb77417bbd105c608a84d0b05ef09d549ca79f
+  size: 10
+  randomness:
+    instance_seed: 27100
+    coordinate_seed: 27101
+    demand_seed: 27102

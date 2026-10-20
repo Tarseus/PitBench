@@ -298,6 +298,7 @@ def binary_clique_cover_data(
     coefficient_min = int(config["coefficient_min"])
     coefficient_max = int(config["coefficient_max"])
     cross_edge_density = float(_choice(config["cross_edge_density"], index))
+    cross_edge_sampler = config.get("cross_edge_sampler", "scan_v1")
     if (
         group_count < 2
         or group_size < 2
@@ -305,6 +306,8 @@ def binary_clique_cover_data(
         or coefficient_max < coefficient_min
         or 2 * coefficient_min <= coefficient_max
         or not 0 <= cross_edge_density < 1
+        or not isinstance(cross_edge_sampler, str)
+        or cross_edge_sampler not in {"scan_v1", "geometric_skip_v1"}
     ):
         raise ValueError("invalid binary clique-cover generator settings")
 
@@ -319,12 +322,30 @@ def binary_clique_cover_data(
     cross_edges = []
     for first_group in range(group_count):
         for second_group in range(first_group + 1, group_count):
-            for first in groups[first_group]:
-                for second in groups[second_group]:
-                    if first in planted_names and second in planted_names:
-                        continue
-                    if rng.random() < cross_edge_density:
+            if cross_edge_sampler == "scan_v1":
+                for first in groups[first_group]:
+                    for second in groups[second_group]:
+                        if first in planted_names and second in planted_names:
+                            continue
+                        if rng.random() < cross_edge_density:
+                            cross_edges.append((first, second))
+            elif cross_edge_density > 0:
+                # Geometric gaps generate the same independent Bernoulli edge
+                # process as scanning every pair, while making sparse large
+                # graph instances proportional to emitted edges.
+                log_failure = math.log1p(-cross_edge_density)
+                position = 0
+                pair_count = group_size * group_size
+                while position < pair_count:
+                    position += int(math.log1p(-rng.random()) / log_failure)
+                    if position >= pair_count:
+                        break
+                    first_offset, second_offset = divmod(position, group_size)
+                    first = groups[first_group][first_offset]
+                    second = groups[second_group][second_offset]
+                    if first not in planted_names or second not in planted_names:
                         cross_edges.append((first, second))
+                    position += 1
     return groups, planted, cross_edges
 
 
