@@ -1277,11 +1277,11 @@ The versioned [budget catalog](configs/research/budgets.json) declares three
 initial tracks. Standard is the default when a task has no explicit research
 budget; these initial values still need budget–performance calibration.
 
-| Track | Agent wall budget | Offline source checkpoints |
-| --- | ---: | --- |
-| Lite | 1 hour | 0.5h, 1h |
-| Standard | 4 hours | 0.5h, 1h, 2h, 4h |
-| Research | 8 hours | 0.5h, 1h, 2h, 4h, 8h |
+| Track | Agent wall budget | CPU | Memory | Offline source checkpoints |
+| --- | ---: | ---: | ---: | --- |
+| Lite | 1 hour | 8 vCPU | 32 GiB | 0.5h, 1h |
+| Standard | 4 hours | 8 vCPU | 32 GiB | 0.5h, 1h, 2h, 4h |
+| Research | 8 hours | 8 vCPU | 32 GiB | 0.5h, 1h, 2h, 4h, 8h |
 
 ```bash
 pitbench evaluate TASK_ID --agent codex --research-track standard --n-attempts 3
@@ -1305,23 +1305,36 @@ deadline. The final evaluator-owned hidden Judge runs afterwards and does not
 consume the Agent research budget. Retain quota/infrastructure failures rather
 than silently giving an agent more time.
 
-CPU and memory are separate resources. The suggested 4–8 vCPU and 16–32 GiB
-ranges remain calibration candidates, not frozen caps. Concrete `cpus` and
-`memory_gib` declarations are emitted as Docker Compose limits. Standard also
-records an initial **4 core-hour development-experiment** candidate: 14,400
-cumulative CPU seconds across processes and threads. Compilation CPU must not
-be charged to that experiment scope. Lite/Research experiment CPU allowances
-have not been chosen and are not automatically scaled from Standard.
+The user-approved initial profile applies **8 vCPU and 32 GiB** to every track,
+with only the wall budget changing. The adapter emits these as Docker Compose
+limits; Smoke inherits the selected resource profile with a 300s wall budget.
+Total CPU and model usage/cost are recording-only: there is no default cumulative
+CPU, token or dollar quota. The earlier 4 core-hour experiment candidate is
+withdrawn from the initial profile. Calibrate resource sufficiency on Base
+builds and public workloads before freezing the formal comparison; any higher
+resource group must be preregistered and applied equally across agents.
+
+Public `pitbench bench` defaults to four development workers in newly
+materialized tasks. `--jobs` changes this scheduling preference; workers shrink
+to fit the declared CPU allowance and per-solve threads. It is not an independent
+parallelism hard quota. `--jobs 1` selects serial development measurements.
+Feedback records effective parallelism; builds finish before the worker pool
+starts. These development measurements do not change hidden Judge scheduling,
+task solver threads, solve budgets or seeds. Rebuild cached task images for
+public-tooling image revision 16; legacy materialized tooling stays unchanged.
 
 Host-owned traces now record whole-container Docker CPU deltas, sampled memory,
 the budget declaration, checkpoint target/observed times and retained source
 state IDs in `agent-trace/<execution-id>/`. `research-budget.json` records
 missing coverage. Whole-container CPU includes compilation and instrumentation;
 it excludes host/sidecar inference and cannot establish experiment CPU usage.
-**Separate experiment CPU attribution, cumulative CPU enforcement and the
-declared parallel-run cap remain unimplemented.** Doctor reports this limitation;
-a named wall track alone is not a validated formal resource comparison. Real
-Docker enforcement and checkpoint timing have not been validated in this pilot.
+Separate experiment CPU attribution remains unavailable; cumulative CPU and a
+separate parallel-run cap are not admission requirements of this initial
+profile. Doctor retains a warning about hardware identity/isolation and real
+container enforcement. Assign non-overlapping CPU sets with consistent CPU/SMT
+layout through the host scheduler. An 8-CPU ceiling alone does not demonstrate
+isolation. Real Docker enforcement and checkpoint timing have not been
+validated in this pilot.
 
 Retain native provider usage/request evidence and AgentResult token/cost data;
 missing request counts and cost provenance must stay explicit. Billed costs and

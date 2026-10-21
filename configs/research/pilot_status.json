@@ -7,34 +7,7 @@
       "pr_number": 701,
       "status": "draft",
       "private_assets_missing": 3,
-      "agent_views": {
-        "guided": {
-          "sha256": "4f687892954a4d67aa2da90e77f7f4aaa06d7e9a995d472075571a2054a33ee9",
-          "readiness_gaps": [
-            "research_cpus_not_declared",
-            "research_memory_gib_not_declared",
-            "research_max_parallel_runs_not_declared",
-            "frozen_private_assets_unavailable",
-            "controlled_structure_and_scale_panels_not_bound",
-            "research_runtime_not_validated",
-            "research_budget_enforcement_not_validated",
-            "pre_solution_guided_context_not_verified"
-          ]
-        },
-        "open_ended": {
-          "sha256": "b7246e6cc8a500212b7fe5401d8e0748e118a9bffd2d733b3d535b3c430799b5",
-          "readiness_gaps": [
-            "research_cpus_not_declared",
-            "research_memory_gib_not_declared",
-            "research_max_parallel_runs_not_declared",
-            "frozen_private_assets_unavailable",
-            "controlled_structure_and_scale_panels_not_bound",
-            "research_runtime_not_validated",
-            "research_budget_enforcement_not_validated"
-          ]
-        }
-      },
-      "historical_request_sha256": "29f0b876cca829475af52ba6cd9802370ee5b22ed679b078b0334e44e85a5793",
+      "historical_request_sha256": "cf902063f36918a9ca4f369dca1d192225acdd85cef9450941ff0f7d51c73452",
       "patches": {
         "full_integrated": {
           "path": "human_reference/full_integrated.patch",
@@ -43,6 +16,27 @@
         "solver_source": {
           "path": "human_reference/solver_source.patch",
           "sha256": "70a3064f282a9b3666f75865378aceceea330990e9ad228ed8ba7c6435a187f4"
+        }
+      },
+      "agent_views": {
+        "guided": {
+          "sha256": "50c32b32298f82806205886f729e128d05ca74a7e670b8c15455cfa94b2ada68",
+          "readiness_gaps": [
+            "frozen_private_assets_unavailable",
+            "controlled_structure_and_scale_panels_not_bound",
+            "research_runtime_not_validated",
+            "research_budget_enforcement_not_validated",
+            "pre_solution_guided_context_not_verified"
+          ]
+        },
+        "open_ended": {
+          "sha256": "551d49908a308e7b060d0c11f196fab76e76223903dc74e971093659931034a3",
+          "readiness_gaps": [
+            "frozen_private_assets_unavailable",
+            "controlled_structure_and_scale_panels_not_bound",
+            "research_runtime_not_validated",
+            "research_budget_enforcement_not_validated"
+          ]
         }
       }
     },
@@ -52,34 +46,7 @@
       "pr_number": 577,
       "status": "draft",
       "private_assets_missing": 3,
-      "agent_views": {
-        "guided": {
-          "sha256": "19311796ba2644636a6bb2a6bb563ba9589343078b74ef03ea19d158758693d9",
-          "readiness_gaps": [
-            "research_cpus_not_declared",
-            "research_memory_gib_not_declared",
-            "research_max_parallel_runs_not_declared",
-            "frozen_private_assets_unavailable",
-            "controlled_structure_and_scale_panels_not_bound",
-            "research_runtime_not_validated",
-            "research_budget_enforcement_not_validated",
-            "pre_solution_guided_context_not_verified"
-          ]
-        },
-        "open_ended": {
-          "sha256": "e13ab85de71e95f9a67207acec2232c36a91823792c34b84fae529f51bd56715",
-          "readiness_gaps": [
-            "research_cpus_not_declared",
-            "research_memory_gib_not_declared",
-            "research_max_parallel_runs_not_declared",
-            "frozen_private_assets_unavailable",
-            "controlled_structure_and_scale_panels_not_bound",
-            "research_runtime_not_validated",
-            "research_budget_enforcement_not_validated"
-          ]
-        }
-      },
-      "historical_request_sha256": "d1de73f95f329b636118de4aa60561b44bddd5e307a2b1aed06bfbd601128579",
+      "historical_request_sha256": "31a53011d0085ca7d6ecc4ebb9235d538caf4fd1fd705be8c0a68d2d09926b16",
       "patches": {
         "full_integrated": {
           "path": "human_reference/full_integrated.patch",
@@ -88,6 +55,27 @@
         "solver_source": {
           "path": "human_reference/solver_source.patch",
           "sha256": "832e654de049de98e8b758fcd51a7258e0689d1f08a4b1753d52271aee1c17ae"
+        }
+      },
+      "agent_views": {
+        "guided": {
+          "sha256": "e26be86659c400269e6aac0b8461885eec50dd2c737ef245512ccf074e7a20be",
+          "readiness_gaps": [
+            "frozen_private_assets_unavailable",
+            "controlled_structure_and_scale_panels_not_bound",
+            "research_runtime_not_validated",
+            "research_budget_enforcement_not_validated",
+            "pre_solution_guided_context_not_verified"
+          ]
+        },
+        "open_ended": {
+          "sha256": "637abab6c6a8b4a94f2eb319ac71aaa2a3f2766203a153da305ff47b799091ff",
+          "readiness_gaps": [
+            "frozen_private_assets_unavailable",
+            "controlled_structure_and_scale_panels_not_bound",
+            "research_runtime_not_validated",
+            "research_budget_enforcement_not_validated"
+          ]
         }
       }
     }
@@ -133,10 +121,10 @@
   "solver_runs": 0,
   "agent_runs": 0,
   "new_task_ready": 0,
-  "research_budget": "standard_4h_wall_declared_resource_caps_pending_calibration",
-  "claim_boundary": "Source-bound construction, public generation, configuration checks and synthetic watchdog/accounting checks only. No real Docker resource run, Agent research, solver correctness/performance experiment or budget-performance calibration.",
-  "protocol_sha256": "5c33d1d42de6a54ba4d5d16aaf57024dab91109cf5fb255e0e0be0e30affadd1",
-  "pilot_plan_sha256": "59774d0c3093dfa4488d06eaba2a2d391a398f343adcd228b086d0225c7481d6",
+  "research_budget": "initial_8vcpu_32gib_profile_selected_cumulative_usage_recording_only",
+  "claim_boundary": "Source-bound case construction, configuration checks and synthetic public CLI concurrency checks only. Prior 15 generated-instance exercises retain their evidence commit. No actual solver, Agent, Docker quota or budget-performance calibration run.",
+  "protocol_sha256": "706068bcd40be0862fb144291d8a6e82fa01c900ecc9bee2ecceea07ef427e84",
+  "pilot_plan_sha256": "1b9f816cf8332156d83f44cc772d40e64237e21e56738fab1b398a35a78319bf",
   "static_checks": {
     "ruff": "passed",
     "syntax_compilation": "passed",
@@ -147,67 +135,117 @@
     "prepared": 2,
     "real_cli_executed": true
   },
-  "budget_catalog_sha256": "9b4e064c3ee19fda3809a6298a7820f73b2e2fc7cf73aed27e8561c397968020",
+  "budget_catalog_sha256": "e2af54da317b3a6005dc2ff05b84c21e8c1c4eb0826390b0c0ac843e0666098c",
   "budget_implementation_checks": {
-    "kind": "research_budget_implementation_checks",
-    "materialized_task_configurations": [
+    "kind": "accepted_resource_profile_checks",
+    "task_configurations": [
       {
         "task_id": "pyvrp_route_distance_storage_20241117",
-        "profile": "lite",
-        "wall_time_sec": 3600
-      },
-      {
-        "task_id": "pyvrp_route_distance_storage_20241117",
-        "profile": "standard",
-        "wall_time_sec": 14400
-      },
-      {
-        "task_id": "pyvrp_route_distance_storage_20241117",
-        "profile": "research",
-        "wall_time_sec": 28800
+        "track": "lite",
+        "wall_sec": 3600,
+        "cpus": 8,
+        "memory_gib": 32,
+        "development_parallel_runs": 4,
+        "cumulative_cpu_cap": null
       },
       {
         "task_id": "pyvrp_route_distance_storage_20241117",
-        "profile": "smoke",
-        "wall_time_sec": 300
+        "track": "standard",
+        "wall_sec": 14400,
+        "cpus": 8,
+        "memory_gib": 32,
+        "development_parallel_runs": 4,
+        "cumulative_cpu_cap": null
+      },
+      {
+        "task_id": "pyvrp_route_distance_storage_20241117",
+        "track": "research",
+        "wall_sec": 28800,
+        "cpus": 8,
+        "memory_gib": 32,
+        "development_parallel_runs": 4,
+        "cumulative_cpu_cap": null
+      },
+      {
+        "task_id": "pyvrp_route_distance_storage_20241117",
+        "track": "smoke",
+        "wall_sec": 300,
+        "cpus": 8,
+        "memory_gib": 32,
+        "development_parallel_runs": 4,
+        "cumulative_cpu_cap": null
       },
       {
         "task_id": "highs_mip_row_aggregation_20210916",
-        "profile": "lite",
-        "wall_time_sec": 3600
+        "track": "lite",
+        "wall_sec": 3600,
+        "cpus": 8,
+        "memory_gib": 32,
+        "development_parallel_runs": 4,
+        "cumulative_cpu_cap": null
       },
       {
         "task_id": "highs_mip_row_aggregation_20210916",
-        "profile": "standard",
-        "wall_time_sec": 14400
+        "track": "standard",
+        "wall_sec": 14400,
+        "cpus": 8,
+        "memory_gib": 32,
+        "development_parallel_runs": 4,
+        "cumulative_cpu_cap": null
       },
       {
         "task_id": "highs_mip_row_aggregation_20210916",
-        "profile": "research",
-        "wall_time_sec": 28800
+        "track": "research",
+        "wall_sec": 28800,
+        "cpus": 8,
+        "memory_gib": 32,
+        "development_parallel_runs": 4,
+        "cumulative_cpu_cap": null
       },
       {
         "task_id": "highs_mip_row_aggregation_20210916",
-        "profile": "smoke",
-        "wall_time_sec": 300
+        "track": "smoke",
+        "wall_sec": 300,
+        "cpus": 8,
+        "memory_gib": 32,
+        "development_parallel_runs": 4,
+        "cumulative_cpu_cap": null
       }
     ],
-    "checks": [
-      "explicit container CPU/memory config and profile precedence",
-      "invalid/non-finite budgets, duplicate/out-of-range checkpoints, mislabeled tracks rejected",
-      "Standard reaches native timeout and bypasses quota wall extension",
-      "sub-second synthetic host watchdog cancels worker",
-      "synthetic cumulative counter delta, real Git checkpoint and missing scope reporting"
+    "synthetic_cli_workers": [
+      {
+        "mode": "default",
+        "worker_peak": 4,
+        "completed": 8,
+        "failed_worker_retained": true
+      },
+      {
+        "mode": "override",
+        "worker_peak": 8,
+        "completed": 8,
+        "failed_worker_retained": true
+      },
+      {
+        "mode": "threads",
+        "worker_peak": 2,
+        "completed": 8,
+        "failed_worker_retained": true
+      },
+      {
+        "mode": "serial",
+        "worker_peak": 1,
+        "completed": 8,
+        "failed_worker_retained": true
+      }
     ],
-    "synthetic_watchdog_elapsed_sec": 0.13130451300094137,
-    "source_task_configs_changed": [],
-    "real_docker_resource_runs": 0,
+    "real_solver_runs": 0,
     "real_agent_runs": 0,
-    "solver_runs": 0,
-    "budget_performance_calibration_runs": 0,
-    "new_task_ready": 0
+    "real_docker_resource_runs": 0,
+    "tests_added_or_run": false,
+    "source_task_configs_changed": []
   },
-  "construction_artifacts": "report/research-budget-20261021/cases",
-  "source_request_export": "report/research-budget-20261021/historical_export",
-  "input_rejection_evidence_commit": "501165635e5eefa2da6bde2f17efd51beba5cd13"
+  "construction_artifacts": "report/research-profile-20261021/cases",
+  "source_request_export": "report/research-profile-20261021/historical_export",
+  "input_rejection_evidence_commit": "501165635e5eefa2da6bde2f17efd51beba5cd13",
+  "generator_exercise_evidence_commit": "9feff392f829e69614f9113239d61a6549ecf300"
 }

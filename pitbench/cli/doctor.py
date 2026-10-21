@@ -1400,8 +1400,9 @@ def evaluation_checks(
                         CheckStatus.WARN,
                         "research budget",
                         f"track={budget.track}; wall={budget.wall_time_sec:g}s; "
-                        f"resource gaps={gaps}; experiment CPU attribution/enforcement is not implemented; "
-                        "calibration configuration, not a validated formal resource comparison",
+                        f"cpus={budget.cpus}; memory_gib={budget.memory_gib}; resource gaps={gaps}; "
+                        "cumulative CPU and model costs are recording-only in the initial protocol; "
+                        "hardware isolation and real container enforcement still require validation",
                     )
                 )
             except ValueError as error:

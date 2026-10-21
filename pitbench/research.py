@@ -45,12 +45,19 @@ def resolve_research_budget(
     configured: ResearchBudget | None = None,
     smoke_test: bool = False,
 ) -> ResearchBudget:
-    """Resolve a named wall budget without inventing unresolved resource caps."""
+    """Resolve the selected wall/CPU/memory profile without adding usage caps."""
     catalog = json.loads((root / "configs/research/budgets.json").read_text())
     if catalog.get("schema_version") != "1.0":
         raise ValueError("unsupported research budget catalog")
     if smoke_test:
-        return ResearchBudget(wall_time_sec=catalog["smoke_wall_time_sec"])
+        selected = resolve_research_budget(root, track=track, configured=configured)
+        return selected.model_copy(
+            update={
+                "track": "custom",
+                "wall_time_sec": catalog["smoke_wall_time_sec"],
+                "checkpoints_sec": [],
+            }
+        )
     if track is not None:
         if track not in catalog["tracks"]:
             raise ValueError(f"unknown research track: {track}")
@@ -72,12 +79,7 @@ def research_budget_gaps(budget: ResearchBudget | None) -> list[str]:
         return ["research_budget_not_declared"]
     return [
         f"research_{key}_not_declared"
-        for key in (
-            "cpus",
-            "memory_gib",
-            "max_parallel_runs",
-            "development_cpu_time_sec",
-        )
+        for key in ("cpus", "memory_gib")
         if getattr(budget, key) is None
     ]
 

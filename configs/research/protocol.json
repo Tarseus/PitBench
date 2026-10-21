@@ -23,18 +23,42 @@
     "custom_instances": "A generated instance does not automatically have a trusted optimum or BKS. Feasibility checks alone do not verify valid bounds, optimality or infeasibility."
   },
   "research_budget": {
-    "status": "wall_tracks_declared_resources_pending_calibration",
+    "status": "initial_wall_cpu_memory_profile_selected_pending_calibration",
     "budget_catalog": "configs/research/budgets.json",
     "default_track": "standard",
-    "required_before_formal_resource_comparison": ["wall_time_sec", "cpus", "memory_gib", "development_cpu_time_sec", "max_parallel_runs", "hardware_identity", "trusted_accounting_and_enforcement"],
-    "additional_accounting": ["model_tokens_and_calls", "generation", "builds", "profiling", "solver_runs", "failed_runs"],
-    "enforcement": "The harness enforces the chosen wall deadline, including model waits and quota retries; setup and final hidden Judge are outside it. Container CPU/memory controls are emitted only when explicitly declared. Whole-container CPU deltas are not development-experiment CPU: trusted attribution and cumulative experiment CPU enforcement remain incomplete. Missing counters are not zeros. Agent-written ledgers do not enforce a compute budget.",
+    "required_before_formal_resource_comparison": [
+      "wall_time_sec",
+      "cpus",
+      "memory_gib",
+      "hardware_identity_and_isolation",
+      "verified_container_limits",
+      "model_and_scaffold_identity",
+      "complete_usage_or_explicit_missingness"
+    ],
+    "additional_accounting": [
+      "model_tokens_and_calls",
+      "generation",
+      "builds",
+      "profiling",
+      "solver_runs",
+      "failed_runs"
+    ],
+    "enforcement": "The harness enforces the selected wall deadline including model waits and quota retries; setup and final hidden Judge are separate. Initial profiles declare 8 vCPU and 32 GiB container caps. Cumulative CPU and model usage are recorded with no new default hard quota. Development parallelism defaults to four as a scheduling preference within the CPU allowance, not an independent quota. Trusted experiment attribution remains unavailable; missing counters are not zeros. Host hardware isolation and actual container enforcement require validation.",
     "solver_budgets": "The pilot inherits each existing task's exact frozen solver budgets, seeds, objective semantics and verifier. These do not define the total Agent research budget."
   },
   "falsifiable_prediction_track": {
     "status": "protocol_only_not_scored",
     "optional_for_patch_only_agents": true,
-    "prediction_fields": ["prediction_id", "observable_structural_predicate", "metric_id", "budget_sec", "expected_direction", "expected_nonbenefit_or_regression_conditions", "patch_sha256", "experiment_artifact_hashes"],
+    "prediction_fields": [
+      "prediction_id",
+      "observable_structural_predicate",
+      "metric_id",
+      "budget_sec",
+      "expected_direction",
+      "expected_nonbenefit_or_regression_conditions",
+      "patch_sha256",
+      "experiment_artifact_hashes"
+    ],
     "commitment": "The evaluator records an immutable acceptance receipt for the patch, predictions and evidence before any hidden result is released. Agent timestamps do not prove commitment.",
     "validation": "Use fixed measurable predicates and the task's preregistered metric evidence; record supported, contradicted, inconclusive and unmeasurable separately. An improvement somewhere does not validate the proposed mechanism. No prose-quality LLM score is used.",
     "controls": "Freeze all submitted predictions; retain contradictions and missing groups. Report prediction coverage and trivial or uninformative predictions. Run controlled ablations before interpreting mechanism claims causally.",
@@ -43,7 +67,11 @@
   "distributional_evaluation": {
     "target": "Report verified improvement as a function of declared distribution condition and solver budget.",
     "loss": "Use each task's existing exact, anytime or declared resource protocol. Do not introduce one runtime loss or combine incompatible units across problem families.",
-    "required_views": ["id", "controlled_structure", "controlled_scale"],
+    "required_views": [
+      "id",
+      "controlled_structure",
+      "controlled_scale"
+    ],
     "optional_view": "joint_structure_and_scale",
     "design": "Bind and verify the generator/configuration for every view. Hold nuisance variables fixed when claiming a controlled structural or scale intervention. A judge_shift name alone proves neither intervention.",
     "interpretation": "Structural distribution distance and algorithmic difficulty are distinct. OT or instance metrics may describe distribution change; they do not directly define optimization quality.",
@@ -57,9 +85,25 @@
     "status": "not_run"
   },
   "related_work_boundaries": [
-    {"name": "FormulaCode", "source": "https://arxiv.org/html/2603.16011v3", "overlap": "Historical code optimization tasks, expert references, multi-workload objectives, hierarchical analysis and workload regressions are already evaluated."},
-    {"name": "ALE-Bench", "source": "https://arxiv.org/abs/2506.09050", "overlap": "Long-horizon algorithm engineering and iterative feedback on hard optimization tasks are already evaluated."},
-    {"name": "EXP-Bench", "source": "https://symbioticlab.org/publications/files/expbench:iclr26/expbench-iclr26.pdf", "overlap": "Hypothesis formation, experiment design, implementation and research conclusions are already evaluated."},
-    {"name": "FIRE-Bench", "source": "https://arxiv.org/html/2602.02905", "overlap": "Independent experimental rediscovery from high-level questions is already evaluated; its published conclusion matching uses LLM-based extraction and entailment."}
+    {
+      "name": "FormulaCode",
+      "source": "https://arxiv.org/html/2603.16011v3",
+      "overlap": "Historical code optimization tasks, expert references, multi-workload objectives, hierarchical analysis and workload regressions are already evaluated."
+    },
+    {
+      "name": "ALE-Bench",
+      "source": "https://arxiv.org/abs/2506.09050",
+      "overlap": "Long-horizon algorithm engineering and iterative feedback on hard optimization tasks are already evaluated."
+    },
+    {
+      "name": "EXP-Bench",
+      "source": "https://symbioticlab.org/publications/files/expbench:iclr26/expbench-iclr26.pdf",
+      "overlap": "Hypothesis formation, experiment design, implementation and research conclusions are already evaluated."
+    },
+    {
+      "name": "FIRE-Bench",
+      "source": "https://arxiv.org/html/2602.02905",
+      "overlap": "Independent experimental rediscovery from high-level questions is already evaluated; its published conclusion matching uses LLM-based extraction and entailment."
+    }
   ]
 }

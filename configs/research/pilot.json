@@ -5,8 +5,8 @@
     {
       "case_id": "cvrp_research_001",
       "task_config": "configs/tasks/pyvrp_route_distance_storage_20241117.yaml",
-      "historical_request": "report/research-budget-20261021/historical_export/requests/PyVRP/PyVRP/pr-701.json",
-      "historical_bundle_root": "report/research-budget-20261021/historical_export",
+      "historical_request": "report/research-profile-20261021/historical_export/requests/PyVRP/PyVRP/pr-701.json",
+      "historical_bundle_root": "report/research-profile-20261021/historical_export",
       "open_question": "Investigate this historical CVRP solver and develop a source-level algorithmic improvement. Establish valid solution quality under the declared solve budgets and investigate whether the improvement transfers across instance structures and sizes.",
       "guided_question": "Investigate how solution quality and computational costs vary across the visible CVRP instances. Form a falsifiable explanation, design development experiments, and improve the solver while preserving original-problem feasibility and objective semantics.",
       "guided_context": [],
@@ -14,13 +14,15 @@
       "research_budget": {
         "track": "standard",
         "wall_time_sec": 14400,
-        "development_cpu_time_sec": 14400,
         "checkpoints_sec": [
           1800,
           3600,
           7200,
           14400
-        ]
+        ],
+        "cpus": 8,
+        "memory_gib": 32,
+        "development_parallel_runs": 4
       },
       "experimental_access": "construct_instances",
       "generators": [
@@ -48,8 +50,8 @@
     {
       "case_id": "mip_research_001",
       "task_config": "configs/tasks/highs_mip_row_aggregation_20210916.yaml",
-      "historical_request": "report/research-budget-20261021/historical_export/requests/ERGO-Code/HiGHS/pr-577.json",
-      "historical_bundle_root": "report/research-budget-20261021/historical_export",
+      "historical_request": "report/research-profile-20261021/historical_export/requests/ERGO-Code/HiGHS/pr-577.json",
+      "historical_bundle_root": "report/research-profile-20261021/historical_export",
       "open_question": "Investigate this historical MIP solver and develop a source-level algorithmic improvement. Preserve original-model feasibility, valid bounds and truthful solve statuses, and establish its effectiveness on independently checked instances.",
       "guided_question": "Study how this solver behaves on the visible scheduling and knapsack MIPs. Design controlled development experiments to explain observed differences, implement an improvement, and predict the structures on which it should help or regress.",
       "guided_context": [],
@@ -57,13 +59,15 @@
       "research_budget": {
         "track": "standard",
         "wall_time_sec": 14400,
-        "development_cpu_time_sec": 14400,
         "checkpoints_sec": [
           1800,
           3600,
           7200,
           14400
-        ]
+        ],
+        "cpus": 8,
+        "memory_gib": 32,
+        "development_parallel_runs": 4
       },
       "experimental_access": "construct_instances",
       "generators": [

@@ -32,7 +32,7 @@ from pitbench.tasks import TaskCatalog
 
 # Increment when the generated task image or bundled public tooling becomes
 # incompatible with an image produced by an earlier PitBench checkout.
-IMAGE_REVISION = "15"
+IMAGE_REVISION = "16"
 IMAGE_REVISION_LABEL = "org.pitbench.image-revision"
 IMAGE_SOURCE_LABEL = "org.pitbench.image-source"
 IMAGE_TOOLS_LABEL = "org.pitbench.agent-tools"
@@ -158,6 +158,7 @@ class PitBenchAdapter:
                 task_dir=task_dir,
                 agent_tools=tools,
                 agent_feedback_mode=agent_feedback_mode,
+                research_budget=budget,
             )
         prepared_image = agent_image or task.repository.agent_image
         submodule_paths = self._submodule_paths(repository) if prepared_image else ()

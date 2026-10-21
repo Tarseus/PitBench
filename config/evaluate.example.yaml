@@ -31,22 +31,22 @@ agent_tools: [inspect, workspace, bench]
 # switch only between outcome_only and solver_behavior.
 agent_feedback_mode: solver_behavior
 
-# Named wall-budget profiles live in configs/research/budgets.json.
-# Default: standard 4h; lite 1h; research 8h; smoke remains 300s.
+# Resource profiles live in configs/research/budgets.json.
+# Standard 4h, Lite 1h, Research 8h; all use 8 vCPU and 32 GiB.
+# Smoke retains a 300s wall time and inherits the selected resource profile.
 # Explicit track selection takes precedence over all per-task budget overrides.
 # research_track: standard
-# For calibration with concrete resource choices, omit research_track and set:
+# For a preregistered custom resource group, omit research_track and set:
 # research_budget:
 #   track: standard
 #   wall_time_sec: 14400
-#   cpus: 4
-#   memory_gib: 16
-#   max_parallel_runs: 4
-#   development_cpu_time_sec: 14400  # 4 core-hours: a separate experiment scope
+#   cpus: 8
+#   memory_gib: 32
+#   development_parallel_runs: 4  # scheduling preference, not a hard quota
 #   checkpoints_sec: [1800, 3600, 7200, 14400]
-# CPU/memory values above are calibration examples, not frozen formal limits.
-# The container cap is applied, and total sandbox CPU is recorded. Experiment
-# CPU attribution, its cumulative cap and max_parallel_runs are not enforced yet.
+# CPU/memory are the accepted initial profile, subject to pilot calibration.
+# Total CPU and model costs are recorded; there is no default cumulative CPU cap.
+# Trusted experiment CPU attribution is incomplete and stays explicitly missing.
 # Use --n-attempts 3 for the recommended independent formal-attempt count.
 
 tasks:

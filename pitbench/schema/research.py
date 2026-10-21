@@ -18,6 +18,8 @@ class ResearchBudget(BaseModel):
     cpus: float | None = Field(default=None, gt=0)
     memory_gib: float | None = Field(default=None, gt=0)
     max_parallel_runs: int | None = Field(default=None, gt=0)
+    # Scheduler preference, not an independently enforced resource quota.
+    development_parallel_runs: int = Field(default=4, gt=0)
     model_token_limit: int | None = Field(default=None, gt=0)
     checkpoints_sec: list[float] = Field(default_factory=list)
 

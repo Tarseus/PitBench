@@ -10,6 +10,7 @@ import yaml
 
 from pitbench.agent_tools import AgentTool, normalize_agent_tools
 from pitbench.repositories.base import BuildKind, RepositoryPluginRegistry
+from pitbench.schema.research import ResearchBudget
 from pitbench.schema.task import PitBenchTask
 
 
@@ -20,6 +21,7 @@ def write_agent_tooling(
     task_dir: Path,
     agent_tools: Iterable[AgentTool | str],
     agent_feedback_mode: str = "solver_behavior",
+    research_budget: ResearchBudget | None = None,
 ) -> None:
     """Bundle the explicitly enabled public developer tooling into a task."""
     tools = normalize_agent_tools(agent_tools)
@@ -56,6 +58,10 @@ def write_agent_tooling(
     config: dict[str, object] = {
         "agent_tools": sorted(tool.value for tool in tools),
         "agent_feedback_mode": agent_feedback_mode,
+        "development_parallel_runs": research_budget.development_parallel_runs
+        if research_budget
+        else 1,
+        "research_cpus": research_budget.cpus if research_budget else None,
     }
     repository = RepositoryPluginRegistry.load(task.repository.plugin)
     if tools & {AgentTool.INSPECT, AgentTool.BENCH}:

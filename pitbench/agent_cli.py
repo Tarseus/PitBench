@@ -9,7 +9,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,12 @@ _CANDIDATE_PATHS = (
     ":(exclude).pitbench",
     ":(exclude).pitbench/**",
 )
+_DEVELOPMENT_OUTPUT_LOCK = threading.Lock()
+
+
+def _print_development_run(payload: dict) -> None:
+    with _DEVELOPMENT_OUTPUT_LOCK:
+        print(json.dumps(payload), flush=True)
 
 
 def _path(environment: str, default: str) -> Path:
@@ -180,6 +188,8 @@ def inspect_command(_: argparse.Namespace) -> int:
         "exact_time_basis": config["exact_time_basis"],
         "development_seeds": config["development_seeds"],
         "threads": config["threads"],
+        "development_parallel_runs": config.get("development_parallel_runs", 1),
+        "research_cpus": config.get("research_cpus"),
         "development_instances": [path.name for path in _instances(None)],
         "development_targets": config.get("development_targets", {}),
         "development_instance_directory": str(
@@ -432,19 +442,18 @@ def _run_one(
     )
     command = _command(config, instance, output, seed, budget, threads)
     if dry_run:
-        print(
-            json.dumps(
-                {
-                    "instance": str(instance),
-                    "instance_id": target_info["id"],
-                    "instance_sha256": instance_sha256,
-                    "label": label,
-                    "seed": seed,
-                    "budget_sec": budget,
-                    "threads": threads,
-                    "command": command,
-                }
-            )
+        _print_development_run(
+            {
+                "instance": str(instance),
+                "instance_id": target_info["id"],
+                "instance_sha256": instance_sha256,
+                "label": label,
+                "seed": seed,
+                "budget_sec": budget,
+                "threads": threads,
+                "command": command,
+                "development_parallel_runs": config.get("development_parallel_runs", 1),
+            }
         )
         return True
     available, detail = _runner_available(config)
@@ -502,6 +511,7 @@ def _run_one(
         "seed": seed,
         "budget_sec": budget,
         "threads": threads,
+        "development_parallel_runs": config.get("development_parallel_runs", 1),
         "declared_budget": budget in config["budgets_sec"],
         "performance_protocol": config["performance_protocol"],
         "patch_sha256": patch_sha256,
@@ -550,7 +560,7 @@ def _run_one(
     output.with_suffix(".feedback.json").write_text(
         json.dumps(payload, indent=2) + "\n"
     )
-    print(json.dumps(payload))
+    _print_development_run(payload)
     return (
         returncode == 0
         and "result_error" not in payload
@@ -585,6 +595,16 @@ def bench_command(args: argparse.Namespace) -> int:
         raise SystemExit("budget must be a positive finite number")
     if threads < 1:
         raise SystemExit("threads must be positive")
+    parallel = getattr(args, "jobs", None)
+    parallel = (
+        parallel if parallel is not None else config.get("development_parallel_runs", 1)
+    )
+    if type(parallel) is not int or parallel < 1:
+        raise SystemExit("jobs must be a positive integer")
+    cpus = config.get("research_cpus")
+    if cpus is not None:
+        parallel = min(parallel, max(1, math.floor(cpus / threads)))
+    config = {**config, "development_parallel_runs": parallel}
     instances = _instances(args.instance, config)
     if not instances:
         print("no visible development instances are mounted", file=sys.stderr)
@@ -595,8 +615,10 @@ def bench_command(args: argparse.Namespace) -> int:
     ):
         return 1
     artifacts = _artifact_identity(config)
-    succeeded = [
-        _run_one(
+
+    def run_one(spec):
+        instance, seed, budget = spec
+        return _run_one(
             config,
             instance,
             seed,
@@ -608,10 +630,15 @@ def bench_command(args: argparse.Namespace) -> int:
             artifacts,
             runs_root,
         )
+
+    grid = (
+        (instance, seed, budget)
         for instance in instances
         for seed in seeds
         for budget in budgets
-    ]
+    )
+    with ThreadPoolExecutor(max_workers=parallel) as executor:
+        succeeded = list(executor.map(run_one, grid))
     return 0 if all(succeeded) else 1
 
 
@@ -831,6 +858,11 @@ def parser() -> argparse.ArgumentParser:
             "--build",
             action="store_true",
             help="rebuild the current source before solving",
+        )
+        bench.add_argument(
+            "--jobs",
+            type=int,
+            help="development workers; defaults to the task preference and fits its CPU allowance",
         )
         _run_options(bench, instance_required=False)
         bench.set_defaults(handler=bench_command)

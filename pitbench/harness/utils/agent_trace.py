@@ -725,9 +725,10 @@ class AgentTrace:
             "resource_enforcement": {
                 "wall_time": "harness_deadline",
                 "cpus_and_memory": "container_configuration_when_declared",
-                "total_cpu_time": "recorded_not_enforced",
-                "development_cpu_time": "requires_trusted_experiment_accounting",
-                "max_parallel_runs": "not_enforced_by_trace",
+                "total_cpu_time": "recording_only_no_default_cap",
+                "development_cpu_time": "recording_only_attribution_unavailable",
+                "development_parallel_runs": "scheduler_preference_within_container_cpu_limit",
+                "max_parallel_runs": "no_default_independent_quota",
             },
             "llm_usage": {
                 "input_tokens": getattr(result, "total_input_tokens", None),
