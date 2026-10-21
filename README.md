@@ -1357,7 +1357,7 @@ no 1h/4h/8h Agent calibration has been run here.
 ## 🛠️ Verification & Developer Tooling
 
 The 2026-10-21 curation review fixes are published on
-`curation/pr-acquisition-review-20261021`. This branch includes the objective
+`feat/curation-import`. This branch includes the objective
 schemas, metadata screening interface, and source recovery changes used by
 the independent curation project; they are not asserted to be on `main`.
 Squash Base drift requires byte-identical complete patches, renames include
