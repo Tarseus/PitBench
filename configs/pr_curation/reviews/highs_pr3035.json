@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 3035,
+  "base_commit": "0d3afefdd40b725e1dc0b940e7368f4b172c6cbd",
+  "head_commit": "4373ea4d5f1d00f095bc8937a6cd7bb5ea3aa180",
+  "decision": "advance",
+  "reason": "The pinned Git diff changes the HiGHS MIP presolver itself: it records whether a single equation has already been examined for dual fixing and avoids repeating that work until the row changes. The PR author cites longprob.mps, but that claim is a workload lead rather than performance admission evidence. Advance to source, build, activation, correctness, and base-only hidden qualification gates.",
+  "review_duration_sec": null,
+  "rejection_basis": null,
+  "missing_evidence": [],
+  "repository_role": "solver_engine",
+  "mechanism": "computational_efficiency",
+  "solver_phase": "presolve",
+  "solver_entry_points": [
+    "HPresolve::dualFixing",
+    "HPresolve::markChangedRow",
+    "HPresolve::shrinkProblem"
+  ],
+  "effect_channels": ["work_per_event", "proof_time", "peak_memory"],
+  "correctness_failure_modes": [
+    "invalid_bound",
+    "false_infeasibility",
+    "incorrect_optimality",
+    "resource_failure"
+  ],
+  "changed_source_paths": [
+    "highs/presolve/HPresolve.cpp",
+    "highs/presolve/HPresolve.h"
+  ],
+  "solver_behavior_hypothesis": "On MIPs where dual fixing revisits the same unchanged single-equation row, a row-indexed checked flag can avoid repeated equation analysis. It may shorten presolve and proof time, while flag storage and invalidation add some work and memory.",
+  "causal_chain": "The PR allocates singleEquationChecked per row, sets a flag after handleSingleEquation, clears it in markChangedRow, and moves or truncates flags when shrinkProblem renumbers rows. Subsequent dualFixing calls on unchanged rows skip handleSingleEquation. Fewer repeated scans can reduce presolve work before the root relaxation and later MIP search.",
+  "structural_trigger": "A MIP with eligible equation rows that are revisited by dualFixing while the row remains unchanged. Include rows modified between visits and models without eligible single equations as controls.",
+  "activation_probe": "On paired pinned Base and PR builds, instrument calls to dualFixing and handleSingleEquation by row identity, repeated visits, markChangedRow invalidations, and shrinkProblem remapping. Confirm the target path occurs on public instances and that cached skips happen only after a completed prior check of the same unchanged row.",
+  "instance_selection_rule": "Freeze public and hidden MIP families by equation-row count, repeated dual-fixing opportunity, integer/continuous mix, row modification frequency, and base proof difficulty before hidden outcomes. Include no-trigger and frequently changed-row controls; keep related generated variants in one overlap group.",
+  "workload_exposure_plan": "Build the exact base and head commits with the shared HiGHS driver and identical budgets, seeds, and settings. Use public diagnostic instances to establish repeated single-equation calls and invalidation behavior. Score only independently checked original-model results on the hidden panel, preserving crashes, timeouts, bounds, and resource use.",
+  "mathematical_risk": "A stale checked flag after row mutation or compaction could skip a valid dual-fixing reduction or interact with later bound and status reasoning. Incorrect row mapping or invalidation may cause false bounds, infeasibility, or optimality claims; the extra row flags may raise memory use.",
+  "independent_check_plan": "Check returned incumbents against the original MIP, validate objective and solver statuses against frozen trusted optima on tractable cases, and verify reported bounds independently. Add small equations that are unchanged, changed, deleted, and renumbered between dualFixing visits; retain normal timeouts and all failures.",
+  "metric_family": "exact",
+  "hidden_generalization_plan": "Use paired ID and shifted MIP families at fixed budgets and seeds. Report independently verified solved coverage, proof time, valid timeout-bound progress, and per-family regressions. Admit an open-opportunity task only after a complete Base-only hidden baseline shows measurable room; do not require a positive human PR or Agent result.",
+  "overlap_review": "HiGHS #2917 restructures the same single-equation dual-fixing calculation and adds a separate MIR-related change at an earlier snapshot; this PR specifically avoids repeated checks of unchanged rows. HiGHS #3255 adds Fourier-Motzkin presolve at a later snapshot. Shared presolve workloads should be grouped for result interpretation, but the causal mechanisms and base commits differ.",
+  "overlap_group": "highs_single_equation_dual_fixing_cache_2026",
+  "related_prs": [2917, 3255],
+  "resource_risk": "The row-indexed flag vector grows with presolved row count, and repeated invalidation or remapping can offset scan savings on frequently changing models.",
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/3035",
+    "https://github.com/ERGO-Code/HiGHS/compare/0d3afefdd40b725e1dc0b940e7368f4b172c6cbd...4373ea4d5f1d00f095bc8937a6cd7bb5ea3aa180"
+  ],
+  "pinned_git_diff_sha256": "3bcd2483f8018940b9e0eb997013387f5d17556ca2fd045a859e4f825b508a58"
+}

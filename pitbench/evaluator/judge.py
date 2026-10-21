@@ -11,7 +11,7 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from queue import Queue
 from typing import Callable
 
@@ -29,6 +29,7 @@ from pitbench.problem_families.verification import (
     TrustedOptimumOracle,
 )
 from pitbench.repositories.base import (
+    SOURCE_SUFFIXES,
     BuildKind,
     CommandSpec,
     RepositoryPluginRegistry,
@@ -64,6 +65,71 @@ class InstanceCase:
     budgets_sec: tuple[float, ...] | None = None
     test_suite: str | None = None
     verifier: ProblemFamilyPlugin | None = None
+
+
+def validate_candidate_source_patch(
+    workspace: Path,
+    editable_paths: list[str],
+    build_paths: tuple[str, ...],
+) -> None:
+    """Enforce editable roots, generated-path exclusion, and a source edit."""
+    commands = (
+        ["git", "diff", "--name-only", "--no-renames", "-z", "HEAD", "--"],
+        ["git", "ls-files", "--others", "-z", "--"],
+        [
+            "git",
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+            "--",
+        ],
+    )
+    changed: set[PurePosixPath] = set()
+    for command in commands:
+        result = subprocess.run(command, cwd=workspace, capture_output=True)
+        if result.returncode:
+            raise RuntimeError(
+                f"candidate patch path inspection failed: "
+                f"{result.stderr.decode(errors='replace').strip()}"
+            )
+        changed.update(
+            PurePosixPath(os.fsdecode(raw))
+            for raw in result.stdout.split(b"\0")
+            if raw
+        )
+    if not changed:
+        raise RuntimeError("candidate patch contains no source changes")
+
+    editable = [PurePosixPath(path) for path in editable_paths]
+    generated = [PurePosixPath(path) for path in build_paths]
+    workspace_root = workspace.resolve()
+
+    def under(path: PurePosixPath, root: PurePosixPath) -> bool:
+        return path.parts[: len(root.parts)] == root.parts
+
+    invalid = []
+    for path in sorted(changed):
+        target = workspace / path.as_posix()
+        resolved = target.resolve()
+        if not resolved.is_relative_to(workspace_root) or target.is_symlink():
+            invalid.append(path.as_posix())
+            continue
+        actual = PurePosixPath(resolved.relative_to(workspace_root).as_posix())
+        if any(
+            not any(under(item, root) for root in editable)
+            or any(under(item, root) for root in generated)
+            for item in (path, actual)
+        ):
+            invalid.append(path.as_posix())
+    if invalid:
+        raise RuntimeError(
+            "candidate patch changes non-editable, generated, or symlink paths: "
+            + ", ".join(invalid)
+        )
+    if not any(path.suffix.lower() in SOURCE_SUFFIXES for path in changed):
+        raise RuntimeError("candidate patch must change solver source code")
 
 
 def _customer_count(path: Path | None) -> float | None:
@@ -697,6 +763,11 @@ class LocalProcessJudge:
             )
             if applied.returncode:
                 raise RuntimeError(f"{state.value} patch failed: {applied.stderr}")
+            validate_candidate_source_patch(
+                workspace,
+                self.task.repository.editable_paths,
+                self.repository.agent_build_paths,
+            )
         if build_kind == BuildKind.VALIDATION and self.validation_test_patch:
             applied = subprocess.run(
                 ["git", "apply", str(self.validation_test_patch)],

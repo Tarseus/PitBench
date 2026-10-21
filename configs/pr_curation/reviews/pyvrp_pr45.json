@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 45,
+  "base_commit": "9a2ba08702d5989ec3b98a27263f9220fedca565",
+  "head_commit": "625911b03530729201b74fe4f43326f6322092e2",
+  "decision": "needs_evidence",
+  "reason": "The integrated diff contains real route caching and inlining, but also changes Route::hasTimeWarp to return isTimeWarpFeasible_, while update sets that flag to timeWarp_ == 0. This appears to invert the previous timeWarp() > 0 predicate. PR #91 later changes the return to !isTimeWarpFeasible_. The old hgs source layout also predates the current PyVRP driver contract. Establish a compatible historical build and independently valid Base/PR route semantics before admission; the title performance claim is insufficient.",
+  "review_duration_sec": null,
+  "rejection_basis": null,
+  "missing_evidence": [
+    "historical_build",
+    "independent_checker"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/45",
+    "https://github.com/PyVRP/PyVRP/compare/9a2ba08702d5989ec3b98a27263f9220fedca565...625911b03530729201b74fe4f43326f6322092e2"
+  ],
+  "pinned_git_diff_sha256": "7ed44054cde85d53396172d3e3f7b9f82d58ec51d8e15935e36b0ac64a54e394"
+}

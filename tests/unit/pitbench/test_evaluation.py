@@ -33,7 +33,11 @@ from pitbench.evaluator.evaluator import (
     _default_judge_cpus,
     _default_judge_parallel_runs,
 )
-from pitbench.evaluator.judge import JudgePlan, LocalProcessJudge
+from pitbench.evaluator.judge import (
+    JudgePlan,
+    LocalProcessJudge,
+    validate_candidate_source_patch,
+)
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.evaluator.reliability import prepare_boundary_cases
 from pitbench.evaluator.storage import ObservationStore
@@ -1491,7 +1495,25 @@ def test_evaluator_only_test_patch_applies_to_both_validation_states(tmp_path):
     base = tmp_path / "source"
     (base / "tests").mkdir(parents=True)
     (base / "tests" / "expectation.txt").write_text("budget=3\n")
-    (base / "solver.txt").write_text("base\n")
+    (base / "pyvrp").mkdir()
+    (base / "pyvrp" / "solver.py").write_text("state = 'base'\n")
+    subprocess.run(["git", "init", "--quiet"], cwd=base, check=True)
+    subprocess.run(["git", "add", "."], cwd=base, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=PitBench",
+            "-c",
+            "user.email=pitbench@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "base",
+        ],
+        cwd=base,
+        check=True,
+    )
     private = tmp_path / "private"
     (private / "validation_tests").mkdir(parents=True)
     test_patch = private / "validation_tests" / "task.patch"
@@ -1507,10 +1529,10 @@ def test_evaluator_only_test_patch_applies_to_both_validation_states(tmp_path):
     )
     candidate = tmp_path / "candidate.patch"
     candidate.write_text(
-        "diff --git a/solver.txt b/solver.txt\n"
-        "--- a/solver.txt\n"
-        "+++ b/solver.txt\n"
-        "@@ -1 +1 @@\n-base\n+agent\n"
+        "diff --git a/pyvrp/solver.py b/pyvrp/solver.py\n"
+        "--- a/pyvrp/solver.py\n"
+        "+++ b/pyvrp/solver.py\n"
+        "@@ -1 +1 @@\n-state = 'base'\n+state = 'agent'\n"
     )
     judge = LocalProcessJudge(
         task,
@@ -1532,7 +1554,53 @@ def test_evaluator_only_test_patch_applies_to_both_validation_states(tmp_path):
         CodeState.AGENT, tmp_path / "performance", BuildKind.PERFORMANCE
     )
     assert (performance / "tests" / "expectation.txt").read_text() == "budget=3\n"
-    assert (performance / "solver.txt").read_text() == "agent\n"
+    assert (performance / "pyvrp" / "solver.py").read_text() == "state = 'agent'\n"
+
+
+@pytest.mark.parametrize(
+    "path,error",
+    [
+        ("src/solver.cpp", None),
+        ("tests/check.py", "non-editable"),
+        ("build/generated.cpp", "generated"),
+        ("src/solver.so", "must change solver source"),
+        ("src/link.cpp", "symlink"),
+    ],
+)
+def test_candidate_patch_scope_requires_solver_source(tmp_path, path, error):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "src").mkdir()
+    (source / "src" / "solver.cpp").write_text("int solve() { return 0; }\n")
+    (source / ".gitignore").write_text("build/\n")
+    subprocess.run(["git", "init", "--quiet"], cwd=source, check=True)
+    subprocess.run(["git", "add", "."], cwd=source, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=PitBench",
+            "-c",
+            "user.email=pitbench@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "base",
+        ],
+        cwd=source,
+        check=True,
+    )
+    changed = source / path
+    changed.parent.mkdir(parents=True, exist_ok=True)
+    if path == "src/link.cpp":
+        changed.symlink_to("solver.cpp")
+    else:
+        changed.write_text("int solve() { return 1; }\n")
+    if error is None:
+        validate_candidate_source_patch(source, ["src", "build"], ("build",))
+    else:
+        with pytest.raises(RuntimeError, match=error):
+            validate_candidate_source_patch(source, ["src", "build"], ("build",))
 
 
 @pytest.fixture
@@ -2190,6 +2258,7 @@ def test_evaluator_uses_base_cache_when_available(tmp_path: Path):
     ]
 
     mock_task = Mock()
+    mock_task.optimization_profile = None
     mock_task.task_id = task_id
     mock_task.evaluation.seed_robustness = None
     mock_task.evaluation.representation_robustness = None
@@ -2283,6 +2352,7 @@ def test_evaluator_saves_base_cache_on_first_run(tmp_path: Path):
     ]
 
     mock_task = Mock()
+    mock_task.optimization_profile = None
     mock_task.task_id = task_id
     mock_task.evaluation.seed_robustness = None
     mock_task.evaluation.representation_robustness = None
@@ -2348,6 +2418,7 @@ def test_directional_performance_requires_fresh_opposite_order_confirmation(
     patch_path = tmp_path / "candidate.patch"
     patch_path.write_bytes(b"")
     task = Mock()
+    task.optimization_profile = None
     task.task_id = task_id
     task.evaluation.seed_robustness = None
     task.evaluation.representation_robustness = None

@@ -212,7 +212,7 @@ class VroomRepositoryPlugin(RepositoryPlugin):
     name = "vroom"
     agent_requirement = "file:bin/vroom"
     agent_artifact_globs = ("bin/vroom",)
-    agent_build_paths = ("lib",)
+    agent_build_paths = ("bin", "lib", "obj")
     collector_environment = {"PITBENCH_VROOM_SOLVER": "/workspace/repo/bin/vroom"}
     representations = {"customer_relabeling": ("judge",)}
     collection_backend = "pitbench.evaluator.collection:VroomCollectionBackend"
@@ -256,6 +256,7 @@ class HighsRepositoryPlugin(RepositoryPlugin):
     agent_python = "python3"
     name = "highs"
     agent_requirement = "file:build/bin/highs"
+    agent_build_paths = ("build",)
     collection_backend = "pitbench.evaluator.collection:HighsCollectionBackend"
     representations = {"row_column_permutation": ("isolated",)}
     driver_name = "highs"
@@ -430,6 +431,7 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
     name = "ortools"
     driver_python = "python3"
     agent_requirement = "env:PITBENCH_ORTOOLS_CP_SAT_RUNNER"
+    agent_build_paths = ("build",)
     agent_artifact_globs = (
         "build/java/ortools-java/target/ortools-java-*.jar",
         "build/java/ortools-linux-x86-64/target/ortools-linux-x86-64-*.jar",

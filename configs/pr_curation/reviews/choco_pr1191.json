@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "chocoteam/choco-solver",
+  "pr_number": 1191,
+  "base_commit": "acb99eb513b53f1c95d511d6965aecb536a1bc77",
+  "head_commit": "49666e081c0b90e0e35a2fa2ef680c29ff2a15bc",
+  "decision": "needs_evidence",
+  "reason": "The remote Git merge first parent is 0c34e616ab58da9d8d8e782106d7115130ac5039, not the registered Base. The pinned branch diff does not pass equivalence to the integrated PR diff. Resolve the actual source boundary and its relationship to preceding modulo PR #1186 before interpreting or measuring it as an independent optimization.",
+  "review_duration_sec": null,
+  "rejection_basis": null,
+  "missing_evidence": [
+    "pr_lineage"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/chocoteam/choco-solver/pull/1191",
+    "https://github.com/chocoteam/choco-solver/compare/acb99eb513b53f1c95d511d6965aecb536a1bc77...49666e081c0b90e0e35a2fa2ef680c29ff2a15bc"
+  ]
+}

@@ -39,6 +39,10 @@ from pitbench.metrics.controlled_transfer_report import (
     compute_controlled_transfer_report,
     format_controlled_transfer_report,
 )
+from pitbench.metrics.objective_report import (
+    compute_objective_report,
+    format_objective_report,
+)
 from pitbench.metrics.performance_report import (
     PerformanceClassification,
     PerformanceConfirmation,
@@ -1531,6 +1535,9 @@ def report_command(
                     ),
                 }
             )
+    repeat_observations = None
+    repeat_grid = None
+    repeat_identity_verified = False
     confirmation_dir = target.parent / "performance-confirmation"
     if confirmation_dir.is_dir():
         confirmation_parquet = confirmation_dir / "trials.parquet"
@@ -1555,6 +1562,7 @@ def report_command(
             "judge_image",
             "cpus",
             "memory",
+            "cpuset_cpus",
             "parallel_runs",
             "harness_sha256",
         ):
@@ -1579,6 +1587,7 @@ def report_command(
                 param_hint=str(confirmation_dir),
             )
         repeat_observations = ObservationStore.read(confirmation_parquet)
+        repeat_identity_verified = True
         repeat_report = compute_task_performance_report(
             [item for item in repeat_observations if item.test_suite is None],
             task=task,
@@ -1634,6 +1643,18 @@ def report_command(
     ):
         reliability_report, _ = compute_reliability_reports(observations, task=task)
 
+    objective_report = compute_objective_report(
+        task=task,
+        performance=performance_report,
+        resources=resource_report,
+        transfer=controlled_transfer_report,
+        reliability=reliability_report,
+        observations=standard,
+        expected_run_grid=expected_run_grid,
+        repeat_observations=repeat_observations,
+        repeat_expected_run_grid=repeat_grid,
+        repeat_identity_verified=repeat_identity_verified,
+    )
     if json_output:
         combined = {
             "performance": performance_report.model_dump()
@@ -1645,6 +1666,9 @@ def report_command(
             "resource_usage": resource_report.model_dump() if resource_report else None,
             "operational_reliability": reliability_report.model_dump()
             if reliability_report
+            else None,
+            "objective_measurements": objective_report.model_dump()
+            if objective_report
             else None,
         }
         typer.echo(json.dumps(combined, indent=2))
@@ -1663,6 +1687,8 @@ def report_command(
         typer.echo("\n" + format_resource_report(resource_report))
     if reliability_report is not None:
         typer.echo("\n" + format_reliability_report(reliability_report))
+    if objective_report is not None:
+        typer.echo("\n" + format_objective_report(objective_report))
 
 
 if __name__ == "__main__":

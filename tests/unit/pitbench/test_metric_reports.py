@@ -171,13 +171,45 @@ def test_optimum_incumbent_without_optimal_termination_receives_par2() -> None:
         RunStatus.OUTPUT_ERROR,
     ],
 )
-def test_exact_solver_origin_failures_receive_par2(status: RunStatus) -> None:
+def test_exact_solver_failures_are_separate_from_normal_time_limits(
+    status: RunStatus,
+) -> None:
     assert compute_exact_run_outcome(exact_observation(status=status)) == (
         ExactRunOutcome(
-            kind=ExactRunOutcomeKind.SOLVER_ORIGIN_UNSOLVED,
+            kind=ExactRunOutcomeKind.SOLVER_FAILURE,
             solved=False,
             penalized_runtime_sec=20.0,
         )
+    )
+
+
+def test_exact_no_solution_at_solver_time_limit_is_normal_unsolved() -> None:
+    assert compute_exact_run_outcome(
+        exact_observation(
+            status=RunStatus.NO_SOLUTION,
+            valid=False,
+            solver_termination=SolverTermination.TIME_LIMIT,
+        )
+    ) == ExactRunOutcome(
+        kind=ExactRunOutcomeKind.SOLVER_ORIGIN_UNSOLVED,
+        solved=False,
+        penalized_runtime_sec=20.0,
+    )
+
+
+@pytest.mark.parametrize(
+    "termination",
+    [SolverTermination.ERROR, SolverTermination.OTHER, None],
+)
+def test_exact_unrecognized_or_error_termination_is_solver_failure(
+    termination: SolverTermination | None,
+) -> None:
+    assert compute_exact_run_outcome(
+        exact_observation(solver_termination=termination)
+    ) == ExactRunOutcome(
+        kind=ExactRunOutcomeKind.SOLVER_FAILURE,
+        solved=False,
+        penalized_runtime_sec=20.0,
     )
 
 
@@ -461,6 +493,7 @@ def test_exact_missing_run_keeps_the_declared_grid_and_is_incomplete() -> None:
     assert report.primary.agent.outcome_counts == {
         "verified_solved": 1,
         "solver_origin_unsolved": 0,
+        "solver_failure": 0,
         "oracle_discrepancy": 0,
         "qualification_failure": 0,
         "infrastructure_missing": 1,
@@ -550,6 +583,7 @@ def test_format_exact_performance_report_states_coverage_priority() -> None:
     assert "Verified exact-solver performance" in rendered
     assert "Coverage is primary" in rendered
     assert "PAR-2" in rendered
+    assert "Base failures | Agent failures" in rendered
 
 
 def performance_observation(

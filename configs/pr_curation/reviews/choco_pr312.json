@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "chocoteam/choco-solver",
+  "pr_number": 312,
+  "base_commit": "effd4e1469b7a7aedb9e9d7356352676c2fb3eef",
+  "head_commit": "6318cee6c31ae842f1676a3f7287bb752827ad71",
+  "decision": "needs_evidence",
+  "reason": "The registered Base and Head are available from remote Git, but fetching registered merge commit 61f456f8d42120ab8ad81da6cceb56b9b2edb04c repeatedly returns upload-pack: not our ref. The actual historical integration identity must be recovered or independently justified before the propagator event-scheduling change advances.",
+  "review_duration_sec": null,
+  "rejection_basis": null,
+  "missing_evidence": [
+    "pr_lineage"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/chocoteam/choco-solver/pull/312",
+    "https://github.com/chocoteam/choco-solver/compare/effd4e1469b7a7aedb9e9d7356352676c2fb3eef...6318cee6c31ae842f1676a3f7287bb752827ad71"
+  ]
+}

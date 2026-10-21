@@ -45,6 +45,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["pitbench*", "adapters*"]
 
+[tool.setuptools.package-data]
+"pitbench.schema" = ["objective_catalog.json", "qualification_protocols.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--import-mode=importlib"]

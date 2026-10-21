@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 968,
+  "base_commit": "d2174c764bdc29e001f8f9c65bb3e2a81b4fc082",
+  "head_commit": "fa7c872517b7f1f564e97a4fd9e04d9ac6efa2d0",
+  "decision": "reject",
+  "reason": "The pinned diff reintroduces the same Solution::load route reuse, Route::clear ownership check, Route equality, and binding changes already present in PyVRP #967, which is task_ready. The resulting Git blobs for Route.cpp, Route.h, Solution.cpp, and bindings.cpp match the corresponding #967 source patch targets (5774039, a3b5c7f, 42f24d6, and 50c50a4). The intermediate Base uses an allocation-heavy load implementation, but the measured optimization mechanism and target source state duplicate #967, so counting both would overweight one task lineage. Pinned #968 source diff SHA-256: 3f997e802421a272088070ad65f31cc8f42c563fe0f4739500b91ccafafc59d8.",
+  "review_duration_sec": null,
+  "rejection_basis": "duplicate_lineage",
+  "missing_evidence": [],
+  "related_prs": [967],
+  "overlap_group": "pyvrp_load_route_reuse_2025",
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/968",
+    "https://github.com/PyVRP/PyVRP/pull/967"
+  ]
+}

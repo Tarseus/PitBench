@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import http.client
 import json
+import math
 import os
 import subprocess
 import sys
@@ -18,24 +19,91 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pitbench.repositories.base import SOURCE_SUFFIXES
+from pitbench.repositories.classification import classify_pr_objectives
 from pitbench.repositories.pr_curation import (
+    append_jsonl,
+    apply_selection_reviews,
     build_baseline_opportunity_evidence,
     build_mechanism_review_queue,
+    build_objective_qualification_evidence,
+    build_objective_scoring_registration,
     build_paired_correctness_evidence,
     build_selection_queue,
     build_task_integration_evidence,
+    candidate_key,
+    inspect_pinned_review_diff,
     load_repository_catalog,
     materialize_git_backed_checkout,
     merge_candidates,
     normalize_search_issue,
     read_jsonl,
+    render_selection_review_card,
+    render_selection_review_index,
+    selection_review_draft,
     summarize_registry,
     validate_evidence_stage,
     validate_selection_review,
     validate_workload_exposure_evidence,
     verify_source_patch,
+    workload_selection_rule_sha256,
     write_jsonl,
 )
+from pitbench.schema.objectives import objective_catalog, objective_catalog_sha256
+
+
+def _type_audit(args: argparse.Namespace) -> None:
+    catalog = load_repository_catalog(args.catalog)
+    scopes = {row["repository"]: row["scope_status"] for row in catalog["repositories"]}
+    taxonomy = objective_catalog()
+    taxonomy_sha256 = objective_catalog_sha256()
+    output = args.output_dir
+    output.mkdir(parents=True, exist_ok=True)
+    rows, counts, kind_counts, scope_counts = [], Counter(), Counter(), Counter()
+    for record in read_jsonl(args.registry):
+        candidate_key(record)
+        classification = classify_pr_objectives(record, taxonomy)
+        classification["taxonomy_sha256"] = taxonomy_sha256
+        scope = scopes.get(record["repository"], "not_cataloged")
+        counts.update(classification["objectives"] or ["unclassified"])
+        kind_counts.update(classification["change_kinds"])
+        scope_counts[scope] += 1
+        rows.append(
+            {
+                "repository": record["repository"],
+                "pr_number": record["pr_number"],
+                "title": record.get("title", ""),
+                "base_commit": record.get("base_commit"),
+                "head_commit": record.get("head_commit"),
+                "scope_status": scope,
+                "classification": classification,
+            }
+        )
+    records_path = output / "pr_type_hints.jsonl"
+    write_jsonl(records_path, rows)
+    summary = {
+        "schema_version": 1,
+        "input_registry_sha256": hashlib.sha256(args.registry.read_bytes()).hexdigest(),
+        "taxonomy_version": taxonomy["taxonomy_version"],
+        "taxonomy_sha256": taxonomy_sha256,
+        "classification_implementation_sha256": hashlib.sha256(
+            (
+                Path(__file__).resolve().parent.parent
+                / "pitbench/repositories/classification.py"
+            ).read_bytes()
+        ).hexdigest(),
+        "records": len(rows),
+        "counts_by_objective_hint": dict(sorted(counts.items())),
+        "counts_by_change_kind_hint": dict(sorted(kind_counts.items())),
+        "counts_by_scope_status": dict(sorted(scope_counts.items())),
+        "classified_records_path": records_path.name,
+        "classified_records_sha256": hashlib.sha256(
+            records_path.read_bytes()
+        ).hexdigest(),
+        "claim_boundary": "Title hints across the retained registry, not semantic classifications or a random sample. Labels overlap. Scope, source, mathematical correctness, measurable benefit and task admission are not inferred. Unclassified records remain retained.",
+    }
+    (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    print(json.dumps(summary, sort_keys=True))
 
 
 def _github_token(name: str) -> str | None:
@@ -78,6 +146,8 @@ def _triage(args: argparse.Namespace) -> None:
         details,
         args.limit,
         audit_fraction=args.audit_fraction,
+        scope_statuses=set(args.scope_status) if args.scope_status else None,
+        review_order=args.review_order,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(queue, indent=2) + "\n")
@@ -93,6 +163,583 @@ def _triage(args: argparse.Namespace) -> None:
                 ],
                 "pending_evidence_prs": queue["pending_evidence_prs"],
                 "output": str(args.output),
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def _prepare_review_batch(args: argparse.Namespace) -> None:
+    """Freeze a review cohort and prefill factual fields without deciding admission."""
+    if args.limit < 1:
+        raise ValueError("review batch limit must be positive")
+    root = args.repository_root.resolve()
+    output_dir = args.output_dir.resolve()
+    if not output_dir.is_relative_to(root):
+        raise ValueError("review batch output must be inside the repository")
+    queue_bytes = args.queue.read_bytes()
+    queue = json.loads(queue_bytes)
+    selected = queue.get("queue")
+    if not isinstance(selected, list):
+        raise ValueError("review batch requires a triage queue")
+    selected = selected[: args.limit]
+    if not selected:
+        raise ValueError("review batch queue is empty")
+    manifest_path = output_dir / "manifest.json"
+    previous_manifest = (
+        json.loads(manifest_path.read_text()) if manifest_path.exists() else None
+    )
+    catalog = load_repository_catalog(args.catalog)
+    scope_status = {
+        entry["repository"]: entry["scope_status"] for entry in catalog["repositories"]
+    }
+    registry_rows = read_jsonl(args.registry)
+    rows = {candidate_key(row): row for row in registry_rows}
+    if len(rows) != len(registry_rows):
+        raise ValueError("duplicate PR in evidence registry")
+    details: dict[tuple[str, int], dict[str, Any]] = {}
+    detail_inputs = []
+    for path in args.details:
+        detail_inputs.append(
+            {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+        )
+        for detail in read_jsonl(path):
+            if detail.get("status") != "completed":
+                continue
+            key = candidate_key(detail)
+            if key in details and details[key] != detail:
+                raise ValueError(f"conflicting complete PR detail for {key}")
+            details[key] = detail
+    cards = []
+    card_files = []
+    drafts = []
+    seen: set[tuple[str, int]] = set()
+    for item in selected:
+        key = candidate_key(item)
+        if key in seen:
+            raise ValueError(f"duplicate PR in review queue: {key}")
+        seen.add(key)
+        row = rows.get(key)
+        detail = details.get(key)
+        if row is None or detail is None or item.get("detail_sha256") is None:
+            raise ValueError(f"{key} needs an indexed PR and complete triage detail")
+        if key[0] not in scope_status:
+            raise ValueError(f"{key} repository is absent from the catalog")
+        digest = hashlib.sha256(
+            json.dumps(detail, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if digest != item["detail_sha256"]:
+            raise ValueError(f"{key} detail differs from frozen triage queue")
+        if previous_manifest is None and (
+            row.get("stage") != "discovered"
+            or row.get("selection_decision") in {"reject", "needs_evidence"}
+        ):
+            raise ValueError(f"{key} already has a selection decision")
+        draft = selection_review_draft(row, detail)
+        draft_path = output_dir / "drafts" / key[0] / f"pr-{key[1]}.json"
+        drafts.append((draft_path, draft))
+        card = {
+            "repository": key[0],
+            "pr_number": key[1],
+            "base_commit": row["base_commit"],
+            "head_commit": row["head_commit"],
+            "repository_scope_status": scope_status.get(key[0]),
+            "review_lane": item.get("review_lane"),
+            "signal_band": item.get("signal_band"),
+            "solver_phase_path_hints": item.get("solver_phase_path_hints", []),
+            "caution_flags": item.get("caution_flags", []),
+            "related_pr_hints": item.get("related_pr_hints", []),
+            "title": detail.get("title"),
+            "body": detail.get("body"),
+            "url": detail.get("url"),
+            "changed_files": detail["files"],
+            "changed_source_paths": draft["changed_source_paths"],
+            "draft_path": draft_path.relative_to(root).as_posix(),
+            "detail_sha256": digest,
+        }
+        card_path = output_dir / "cards" / key[0] / f"pr-{key[1]}.md"
+        card_content = render_selection_review_card(card)
+        card["card_path"] = card_path.relative_to(root).as_posix()
+        card["card_sha256"] = hashlib.sha256(card_content.encode("utf-8")).hexdigest()
+        cards.append(card)
+        card_files.append((card_path, card_content))
+    manifest = {
+        "schema_version": 1,
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "registry_sha256_at_selection": hashlib.sha256(
+            args.registry.read_bytes()
+        ).hexdigest(),
+        "queue_sha256": hashlib.sha256(queue_bytes).hexdigest(),
+        "detail_inputs": detail_inputs,
+        "cards_sha256": hashlib.sha256(
+            "".join(json.dumps(card, sort_keys=True) + "\n" for card in cards).encode()
+        ).hexdigest(),
+        "cohort": [
+            {
+                "repository": card["repository"],
+                "pr_number": card["pr_number"],
+                "base_commit": card["base_commit"],
+                "head_commit": card["head_commit"],
+                "review_lane": card["review_lane"],
+                "signal_band": card["signal_band"],
+                "draft_path": card["draft_path"],
+                "card_path": card["card_path"],
+                "card_sha256": card["card_sha256"],
+            }
+            for card in cards
+        ],
+        "cohort_by_repository": dict(
+            sorted(Counter(card["repository"] for card in cards).items())
+        ),
+        "cohort_by_signal_band": dict(
+            sorted(Counter(str(card["signal_band"]) for card in cards).items())
+        ),
+        "cohort_by_review_lane": dict(
+            sorted(Counter(str(card["review_lane"]) for card in cards).items())
+        ),
+        "claim_boundary": "Review cards and drafts do not approve PRs or count as tasks.",
+    }
+    if previous_manifest is not None:
+        for field in ("queue_sha256", "detail_inputs", "cards_sha256", "cohort"):
+            if previous_manifest.get(field) != manifest[field]:
+                raise ValueError("existing review batch has a different frozen cohort")
+        manifest = previous_manifest
+    else:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        write_jsonl(output_dir / "cards.jsonl", cards)
+    cards_path = output_dir / "cards.jsonl"
+    if (
+        not cards_path.is_file()
+        or hashlib.sha256(cards_path.read_bytes()).hexdigest()
+        != manifest["cards_sha256"]
+    ):
+        raise ValueError("existing review batch lacks its frozen review cards")
+    for card_path, card_content in card_files:
+        card_path.parent.mkdir(parents=True, exist_ok=True)
+        if card_path.exists():
+            if (
+                hashlib.sha256(card_path.read_bytes()).hexdigest()
+                != hashlib.sha256(card_content.encode("utf-8")).hexdigest()
+            ):
+                raise ValueError(f"review card differs from frozen inputs: {card_path}")
+            continue
+        temporary = card_path.with_suffix(".md.tmp")
+        temporary.write_text(card_content, encoding="utf-8")
+        temporary.replace(card_path)
+    for draft_path, draft in drafts:
+        draft_path.parent.mkdir(parents=True, exist_ok=True)
+        if draft_path.exists():
+            existing = json.loads(draft_path.read_text())
+            if any(
+                existing.get(field) != draft[field]
+                for field in ("repository", "pr_number", "base_commit", "head_commit")
+            ):
+                raise ValueError(f"review draft identity differs at {draft_path}")
+            continue
+        temporary = draft_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(draft, indent=2) + "\n")
+        temporary.replace(draft_path)
+    if previous_manifest is None:
+        temporary = manifest_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(manifest, indent=2) + "\n")
+        temporary.replace(manifest_path)
+    index_path = output_dir / "index.md"
+    index_content = render_selection_review_index(cards, output_dir.relative_to(root))
+    if index_path.exists():
+        if index_path.read_text(encoding="utf-8") != index_content:
+            raise ValueError(f"review index differs from frozen inputs: {index_path}")
+    else:
+        temporary = index_path.with_suffix(".md.tmp")
+        temporary.write_text(index_content, encoding="utf-8")
+        temporary.replace(index_path)
+    print(
+        json.dumps(
+            {
+                "cohort_size": len(manifest["cohort"]),
+                "manifest": str(manifest_path),
+                "index": str(index_path),
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def _review_batch_status(args: argparse.Namespace) -> None:
+    manifest = json.loads(args.manifest.read_text())
+    if manifest.get("schema_version") != 1 or not isinstance(
+        manifest.get("cohort"), list
+    ):
+        raise ValueError("unsupported review batch manifest")
+    registry_rows = read_jsonl(args.registry)
+    rows = {candidate_key(row): row for row in registry_rows}
+    if len(rows) != len(registry_rows):
+        raise ValueError("duplicate PR in evidence registry")
+    stages = Counter()
+    decisions = Counter()
+    by_lane: dict[str, Counter[str]] = defaultdict(Counter)
+    by_repository: dict[str, Counter[str]] = defaultdict(Counter)
+    by_signal_band: dict[str, Counter[str]] = defaultdict(Counter)
+    review_duration_sec = 0.0
+    timed_reviews = 0
+    seen: set[tuple[str, int]] = set()
+    for item in manifest["cohort"]:
+        key = candidate_key(item)
+        if key in seen:
+            raise ValueError(f"duplicate PR in review batch: {key}")
+        seen.add(key)
+        row = rows.get(key)
+        if row is None or any(
+            row.get(field) != item.get(field)
+            for field in ("base_commit", "head_commit")
+        ):
+            raise ValueError(f"review batch PR identity differs from registry: {key}")
+        stage = str(row.get("stage", "discovered"))
+        decision = str(row.get("selection_decision") or "unreviewed")
+        stages[stage] += 1
+        decisions[decision] += 1
+        by_lane[str(item.get("review_lane") or "unspecified")][stage] += 1
+        by_repository[key[0]][stage] += 1
+        by_signal_band[str(item.get("signal_band"))][stage] += 1
+        review_path = row.get("selection_review_path")
+        if review_path:
+            review_file = (args.repository_root / review_path).resolve()
+            if not review_file.is_relative_to(args.repository_root.resolve()):
+                raise ValueError(f"review path escapes repository: {key}")
+            review_bytes = review_file.read_bytes()
+            if hashlib.sha256(review_bytes).hexdigest() != row.get(
+                "selection_review_sha256"
+            ):
+                raise ValueError(f"review hash differs from registry: {key}")
+            review = json.loads(review_bytes)
+            duration = review.get("review_duration_sec")
+            if duration is not None:
+                if (
+                    type(duration) not in {int, float}
+                    or not math.isfinite(duration)
+                    or duration < 0
+                ):
+                    raise ValueError(f"invalid review duration for {key}")
+                timed_reviews += 1
+                review_duration_sec += duration
+    report = {
+        "schema_version": 1,
+        "manifest_sha256": hashlib.sha256(args.manifest.read_bytes()).hexdigest(),
+        "cohort_size": len(seen),
+        "reviewed": len(seen) - decisions["unreviewed"],
+        "task_ready": stages["task_ready"],
+        "timed_reviews": timed_reviews,
+        "reported_review_hours": round(review_duration_sec / 3600, 3),
+        "stage_counts": dict(sorted(stages.items())),
+        "decision_counts": dict(sorted(decisions.items())),
+        "stage_counts_by_review_lane": {
+            lane: dict(sorted(counts.items()))
+            for lane, counts in sorted(by_lane.items())
+        },
+        "stage_counts_by_repository": {
+            repository: dict(sorted(counts.items()))
+            for repository, counts in sorted(by_repository.items())
+        },
+        "stage_counts_by_signal_band": {
+            band: dict(sorted(counts.items()))
+            for band, counts in sorted(by_signal_band.items())
+        },
+        "claim_boundary": "This report describes a frozen review cohort; it does not estimate unseen PR yield.",
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps(report, sort_keys=True))
+
+
+def _cache_local_diffs(args: argparse.Namespace) -> None:
+    """Cache pinned source diffs from Git objects, optionally fetching missing SHAs."""
+    if args.limit < 1 or args.git_timeout_sec <= 0:
+        raise ValueError("Git diff cache limit and timeout must be positive")
+    root = args.repository_root.resolve()
+    output_dir = args.output_dir.resolve()
+    if not output_dir.is_relative_to(root):
+        raise ValueError("local diff cache must be inside the repository")
+    manifest = json.loads(args.manifest.read_text())
+    if manifest.get("schema_version") != 1:
+        raise ValueError("unsupported review batch manifest")
+    cards_path = args.manifest.parent / "cards.jsonl"
+    if hashlib.sha256(cards_path.read_bytes()).hexdigest() != manifest.get(
+        "cards_sha256"
+    ):
+        raise ValueError("review cards differ from frozen manifest")
+    cards = read_jsonl(cards_path)
+    if len(cards) != len(manifest["cohort"]):
+        raise ValueError("review cards differ from frozen cohort")
+    registry = {candidate_key(row): row for row in read_jsonl(args.registry)}
+    checkouts: dict[str, Path] = {}
+    for mapping in args.repository_checkout:
+        repository, separator, raw_path = mapping.partition("=")
+        if not separator or not repository or not raw_path or repository in checkouts:
+            raise ValueError(f"invalid repository checkout mapping: {mapping!r}")
+        path = Path(raw_path)
+        checkouts[repository] = (
+            (root / path).resolve() if not path.is_absolute() else path
+        )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    status_path = output_dir / "status.jsonl"
+    previous = {candidate_key(row): row for row in read_jsonl(status_path)}
+    saved = dict(previous)
+
+    def save_status(record: dict[str, Any]) -> None:
+        saved[candidate_key(record)] = record
+        write_jsonl(
+            status_path,
+            [
+                saved[candidate_key(item)]
+                for item in manifest["cohort"]
+                if candidate_key(item) in saved
+            ],
+        )
+
+    results = []
+    counts = Counter()
+    index = [
+        "# Local source diffs",
+        "",
+        "These pinned source diffs support human review; they do not approve PRs.",
+        "",
+    ]
+    selected = list(zip(manifest["cohort"], cards))[: args.limit]
+    probe_env = {**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_TERMINAL_PROMPT": "0"}
+    for ordinal, (item, card) in enumerate(selected, 1):
+        key = candidate_key(item)
+        if candidate_key(card) != key or any(
+            card.get(field) != item.get(field)
+            for field in ("base_commit", "head_commit", "card_sha256")
+        ):
+            raise ValueError(f"review card differs from frozen cohort: {key}")
+        row = registry.get(key)
+        if row is None or any(
+            row.get(field) != item.get(field)
+            for field in ("base_commit", "head_commit")
+        ):
+            raise ValueError(f"registry identity differs from review card: {key}")
+        checkout = checkouts.get(key[0])
+        prior = previous.get(key)
+        same_identity = prior is not None and (
+            prior.get("card_sha256") == item["card_sha256"]
+            and prior.get("diff_identity_version") == 4
+            and prior.get("merge_commit") == row.get("merge_commit")
+            and prior.get("checkout") == (str(checkout) if checkout else None)
+        )
+        if (
+            same_identity
+            and prior.get("status") == "unfetchable_merge_commit"
+            and not args.retry_unavailable
+        ):
+            results.append(prior)
+            counts[prior["status"]] += 1
+            card_link = os.path.relpath(root / item["card_path"], output_dir)
+            index.append(
+                f"{ordinal}. [{key[0]} #{key[1]}]({card_link}): {prior['status']}"
+            )
+            (output_dir / "index.md").write_text("\n".join(index) + "\n")
+            continue
+        if same_identity and prior.get("status") in {"cached", "cached_branch_base"}:
+            patch_path = root / str(prior.get("patch_path"))
+            if patch_path.is_file() and hashlib.sha256(
+                patch_path.read_bytes()
+            ).hexdigest() == prior.get("patch_sha256"):
+                results.append(prior)
+                counts[prior["status"]] += 1
+                card_link = os.path.relpath(root / item["card_path"], output_dir)
+                patch_link = os.path.relpath(patch_path, output_dir)
+                index.append(
+                    f"{ordinal}. [{key[0]} #{key[1]}]({card_link}): {prior['status']} "
+                    f"([source diff]({patch_link}))"
+                )
+                save_status(prior)
+                (output_dir / "index.md").write_text("\n".join(index) + "\n")
+                continue
+        fetch_failed = False
+        fetch_failure_status = "git_fetch_failed"
+        integration_base_candidate = None
+        if (
+            args.fetch_missing
+            and checkout is not None
+            and card.get("changed_source_paths")
+        ):
+            remote = subprocess.run(
+                ["git", "-C", str(checkout), "remote", "get-url", "origin"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            expected_remote = f"https://github.com/{key[0]}"
+            if (
+                remote.returncode
+                or remote.stdout.strip().removesuffix(".git") != expected_remote
+            ):
+                raise ValueError(
+                    f"{key} checkout origin is not the pinned GitHub repository"
+                )
+            missing = [
+                commit
+                for commit in (
+                    item["base_commit"],
+                    item["head_commit"],
+                    row.get("merge_commit"),
+                )
+                if commit
+                if subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(checkout),
+                        "cat-file",
+                        "-e",
+                        f"{commit}^{{commit}}",
+                    ],
+                    capture_output=True,
+                    check=False,
+                    env=probe_env,
+                ).returncode
+            ]
+            if missing:
+                try:
+                    fetched = subprocess.run(
+                        [
+                            "git",
+                            "-C",
+                            str(checkout),
+                            "fetch",
+                            "--filter=blob:none",
+                            "--no-tags",
+                            "--depth=1",
+                            "origin",
+                            *missing,
+                        ],
+                        capture_output=True,
+                        check=False,
+                        timeout=args.git_timeout_sec,
+                    )
+                    fetch_failed = fetched.returncode != 0
+                    if (
+                        fetch_failed
+                        and missing == [row.get("merge_commit")]
+                        and b"not our ref" in fetched.stderr
+                    ):
+                        fetch_failure_status = "unfetchable_merge_commit"
+                except subprocess.TimeoutExpired:
+                    fetch_failed = True
+            merge = row.get("merge_commit")
+            if merge and not fetch_failed:
+                metadata = subprocess.run(
+                    ["git", "-C", str(checkout), "cat-file", "-p", merge],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                parents = [
+                    line[7:]
+                    for line in metadata.stdout.splitlines()
+                    if line.startswith("parent ")
+                ]
+                integration_base_candidate = parents[0] if parents else None
+                if parents and parents[0] != item["base_commit"]:
+                    integration_base = parents[0]
+                    present = subprocess.run(
+                        [
+                            "git",
+                            "-C",
+                            str(checkout),
+                            "cat-file",
+                            "-e",
+                            f"{integration_base}^{{commit}}",
+                        ],
+                        capture_output=True,
+                        check=False,
+                        env=probe_env,
+                    )
+                    if present.returncode:
+                        try:
+                            fetched = subprocess.run(
+                                [
+                                    "git",
+                                    "-C",
+                                    str(checkout),
+                                    "fetch",
+                                    "--filter=blob:none",
+                                    "--no-tags",
+                                    "--depth=1",
+                                    "origin",
+                                    integration_base,
+                                ],
+                                capture_output=True,
+                                check=False,
+                                timeout=args.git_timeout_sec,
+                            )
+                            fetch_failed = fetched.returncode != 0
+                        except subprocess.TimeoutExpired:
+                            fetch_failed = True
+        status, patch, observed = (
+            (fetch_failure_status, None, [])
+            if fetch_failed
+            else inspect_pinned_review_diff(
+                card,
+                checkout,
+                merge_commit=row.get("merge_commit"),
+                timeout_sec=args.git_timeout_sec,
+            )
+            if checkout is not None
+            else ("missing_checkout", None, [])
+        )
+        record = {
+            "repository": key[0],
+            "pr_number": key[1],
+            "base_commit": item["base_commit"],
+            "head_commit": item["head_commit"],
+            "merge_commit": row.get("merge_commit"),
+            "card_sha256": item["card_sha256"],
+            "diff_identity_version": 4,
+            "status": status,
+            "observed_changed_paths": [] if status == "base_drift" else observed,
+            "integration_base_commit": (
+                integration_base_candidate
+                or (
+                    observed[0]
+                    if status in {"base_drift", "missing_integration_base_commit"}
+                    and observed
+                    else None
+                )
+            ),
+            "checkout": str(checkout) if checkout is not None else None,
+            "patch_path": None,
+            "patch_sha256": None,
+        }
+        if patch is not None:
+            path = output_dir / "diffs" / key[0] / f"pr-{key[1]}.patch"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            digest = hashlib.sha256(patch).hexdigest()
+            if path.exists():
+                if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                    raise ValueError(f"cached source diff changed: {path}")
+            else:
+                temporary = path.with_suffix(".patch.tmp")
+                temporary.write_bytes(patch)
+                temporary.replace(path)
+            record["patch_path"] = path.relative_to(root).as_posix()
+            record["patch_sha256"] = digest
+        results.append(record)
+        counts[status] += 1
+        card_link = os.path.relpath(root / item["card_path"], output_dir)
+        line = f"{ordinal}. [{key[0]} #{key[1]}]({card_link}): {status}"
+        if record["patch_path"]:
+            patch_link = os.path.relpath(root / record["patch_path"], output_dir)
+            line += f" ([source diff]({patch_link}))"
+        index.append(line)
+        save_status(record)
+        (output_dir / "index.md").write_text("\n".join(index) + "\n")
+    print(
+        json.dumps(
+            {
+                "cohort_size": len(results),
+                "status_counts": dict(sorted(counts.items())),
+                "index": str(output_dir / "index.md"),
             },
             sort_keys=True,
         )
@@ -171,9 +818,7 @@ def _screening_audit(args: argparse.Namespace) -> None:
             for decision, count in bands[band].items()
             if decision not in {"unreviewed", "legacy_unlabeled"}
         ),
-        "low_signal_advanced": sum(
-            bands[band]["advance"] for band in ("2", "3")
-        ),
+        "low_signal_advanced": sum(bands[band]["advance"] for band in ("2", "3")),
         "reviewed_low_signal_cases": sorted(
             low_signal_cases,
             key=lambda case: (case["repository"], case["pr_number"]),
@@ -276,8 +921,12 @@ def _public_correctness(args: argparse.Namespace) -> None:
     destination.write_text(json.dumps(evidence, indent=2) + "\n")
     row["correctness_evidence_path"] = relative
     row["stage"] = "correctness_verified"
+    validate_evidence_stage(row, args.repository_root)
     summary = summarize_registry(
-        rows, catalog["target_validated_pr_tasks"], args.repository_root
+        rows,
+        catalog["target_validated_pr_tasks"],
+        args.repository_root,
+        validate_evidence_files=False,
     )
     write_jsonl(args.registry, rows)
     print(
@@ -309,8 +958,12 @@ def _baseline_evidence(args: argparse.Namespace) -> None:
     )
     destination.write_text(json.dumps(evidence, indent=2) + "\n")
     row["opportunity_evidence_path"] = relative
+    validate_evidence_stage(row, args.repository_root)
     summary = summarize_registry(
-        rows, catalog["target_validated_pr_tasks"], args.repository_root
+        rows,
+        catalog["target_validated_pr_tasks"],
+        args.repository_root,
+        validate_evidence_files=False,
     )
     write_jsonl(args.registry, rows)
     print(
@@ -324,13 +977,102 @@ def _baseline_evidence(args: argparse.Namespace) -> None:
     )
 
 
+def _objective_register(args: argparse.Namespace) -> None:
+    load_repository_catalog(args.catalog)
+    row, rows = _evidence_candidate(
+        args,
+        (
+            "source_verified",
+            "build_verified",
+            "workload_verified",
+            "correctness_verified",
+        ),
+    )
+    validate_evidence_stage(row, args.repository_root)
+    destination, relative = _evidence_output(args.output, args.repository_root)
+    evidence = build_objective_scoring_registration(row, args.repository_root)
+    destination.write_text(json.dumps(evidence, indent=2) + "\n")
+    if row.get("objective_registration_path"):
+        row.setdefault("objective_registration_history", []).append(
+            {
+                "path": row["objective_registration_path"],
+                "sha256": row["objective_registration_sha256"],
+            }
+        )
+    row["objective_registration_path"] = relative
+    row["objective_registration_sha256"] = hashlib.sha256(
+        destination.read_bytes()
+    ).hexdigest()
+    row["objective_status"] = (
+        "needs_protocol" if evidence["protocol_gaps"] else "registered"
+    )
+    write_jsonl(args.registry, rows)
+    print(
+        json.dumps(
+            {
+                "task_id": row["task_id"],
+                "stage": row["stage"],
+                "objective_status": row["objective_status"],
+                "protocol_gaps": evidence["protocol_gaps"],
+            }
+        )
+    )
+
+
+def _objective_qualify(args: argparse.Namespace) -> None:
+    load_repository_catalog(args.catalog)
+    row, rows = _evidence_candidate(args)
+    validate_evidence_stage(row, args.repository_root)
+    if not row.get("objective_registration_path"):
+        raise ValueError(
+            "register the task scoring plan before collecting qualification runs"
+        )
+    destination, relative = _evidence_output(args.output, args.repository_root)
+    evidence = build_objective_qualification_evidence(
+        row,
+        args.repository_root,
+        _repository_path(args.run_directory, args.repository_root),
+    )
+    destination.write_text(json.dumps(evidence, indent=2) + "\n")
+    report = evidence["objective_qualification"]
+    row["objective_evidence_path"] = relative
+    row["objective_status"] = report["classification"]
+    # Open opportunities retain the independent Base-only admission route.
+    if (
+        report["performance_confirmed"]
+        and row.get("task_track", "expert_reference") == "expert_reference"
+    ):
+        row["performance_evidence_path"] = relative
+        row["stage"] = "performance_confirmed"
+        validate_evidence_stage(row, args.repository_root)
+    write_jsonl(args.registry, rows)
+    print(
+        json.dumps(
+            {
+                "task_id": row["task_id"],
+                "stage": row["stage"],
+                "objective_qualification": report,
+            }
+        )
+    )
+
+
 def _integration_evidence(args: argparse.Namespace) -> None:
     catalog = load_repository_catalog(args.catalog)
-    row, rows = _evidence_candidate(args)
-    if row.get("task_track") != "open_opportunity":
-        raise ValueError("real Judge integration requires an open-opportunity task")
-    if not row.get("opportunity_evidence_path"):
+    row, rows = _evidence_candidate(
+        args, ("correctness_verified", "performance_confirmed")
+    )
+    if row.get("task_track") == "open_opportunity" and not row.get(
+        "opportunity_evidence_path"
+    ):
         raise ValueError("real Judge integration requires hidden baseline evidence")
+    if (
+        row.get("task_track", "expert_reference") == "expert_reference"
+        and row["stage"] != "performance_confirmed"
+    ):
+        raise ValueError(
+            "expert integration requires confirmed objective/performance evidence"
+        )
     destination, relative = _evidence_output(args.output, args.repository_root)
     evidence = build_task_integration_evidence(
         row,
@@ -345,8 +1087,12 @@ def _integration_evidence(args: argparse.Namespace) -> None:
     row["integration_evidence_path"] = relative
     row["integration_status"] = "passed"
     row["stage"] = "task_ready"
+    validate_evidence_stage(row, args.repository_root)
     summary = summarize_registry(
-        rows, catalog["target_validated_pr_tasks"], args.repository_root
+        rows,
+        catalog["target_validated_pr_tasks"],
+        args.repository_root,
+        validate_evidence_files=False,
     )
     write_jsonl(args.registry, rows)
     print(
@@ -363,56 +1109,31 @@ def _integration_evidence(args: argparse.Namespace) -> None:
 def _screen(args: argparse.Namespace) -> None:
     catalog = load_repository_catalog(args.catalog)
     rows = read_jsonl(args.registry)
-    review = json.loads(args.review_file.read_text())
-    if not isinstance(review, dict):
-        raise ValueError("selection review must be a JSON object")
-    matches = [
-        row
-        for row in rows
-        if row["repository"] == review.get("repository")
-        and row["pr_number"] == review.get("pr_number")
-    ]
-    if len(matches) != 1:
-        raise ValueError("selection review requires exactly one indexed PR")
-    row = matches[0]
-    if row["stage"] not in {"discovered", "intent_reviewed"}:
-        raise ValueError("selection review cannot rewrite a later evidence stage")
-    decision = validate_selection_review(review, row)
-    scope_status = {
-        entry["repository"]: entry["scope_status"] for entry in catalog["repositories"]
-    }.get(row["repository"])
-    if scope_status is None:
-        raise ValueError("selection PR source is absent from the repository catalog")
-    if decision == "advance" and scope_status not in {"task_backed", "approved_source"}:
-        raise ValueError("repository needs domain approval before a PR can advance")
-    review_path = args.review_file.resolve().relative_to(args.repository_root.resolve())
-    row["selection_review_path"] = str(review_path)
-    row["selection_review_sha256"] = hashlib.sha256(
-        args.review_file.read_bytes()
-    ).hexdigest()
-    row["selection_decision"] = decision
-    if decision == "advance":
-        row["intent_evidence_path"] = str(review_path)
-        row["stage"] = "intent_reviewed"
-    else:
-        row.pop("intent_evidence_path", None)
-        row["stage"] = "discovered"
+    review_paths = list(args.review_file or [])
+    if args.review_dir is not None:
+        review_paths.extend(sorted(args.review_dir.rglob("*.json")))
+    decisions = apply_selection_reviews(
+        rows, catalog, review_paths, args.repository_root
+    )
     summary = summarize_registry(
-        rows, catalog["target_validated_pr_tasks"], args.repository_root
+        rows,
+        catalog["target_validated_pr_tasks"],
+        args.repository_root,
+        validate_evidence_files=False,
     )
     write_jsonl(args.registry, rows)
-    print(
-        json.dumps(
-            {
-                "repository": row["repository"],
-                "pr_number": row["pr_number"],
-                "decision": decision,
-                "stage": row["stage"],
-                "remaining_task_ready_prs": summary["remaining_task_ready_prs"],
-            },
-            sort_keys=True,
-        )
-    )
+    if len(decisions) == 1:
+        report = {
+            **decisions[0],
+            "remaining_task_ready_prs": summary["remaining_task_ready_prs"],
+        }
+    else:
+        report = {
+            "screened": len(decisions),
+            "decision_counts": dict(Counter(item["decision"] for item in decisions)),
+            "remaining_task_ready_prs": summary["remaining_task_ready_prs"],
+        }
+    print(json.dumps(report, sort_keys=True))
 
 
 def _checkout(args: argparse.Namespace) -> None:
@@ -619,6 +1340,13 @@ def _enrich(args: argparse.Namespace) -> None:
                             if isinstance(file.get("patch"), str)
                             else None
                         ),
+                        "patch": (
+                            file["patch"]
+                            if isinstance(file.get("patch"), str)
+                            and Path(str(file.get("filename", ""))).suffix.lower()
+                            in SOURCE_SUFFIXES
+                            else None
+                        ),
                     }
                     for file in files or []
                 ],
@@ -644,8 +1372,9 @@ def _enrich(args: argparse.Namespace) -> None:
                 "status": "rate_limited" if rate_limited else "failed",
                 "error": str(error),
             }
-        details.append(record)
-        write_jsonl(args.output, details)
+        append_jsonl(args.output, record)
+        if record["status"] in {"completed", "manual_large_pr"}:
+            completed.add(key)
         print(f"{key[0]}#{key[1]}: {record['status']}", flush=True)
         if record["status"] == "rate_limited":
             break
@@ -829,7 +1558,10 @@ def _import(args: argparse.Namespace) -> None:
             )
     merged = merge_candidates([*read_jsonl(args.output), *incoming])
     summary = summarize_registry(
-        merged, catalog["target_validated_pr_tasks"], args.repository_root
+        merged,
+        catalog["target_validated_pr_tasks"],
+        args.repository_root,
+        validate_evidence_files=False,
     )
     write_jsonl(args.output, merged)
     print(json.dumps(summary, sort_keys=True))
@@ -874,7 +1606,7 @@ def _source_verify(args: argparse.Namespace) -> None:
         review = json.loads(
             (args.repository_root / row["selection_review_path"]).read_text()
         )
-        intent_note = review["solver_behavior_hypothesis"]
+        intent_note = review.get("solver_behavior_hypothesis") or review.get("reason", "")
     evidence = verify_source_patch(
         repository_checkout=args.repository_checkout,
         record=row,
@@ -893,8 +1625,12 @@ def _source_verify(args: argparse.Namespace) -> None:
             "changed_source_files": evidence["changed_source_files"],
         }
     )
+    validate_evidence_stage(row, args.repository_root)
     summary = summarize_registry(
-        rows, catalog["target_validated_pr_tasks"], args.repository_root
+        rows,
+        catalog["target_validated_pr_tasks"],
+        args.repository_root,
+        validate_evidence_files=False,
     )
     write_jsonl(args.registry, rows)
     print(
@@ -918,7 +1654,9 @@ def _workload_evidence(args: argparse.Namespace) -> None:
     row = matching[0]
     if row.get("stage") != "build_verified":
         raise ValueError("workload evidence requires a build-verified candidate")
-    review_path = _repository_path(args.repository_root / row["selection_review_path"], args.repository_root)
+    review_path = _repository_path(
+        args.repository_root / row["selection_review_path"], args.repository_root
+    )
     if hashlib.sha256(review_path.read_bytes()).hexdigest() != row.get(
         "selection_review_sha256"
     ):
@@ -940,9 +1678,7 @@ def _workload_evidence(args: argparse.Namespace) -> None:
                 "source_patch_sha256",
             )
         },
-        "instance_selection_rule_sha256": hashlib.sha256(
-            review["instance_selection_rule"].encode()
-        ).hexdigest(),
+        "instance_selection_rule_sha256": workload_selection_rule_sha256(review, row, root),
     }
     for name, input_path in (
         ("instance_manifest", args.manifest),
@@ -959,14 +1695,23 @@ def _workload_evidence(args: argparse.Namespace) -> None:
 
     destination, relative = _evidence_output(args.output, root)
     destination.write_text(json.dumps(evidence, indent=2) + "\n")
-    updated_row = {**row, "workload_evidence_path": relative, "stage": "workload_verified"}
+    updated_row = {
+        **row,
+        "workload_evidence_path": relative,
+        "stage": "workload_verified",
+    }
     try:
         validate_evidence_stage(updated_row, root)
     except Exception:
         destination.unlink(missing_ok=True)
         raise
     rows[rows.index(row)] = updated_row
-    summary = summarize_registry(rows, catalog["target_validated_pr_tasks"], root)
+    summary = summarize_registry(
+        rows,
+        catalog["target_validated_pr_tasks"],
+        root,
+        validate_evidence_files=False,
+    )
     write_jsonl(args.registry, rows)
     print(
         json.dumps(
@@ -992,6 +1737,11 @@ def main() -> None:
         "audit",
         "queue",
         "triage",
+        "type-audit",
+        "prepare-review-batch",
+        "review-batch-status",
+        "cache-local-diffs",
+        "cache-git-diffs",
         "screening-audit",
         "enrich",
         "checkout",
@@ -1000,6 +1750,8 @@ def main() -> None:
         "workload-evidence",
         "public-correctness",
         "baseline-evidence",
+        "objective-register",
+        "objective-qualify",
         "integrate",
     ):
         subparser = commands.add_parser(name)
@@ -1027,6 +1779,9 @@ def main() -> None:
             subparser.add_argument("--registry", type=Path, required=True)
             subparser.add_argument("--limit", type=int, default=100)
             subparser.add_argument("--output", type=Path, required=True)
+        elif name == "type-audit":
+            subparser.add_argument("--registry", type=Path, required=True)
+            subparser.add_argument("--output-dir", type=Path, required=True)
         elif name in {"triage", "screening-audit"}:
             subparser.add_argument("--registry", type=Path, required=True)
             subparser.add_argument(
@@ -1035,7 +1790,45 @@ def main() -> None:
             if name == "triage":
                 subparser.add_argument("--limit", type=int, default=100)
                 subparser.add_argument("--audit-fraction", type=float, default=0.1)
+                subparser.add_argument(
+                    "--scope-status",
+                    action="append",
+                    choices=("task_backed", "approved_source", "pending_domain_review"),
+                    help="Schedule reviews from these catalog states; other PRs remain eligible",
+                )
+                subparser.add_argument(
+                    "--review-order",
+                    choices=("coverage", "throughput"),
+                    default="coverage",
+                    help="Balance source coverage or prioritize explicit optimization signals",
+                )
             subparser.add_argument("--output", type=Path, required=True)
+        elif name == "prepare-review-batch":
+            subparser.add_argument("--registry", type=Path, required=True)
+            subparser.add_argument(
+                "--details", type=Path, action="append", required=True
+            )
+            subparser.add_argument("--queue", type=Path, required=True)
+            subparser.add_argument("--limit", type=int, default=100)
+            subparser.add_argument("--output-dir", type=Path, required=True)
+            subparser.add_argument("--repository-root", type=Path, default=Path.cwd())
+        elif name == "review-batch-status":
+            subparser.add_argument("--registry", type=Path, required=True)
+            subparser.add_argument("--manifest", type=Path, required=True)
+            subparser.add_argument("--output", type=Path, required=True)
+            subparser.add_argument("--repository-root", type=Path, default=Path.cwd())
+        elif name in {"cache-local-diffs", "cache-git-diffs"}:
+            subparser.add_argument("--registry", type=Path, required=True)
+            subparser.add_argument("--manifest", type=Path, required=True)
+            subparser.add_argument(
+                "--repository-checkout", action="append", required=True
+            )
+            subparser.add_argument("--output-dir", type=Path, required=True)
+            subparser.add_argument("--repository-root", type=Path, default=Path.cwd())
+            subparser.add_argument("--fetch-missing", action="store_true")
+            subparser.add_argument("--retry-unavailable", action="store_true")
+            subparser.add_argument("--limit", type=int, default=1000000)
+            subparser.add_argument("--git-timeout-sec", type=float, default=120)
         elif name == "enrich":
             subparser.add_argument("--registry", type=Path, required=True)
             subparser.add_argument("--queue", type=Path, required=True)
@@ -1052,12 +1845,15 @@ def main() -> None:
             subparser.add_argument("--audit-output", type=Path, required=True)
         elif name == "screen":
             subparser.add_argument("--registry", type=Path, required=True)
-            subparser.add_argument("--review-file", type=Path, required=True)
+            subparser.add_argument("--review-file", type=Path, action="append")
+            subparser.add_argument("--review-dir", type=Path)
             subparser.add_argument("--repository-root", type=Path, default=Path.cwd())
         elif name in {
             "workload-evidence",
             "public-correctness",
             "baseline-evidence",
+            "objective-register",
+            "objective-qualify",
             "integrate",
         }:
             subparser.add_argument("--registry", type=Path, required=True)
@@ -1078,6 +1874,10 @@ def main() -> None:
                 subparser.add_argument("--manifest", type=Path, required=True)
                 subparser.add_argument("--analysis", type=Path, required=True)
                 subparser.add_argument("--runs", type=Path, required=True)
+            elif name == "objective-register":
+                pass
+            elif name == "objective-qualify":
+                subparser.add_argument("--run-directory", type=Path, required=True)
             else:
                 subparser.add_argument("--agent-identity", type=Path, required=True)
                 subparser.add_argument("--checkout-audit", type=Path, required=True)
@@ -1104,6 +1904,11 @@ def main() -> None:
             "audit": _audit,
             "queue": _queue,
             "triage": _triage,
+            "type-audit": _type_audit,
+            "prepare-review-batch": _prepare_review_batch,
+            "review-batch-status": _review_batch_status,
+            "cache-local-diffs": _cache_local_diffs,
+            "cache-git-diffs": _cache_local_diffs,
             "screening-audit": _screening_audit,
             "enrich": _enrich,
             "checkout": _checkout,
@@ -1112,6 +1917,8 @@ def main() -> None:
             "workload-evidence": _workload_evidence,
             "public-correctness": _public_correctness,
             "baseline-evidence": _baseline_evidence,
+            "objective-register": _objective_register,
+            "objective-qualify": _objective_qualify,
             "integrate": _integration_evidence,
         }[args.command](args)
     except Exception as error:

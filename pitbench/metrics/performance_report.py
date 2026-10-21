@@ -68,6 +68,7 @@ def classify_exact_performance(
 class ExactRunOutcomeKind(str, Enum):
     VERIFIED_SOLVED = "verified_solved"
     SOLVER_ORIGIN_UNSOLVED = "solver_origin_unsolved"
+    SOLVER_FAILURE = "solver_failure"
     ORACLE_DISCREPANCY = "oracle_discrepancy"
     QUALIFICATION_FAILURE = "qualification_failure"
     INFRASTRUCTURE_MISSING = "infrastructure_missing"
@@ -93,9 +94,18 @@ def compute_exact_run_outcome(
     if observation.status == RunStatus.INVALID:
         return ExactRunOutcome(kind=ExactRunOutcomeKind.QUALIFICATION_FAILURE)
 
-    if observation.status != RunStatus.COMPLETED:
+    if observation.status == RunStatus.NO_SOLUTION and (
+        observation.solver_termination == SolverTermination.TIME_LIMIT
+    ):
         return ExactRunOutcome(
             kind=ExactRunOutcomeKind.SOLVER_ORIGIN_UNSOLVED,
+            solved=False,
+            penalized_runtime_sec=2 * observation.budget_sec,
+        )
+
+    if observation.status != RunStatus.COMPLETED:
+        return ExactRunOutcome(
+            kind=ExactRunOutcomeKind.SOLVER_FAILURE,
             solved=False,
             penalized_runtime_sec=2 * observation.budget_sec,
         )
@@ -105,7 +115,11 @@ def compute_exact_run_outcome(
 
     if observation.solver_termination != SolverTermination.OPTIMAL:
         return ExactRunOutcome(
-            kind=ExactRunOutcomeKind.SOLVER_ORIGIN_UNSOLVED,
+            kind=(
+                ExactRunOutcomeKind.SOLVER_ORIGIN_UNSOLVED
+                if observation.solver_termination == SolverTermination.TIME_LIMIT
+                else ExactRunOutcomeKind.SOLVER_FAILURE
+            ),
             solved=False,
             penalized_runtime_sec=2 * observation.budget_sec,
         )
@@ -346,6 +360,7 @@ def _exact_state_performance(
     ordinary_kinds = {
         ExactRunOutcomeKind.VERIFIED_SOLVED,
         ExactRunOutcomeKind.SOLVER_ORIGIN_UNSOLVED,
+        ExactRunOutcomeKind.SOLVER_FAILURE,
     }
     complete = bool(expected_runs) and all(
         outcome.kind in ordinary_kinds
@@ -795,8 +810,8 @@ def _format_exact_performance_report(report: ExactPerformanceReport) -> str:
         "",
         "Budget | Base solved | Agent solved | Agent-Base solved coverage "
         "(95% CI) | Base PAR-2 | Agent PAR-2 | "
-        "Base-Agent PAR-2 reduction (95% CI)",
-        "---: | ---: | ---: | ---: | ---: | ---: | ---:",
+        "Base-Agent PAR-2 reduction (95% CI) | Base failures | Agent failures",
+        "---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---:",
     ]
     confirmation_text = _confirmation_text(report)
     if confirmation_text is not None:
@@ -833,13 +848,17 @@ def _format_exact_performance_report(report: ExactPerformanceReport) -> str:
             f"{cell.budget_sec:g}s | {coverage(cell.base)} | "
             f"{coverage(cell.agent)} | {coverage_reduction} | "
             f"{runtime(cell.base)} | "
-            f"{runtime(cell.agent)} | {reduction}"
+            f"{runtime(cell.agent)} | {reduction} | "
+            f"{cell.base.outcome_counts.get('solver_failure', '-')} | "
+            f"{cell.agent.outcome_counts.get('solver_failure', '-')}"
         )
     lines.extend(
         [
             "",
             "Coverage is primary; directional coverage needs an interval excluding "
             "zero. Equal coverage is classified by paired PAR-2.",
+            "Solver failures are reported separately from normal time limits; "
+            "both retain the existing PAR-2 penalty.",
             "95% intervals use an instance bootstrap over per-instance seed means.",
         ]
     )

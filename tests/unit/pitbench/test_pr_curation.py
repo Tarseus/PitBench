@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,162 @@ from pitbench.repositories.pr_curation import (
     validate_task_integration_evidence,
     validate_workload_exposure_evidence,
 )
+
+
+@pytest.mark.parametrize(
+    ("history", "expected_status"),
+    [
+        ("merge", "cached"),
+        ("squash", "cached"),
+        ("advanced_base", "cached"),
+        ("equivalent_branch", "cached_branch_base"),
+        ("squash_equivalent_branch", "cached_branch_base"),
+        ("squash_changed_context", "base_drift"),
+        ("changed_context", "base_drift"),
+        ("extra_file", "pinned_file_mismatch"),
+    ],
+)
+def test_review_diff_tracks_actual_git_integration(tmp_path, history, expected_status):
+    repo = tmp_path / "solver"
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.check_output(
+            ["git", *args], cwd=repo, text=True, stderr=subprocess.PIPE
+        ).strip()
+
+    git("init", "-q")
+    git("config", "user.name", "PitBench test")
+    git("config", "user.email", "test@example.invalid")
+    (repo / "src").mkdir()
+    source = repo / "src/engine.cpp"
+    source.write_text("first\n" + "middle\n" * 12 + "before\n")
+    (repo / "build.txt").write_text("initial\n")
+    git("add", ".")
+    git("commit", "-qm", "base")
+    base = git("rev-parse", "HEAD")
+    git("checkout", "-qb", "feature")
+    source.write_text(source.read_text().replace("before", "after"))
+    if history == "extra_file":
+        (repo / "src/other.cpp").write_text("another change\n")
+    git("add", ".")
+    git("commit", "-qm", "optimization")
+    head = git("rev-parse", "HEAD")
+    git("checkout", "-q", "--detach", base)
+    if history in {"advanced_base", "equivalent_branch", "changed_context", "squash_equivalent_branch", "squash_changed_context"}:
+        if history in {"changed_context", "squash_changed_context"}:
+            source.write_text(source.read_text().replace("first", "new first"))
+        else:
+            (repo / "build.txt").write_text("updated\n")
+        git("add", ".")
+        git("commit", "-qm", "base advances")
+    integration_base = git("rev-parse", "HEAD")
+    if history == "advanced_base":
+        base = integration_base
+    if history.startswith("squash"):
+        git("merge", "--squash", head)
+        git("commit", "-qm", "squash optimization")
+    else:
+        git("merge", "--no-ff", "--no-edit", head)
+    merge = git("rev-parse", "HEAD")
+    card = {
+        "base_commit": base,
+        "head_commit": head,
+        "changed_source_paths": ["src/engine.cpp"],
+        "changed_files": [{"path": "src/engine.cpp"}],
+    }
+    status, patch, _ = pr_curation.inspect_pinned_review_diff(
+        card, repo, merge_commit=merge
+    )
+    assert status == expected_status
+    if status not in {"cached", "cached_branch_base"}:
+        assert patch is None
+        if history == "changed_context":
+            with pytest.raises(ValueError, match="source patches differ"):
+                pr_curation.verify_source_patch(
+                    repository_checkout=repo,
+                    record={**card, "repository": "owner/solver", "pr_number": 1,
+                            "merge_commit": merge},
+                    editable_roots=["src"],
+                    patch_path=tmp_path / "rejected.patch",
+                    audit_path=tmp_path / "rejected.json",
+                    intent_note="Reduce repeated search work",
+                )
+            assert not (tmp_path / "rejected.patch").exists()
+        return
+    audit = pr_curation.verify_source_patch(
+        repository_checkout=repo,
+        record={**card, "repository": "owner/solver", "pr_number": 1,
+                "merge_commit": merge},
+        editable_roots=["src"],
+        patch_path=tmp_path / "source.patch",
+        audit_path=tmp_path / "source.json",
+        intent_note="Reduce repeated search work",
+    )
+    assert (tmp_path / "source.patch").read_bytes() == patch
+    assert audit["integrated_commit"] == merge
+    assert audit["integration_base_commit"] == integration_base
+    assert audit["changed_source_files"] == ["src/engine.cpp"]
+    assert git("rev-parse", "HEAD") == merge
+
+
+def test_interrupted_diff_cache_keeps_unvisited_results(tmp_path, monkeypatch):
+    from argparse import Namespace
+
+    import scripts.curate_solver_prs as cli
+
+    batch = tmp_path / "batch"
+    batch.mkdir()
+    checkout = tmp_path / "mirror"
+    checkout.mkdir()
+    output = batch / "diffs"
+    output.mkdir()
+    cards = [
+        {"repository": "owner/solver", "pr_number": number,
+         "base_commit": "a" * 40, "head_commit": "b" * 40,
+         "card_sha256": str(number) * 64, "card_path": f"batch/{number}.md",
+         "changed_source_paths": ["src/engine.cpp"]}
+        for number in (1, 2, 3)
+    ]
+    cli.write_jsonl(batch / "cards.jsonl", cards)
+    manifest = {
+        "schema_version": 1, "cohort": cards,
+        "cards_sha256": hashlib.sha256((batch / "cards.jsonl").read_bytes()).hexdigest(),
+    }
+    (batch / "manifest.json").write_text(json.dumps(manifest))
+    cli.write_jsonl(tmp_path / "registry.jsonl", cards)
+    prior = [
+        {**card, "status": "git_timeout", "diagnostic": f"prior-{card['pr_number']}"}
+        for card in cards
+    ]
+    cli.write_jsonl(output / "status.jsonl", prior)
+
+    def inspect(card, *_args, **_kwargs):
+        if card["pr_number"] == 2:
+            raise RuntimeError("interrupted")
+        return "cached", b"source patch", ["src/engine.cpp"]
+
+    monkeypatch.setattr(cli, "inspect_pinned_review_diff", inspect)
+    args = Namespace(
+        limit=3, git_timeout_sec=10, repository_root=tmp_path, output_dir=output,
+        manifest=batch / "manifest.json", registry=tmp_path / "registry.jsonl",
+        repository_checkout=[f"owner/solver={checkout}"], fetch_missing=False,
+        retry_unavailable=False,
+    )
+    with pytest.raises(RuntimeError, match="interrupted"):
+        cli._cache_local_diffs(args)
+    saved = cli.read_jsonl(output / "status.jsonl")
+    assert len(saved) == 3
+    assert saved[0]["status"] == "cached"
+    assert saved[1:] == prior[1:]
+
+    def finish(card, *_args, **_kwargs):
+        assert card["pr_number"] != 1, "the completed diff must be reused"
+        return "cached", b"source patch", ["src/engine.cpp"]
+
+    monkeypatch.setattr(cli, "inspect_pinned_review_diff", finish)
+    cli._cache_local_diffs(args)
+    assert [row["status"] for row in cli.read_jsonl(output / "status.jsonl")] == ["cached"] * 3
 
 
 def test_repeated_discovery_does_not_inflate_distinct_pr_count() -> None:

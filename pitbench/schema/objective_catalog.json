@@ -1,0 +1,560 @@
+{
+  "schema_version": 1,
+  "taxonomy_version": "1.0",
+  "research_date": "2026-10-20",
+  "claim_boundary": "A proposed extensible classification and measurement map. Categories and title hints are not mathematical verification or acceptance criteria; existing metrics, budgets, seeds and thresholds are preserved.",
+  "default_observation_objectives": [
+    "solve_time",
+    "solution_quality",
+    "peak_memory"
+  ],
+  "change_kinds": [
+    "algorithmic_search",
+    "implementation_efficiency",
+    "resource_management",
+    "numerical_reliability",
+    "concurrency",
+    "incremental_state",
+    "capability_extension",
+    "correctness_fix",
+    "integration_api",
+    "maintenance",
+    "unknown"
+  ],
+  "solver_phases": [
+    "presolve",
+    "branching",
+    "cut_generation",
+    "primal_heuristic",
+    "propagation",
+    "local_search",
+    "search_state",
+    "numerical_kernel",
+    "solver_setup"
+  ],
+  "objectives": {
+    "solve_time": {
+      "label": "求解效率",
+      "metric_ids": [
+        "exact_solved_coverage",
+        "exact_penalized_runtime_sec",
+        "search_work"
+      ],
+      "scenario": "paired_single_solve",
+      "source_ids": [
+        "scip_testing",
+        "performance_profiles"
+      ],
+      "title_hint_pattern": "\\b(?:performance|faster|speed(?:up)?|optimi[sz](?:e|ation)|efficien(?:t|cy))\\b",
+      "scope": "solver_optimization"
+    },
+    "solution_quality": {
+      "label": "固定预算解质量",
+      "metric_ids": [
+        "fixed_budget_normalized_gap"
+      ],
+      "scenario": "paired_fixed_budget",
+      "source_ids": [
+        "scip_testing",
+        "minizinc_2026"
+      ],
+      "title_hint_pattern": "\\b(?:heuristic|local.search|perturbation|incumbent|solution.quality)\\b",
+      "scope": "solver_optimization"
+    },
+    "primal_progress": {
+      "label": "更早找到好解",
+      "metric_ids": [
+        "time_to_first_verified_solution_sec",
+        "time_to_target_sec",
+        "primal_integral"
+      ],
+      "scenario": "verified_incumbent_trajectory",
+      "source_ids": [
+        "primal_integral",
+        "minizinc_2026"
+      ],
+      "title_hint_pattern": "\\b(?:primal|first.solution|incumbent|anytime|solution.trajectory)\\b",
+      "scope": "solver_optimization"
+    },
+    "dual_progress": {
+      "label": "界推进与证明效率",
+      "metric_ids": [
+        "exact_solved_coverage",
+        "exact_penalized_runtime_sec",
+        "dual_progress_integral",
+        "search_work"
+      ],
+      "scenario": "certified_bound_trajectory",
+      "source_ids": [
+        "scip_testing",
+        "scip_exact"
+      ],
+      "title_hint_pattern": "\\b(?:dual.bound|lower.bound|upper.bound|cut.generation|separation|optimality|proof)\\b",
+      "scope": "solver_optimization"
+    },
+    "peak_memory": {
+      "label": "单次求解内存占用",
+      "metric_ids": [
+        "peak_rss_ratio",
+        "cpu_time_ratio"
+      ],
+      "scenario": "scope_matched_paired_single_solve",
+      "source_ids": [
+        "pyvrp_memory_pr",
+        "highs_parallel_pr"
+      ],
+      "title_hint_pattern": "\\b(?:memory|allocat\\w*|footprint|arena|bitset)\\b",
+      "scope": "solver_optimization",
+      "title_hint_exclusion_pattern": "uninitiali[sz]ed|use.after.free|out.of.bounds"
+    },
+    "memory_lifecycle": {
+      "label": "持续运行内存与资源回收",
+      "metric_ids": [
+        "retained_memory_series",
+        "memory_growth_per_solve",
+        "operational_failure_counts"
+      ],
+      "scenario": "long_lived_repeated_solve",
+      "source_ids": [
+        "highs_lifecycle_pr"
+      ],
+      "title_hint_pattern": "\\b(?:memory.leak|leak\\w*.memory|release.memory|state.cleanup|retained.memory|rss.growth)\\b",
+      "scope": "solver_optimization"
+    },
+    "parallel_scaling": {
+      "label": "并行与加速器效率",
+      "metric_ids": [
+        "thread_scaling_curve",
+        "parallel_efficiency",
+        "cpu_time_ratio",
+        "peak_rss_ratio"
+      ],
+      "scenario": "declared_hardware_and_thread_grid",
+      "source_ids": [
+        "scip_concurrent",
+        "highs_parallel_pr",
+        "cuopt_features"
+      ],
+      "title_hint_pattern": "\\b(?:parallel|thread\\w*|concurren\\w*|gpu|cuda|simd|vectoriz\\w*)\\b",
+      "scope": "solver_optimization",
+      "title_hint_exclusion_pattern": "(?:nearly[ -])?parallel[ -](?:row|column|col)s?"
+    },
+    "reoptimization": {
+      "label": "增量与重复优化",
+      "metric_ids": [
+        "sequence_solve_time_sec",
+        "update_overhead_sec",
+        "retained_memory_series"
+      ],
+      "scenario": "declared_model_update_sequence",
+      "source_ids": [
+        "scip_reoptimization",
+        "cuopt_warmstart_pr",
+        "cuopt_features"
+      ],
+      "title_hint_pattern": "\\b(?:warm.?start|reoptimi\\w*|incremental|model.update)\\b",
+      "scope": "solver_optimization"
+    },
+    "numerical_robustness": {
+      "label": "数值稳定性",
+      "metric_ids": [
+        "independent_violation",
+        "numerical_failure_counts"
+      ],
+      "scenario": "declared_numerical_stress_grid",
+      "source_ids": [
+        "highs_numerics_pr",
+        "scip_exact"
+      ],
+      "title_hint_pattern": "\\b(?:numeri\\w*|precision|tolerance\\w*|roundoff|ill.condition\\w*|underflow|overflow)\\b",
+      "scope": "mixed_optimization_and_correctness"
+    },
+    "operational_reliability": {
+      "label": "运行可靠性",
+      "metric_ids": [
+        "boundary_pass_counts",
+        "operational_failure_counts"
+      ],
+      "scenario": "declared_boundary_suite",
+      "source_ids": [
+        "scip_testing"
+      ],
+      "title_hint_pattern": "\\b(?:crash\\w*|segfault|deadlock|out.of.memory|time.limit|infinite.loop|resource.leak)\\b",
+      "scope": "mixed_optimization_and_correctness"
+    },
+    "repeatability": {
+      "label": "随机性与表示鲁棒性",
+      "metric_ids": [
+        "seed_dispersion",
+        "representation_dispersion",
+        "same_seed_replay_consistency"
+      ],
+      "scenario": "declared_seed_representation_and_replay_grids",
+      "source_ids": [
+        "gurobi_concurrent",
+        "highs_parallel_pr"
+      ],
+      "title_hint_pattern": "\\b(?:determin\\w*|reproduc\\w*|random\\w*|seed\\w*|relabel\\w*|permutation)\\b",
+      "scope": "solver_optimization"
+    },
+    "scale_generalization": {
+      "label": "规模与工作负载适应性",
+      "metric_ids": [
+        "controlled_retention"
+      ],
+      "scenario": "declared_controlled_transfer",
+      "source_ids": [
+        "pyvrp_transfer_pr",
+        "performance_profiles"
+      ],
+      "title_hint_pattern": "\\b(?:scalability|large.instance\\w*|generaliz\\w*|workload|large.scale)\\b",
+      "scope": "solver_optimization"
+    },
+    "solver_setup": {
+      "label": "读取与初始化效率",
+      "metric_ids": [
+        "setup_time_sec",
+        "setup_peak_memory"
+      ],
+      "scenario": "stage_qualified_solver_setup",
+      "source_ids": [
+        "pyvrp_initialization_pr",
+        "cuopt_features"
+      ],
+      "title_hint_pattern": "\\b(?:initiali[sz]\\w*|startup|parser|parsing|reader|read.performance|compute_neighbours)\\b",
+      "scope": "solver_owned_setup_only"
+    }
+  },
+  "metrics": {
+    "exact_solved_coverage": {
+      "label": "经独立验证的精确求解覆盖率",
+      "unit": "fraction",
+      "direction": "higher",
+      "current_support": "existing_protocol",
+      "evidence": "performance.primary.{base,agent}.verified_solved_coverage",
+      "qualification": "existing_exact_protocol"
+    },
+    "exact_penalized_runtime_sec": {
+      "label": "精确求解惩罚平均耗时",
+      "unit": "seconds",
+      "direction": "lower",
+      "current_support": "existing_protocol",
+      "evidence": "performance.primary.{base,agent}.penalized_average_runtime_sec",
+      "qualification": "existing_exact_protocol"
+    },
+    "fixed_budget_normalized_gap": {
+      "label": "固定预算归一化目标差距",
+      "unit": "fraction",
+      "direction": "lower",
+      "current_support": "existing_protocol",
+      "evidence": "performance.primary.{base,agent}.mean_normalized_gap",
+      "qualification": "existing_heuristic_protocol"
+    },
+    "time_to_first_verified_solution_sec": {
+      "label": "首次经验证可行解耗时",
+      "unit": "seconds",
+      "direction": "lower",
+      "current_support": "requires_collection",
+      "evidence": "Requires timestamped incumbent solutions and independent checking of those solutions.",
+      "qualification": "requires_protocol"
+    },
+    "time_to_target_sec": {
+      "label": "达到预定质量目标的耗时",
+      "unit": "seconds",
+      "direction": "lower",
+      "current_support": "requires_collection",
+      "evidence": "Requires a target fixed before candidate outcomes and complete censored-run handling.",
+      "qualification": "requires_protocol"
+    },
+    "primal_integral": {
+      "label": "原始解质量随时间的积分",
+      "unit": "gap_seconds",
+      "direction": "lower",
+      "current_support": "requires_collection",
+      "evidence": "Existing solver traces are not independently checked incumbent trajectories with a frozen missing-value convention.",
+      "qualification": "requires_protocol"
+    },
+    "dual_progress_integral": {
+      "label": "经认证的界随时间的进展",
+      "unit": "gap_seconds",
+      "direction": "lower",
+      "current_support": "requires_collection",
+      "evidence": "Requires valid bound evidence, trace coverage and a fixed treatment of missing bounds.",
+      "qualification": "requires_protocol"
+    },
+    "search_work": {
+      "label": "搜索节点与迭代工作量",
+      "unit": "backend_specific_counts",
+      "direction": "diagnostic",
+      "current_support": "raw_observations",
+      "evidence": "observations.nodes and observations.iterations; unit and algorithm changes can make counts incomparable.",
+      "qualification": "diagnostic_only"
+    },
+    "peak_rss_ratio": {
+      "label": "成对峰值 RSS 比值",
+      "unit": "ratio",
+      "direction": "lower",
+      "current_support": "existing_descriptive",
+      "evidence": "resource_usage.by_instance_set.*.*.memory; matched measurement scope and complete-pair counts retained.",
+      "qualification": "requires_protocol"
+    },
+    "cpu_time_ratio": {
+      "label": "成对 CPU 时间比值",
+      "unit": "ratio",
+      "direction": "lower",
+      "current_support": "existing_descriptive",
+      "evidence": "resource_usage.by_instance_set.*.*.cpu",
+      "qualification": "requires_protocol"
+    },
+    "retained_memory_series": {
+      "label": "连续求解后保留内存序列",
+      "unit": "bytes",
+      "direction": "lower",
+      "current_support": "requires_scenario",
+      "evidence": "Requires one long-lived process, declared solve/update/reset sequence and allocator scope.",
+      "qualification": "requires_protocol"
+    },
+    "memory_growth_per_solve": {
+      "label": "每次重复求解的内存增长",
+      "unit": "bytes_per_solve",
+      "direction": "lower",
+      "current_support": "requires_scenario",
+      "evidence": "Requires a declared estimator, warm-up convention, workload sequence and uncertainty protocol.",
+      "qualification": "requires_protocol"
+    },
+    "thread_scaling_curve": {
+      "label": "线程数与质量时间表现曲线",
+      "unit": "curve",
+      "direction": "diagnostic",
+      "current_support": "requires_scenario",
+      "evidence": "Requires a fixed thread-count grid, comparable target/quality and per-condition raw outcomes.",
+      "qualification": "requires_protocol"
+    },
+    "parallel_efficiency": {
+      "label": "达到同一目标的并行效率",
+      "unit": "fraction",
+      "direction": "higher",
+      "current_support": "requires_scenario",
+      "evidence": "Requires comparable time-to-target, declared reference thread count and hardware resource accounting.",
+      "qualification": "requires_protocol"
+    },
+    "sequence_solve_time_sec": {
+      "label": "模型更新序列总求解耗时",
+      "unit": "seconds",
+      "direction": "lower",
+      "current_support": "requires_scenario",
+      "evidence": "Requires equivalent cold/warm sequences with every intermediate model and solution independently checked.",
+      "qualification": "requires_protocol"
+    },
+    "update_overhead_sec": {
+      "label": "求解器模型更新开销",
+      "unit": "seconds",
+      "direction": "lower",
+      "current_support": "requires_scenario",
+      "evidence": "Requires a declared sequence and separate update/solve timing.",
+      "qualification": "requires_protocol"
+    },
+    "independent_violation": {
+      "label": "原始模型约束与整数性违背量",
+      "unit": "model_units",
+      "direction": "lower",
+      "current_support": "checker_artifacts",
+      "evidence": "Independent verifiers check feasibility with existing task tolerances; no universal residual distribution report exists.",
+      "qualification": "requires_protocol"
+    },
+    "numerical_failure_counts": {
+      "label": "数值失败与状态不一致次数",
+      "unit": "count",
+      "direction": "lower",
+      "current_support": "raw_observations",
+      "evidence": "Raw statuses and verification artifacts; needs a declared numerical stress grid and denominator.",
+      "qualification": "requires_protocol"
+    },
+    "boundary_pass_counts": {
+      "label": "预先声明的边界测试通过计数",
+      "unit": "count",
+      "direction": "higher",
+      "current_support": "existing_descriptive",
+      "evidence": "operational_reliability.by_budget",
+      "qualification": "descriptive_only"
+    },
+    "operational_failure_counts": {
+      "label": "崩溃、OOM、输出错误与超时计数",
+      "unit": "count",
+      "direction": "lower",
+      "current_support": "existing_descriptive",
+      "evidence": "operational_reliability.by_budget; raw failures remain in observations.",
+      "qualification": "descriptive_only"
+    },
+    "seed_dispersion": {
+      "label": "跨 seed 表现离散程度",
+      "unit": "native_metric_units",
+      "direction": "lower",
+      "current_support": "existing_descriptive",
+      "evidence": "nuisance_robustness; uses the existing heuristic or exact seed report definition.",
+      "qualification": "descriptive_only"
+    },
+    "representation_dispersion": {
+      "label": "等价实例表示敏感性",
+      "unit": "native_metric_units",
+      "direction": "lower",
+      "current_support": "separate_report",
+      "evidence": "Existing nuisance/representation reports require a configured equivalence experiment.",
+      "qualification": "descriptive_only"
+    },
+    "same_seed_replay_consistency": {
+      "label": "同 seed 重复执行一致性",
+      "unit": "fraction",
+      "direction": "higher",
+      "current_support": "requires_scenario",
+      "evidence": "Requires repeated identical inputs and declared equality/tolerance and schedule conditions; distinct from cross-seed variance.",
+      "qualification": "requires_protocol"
+    },
+    "controlled_retention": {
+      "label": "规模与结构变化下的改善保留",
+      "unit": "native_metric_units",
+      "direction": "higher",
+      "current_support": "existing_protocol",
+      "evidence": "controlled_transfer.condition_reports and controlled_transfer.scale_paths",
+      "qualification": "existing_controlled_transfer_protocol"
+    },
+    "setup_time_sec": {
+      "label": "求解器读取与初始化耗时",
+      "unit": "seconds",
+      "direction": "lower",
+      "current_support": "requires_scenario",
+      "evidence": "Separate solver-owned setup from solve and wrapper time; include affected stages in the measured scope.",
+      "qualification": "requires_protocol"
+    },
+    "setup_peak_memory": {
+      "label": "求解器初始化峰值内存",
+      "unit": "bytes",
+      "direction": "lower",
+      "current_support": "requires_scenario",
+      "evidence": "Requires stage-qualified measurement; solve-only RSS does not identify initialization savings.",
+      "qualification": "requires_protocol"
+    }
+  },
+  "sources": [
+    {
+      "id": "scip_testing",
+      "url": "https://www.scipopt.org/scip/doc/html/TEST.php",
+      "title": "SCIP automated testing",
+      "support": "Official test output distinguishes solve time, nodes, feasible/optimal coverage, first/best-solution times and failures.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "primal_integral",
+      "url": "https://www.zib.de/userpage//hendel/publication/rounding-and-propagation-heuristics-for-mip/",
+      "title": "Rounding and Propagation Heuristics for MIP",
+      "support": "Authors introduce primal integral to assess finding feasible solutions early in search.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "minizinc_2026",
+      "url": "https://www.minizinc.org/challenge/2026/rules/",
+      "title": "MiniZinc Challenge 2026 rules",
+      "support": "Separate complete, incomplete and area scoring; parallel entries have a distinct resource setting.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "scip_reoptimization",
+      "url": "https://www.scipopt.org/doc/html/REOPT.php",
+      "title": "SCIP reoptimization",
+      "support": "Reuses information across a declared sequence of modified models.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "scip_concurrent",
+      "url": "https://www.scipopt.org/doc/html/CONCSCIP.php",
+      "title": "SCIP concurrent solving",
+      "support": "Thread allocation is part of the solving configuration.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "gurobi_concurrent",
+      "url": "https://docs.gurobi.com/projects/optimizer/en/current/features/concurrent.html",
+      "title": "Gurobi concurrent optimization",
+      "support": "Concurrent races can be nondeterministic; callbacks need not describe every concurrent strategy.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "scip_exact",
+      "url": "https://scipopt.org/doc/html/EXACT.php",
+      "title": "SCIP numerically exact solving",
+      "support": "Exact arithmetic and proof checking are separate capabilities; certificate completion may be required.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "performance_profiles",
+      "url": "https://optimization-online.org/2001/03/300/",
+      "title": "Dolan and More: performance profiles",
+      "support": "Distributional comparison can be applied to a chosen metric; it does not choose a universal score.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "cuopt_features",
+      "url": "https://docs.nvidia.com/cuopt/user-guide/latest/lp-qp-features.html",
+      "title": "NVIDIA cuOpt LP/QP features",
+      "support": "Warm starts and CPU/GPU concurrent methods require appropriate scenarios and resource accounting.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "highs_parallel_pr",
+      "url": "https://github.com/ERGO-Code/HiGHS/pull/3192",
+      "title": "HiGHS parallel redesign",
+      "support": "Author reports thread-dependent time and memory tradeoffs; these are claims requiring independent replication.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "highs_lifecycle_pr",
+      "url": "https://github.com/ERGO-Code/HiGHS/pull/2981",
+      "title": "HiGHS solver-state cleanup",
+      "support": "Repeated reuse and retained allocation motivate a long-lived-process scenario.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "highs_numerics_pr",
+      "url": "https://github.com/ERGO-Code/HiGHS/pull/796",
+      "title": "HiGHS singleton-row numerical tolerances",
+      "support": "Original-model feasibility can differ from a tolerance check on a transformed row; this example is a correctness fix, not automatic optimization admission.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "pyvrp_memory_pr",
+      "url": "https://github.com/PyVRP/PyVRP/pull/783",
+      "title": "PyVRP Solution constructor memory",
+      "support": "Bitset membership changes representation and memory usage.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "pyvrp_initialization_pr",
+      "url": "https://github.com/PyVRP/PyVRP/pull/974",
+      "title": "PyVRP compute_neighbours allocations",
+      "support": "Initialization allocations require a measured scope that includes the affected stage.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "pyvrp_transfer_pr",
+      "url": "https://github.com/PyVRP/PyVRP/pull/1156",
+      "title": "PyVRP perturbation neighbours",
+      "support": "PR-reported effects vary across routing families; reported numbers are not PitBench measurements.",
+      "accessed_at": "2026-10-20"
+    },
+    {
+      "id": "cuopt_warmstart_pr",
+      "url": "https://github.com/NVIDIA/cuopt/pull/411",
+      "title": "cuOpt warmstart and model updates",
+      "support": "Mixed API/capability and solver-state changes illustrate the need to classify scope separately from benefit.",
+      "accessed_at": "2026-10-20"
+    }
+  ],
+  "admission_notes": [
+    "Multiple objective and mechanism labels may apply to one PR; count each historical PR once.",
+    "Select the primary objective and qualification protocol before qualification results; secondary diagnostics do not silently change the primary score.",
+    "Retain unknown classifications and unavailable measurements. Missing support is not regression or rejection.",
+    "Correctness-only, feature, parameter, wrapper and maintenance PRs are classified but do not automatically enter the existing solver-optimization task scope.",
+    "Search nodes, iterations, allocator counters and hardware counters need comparability evidence and do not alone establish end-to-end optimization success.",
+    "Do not derive a composite score or a resource, parallel, numerical or trajectory acceptance threshold from this catalog."
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "repository": "PyVRP/PyVRP",
+  "pr_number": 91,
+  "base_commit": "75458d01505142fdc898c873e7689d7d501dcfc9",
+  "head_commit": "c14daf255c426eef976e9024ab4f487782d91c27",
+  "decision": "needs_evidence",
+  "reason": "The integrated diff combines inlining and the VRP_NO_TIME_WINDOWS specialization with a correction of Route::hasTimeWarp from isTimeWarpFeasible_ to !isTimeWarpFeasible_. Its Base retains the predicate introduced by #45. Check whether a declared workload has a mathematically valid Base and whether the historical API can use the common driver. A fixed CVRP scope must also justify skipping time-window computation without changing instance semantics before optimization qualification.",
+  "review_duration_sec": null,
+  "rejection_basis": null,
+  "missing_evidence": [
+    "historical_build",
+    "independent_checker"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/PyVRP/PyVRP/pull/91",
+    "https://github.com/PyVRP/PyVRP/compare/75458d01505142fdc898c873e7689d7d501dcfc9...c14daf255c426eef976e9024ab4f487782d91c27"
+  ],
+  "pinned_git_diff_sha256": "ffcaa0725555a667ca4c6fcc110615974470ae05c55661c0fb59955e057079f2"
+}

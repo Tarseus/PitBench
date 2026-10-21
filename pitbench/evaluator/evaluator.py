@@ -20,6 +20,8 @@ from pitbench.harness.evaluation import EvaluationRequest, Evaluator
 from pitbench.metrics.controlled_transfer_report import (
     compute_controlled_transfer_report,
 )
+from pitbench.metrics.objective_qualification import compute_objective_qualification
+from pitbench.metrics.objective_report import compute_objective_report
 from pitbench.metrics.performance_report import (
     ExactPerformanceReport,
     ExactRunOutcomeKind,
@@ -554,13 +556,25 @@ class PitBenchEvaluator(Evaluator):
         )
         confirmation_observations: list[RunObservation] = []
         confirmation_report = None
+        confirmation_grid = None
+        objective_initial = compute_objective_qualification(
+            task=task,
+            observations=original_observations,
+            expected_run_grid=expected_run_grid,
+        )
         if (
             performance is not None
-            and performance.classification
-            in {
-                PerformanceClassification.IMPROVED,
-                PerformanceClassification.REGRESSED,
-            }
+            and (
+                performance.classification
+                in {
+                    PerformanceClassification.IMPROVED,
+                    PerformanceClassification.REGRESSED,
+                }
+                or (
+                    objective_initial is not None
+                    and objective_initial.eligible_for_confirmation
+                )
+            )
             and is_real_full_eval
             and not config.get("smoke_test", False)
             and config.get("instances_per_instance_set") is None
@@ -642,14 +656,15 @@ class PitBenchEvaluator(Evaluator):
                 )
                 if confirmation_report is None:
                     raise ValueError("Performance confirmation produced no report")
-                performance = adjudicate_performance_confirmation(
-                    performance,
-                    confirmation_report,
-                    repeat_observation_count=len(confirmation_observations),
-                    repeat_valid_observation_count=sum(
-                        item.valid for item in confirmation_observations
-                    ),
-                )
+                if initial_classification in {PerformanceClassification.IMPROVED, PerformanceClassification.REGRESSED}:
+                    performance = adjudicate_performance_confirmation(
+                        performance,
+                        confirmation_report,
+                        repeat_observation_count=len(confirmation_observations),
+                        repeat_valid_observation_count=sum(
+                            item.valid for item in confirmation_observations
+                        ),
+                    )
                 (confirmation_dir / "report.json").write_text(
                     json.dumps(
                         {
@@ -724,5 +739,19 @@ class PitBenchEvaluator(Evaluator):
                 nuisance_robustness=nuisance_robustness,
                 resource_usage=resource_usage,
                 operational_reliability=reliability,
+                objective_measurements=compute_objective_report(
+                    task=task,
+                    performance=performance,
+                    resources=resource_usage,
+                    seeds=nuisance_robustness,
+                    transfer=controlled_transfer,
+                    reliability=reliability,
+                    observations=original_observations,
+                    validity_accepted=validity.accepted,
+                    expected_run_grid=expected_run_grid,
+                    repeat_observations=confirmation_observations or None,
+                    repeat_expected_run_grid=confirmation_grid,
+                    repeat_identity_verified=confirmation_grid is not None,
+                ),
             ),
         )

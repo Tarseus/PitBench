@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 2917,
+  "base_commit": "bf7cf8fe071e90e16cfa04c3b7d1bbb4156539dd",
+  "head_commit": "306407719d7e32f24f2c953ab34d9db19276113c",
+  "decision": "needs_evidence",
+  "reason": "The remote Git merge first parent is 0e119e9a49f9000a8f1c4b059123fafe9fada939, not the registered Base. The pinned Base-to-Head file list or source patch is not byte-equivalent to the actual first-parent-to-merge diff. Resolve the task source boundary and repeat the frozen review before building or claiming this equation-handling optimization as a task.",
+  "review_duration_sec": null,
+  "rejection_basis": null,
+  "missing_evidence": [
+    "pr_lineage"
+  ],
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/2917",
+    "https://github.com/ERGO-Code/HiGHS/compare/bf7cf8fe071e90e16cfa04c3b7d1bbb4156539dd...306407719d7e32f24f2c953ab34d9db19276113c"
+  ]
+}

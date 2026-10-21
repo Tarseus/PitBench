@@ -11,6 +11,29 @@ from pydantic import BaseModel, Field
 
 from pitbench.schema.observation import SolverTermination
 
+SOURCE_SUFFIXES = frozenset(
+    {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cxx",
+        ".h",
+        ".hpp",
+        ".hh", ".hxx", ".h++", ".c++", ".tpp", ".ipp", ".inl", ".inc", ".tcc", ".txx",
+        ".cu",
+        ".cuh",
+        ".py",
+        ".pyx", ".pxd", ".pxi", ".proto", ".f", ".for", ".f77", ".f90", ".f95", ".f03", ".f08",
+        ".rs",
+        ".java",
+        ".kt",
+        ".scala",
+        ".jl",
+        ".go",
+        ".cs",
+    }
+)
+
 
 class BuildKind(str, Enum):
     VALIDATION = "validation"
@@ -70,6 +93,7 @@ class RepositoryPlugin(ABC):
     agent_environment: AgentEnvironment | None = None
     agent_requirement: str | None = None
     agent_artifact_globs: tuple[str, ...] = ()
+    # Writable generated output roots; candidate patches may not change them.
     agent_build_paths: tuple[str, ...] = ()
     agent_python: str | None = None
     collection_backend: str | None = None

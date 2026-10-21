@@ -8,6 +8,8 @@ from typing import Literal, Self
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from pitbench.schema.objectives import OptimizationProfile
+
 
 class TaskType(str, Enum):
     HEURISTIC_SOLVER = "heuristic_solver"
@@ -314,6 +316,7 @@ class PitBenchTask(BaseModel):
     problem_variant: str | None = None
     formulation_id: str | None = None
     optimization_scope: str
+    optimization_profile: OptimizationProfile | None = None
     instruction: str
     repository: RepositorySpec
     oracle: OracleReference
@@ -373,6 +376,25 @@ class PitBenchTask(BaseModel):
         names = [instance_set.name for instance_set in self.instance_sets]
         if len(names) != len(set(names)):
             raise ValueError("instance-set names must be unique")
+        scoring = (
+            self.optimization_profile.scoring if self.optimization_profile else None
+        )
+        if scoring is not None:
+            selected = set(
+                scoring.qualification_instance_sets + scoring.reporting_instance_sets
+            )
+            selected.update(
+                name for item in scoring.guardrails or [] for name in item.instance_sets
+            )
+            hidden = {
+                item.name
+                for item in self.instance_sets
+                if item.kind != InstanceSetKind.AGENT_DEV
+            }
+            if selected - hidden:
+                raise ValueError(
+                    "objective qualification/reporting requires declared hidden panels"
+                )
         controlled_transfer = self.evaluation.controlled_transfer
         if controlled_transfer is not None:
             if self.problem_variant is None or self.formulation_id is None:

@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pitbench.evaluator.judge import LocalProcessJudge, _development_seeds
@@ -34,6 +35,7 @@ def main() -> None:
         choices=[state.value for state in CodeState],
     )
     args = parser.parse_args()
+    measurement_started_at = datetime.now(timezone.utc).isoformat()
     task = PitBenchTask.from_yaml(args.task_config)
     boundary_cases = (
         prepare_boundary_cases(
@@ -85,6 +87,7 @@ def main() -> None:
     if args.checkpoint_identity is not None:
         grid_path = args.output_dir / "expected-run-grid.json"
         checkpoint = {
+            "measurement_started_at": measurement_started_at,
             "identity": json.loads(args.checkpoint_identity),
             "observation_count": len(observations),
             "observations_sha256": hashlib.sha256(

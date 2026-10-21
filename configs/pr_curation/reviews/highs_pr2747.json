@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "repository": "ERGO-Code/HiGHS",
+  "pr_number": 2747,
+  "base_commit": "0da61e315a5dca964657fdd6cb02565f732f2883",
+  "head_commit": "3833bd5d55552962060be49f5821e8b4ebd56862",
+  "decision": "reject",
+  "reason": "The pinned integrated source diff only initializes HighsSimplexBadBasisChangeRecord::save_value to 0.0. This removes an uninitialized-memory correctness defect; it introduces no independent solver optimization mechanism.",
+  "review_duration_sec": null,
+  "rejection_basis": "correctness_only",
+  "missing_evidence": [],
+  "source_evidence_urls": [
+    "https://github.com/ERGO-Code/HiGHS/pull/2747",
+    "https://github.com/ERGO-Code/HiGHS/compare/0da61e315a5dca964657fdd6cb02565f732f2883...3833bd5d55552962060be49f5821e8b4ebd56862"
+  ],
+  "pinned_git_diff_sha256": "587ea6258f5b5fd934c236f31b47956ff287bf8eb09aa21cb4c96ed82a4e66ef"
+}

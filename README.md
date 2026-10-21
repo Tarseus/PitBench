@@ -70,7 +70,13 @@ Unlike general repository-level coding benchmarks, solver optimization must pres
    run before it becomes a public improvement or regression label.
 
 4. **Prepared Docker Environments**
-   PyVRP native extensions are compiled in prepared, commit-tagged images. Agent execution is network-disabled, while evaluator-owned hidden assets are supplied only to a separate judge environment.
+   PyVRP native extensions are compiled in prepared, commit-tagged images.
+   Agent execution is network-disabled, while evaluator-owned hidden assets
+   are supplied only to a separate judge environment. The current Judge mounts
+   its private asset root into the same container that runs candidate solver
+   code; read-only mounting prevents modification but does not isolate hidden
+   oracles from that code. A claim of leakage-resistant hidden judging therefore
+   needs a separate solver-process access boundary.
 
 ---
 
@@ -109,6 +115,147 @@ Unlike general repository-level coding benchmarks, solver optimization must pres
   hidden-shift instance set; it does not claim universal generalization.
 
 ---
+
+## PR types and objective-specific measurement
+
+PR type is recorded along three axes: change kind, solver phase, and intended
+benefit. One PR may have several labels. The versioned
+[catalog](pitbench/schema/objective_catalog.json) currently maps 13 benefit
+categories to 26 measurement items; this is extensible and does not impose
+equal quotas or create a combined score.
+
+| Intended benefit | Measurement and required scenario | Current support |
+| --- | --- | --- |
+| Solve efficiency | Verified solve coverage, penalized runtime; paired solves | Existing exact protocol |
+| Fixed-budget quality | Independently checked normalized gap | Existing heuristic protocol |
+| Earlier good solutions | First verified incumbent, time to target, primal integral | Requires verified incumbent trajectories and a qualification protocol |
+| Bound and proof progress | Solve coverage/time, certified bound trajectory, search-work diagnostics | Final exact outcomes supported; trajectory qualification incomplete |
+| Memory footprint | Scope-matched paired peak RSS and auxiliary CPU ratios | Formal paired-resource qualification with predeclared tradeoff limits |
+| Memory lifecycle | Retained-memory series and growth across repeated solves in one process | Requires a long-lived-process scenario |
+| Parallel/accelerator efficiency | Thread scaling, efficiency, CPU and memory under a declared hardware grid | Requires multiple resource conditions |
+| Incremental/reoptimization efficiency | Update overhead and total time across equivalent model-update sequences | Requires a sequence scenario |
+| Numerical robustness | Independent original-model violations and numerical failures on declared stress cases | Checkers and raw evidence exist; dedicated stress protocol incomplete |
+| Operational reliability | Boundary-suite pass, crash, OOM, output-error and missing-run counts | Existing descriptive reliability report |
+| Repeatability | Existing seed/representation dispersion; separately, same-seed replay consistency | Seed and representation reports exist; replay protocol pending |
+| Scale/structural generalization | Improvement retention on declared scale and structural conditions | Existing controlled-transfer protocol where configured |
+| Solver-owned setup | Read/initialization time and stage-qualified memory | Requires stage-specific collection |
+
+The research basis includes [SCIP testing](https://www.scipopt.org/scip/doc/html/TEST.php),
+[primal-integral research](https://www.zib.de/userpage//hendel/publication/rounding-and-propagation-heuristics-for-mip/),
+[MiniZinc 2026 scoring](https://www.minizinc.org/challenge/2026/rules/),
+[SCIP reoptimization](https://www.scipopt.org/doc/html/REOPT.php), and actual PRs.
+For example, [HiGHS #2981](https://github.com/ERGO-Code/HiGHS/pull/2981)
+concerns memory retained across repeated solves, while
+[HiGHS #3192](https://github.com/ERGO-Code/HiGHS/pull/3192) reports different
+effects under one and eight threads. These motivate different experiments;
+author-reported effects are not independently confirmed PitBench results.
+The catalog retains all source links and implementation limitations.
+
+Tasks may declare an optional `optimization_profile` with `objectives`,
+`change_kinds`, `solver_phases`, classification provenance, and a
+`primary_metric_id`. Title hints never choose a qualification primary metric.
+The evaluator and `pitbench report` expose `objective_measurements`, reusing
+native measurements and showing partial, unavailable, raw-only, and
+inapplicable evidence. New scenarios are not fabricated from a single solve;
+unmeasured objectives are not zero gains or rejections. The optional formal
+qualification contract is defined below. Frozen tasks without a profile retain
+their existing scoring; no task budgets or seeds are changed by annotation.
+
+For example, an annotated task can request resource evidence with:
+
+```yaml
+optimization_profile:
+  objectives: [peak_memory, memory_lifecycle]
+  change_kinds: [resource_management]
+  classification_basis: declared
+```
+
+This requests measurements only. Admission additionally requires the scoring
+plan, registration, complete runs, independent correctness and confirmation.
+
+### Formal objective qualification protocol 1.0
+
+The versioned [qualification registry](pitbench/schema/qualification_protocols.json)
+covers all 13 objective categories and 26 measurement items. Every item has an
+explicit implementation status. Exact coverage/runtime and fixed-budget gap
+reuse their existing definitions; paired peak RSS and CPU ratios can now qualify
+resource optimizations. Dedicated lifecycle, trajectory, scaling, sequence,
+numerical-stress and replay scenarios remain pending where their collection or
+decision protocol is missing. Existing seed (99% paired seed bootstrap) and
+controlled-transfer statistics remain unchanged; their descriptive availability
+alone does not define a new primary admission decision.
+
+One primary metric is frozen before qualification outcomes. Every declared
+qualification panel must improve; the program does not select the best metric
+or panel after seeing results. Exact qualification keeps the coverage-first
+decision and PAR2 treatment. Gap qualification keeps the native paired 95%
+instance-bootstrap decision. Resource qualification keeps the existing ratio of
+paired seed means per instance and geometric mean across instances; the native
+95% instance bootstrap is applied to log ratios and exponentiated. Its upper
+bound on Agent/Base must be below 1, with at least two complete instances.
+There is no universal 5% minimum improvement.
+
+**Allowed degradation is declared per task.** The primary metric and explicit
+guardrails jointly cover quality/exact solved coverage, compute cost/exact PAR2,
+and peak RSS on every qualification panel. Relative limits use Agent/Base minus
+1; absolute limits use signed deterioration in the metric's own units (coverage
+uses Base minus Agent). The adverse confidence bound must stay within the
+declared limit in both runs. `guardrail_failed` means this requirement was not
+established, including uncertain bounds; it is not an automatic permanent PR
+rejection. No declaration is replaced with an implicit zero or percentage.
+
+The task's `optimization_profile.scoring` contains:
+
+| Field | Required decision |
+| --- | --- |
+| `protocol_version` | `"1.0"` |
+| `protocols_sha256` | Hash returned by `qualification_protocols_sha256()` |
+| `qualification_instance_sets` | Frozen hidden panels used for selection |
+| `reporting_instance_sets` | Separate hidden panels for final effect estimates |
+| `guardrails` | Explicit `{metric_id, comparison, max_degradation, instance_sets}` entries; `null` remains `needs_protocol` |
+
+`exact_solved_coverage`, `exact_penalized_runtime_sec`, and
+`fixed_budget_normalized_gap` use absolute guards; resource ratios use relative
+guards. Final reporting panels cannot act as qualification or control panels.
+Correctness failures are never an allowed tradeoff. All declared pairs, failures
+and missing observations are retained. Missing protocols yield `needs_protocol`,
+missing measurements yield `incomplete`, and uncertain primary directions yield
+`inconclusive`. A fresh full Judge repeat must independently improve and satisfy
+all guards, with identical identities/resources/grid and reversed Base/Agent
+order. Cached Base observations cannot provide this confirmation.
+
+For each indexed PR with a pinned task configuration, use the existing curator:
+
+```bash
+# First freeze the profile, primary metric, panels and per-task guardrails in YAML.
+python scripts/curate_solver_prs.py objective-register \
+  --catalog configs/pr_curation/repositories.json --registry REGISTRY.jsonl \
+  --repository OWNER/REPO --pr-number N --output report/REGISTRATION.json
+
+# Run the normal full Judge, then recompute from its original artifacts.
+python scripts/curate_solver_prs.py objective-qualify \
+  --catalog configs/pr_curation/repositories.json --registry REGISTRY.jsonl \
+  --repository OWNER/REPO --pr-number N --run-directory report/JUDGE_RUN \
+  --output report/QUALIFICATION.json
+```
+
+Registration binds the task, source patch and protocol hashes before measured
+runs. Judge checkpoints retain measurement start times. These are audit records
+from the evaluator, not an external timestamp attestation. Revisions retain the
+previous registration and require fresh runs. Qualification re-reads hash-bound
+observations and grids; an `improved` JSON flag cannot promote a task. Only a
+confirmed result within the declared limits advances an `expert_reference` to
+`performance_confirmed`. The existing source/build/workload/independent-checker
+gates remain mandatory, and `integrate` requires a real task run before
+`task_ready`. `open_opportunity` retains its Base-opportunity route without
+requiring the historical human implementation to improve.
+
+`scripts/curate_solver_prs.py type-audit --catalog ... --registry ...
+--output-dir ...` produces a JSONL hint inventory
+and hash-bound summary without modifying the source registry. Its title
+matches are provisional, overlap, and do not constitute semantic review or
+task admission. Correctness-only, feature, wrapper, parameter and maintenance
+changes remain separately classified under the existing research scope.
 
 ## 📦 Current Combinatorial Optimization Tasks
 
@@ -296,14 +443,25 @@ batches, a low-signal PR, SHOT #9, advanced to source verification even though
 its title lacked the usual performance terms. Only two low-signal PRs had a
 recorded structured decision at that point, so this is a discovered miss of the
 priority heuristic, not an estimate of its recall.
-The current twelve-batch audit has forty-four structured low-signal decisions:
-one advance, forty-two rejections, and one `needs_evidence` decision after
-complete changed-file or source-diff review. The sampled reviews include
-solver correctness fixes and build/API changes that metadata hints alone could
-mis-rank. Most of the low-signal pool remains unreviewed, so recall is still
-unknown.
+Later detail batches and decisions must be passed together to
+`screening-audit`; its output is the current count of low-signal reviews and
+advances. The sampled reviews include solver correctness fixes and build/API
+changes that metadata hints alone could mis-rank. Most of the low-signal pool
+remains unreviewed, so recall is still unknown.
 
-An `advance` decision needs source-level evidence that the PR changes a solver
+The default bulk path now accepts schema 3 `pr_metadata` prechecks. It extracts
+PR title/body, the complete file list, links, fenced materials and pinned-diff
+context without a model. Its `advance` schedules measurement; mechanism labels
+may remain unknown. These records pass through `screen` and `source-verify`
+without a mandatory causal-chain essay. Actual source reproduction, builds,
+workload activation, independent correctness and the frozen scoring contract
+still decide qualification. For metadata candidates, workload selection is
+bound to the task configuration hash. Exact candidates with unknown mechanisms
+conservatively retain bound-validity, status-consistency and optimality evidence
+obligations; missing checkers remain pending. Schema 3 cannot enter `task_ready`
+without the explicit objective scoring contract.
+
+The optional schema 2 mechanism-review `advance` needs source-level evidence that the PR changes a solver
 engine, a concrete algorithmic-search or computational-efficiency mechanism,
 and a hypothesis about how that change affects end-to-end solving. The review
 requires the repository to be task-backed or approved after domain review. It
@@ -352,6 +510,31 @@ For PRs that may invalidate bounds, infeasibility, or optimality claims, the
 correctness gate additionally requires hash-pinned independent bound, status,
 or certificate checks. Checking a returned primal solution alone does not
 discharge those obligations.
+
+Before a new task is used for a correctness or capability claim, its problem
+family and evaluation mode need a recorded verification contract. The contract
+names every solver result state used by the score and the evidence that
+supports it:
+
+| Solver result | Required independent evidence |
+| --- | --- |
+| Feasible solution | Original constraints, integrality, and recomputed objective. |
+| Bound | Validity for the original problem; a solver-reported bound alone is insufficient. |
+| Optimal | A verified feasible solution plus an independent optimum target or checkable proof. |
+| Infeasible | A checkable certificate or independently established infeasibility. |
+| Time limit | Validity of any incumbent and bound, with the termination state retained. |
+| Crash, invalid output, or build failure | A separate failure record, never a normal solver time limit. |
+
+The current exact Judge compares optimality claims with trusted targets rather
+than constructing general proof certificates. The existing selection review
+records failure modes and semantic checks, but it does not yet store this full
+status-by-status contract as a machine-checked field. Tasks lacking evidence
+for a scored status need that evidence or a score restricted to independently
+verifiable outcomes. Exact reports now count solver failures separately from
+normal unsolved outcomes while retaining the existing PAR2 penalty.
+Previously saved reports keep their original categories until their raw ledgers
+are reprocessed.
+
 `needs_evidence` and `reject` remain in the
 registry and do not count as tasks. A bug fix, test change, dependency update,
 modeling-only change, or faster local routine is not accepted on its title or
@@ -365,10 +548,41 @@ verified solution and bound trajectories at declared budgets. Instance-family
 holdouts, missing runs, regressions, and PR overlap are reported rather than
 silently filtered. The `expert_reference` track requires a confirmed positive
 human PR on the hidden panel. The `open_opportunity` track instead requires a
-complete independently verified hidden baseline with measurable improvement
-room; the human PR result is retained and cannot be called a positive expert
-reference. A unique historical PR counts once across these tracks. Only a PR
+complete independently verified hidden baseline with nonzero room under its
+declared score; the human PR result is retained and cannot be called a positive
+expert reference. A unique historical PR counts once across these tracks. Only a PR
 passing its full track gate becomes one `task_ready` task.
+
+For `open_opportunity`, an unsolved exact run or a positive baseline gap is an
+observable baseline state, not evidence that an Agent can improve it. The
+selection record must name the frozen score and budget, the independently
+valid baseline outcomes, and how the Judge can distinguish a change from
+baseline variation. A stability or detectability threshold must be fixed
+before inspecting qualification outcomes; none is chosen here. The current
+`baseline-evidence` gate checks complete, valid runs and nonzero room but does
+not yet enforce a separate stability criterion.
+
+For `expert_reference`, the qualification panel used to select a positive
+human PR and any final panel used to estimate or compare its effect have
+different roles. The final effect estimate must use a panel and analysis rule
+not repeatedly searched for admission; otherwise it is reported as
+selection-conditioned. Budgets, seeds, aggregation, missing runs, regressions,
+and retry rules are declared before the qualification run. The current
+`performance_confirmed` gate accepts a recorded positive paired
+classification; the report pipeline supports reverse-order confirmation, but
+the gate does not encode a distinct final reporting panel.
+
+The Agent receives the pinned pre-PR source, the public task goal, and
+development instances. Its source snapshot is shallow and has no named refs
+or remote; Agent execution has no internet access. Reference patches,
+selection reviews, and hidden data are evaluator-owned. In the real Judge,
+candidate patches are checked before build: changed files must stay within
+configured editable paths, generated build paths are excluded, and a nonempty
+patch must change a recognized solver source file. Candidate patch and Judge
+image identities are retained. This controls submitted files; the remaining
+private-oracle process boundary above must be resolved before claiming full
+protection against runtime inspection of hidden assets.
+
 Structured tasks from the same repository and overlap group cannot both enter
 the ready count; a reviewer must establish distinct mechanisms and workloads
 before assigning separate groups. PRs sharing the same pre-PR commit cannot
@@ -379,6 +593,13 @@ must link the other PR and state the different improvement target; this check
 does not depend on PR merge order. The snapshot reports repository, track,
 mechanism, solver phase, and overlap-group counts so scale does not hide
 concentration in one solver or PR series.
+
+Capability reports should additionally show problem family, source-version
+period, task difficulty, and source-change complexity, grouping near-identical
+snapshots and workloads rather than treating them as independent samples. No
+equal mechanism quota is assumed. These additional distributions are not yet
+part of the generated snapshot.
+
 For scalable open-opportunity qualification, the evaluator can run the full
 hidden ID instance panel at one seed selected before outcomes, using only the
 pinned base image. This establishes baseline validity and remaining gap without
@@ -391,6 +612,14 @@ normalized gap; its more expensive two-order human comparison remains a
 separate, inconclusive reference record.
 This solver-behavior and mathematical-validity screen is PitBench's selection
 criterion; FormulaCode supplies a scale comparison, not the admission rule.
+
+`measurement_ready` remains a proposed queue state, not an implemented stage or
+an admission count. Its pre-queue build should be a lightweight smoke check;
+the queued HPC job should retain a full fixed-identity build and public
+correctness ledger. A representative, preregistered cross-solver pilot should
+record human review time, stage failures, build cost, and ready yield before
+extrapolating to 1,001 tasks. The pilot size and any admission thresholds still
+need a protocol decision.
 
 Build a review order, then apply a structured JSON decision before source
 verification:
@@ -416,6 +645,12 @@ uv run python -m scripts.curate_solver_prs screening-audit \
   --registry report/pr-scale-20261018/pr_registry.jsonl \
   --details report/pr-scale-20261018/pr_detail_review.jsonl \
   --output report/pr-scale-20261018/screening_audit.json
+uv run python -m scripts.curate_solver_prs prepare-review-batch \
+  --catalog configs/pr_curation/repositories.json \
+  --registry report/pr-scale-20261018/pr_registry.jsonl \
+  --details report/pr-scale-20261018/pr_detail_review.jsonl \
+  --queue report/pr-scale-20261018/mechanism_review_queue.json \
+  --limit 100 --output-dir report/pr-scale-20261018/review_batch_01
 uv run python -m scripts.curate_solver_prs screen \
   --catalog configs/pr_curation/repositories.json \
   --registry report/pr-scale-20261018/pr_registry.jsonl \
@@ -424,11 +659,94 @@ uv run python -m scripts.curate_solver_prs screen \
 
 `enrich` caches public PR descriptions and complete changed-file lists without
 making an admission decision; oversized merges are marked for manual diff
-inspection and rate-limit failures remain in the audit log. `triage` is an
+inspection and rate-limit failures remain in the audit log. Where GitHub
+supplies a textual source-file patch, the cache retains it for the review card;
+omitted or truncated patches still require pinned-source inspection. Each fetched
+detail is durably appended, so a resumed batch skips completed PRs without
+rewriting the full detail cache. `triage` is an
 outcome-blind review order: phase hints can be wrong and low-signal PRs remain
 eligible for later batches. The review schema
 and allowed decisions are checked by
 `pitbench.repositories.pr_curation`.
+`prepare-review-batch` freezes the chosen triage cohort and input hashes,
+writes a linked `index.md`, public PR review cards, and editable JSON drafts containing
+only pinned PR facts. In this optional schema 2 path, a reviewer fills the decision, rationale, mechanism, and
+correctness fields; `review_duration_sec` may record active review time. Drafts
+do not count as decisions. Place completed reviews in a new tracked directory
+under `configs/pr_curation/reviews/`, then pass that directory to `screen` with
+`--review-dir`. The entire batch is validated before the registry is written
+once; the existing `--review-file` option also accepts repeated files.
+Re-running `prepare-review-batch` with the same queue and detail inputs keeps
+edited drafts and the frozen manifest. After screening or later evidence
+stages, run:
+
+```bash
+uv run python -m scripts.curate_solver_prs screen \
+  --catalog configs/pr_curation/repositories.json \
+  --registry report/pr-scale-20261018/pr_registry.jsonl \
+  --review-dir configs/pr_curation/reviews/pilot_01
+uv run python -m scripts.curate_solver_prs review-batch-status \
+  --catalog configs/pr_curation/repositories.json \
+  --registry report/pr-scale-20261018/pr_registry.jsonl \
+  --manifest report/pr-scale-20261018/review_batch_01/manifest.json \
+  --output report/pr-scale-20261018/review_batch_01/status.json
+```
+
+The batch status
+reports the cohort's decisions, evidence stages, ready count, and recorded
+review hours. This measures throughput for that selected queue; it is not an
+estimate of readiness among unreviewed PRs. The raw registry and detail batches
+must be retained alongside their manifest hashes to reproduce the cohort.
+Use repeated `--details` arguments for all fetched batches. The `triage`
+options `--scope-status task_backed --review-order throughput` schedule approved,
+already task-backed solver sources first and puts explicit optimization terms
+ahead of weaker title signals; it retains the low-signal audit lane. The
+default `coverage` order spreads review across the full catalog. Both orders
+only schedule source review and do not admit or reject PRs.
+
+Bulk acquisition and screening are also available in the standalone
+[pitbench-curation](https://github.com/Tarseus/pitbench-curation) project. It
+provides PR-link-list intake, paced GitHub collection, concurrent Git source
+checks, durable per-PR attempts, resume, and hash-bound exports. Its default
+source/prepare path schedules measurement without a prose or model review,
+retaining solve-time, solution-quality, and peak-memory objectives. Memory-only
+candidates stay in that queue when time/quality gains are inconclusive; the
+formal resource protocol now allows qualification after a primary metric,
+per-task tradeoff limits and independent confirmation have been declared.
+Command or HTTP mechanism review remains optional. Default measurement exports
+also contain automatically extracted schema 3 prechecks in `reviews/`; the same
+`screen --review-dir` entry accepts them without a model or mechanism narrative.
+Their `advance` is scheduling approval. PitBench still validates the
+solver build, workload, mathematical correctness, performance protocol, and
+real Judge integration before counting a task as ready.
+
+The optional `semantic` stage in pitbench-curation classifies PR title/body and
+the pinned source-analysis diff through a local System One compatible model or Ollama
+structured output. It retains multiple labels, unknowns, material ranges and raw
+model responses; long inputs are processed in explicit chunks. Exported labels
+use `classification_basis: semantic_model` and propose objective-specific
+scenarios. They cannot declare a primary metric or satisfy task admission;
+confirm the objective and freeze its scoring contract before qualification.
+
+For older detail caches that contain patch hashes but no patch text, clone the
+public solver repository with Git and run `cache-git-diffs` on a frozen review
+manifest. Supply one `--repository-checkout REPOSITORY=PATH` mapping per Git
+mirror and `--fetch-missing` to request the exact registry base, head, and merge
+SHAs from the mirror's checked GitHub origin. The command compares the full
+integrated Git file list with the cached PR detail list. For a merge or squash
+commit whose first parent is the pinned base, it extracts the integrated diff.
+If the integration base advanced, it accepts the pinned branch-base diff only
+when its file list and complete binary patch equal the actual integrated diff byte for
+byte; other base drift and unavailable merge commits receive separate statuses.
+The command writes full-index source diffs, hashes, per-PR status, and a linked
+diff index after each PR. `--limit` and `--git-timeout-sec` bound a fetch batch;
+reruns keep verified cached patches and unvisited status records if interrupted.
+An unchanged merge SHA rejected by remote Git is retained without repeated
+fetches; `--retry-unavailable` explicitly retries it. Source diffs are review material, while
+`source-verify` separately checks patch application and source-byte identity.
+Screening and stage transitions validate their changed records and summarize
+the registry without replaying all historical run artifacts. `audit` remains
+the full evidence-file and hash validation command.
 `workload-evidence` binds a frozen instance manifest and activation record to
 the reviewed selection rule, verifies per-case solver-path counts and trace
 hashes, then advances a build-verified PR only when at least one case exercises
@@ -879,6 +1197,20 @@ observations are excluded from performance, resource, and seed-IQR aggregation.
 ---
 
 ## 🛠️ Verification & Developer Tooling
+
+The 2026-10-21 curation review fixes are published on
+`curation/pr-acquisition-review-20261021`. This branch includes the objective
+schemas, metadata screening interface, and source recovery changes used by
+the independent curation project; they are not asserted to be on `main`.
+Squash Base drift requires byte-identical complete patches, renames include
+both paths, and source-only and complete integrated patches have separate
+hashes. Unknown source formats remain candidates for review.
+
+For this snapshot, the curation project's full suite passed 41 tests. PitBench's
+PR curation, source cache, and repository plugin suites passed 71 tests. The
+expanded `tests/unit/pitbench` plus exact runner check passed 446, skipped 17,
+and failed 6 because the local private oracle/seed assets were absent. No
+solver qualification or new `task_ready` is claimed by these checks.
 
 Repository code organization and cleanup rules are in [AGENTS.md](AGENTS.md).
 

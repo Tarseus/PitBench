@@ -1,0 +1,303 @@
+{
+  "protocol_version": "1.0",
+  "purpose": "PR qualification and objective scoring, separate from final benchmark reporting.",
+  "decision_rules": {
+    "primary": "One metric chosen before outcomes; all declared qualification panels must improve. No best-of-metrics selection or composite score.",
+    "improvement": "Native exact/gap decisions. For resources the upper 95% confidence bound on Agent/Base minus one must be strictly below zero. No universal minimum percent gain.",
+    "confirmation": "Fresh full Judge repeat with the same task, patch, image, harness, CPU/memory/cpuset and grid, reversed Base/Agent order; both runs must improve and pass all guardrails.",
+    "guardrails": "Tasks explicitly declare allowed degradation in canonical absolute or relative units. The adverse confidence bound must be no greater than that limit. Missing declarations => needs_protocol.",
+    "required_tradeoffs": "Cover solution quality/exact coverage, compute cost/exact PAR2 runtime, and peak RSS. Primary covers its own metric. Required guards cover every qualification panel. Extra control panels are allowed; final reporting panels cannot select tasks.",
+    "correctness": "Independent semantic verification and complete run evidence are mandatory. Resource savings cannot excuse invalid solutions, bounds, optimum or infeasibility claims.",
+    "pending": "Missing scenario/collector rules => needs_protocol; missing paired measurements => incomplete; no significant direction => inconclusive. These are not automatic rejections.",
+    "panels": "Qualification and final reporting panels are disjoint frozen task instance sets. Qualification-selected effects are not independent final estimates.",
+    "registration": "Freeze task/source/protocol hashes before measured runs. Judge checkpoints bind that task hash and record measurement start time. Revised plans require fresh runs.",
+    "admission": "Recomputed hash-bound confirmed improvement plus passing guardrails satisfies expert_reference performance_confirmed. Other source/build/workload/correctness/integration gates still apply. open_opportunity retains its baseline route without requiring human improvement."
+  },
+  "metrics": {
+    "exact_solved_coverage": {
+      "adapter": "native_exact",
+      "comparison": "absolute",
+      "status": "implemented",
+      "decision": "Coverage-first exact protocol, including runtime tie-break and PAR2 failure treatment."
+    },
+    "exact_penalized_runtime_sec": {
+      "adapter": "native_exact",
+      "comparison": "absolute",
+      "status": "implemented",
+      "decision": "Coverage-first exact protocol: runtime cannot override lost verified solves."
+    },
+    "fixed_budget_normalized_gap": {
+      "adapter": "native_gap",
+      "comparison": "absolute",
+      "status": "implemented",
+      "decision": "Native paired per-instance seed means and 95% instance-bootstrap interval."
+    },
+    "time_to_first_verified_solution_sec": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Requires timestamped incumbent solutions and independent checking of those solutions.",
+      "existing_definition": "requires_protocol"
+    },
+    "time_to_target_sec": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Requires a target fixed before candidate outcomes and complete censored-run handling.",
+      "existing_definition": "requires_protocol"
+    },
+    "primal_integral": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Existing solver traces are not independently checked incumbent trajectories with a frozen missing-value convention.",
+      "existing_definition": "requires_protocol"
+    },
+    "dual_progress_integral": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Requires valid bound evidence, trace coverage and a fixed treatment of missing bounds.",
+      "existing_definition": "requires_protocol"
+    },
+    "search_work": {
+      "adapter": null,
+      "comparison": null,
+      "status": "diagnostic_only",
+      "decision": "observations.nodes and observations.iterations; unit and algorithm changes can make counts incomparable.",
+      "existing_definition": "diagnostic_only"
+    },
+    "peak_rss_ratio": {
+      "adapter": "paired_resource",
+      "comparison": "relative",
+      "status": "implemented",
+      "decision": "Existing per-instance ratio of paired seed means, geometric mean across instances; bootstrap log ratios by instance, exponentiate the native 95% interval. At least two complete instances; equal resource scope and threads."
+    },
+    "cpu_time_ratio": {
+      "adapter": "paired_resource",
+      "comparison": "relative",
+      "status": "implemented",
+      "decision": "Same estimator and inference as peak RSS. CPU work does not establish parallel scaling efficiency."
+    },
+    "retained_memory_series": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Requires one long-lived process, declared solve/update/reset sequence and allocator scope.",
+      "existing_definition": "requires_protocol"
+    },
+    "memory_growth_per_solve": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Requires a declared estimator, warm-up convention, workload sequence and uncertainty protocol.",
+      "existing_definition": "requires_protocol"
+    },
+    "thread_scaling_curve": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Requires a fixed thread-count grid, comparable target/quality and per-condition raw outcomes.",
+      "existing_definition": "requires_protocol"
+    },
+    "parallel_efficiency": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Requires comparable time-to-target, declared reference thread count and hardware resource accounting.",
+      "existing_definition": "requires_protocol"
+    },
+    "sequence_solve_time_sec": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Requires equivalent cold/warm sequences with every intermediate model and solution independently checked.",
+      "existing_definition": "requires_protocol"
+    },
+    "update_overhead_sec": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Requires a declared sequence and separate update/solve timing.",
+      "existing_definition": "requires_protocol"
+    },
+    "independent_violation": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Independent verifiers check feasibility with existing task tolerances; no universal residual distribution report exists.",
+      "existing_definition": "requires_protocol"
+    },
+    "numerical_failure_counts": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Raw statuses and verification artifacts; needs a declared numerical stress grid and denominator.",
+      "existing_definition": "requires_protocol"
+    },
+    "boundary_pass_counts": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "operational_reliability.by_budget",
+      "existing_definition": "descriptive_only"
+    },
+    "operational_failure_counts": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "operational_reliability.by_budget; raw failures remain in observations.",
+      "existing_definition": "descriptive_only"
+    },
+    "seed_dispersion": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "nuisance_robustness; uses the existing heuristic or exact seed report definition.",
+      "existing_definition": "descriptive_only"
+    },
+    "representation_dispersion": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Existing nuisance/representation reports require a configured equivalence experiment.",
+      "existing_definition": "descriptive_only"
+    },
+    "same_seed_replay_consistency": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Requires repeated identical inputs and declared equality/tolerance and schedule conditions; distinct from cross-seed variance.",
+      "existing_definition": "requires_protocol"
+    },
+    "controlled_retention": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "controlled_transfer.condition_reports and controlled_transfer.scale_paths",
+      "existing_definition": "existing_controlled_transfer_protocol"
+    },
+    "setup_time_sec": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Separate solver-owned setup from solve and wrapper time; include affected stages in the measured scope.",
+      "existing_definition": "requires_protocol"
+    },
+    "setup_peak_memory": {
+      "adapter": null,
+      "comparison": null,
+      "status": "requires_scenario_protocol",
+      "decision": "Requires stage-qualified measurement; solve-only RSS does not identify initialization savings.",
+      "existing_definition": "requires_protocol"
+    }
+  },
+  "objectives": {
+    "solve_time": {
+      "metric_ids": [
+        "exact_solved_coverage",
+        "exact_penalized_runtime_sec",
+        "search_work"
+      ],
+      "scenario": "paired_single_solve"
+    },
+    "solution_quality": {
+      "metric_ids": [
+        "fixed_budget_normalized_gap"
+      ],
+      "scenario": "paired_fixed_budget"
+    },
+    "primal_progress": {
+      "metric_ids": [
+        "time_to_first_verified_solution_sec",
+        "time_to_target_sec",
+        "primal_integral"
+      ],
+      "scenario": "verified_incumbent_trajectory"
+    },
+    "dual_progress": {
+      "metric_ids": [
+        "exact_solved_coverage",
+        "exact_penalized_runtime_sec",
+        "dual_progress_integral",
+        "search_work"
+      ],
+      "scenario": "certified_bound_trajectory"
+    },
+    "peak_memory": {
+      "metric_ids": [
+        "peak_rss_ratio",
+        "cpu_time_ratio"
+      ],
+      "scenario": "scope_matched_paired_single_solve"
+    },
+    "memory_lifecycle": {
+      "metric_ids": [
+        "retained_memory_series",
+        "memory_growth_per_solve",
+        "operational_failure_counts"
+      ],
+      "scenario": "long_lived_repeated_solve"
+    },
+    "parallel_scaling": {
+      "metric_ids": [
+        "thread_scaling_curve",
+        "parallel_efficiency",
+        "cpu_time_ratio",
+        "peak_rss_ratio"
+      ],
+      "scenario": "declared_hardware_and_thread_grid"
+    },
+    "reoptimization": {
+      "metric_ids": [
+        "sequence_solve_time_sec",
+        "update_overhead_sec",
+        "retained_memory_series"
+      ],
+      "scenario": "declared_model_update_sequence"
+    },
+    "numerical_robustness": {
+      "metric_ids": [
+        "independent_violation",
+        "numerical_failure_counts"
+      ],
+      "scenario": "declared_numerical_stress_grid"
+    },
+    "operational_reliability": {
+      "metric_ids": [
+        "boundary_pass_counts",
+        "operational_failure_counts"
+      ],
+      "scenario": "declared_boundary_suite"
+    },
+    "repeatability": {
+      "metric_ids": [
+        "seed_dispersion",
+        "representation_dispersion",
+        "same_seed_replay_consistency"
+      ],
+      "scenario": "declared_seed_representation_and_replay_grids"
+    },
+    "scale_generalization": {
+      "metric_ids": [
+        "controlled_retention"
+      ],
+      "scenario": "declared_controlled_transfer"
+    },
+    "solver_setup": {
+      "metric_ids": [
+        "setup_time_sec",
+        "setup_peak_memory"
+      ],
+      "scenario": "stage_qualified_solver_setup"
+    }
+  },
+  "bootstrap": {
+    "resource_interval_level": 0.95,
+    "resamples": 5000,
+    "seed": 20260824,
+    "method": "Native instance bootstrap of log per-instance ratios; geometric mean estimator unchanged.",
+    "seed_robustness": "Existing 99% paired seed-list bootstrap unchanged; declare dispersion variant before primary qualification.",
+    "controlled_transfer": "Existing simultaneous retention protocol unchanged; not replaced by generic scalar inference."
+  }
+}

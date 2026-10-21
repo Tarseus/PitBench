@@ -5,6 +5,7 @@ from enum import Enum
 from pydantic import BaseModel, Field, computed_field
 
 from pitbench.metrics.controlled_transfer_report import ControlledTransferReport
+from pitbench.metrics.objective_report import ObjectiveMeasurementReport
 from pitbench.metrics.performance_report import (
     ExactPerformanceReport,
     PerformanceReport,
@@ -77,6 +78,7 @@ class EvaluationSummary(BaseModel):
     nuisance_robustness: SeedRobustnessReport | ExactSeedRobustnessReport | None = None
     resource_usage: ResourceReport | None = None
     operational_reliability: ReliabilityReport | None = None
+    objective_measurements: ObjectiveMeasurementReport | None = None
 
 
 class EvaluationResult(BaseModel):

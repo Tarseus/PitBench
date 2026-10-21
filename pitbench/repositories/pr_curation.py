@@ -12,6 +12,7 @@ import subprocess
 import tarfile
 import tempfile
 from collections import Counter, deque
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from statistics import fmean
 from typing import Any
@@ -19,6 +20,8 @@ from typing import Any
 import yaml
 
 from pitbench.problem_families.base import ProblemFamilyRegistry
+from pitbench.repositories.base import SOURCE_SUFFIXES
+from pitbench.repositories.classification import validate_metadata_selection_review
 
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 STAGES = (
@@ -128,26 +131,6 @@ LINEAGE_TITLE = re.compile(
     re.IGNORECASE,
 )
 RELATED_PR_HINT = re.compile(r"(?<!\w)#([1-9][0-9]*)")
-SOURCE_SUFFIXES = frozenset(
-    {
-        ".c",
-        ".cc",
-        ".cpp",
-        ".cxx",
-        ".h",
-        ".hpp",
-        ".cu",
-        ".cuh",
-        ".py",
-        ".rs",
-        ".java",
-        ".kt",
-        ".scala",
-        ".jl",
-        ".go",
-        ".cs",
-    }
-)
 NON_ENGINE_PATH_PARTS = frozenset(
     {
         ".github",
@@ -296,6 +279,17 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     temporary.replace(path)
 
 
+def append_jsonl(path: Path, row: dict[str, Any]) -> None:
+    """Persist one fetched record without rewriting the entire detail cache."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = (json.dumps(row, sort_keys=True) + "\n").encode()
+    with path.open("ab") as handle:
+        if handle.write(data) != len(data):
+            raise OSError(f"short JSONL append at {path}")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
 def candidate_key(row: dict[str, Any]) -> tuple[str, int]:
     repository = row.get("repository")
     number = row.get("pr_number")
@@ -309,6 +303,8 @@ def candidate_key(row: dict[str, Any]) -> tuple[str, int]:
 def validate_selection_review(review: dict[str, Any], candidate: dict[str, Any]) -> str:
     """Validate a solver-specific PR selection decision, not its later outcome."""
     key = candidate_key(candidate)
+    if review.get("schema_version") == 3:
+        return validate_metadata_selection_review(review, candidate)
     if review.get("schema_version") != SELECTION_REVIEW_SCHEMA_VERSION:
         raise ValueError(f"{key} has unsupported selection review schema")
     if (review.get("repository"), review.get("pr_number")) != key:
@@ -323,6 +319,13 @@ def validate_selection_review(review: dict[str, Any], candidate: dict[str, Any])
         raise ValueError(f"{key} selection review has invalid decision")
     if not isinstance(review.get("reason"), str) or not review["reason"].strip():
         raise ValueError(f"{key} selection review needs a reason")
+    duration = review.get("review_duration_sec")
+    if duration is not None and (
+        type(duration) not in {int, float}
+        or not math.isfinite(duration)
+        or duration < 0
+    ):
+        raise ValueError(f"{key} has invalid review duration")
     if decision == "reject" and review.get("rejection_basis") not in REJECTION_BASES:
         raise ValueError(f"{key} rejection needs a solver-specific basis")
     if decision == "needs_evidence" and (
@@ -413,6 +416,512 @@ def validate_selection_review(review: dict[str, Any], candidate: dict[str, Any])
     return decision
 
 
+NON_SOURCE_SUFFIXES = frozenset(
+    {
+        ".md",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".pdf",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".svg",
+        ".ico",
+        ".csv",
+        ".mps",
+        ".lp",
+        ".vrp",
+        ".sol",
+        ".ipynb",
+        ".bib",
+        ".tex",
+    }
+)
+NON_SOURCE_NAMES = frozenset(
+    {"license", "copying", "notice", "authors", "readme", "changelog"}
+)
+
+
+def _solver_source_paths(files: list[dict[str, Any]]) -> list[str]:
+    paths = []
+    for file in files:
+        raw = file.get("path") if isinstance(file, dict) else None
+        if not isinstance(raw, str):
+            continue
+        path = PurePosixPath(raw)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError("unsafe source candidate path")
+        if any(part.lower() in NON_ENGINE_PATH_PARTS for part in path.parts[:-1]):
+            continue
+        if path.suffix.lower() not in SOURCE_SUFFIXES and (
+            path.suffix.lower() in NON_SOURCE_SUFFIXES
+            or path.name.lower() in NON_SOURCE_NAMES
+        ):
+            continue
+        paths.append(raw)
+    return paths
+
+
+def selection_review_draft(
+    candidate: dict[str, Any], detail: dict[str, Any]
+) -> dict[str, Any]:
+    """Prefill only PR facts; a reviewer must supply the selection judgment."""
+    key = candidate_key(candidate)
+    if candidate_key(detail) != key or detail.get("status") != "completed":
+        raise ValueError(f"{key} lacks complete PR detail for a review draft")
+    if any(
+        detail.get(field) != candidate.get(field)
+        for field in ("base_commit", "head_commit", "merged_at")
+    ):
+        raise ValueError(f"{key} review detail differs from pinned PR identity")
+    files = detail.get("files")
+    if not isinstance(files, list) or any(not isinstance(file, dict) for file in files):
+        raise ValueError(f"{key} completed detail lacks changed files")
+    changed_file_count = detail.get("changed_file_count")
+    if type(changed_file_count) is int and changed_file_count != len(files):
+        raise ValueError(f"{key} completed detail has an incomplete file listing")
+    source_paths = sorted(set(_solver_source_paths(files)))
+    repository, number = key
+    return {
+        "schema_version": SELECTION_REVIEW_SCHEMA_VERSION,
+        "repository": repository,
+        "pr_number": number,
+        "base_commit": candidate["base_commit"],
+        "head_commit": candidate["head_commit"],
+        "decision": None,
+        "reason": "",
+        "review_duration_sec": None,
+        "rejection_basis": None,
+        "missing_evidence": [],
+        "repository_role": None,
+        "mechanism": None,
+        "solver_phase": None,
+        "solver_entry_points": [],
+        "effect_channels": [],
+        "correctness_failure_modes": [],
+        "changed_source_paths": source_paths,
+        "solver_behavior_hypothesis": "",
+        "causal_chain": "",
+        "structural_trigger": "",
+        "activation_probe": "",
+        "instance_selection_rule": "",
+        "workload_exposure_plan": "",
+        "mathematical_risk": "",
+        "independent_check_plan": "",
+        "metric_family": None,
+        "hidden_generalization_plan": "",
+        "overlap_review": "",
+        "overlap_group": "",
+        "related_prs": [],
+        "resource_risk": "",
+        "source_evidence_urls": [
+            f"https://github.com/{repository}/pull/{number}",
+            f"https://github.com/{repository}/compare/"
+            f"{candidate['base_commit']}...{candidate['head_commit']}",
+        ],
+    }
+
+
+def render_selection_review_card(card: dict[str, Any]) -> str:
+    """Render cached PR facts and available source patches for human review."""
+    source_paths = set(card["changed_source_paths"])
+    lines = [
+        f"# {card['repository']} #{card['pr_number']}: {card.get('title') or ''}",
+        "",
+        "This card contains unreviewed public PR material; the linked source and",
+        "solver mechanism still require independent inspection.",
+        "",
+        f"- PR: {card.get('url') or 'unknown'}",
+        f"- Base commit: `{card['base_commit']}`",
+        f"- Head commit: `{card['head_commit']}`",
+        f"- Repository scope: `{card.get('repository_scope_status') or 'unknown'}`",
+        f"- Review lane: `{card.get('review_lane') or 'unknown'}`",
+        f"- Signal band: `{card.get('signal_band')}`",
+        f"- Phase path hints: {', '.join(card.get('solver_phase_path_hints') or []) or 'none'}",
+        f"- Caution flags: {', '.join(card.get('caution_flags') or []) or 'none'}",
+        f"- Related PR hints: {', '.join(map(str, card.get('related_pr_hints') or [])) or 'none'}",
+        f"- Draft: `{card['draft_path']}`",
+        "",
+        "## PR description",
+        "",
+        card.get("body") or "(No PR description was supplied.)",
+        "",
+        "## Changed files",
+        "",
+    ]
+    for file in card["changed_files"]:
+        path = file.get("path")
+        lines.append(
+            f"- `{path}` (+{file.get('additions', '?')}/-{file.get('deletions', '?')})"
+        )
+    lines.extend(["", "## Cached source patches", ""])
+    if not source_paths:
+        lines.extend(["No likely solver source path was found in the PR metadata.", ""])
+    for file in card["changed_files"]:
+        path = file.get("path")
+        if path not in source_paths:
+            continue
+        lines.extend([f"### `{path}`", ""])
+        patch = file.get("patch")
+        if isinstance(patch, str):
+            fence_length = max(
+                3,
+                max((len(match) for match in re.findall(r"`+", patch)), default=0) + 1,
+            )
+            fence = "`" * fence_length
+            lines.extend([f"{fence}diff", patch, fence, ""])
+        else:
+            lines.extend(
+                ["GitHub did not supply patch text; inspect the pinned diff.", ""]
+            )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_selection_review_index(cards: list[dict[str, Any]], batch_root: Path) -> str:
+    """Link the frozen cards and editable drafts in review order."""
+    lines = [
+        "# PR mechanism review batch",
+        "",
+        f"{len(cards)} public PR records are queued for review. No entry is approved by this index.",
+        "",
+    ]
+    for number, card in enumerate(cards, 1):
+        card_path = Path(card["card_path"]).relative_to(batch_root)
+        draft_path = Path(card["draft_path"]).relative_to(batch_root)
+        title = " ".join(str(card.get("title") or "").split())
+        lines.append(
+            f"{number}. [{card['repository']} #{card['pr_number']}]({card_path.as_posix()}) "
+            f"{title} — {card['repository_scope_status']}, "
+            f"{card['review_lane']}, band {card['signal_band']} "
+            f"([draft]({draft_path.as_posix()}))"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _git_diff(
+    checkout,
+    base,
+    head,
+    *,
+    paths=(),
+    name_only=False,
+    renames=False,
+    timeout_sec=120,
+    offline=True,
+    diagnostics=None,
+):
+    args = [
+        "git",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "--full-index",
+        "--find-renames" if renames else "--no-renames",
+    ]
+    args += (
+        ["--name-status", "-z"]
+        if renames
+        else (["--name-only", "-z"] if name_only else ["--binary"])
+    )
+    environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    if offline:
+        # Also prohibit transports on Git versions that predate NO_LAZY_FETCH.
+        environment.update(GIT_NO_LAZY_FETCH="1", GIT_ALLOW_PROTOCOL="")
+    result = subprocess.run(
+        [*args, base, head, "--", *paths],
+        cwd=checkout,
+        capture_output=True,
+        check=False,
+        timeout=timeout_sec,
+        env=environment,
+    )
+    if result.returncode and diagnostics is not None:
+        diagnostics.update(
+            returncode=result.returncode,
+            stderr=result.stderr.decode(errors="replace"),
+            base=base,
+            head=head,
+            name_only=name_only,
+            renames=renames,
+        )
+    return result
+
+
+def _rename_pairs(raw):
+    fields = raw.split(b"\0")
+    pairs, index = {}, 0
+    while index < len(fields) and fields[index]:
+        status = fields[index]
+        index += 1
+        if status.startswith((b"R", b"C")):
+            old, new = fields[index : index + 2]
+            if status.startswith(b"R"):
+                pairs[os.fsdecode(new)] = os.fsdecode(old)
+            index += 2
+        else:
+            index += 1
+    return pairs
+
+
+def inspect_pinned_review_diff(
+    card: dict[str, Any],
+    repository_checkout: Path,
+    *,
+    merge_commit: str | None = None,
+    timeout_sec: float = 120,
+    offline: bool = True,
+    diagnostics: dict | None = None,
+) -> tuple[str, bytes | None, list[str]]:
+    """Read the integrated PR diff from pinned Git commits without checkout changes."""
+    paths = card.get("changed_source_paths")
+    if not isinstance(paths, list) or not paths:
+        return "no_source_paths", None, []
+    if any(
+        not isinstance(path, str)
+        or not path
+        or PurePosixPath(path).is_absolute()
+        or ".." in PurePosixPath(path).parts
+        for path in paths
+    ):
+        raise ValueError("review card has an unsafe source path")
+    if not repository_checkout.is_dir():
+        return "missing_checkout", None, []
+    probe_env = {**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_TERMINAL_PROMPT": "0"}
+    base, head = card["base_commit"], card["head_commit"]
+    for label, commit in (("base", base), ("head", head), ("merge", merge_commit)):
+        if not commit:
+            continue
+        if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit):
+            raise ValueError("source identities must be full hexadecimal commit hashes")
+        found = subprocess.run(
+            ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+            cwd=repository_checkout,
+            capture_output=True,
+            check=False,
+            env=probe_env,
+        )
+        if found.returncode:
+            return f"missing_{label}_commit", None, []
+    target = head
+    integration_base = base
+    if merge_commit:
+        parents = subprocess.check_output(
+            ["git", "cat-file", "-p", merge_commit],
+            cwd=repository_checkout,
+            text=True,
+        )
+        parent_ids = [
+            line[7:] for line in parents.splitlines() if line.startswith("parent ")
+        ]
+        if not parent_ids:
+            return "merge_parent_mismatch", None, []
+        integration_base = parent_ids[0]
+        if len(parent_ids) == 2 and parent_ids[1] != head:
+            return "merge_head_mismatch", None, []
+        if len(parent_ids) not in {1, 2}:
+            return "merge_parent_mismatch", None, []
+        if integration_base != base:
+            present = subprocess.run(
+                ["git", "cat-file", "-e", f"{integration_base}^{{commit}}"],
+                cwd=repository_checkout,
+                capture_output=True,
+                check=False,
+                env=probe_env,
+            )
+            if present.returncode:
+                return "missing_integration_base_commit", None, [integration_base]
+        else:
+            target = merge_commit
+
+    def diff(*args, **kwargs):
+        return _git_diff(*args, offline=offline, diagnostics=diagnostics, **kwargs)
+
+    try:
+        names = diff(
+            repository_checkout,
+            integration_base,
+            merge_commit or target,
+            name_only=True,
+            timeout_sec=timeout_sec,
+        )
+    except subprocess.TimeoutExpired:
+        return "git_timeout", None, []
+    if names.returncode:
+        return "git_diff_failed", None, []
+    observed = sorted(os.fsdecode(path) for path in names.stdout.split(b"\0") if path)
+    listed = card.get("changed_files")
+    listed = listed if isinstance(listed, list) else []
+    expected = (
+        {item["path"] for item in listed if isinstance(item, dict) and "path" in item}
+        if isinstance(listed, list)
+        else set()
+    )
+    missing_previous = [
+        item
+        for item in listed
+        if item.get("status") == "renamed" and not item.get("previous_filename")
+    ]
+    renames = {}
+    if missing_previous:
+        try:
+            rename_diff = diff(
+                repository_checkout,
+                integration_base,
+                merge_commit or target,
+                renames=True,
+                timeout_sec=timeout_sec,
+            )
+        except subprocess.TimeoutExpired:
+            return "git_timeout", None, observed
+        if rename_diff.returncode:
+            return "git_diff_failed", None, observed
+        renames = _rename_pairs(rename_diff.stdout)
+    selected = set(paths)
+    for item in listed:
+        if item.get("status") != "renamed":
+            continue
+        previous = item.get("previous_filename") or renames.get(item.get("path"))
+        if not previous:
+            return "rename_metadata_incomplete", None, observed
+        if (
+            not isinstance(previous, str)
+            or PurePosixPath(previous).is_absolute()
+            or ".." in PurePosixPath(previous).parts
+        ):
+            raise ValueError("unsafe previous filename")
+        expected.add(previous)
+        if item["path"] in selected:
+            selected.add(previous)
+    if expected and set(observed) != expected:
+        return "pinned_file_mismatch", None, observed
+    if not set(paths).issubset(observed):
+        return "source_path_mismatch", None, observed
+    if integration_base != base:
+        try:
+            branch_names = diff(
+                repository_checkout, base, head, name_only=True, timeout_sec=timeout_sec
+            )
+        except subprocess.TimeoutExpired:
+            return "git_timeout", None, observed
+        if branch_names.returncode or {
+            os.fsdecode(path) for path in branch_names.stdout.split(b"\0") if path
+        } != set(observed):
+            return "base_drift", None, [integration_base]
+    try:
+        patch = diff(
+            repository_checkout,
+            base,
+            target,
+            paths=sorted(selected),
+            timeout_sec=timeout_sec,
+        )
+    except subprocess.TimeoutExpired:
+        return "git_timeout", None, observed
+    if patch.returncode:
+        return "git_diff_failed", None, observed
+    if not patch.stdout:
+        return "empty_diff", None, observed
+    if integration_base != base:
+        try:
+            branch = diff(repository_checkout, base, head, timeout_sec=timeout_sec)
+            integrated = diff(
+                repository_checkout,
+                integration_base,
+                merge_commit,
+                timeout_sec=timeout_sec,
+            )
+        except subprocess.TimeoutExpired:
+            return "git_timeout", None, observed
+        if (
+            branch.returncode
+            or integrated.returncode
+            or branch.stdout != integrated.stdout
+        ):
+            return "base_drift", None, [integration_base]
+        return "cached_branch_base", patch.stdout, observed
+    return "cached", patch.stdout, observed
+
+def apply_selection_reviews(
+    rows: list[dict[str, Any]],
+    catalog: dict[str, Any],
+    review_paths: list[Path],
+    repository_root: Path,
+) -> list[dict[str, Any]]:
+    """Validate an entire review batch before mutating the in-memory registry."""
+    if not review_paths:
+        raise ValueError("screening requires at least one review file")
+    indexed = {candidate_key(row): row for row in rows}
+    if len(indexed) != len(rows):
+        raise ValueError("duplicate PR in evidence registry")
+    scope_status = {
+        entry["repository"]: entry["scope_status"] for entry in catalog["repositories"]
+    }
+    updates: list[tuple[dict[str, Any], str, str, str, str]] = []
+    seen: set[tuple[str, int]] = set()
+    root = repository_root.resolve()
+    for review_path in review_paths:
+        path = review_path.resolve()
+        relative = path.relative_to(root)
+        review_bytes = path.read_bytes()
+        review = json.loads(review_bytes)
+        if not isinstance(review, dict):
+            raise ValueError("selection review must be a JSON object")
+        key = candidate_key(review)
+        if key in seen:
+            raise ValueError(f"duplicate PR in screening batch: {key}")
+        seen.add(key)
+        row = indexed.get(key)
+        if row is None:
+            raise ValueError(f"selection review requires an indexed PR: {key}")
+        if row["stage"] not in {"discovered", "intent_reviewed"}:
+            raise ValueError(f"selection review cannot rewrite a later stage: {key}")
+        decision = validate_selection_review(review, row)
+        status = scope_status.get(row["repository"])
+        if status is None:
+            raise ValueError(
+                "selection PR source is absent from the repository catalog"
+            )
+        if decision == "advance" and status not in {"task_backed", "approved_source"}:
+            raise ValueError(
+                f"repository needs domain approval before {key} can advance"
+            )
+        updates.append(
+            (
+                row,
+                decision,
+                relative.as_posix(),
+                hashlib.sha256(review_bytes).hexdigest(),
+                str(path),
+            )
+        )
+    result = []
+    for row, decision, relative, digest, path in updates:
+        row["selection_review_path"] = relative
+        row["selection_review_sha256"] = digest
+        row["selection_decision"] = decision
+        if decision == "advance":
+            row["intent_evidence_path"] = relative
+            row["stage"] = "intent_reviewed"
+        else:
+            row.pop("intent_evidence_path", None)
+            row["stage"] = "discovered"
+        result.append(
+            {
+                "repository": row["repository"],
+                "pr_number": row["pr_number"],
+                "decision": decision,
+                "stage": row["stage"],
+                "review_file": path,
+            }
+        )
+    return result
+
+
 def validate_pinned_build_evidence(
     evidence: dict[str, Any], candidate: dict[str, Any], repository_root: Path
 ) -> None:
@@ -455,6 +964,26 @@ def validate_pinned_build_evidence(
             raise ValueError(f"{key} {name} build or executable check failed")
 
 
+def workload_selection_rule_sha256(
+    review: dict[str, Any], candidate: dict[str, Any], repository_root: Path,
+) -> str:
+    """Metadata prechecks use a frozen task workload instead of a prose plan."""
+    if review.get("schema_version") != 3:
+        return hashlib.sha256(review["instance_selection_rule"].encode()).hexdigest()
+    raw = candidate.get("task_config_path")
+    if not isinstance(raw, str) or not raw:
+        raise ValueError("metadata precheck needs a task before workload qualification")
+    path = (repository_root / raw).resolve()
+    if not path.is_relative_to(repository_root.resolve()) or not path.is_file():
+        raise ValueError("metadata workload task path is unsafe or missing")
+    from pitbench.schema.task import PitBenchTask
+
+    task = PitBenchTask.from_yaml(path)
+    if task.task_id != candidate.get("task_id") or task.release.repository != candidate["repository"] or task.release.base_commit != candidate["base_commit"]:
+        raise ValueError("metadata workload task/source identity differs")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def validate_workload_exposure_evidence(
     evidence: dict[str, Any],
     candidate: dict[str, Any],
@@ -470,9 +999,7 @@ def validate_workload_exposure_evidence(
             raise ValueError(f"{key} workload evidence has mismatched {field}")
     if evidence.get("source_patch_sha256") != candidate.get("source_patch_sha256"):
         raise ValueError(f"{key} workload evidence uses another source patch")
-    selection_digest = hashlib.sha256(
-        review["instance_selection_rule"].encode()
-    ).hexdigest()
+    selection_digest = workload_selection_rule_sha256(review, candidate, repository_root)
     if evidence.get("instance_selection_rule_sha256") != selection_digest:
         raise ValueError(f"{key} workload selection differs from the prior review")
     for field in ("instance_manifest_path", "activation_artifact_path"):
@@ -552,6 +1079,30 @@ def validate_workload_exposure_evidence(
             path.read_bytes()
         ).hexdigest() != trace.get("sha256"):
             raise ValueError(f"{key} workload trace artifact hash mismatch")
+
+
+def required_semantic_obligations(
+    review: dict[str, Any], candidate: dict[str, Any], repository_root: Path,
+) -> set[str]:
+    """Unknown mechanisms do not waive exact-solver semantic obligations."""
+    if review.get("schema_version") != 3:
+        return {
+            SEMANTIC_OBLIGATIONS[risk]
+            for risk in review["correctness_failure_modes"]
+            if risk in SEMANTIC_OBLIGATIONS
+        }
+    raw = candidate.get("task_config_path")
+    if not isinstance(raw, str) or not raw:
+        raise ValueError("metadata correctness qualification requires a pinned task")
+    path = (repository_root / raw).resolve()
+    if not path.is_relative_to(repository_root.resolve()) or not path.is_file():
+        raise ValueError("metadata correctness task path is unsafe or missing")
+    task = yaml.safe_load(path.read_text())
+    if task.get("task_id") != candidate.get("task_id") or task.get("release", {}).get("base_commit") != candidate["base_commit"] or task.get("release", {}).get("repository") != candidate["repository"]:
+        raise ValueError("metadata correctness task/source identity differs")
+    if task.get("evaluation", {}).get("performance_protocol") == "exact_verified_solve":
+        return set(SEMANTIC_OBLIGATIONS.values())
+    return set()
 
 
 def validate_independent_correctness_evidence(
@@ -1307,11 +1858,7 @@ def build_paired_correctness_evidence(
     required = set()
     if candidate.get("selection_review_path"):
         review = json.loads((root / candidate["selection_review_path"]).read_text())
-        required = {
-            SEMANTIC_OBLIGATIONS[risk]
-            for risk in review["correctness_failure_modes"]
-            if risk in SEMANTIC_OBLIGATIONS
-        }
+        required = required_semantic_obligations(review, candidate, root)
     validate_independent_correctness_evidence(
         evidence, candidate, root, required_semantic_obligations=required
     )
@@ -1387,8 +1934,8 @@ def build_task_integration_evidence(
     dry_run_exit_note: str | None = None,
 ) -> dict[str, Any]:
     """Bind and validate a real limited Judge run and Git-backed Agent image."""
-    if candidate.get("task_track") != "open_opportunity":
-        raise ValueError("integration builder requires an open-opportunity task")
+    if candidate.get("task_track", "expert_reference") not in TASK_TRACKS:
+        raise ValueError("integration builder requires a supported task track")
     task_path = repository_root / candidate["task_config_path"]
     task = yaml.safe_load(task_path.read_text())
     evidence = {
@@ -1509,10 +2056,19 @@ def build_mechanism_review_queue(
     limit: int,
     *,
     audit_fraction: float = 0.1,
+    scope_statuses: set[str] | None = None,
+    review_order: str = "coverage",
 ) -> dict[str, Any]:
     """Order metadata-backed human reviews without deciding PR eligibility."""
     if limit <= 0 or not 0 <= audit_fraction < 1:
         raise ValueError("triage needs a positive limit and audit fraction in [0, 1)")
+    if review_order not in {"coverage", "throughput"}:
+        raise ValueError("review order must be coverage or throughput")
+    allowed_scopes = {"task_backed", "approved_source", "pending_domain_review"}
+    if scope_statuses is not None and (
+        not scope_statuses or not scope_statuses <= allowed_scopes
+    ):
+        raise ValueError("triage scope statuses must name approved catalog states")
     status_by_repo = {
         entry["repository"]: entry["scope_status"] for entry in catalog["repositories"]
     }
@@ -1549,6 +2105,8 @@ def build_mechanism_review_queue(
         status = status_by_repo.get(row.get("repository"))
         if status is None:
             raise ValueError(f"PR source absent from catalog: {row.get('repository')}")
+        if scope_statuses is not None and status not in scope_statuses:
+            continue
         if status != "rejected" and row.get("stage") == "discovered" and row.get(
             "selection_decision"
         ) == "needs_evidence":
@@ -1587,17 +2145,7 @@ def build_mechanism_review_queue(
         files = detail.get("files")
         if not isinstance(files, list):
             raise ValueError(f"completed PR detail lacks files: {candidate_key(row)}")
-        source_paths = []
-        for file in files:
-            raw = file.get("path") if isinstance(file, dict) else None
-            if not isinstance(raw, str):
-                continue
-            path = PurePosixPath(raw)
-            if path.suffix.lower() not in SOURCE_SUFFIXES or any(
-                part.lower() in NON_ENGINE_PATH_PARTS for part in path.parts[:-1]
-            ):
-                continue
-            source_paths.append(raw)
+        source_paths = _solver_source_paths(files)
         phases = sorted(
             phase
             for phase, pattern in PHASE_PATH_HINTS.items()
@@ -1606,6 +2154,17 @@ def build_mechanism_review_queue(
         title = row.get("title") or ""
         title_signals = sorted(
             name for name, pattern in TITLE_SIGNALS.items() if pattern.search(title)
+        )
+        review_priority = (
+            4
+            if NON_SOLVER_TITLE.search(title)
+            else 0
+            if len(title_signals) == 2
+            else 1
+            if "performance" in title_signals
+            else 2
+            if title_signals
+            else 3
         )
         caution_flags = ["lineage_review"] if LINEAGE_TITLE.search(title) else []
         body = detail.get("body")
@@ -1638,6 +2197,7 @@ def build_mechanism_review_queue(
             "source_path_preview": source_paths[:8],
             "solver_phase_path_hints": phases,
             "title_signals": title_signals,
+            "review_priority": review_priority,
             "caution_flags": caution_flags,
             "related_pr_hints": related_pr_hints,
             "signal_band": band,
@@ -1651,10 +2211,17 @@ def build_mechanism_review_queue(
         ).hexdigest()
 
     ordered_core = []
-    for band in (0, 1):
+    core_order = (
+        [(priority, band) for priority in range(5) for band in (0, 1)]
+        if review_order == "throughput"
+        else [(None, band) for band in (0, 1)]
+    )
+    for priority, band in core_order:
         groups: dict[tuple[int, str, str], deque[dict[str, Any]]] = {}
         for item in core:
-            if item["signal_band"] != band:
+            if item["signal_band"] != band or (
+                priority is not None and item["review_priority"] != priority
+            ):
                 continue
             scope_tier = {
                 "task_backed": 0,
@@ -1740,6 +2307,8 @@ def build_mechanism_review_queue(
         "mechanism_hint_pool": len(core),
         "low_signal_pool": len(low_signal),
         "audit_fraction": audit_fraction,
+        "scope_statuses": sorted(scope_statuses) if scope_statuses is not None else None,
+        "review_order": review_order,
         "queue_size": len(queue),
         "queue": queue,
         "claim_boundary": (
@@ -1817,6 +2386,332 @@ def merge_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [merged[key] for key in sorted(merged)]
 
 
+def build_objective_scoring_registration(
+    candidate: dict[str, Any],
+    repository_root: Path,
+) -> dict[str, Any]:
+    """Freeze the scoring decision before measurements, including pending inputs."""
+    from pitbench.metrics.objective_qualification import objective_protocol_gaps
+    from pitbench.schema.objectives import qualification_protocols_sha256
+    from pitbench.schema.task import PitBenchTask
+
+    task_path = repository_root / candidate["task_config_path"]
+    task = PitBenchTask.from_yaml(task_path)
+    if (
+        task.task_id != candidate["task_id"]
+        or task.release.repository != candidate["repository"]
+        or task.release.base_commit != candidate["base_commit"]
+        or task.optimization_profile is None
+    ):
+        raise ValueError("objective scoring registration differs from pinned PR/task")
+    evidence = {
+        "schema_version": 1,
+        "kind": "objective_scoring_registration",
+        **{
+            name: candidate[name]
+            for name in (
+                "repository",
+                "pr_number",
+                "base_commit",
+                "head_commit",
+                "task_id",
+                "source_patch_sha256",
+            )
+        },
+        "registered_at": datetime.now(timezone.utc).isoformat(),
+        "protocols_sha256": qualification_protocols_sha256(),
+        "profile": task.optimization_profile.model_dump(mode="json"),
+        "protocol_gaps": objective_protocol_gaps(task),
+        "supersedes_sha256": candidate.get("objective_registration_sha256"),
+    }
+    _record_artifact(evidence, "task_config", task_path, repository_root)
+    _record_artifact(
+        evidence,
+        "source_patch",
+        repository_root / candidate["source_patch_path"],
+        repository_root,
+    )
+    if evidence["source_patch_sha256"] != candidate["source_patch_sha256"]:
+        raise ValueError("objective registration source patch hash mismatch")
+    return evidence
+
+
+def _objective_artifact(evidence: dict[str, Any], name: str, root: Path) -> Path:
+    raw = evidence.get(f"{name}_path", "")
+    relative = PurePosixPath(raw)
+    if not raw or relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"unsafe or missing objective {name} path")
+    path = (root / raw).resolve()
+    if (
+        not path.is_relative_to(root.resolve())
+        or not path.is_file()
+        or hashlib.sha256(path.read_bytes()).hexdigest()
+        != evidence.get(f"{name}_sha256")
+    ):
+        raise ValueError(f"objective {name} artifact hash mismatch")
+    return path
+
+
+def recompute_objective_qualification_evidence(
+    evidence: dict[str, Any],
+    candidate: dict[str, Any],
+    repository_root: Path,
+) -> dict[str, Any]:
+    """Never trust an uploaded improved flag: re-read all bound Judge artifacts."""
+    from pitbench.evaluator.storage import ObservationStore
+    from pitbench.metrics.objective_qualification import (
+        ObjectiveQualificationReport,
+        compute_objective_qualification,
+    )
+    from pitbench.schema.evaluation import ValidityResult
+    from pitbench.schema.objectives import qualification_protocols_sha256
+    from pitbench.schema.observation import ExpectedRunGrid, RunObservation
+    from pitbench.schema.task import PitBenchTask
+
+    if (
+        evidence.get("kind") != "objective_qualification"
+        or evidence.get("schema_version") != 1
+    ):
+        raise ValueError("unsupported objective qualification evidence")
+    for name in (
+        "repository",
+        "pr_number",
+        "base_commit",
+        "head_commit",
+        "task_id",
+        "source_patch_sha256",
+    ):
+        if evidence.get(name) != candidate.get(name):
+            raise ValueError(f"objective qualification identity differs: {name}")
+    registration_path = _objective_artifact(evidence, "registration", repository_root)
+    if evidence["registration_path"] != candidate.get(
+        "objective_registration_path"
+    ) or evidence["registration_sha256"] != candidate.get(
+        "objective_registration_sha256"
+    ):
+        raise ValueError("objective scoring uses a different registration")
+    registration = json.loads(registration_path.read_text())
+    if (
+        registration.get("kind") != "objective_scoring_registration"
+        or registration.get("schema_version") != 1
+    ):
+        raise ValueError("unsupported objective scoring registration")
+    for name in (
+        "repository",
+        "pr_number",
+        "base_commit",
+        "head_commit",
+        "task_id",
+        "source_patch_sha256",
+    ):
+        if registration.get(name) != candidate.get(name):
+            raise ValueError(f"objective registration identity differs: {name}")
+    task_path = _objective_artifact(registration, "task_config", repository_root)
+    _objective_artifact(registration, "source_patch", repository_root)
+    if registration["task_config_path"] != candidate["task_config_path"]:
+        raise ValueError("objective task path differs from the registration")
+    task = PitBenchTask.from_yaml(task_path)
+    if (
+        registration.get("protocols_sha256") != qualification_protocols_sha256()
+        or not task.optimization_profile
+        or registration.get("profile")
+        != task.optimization_profile.model_dump(mode="json")
+    ):
+        raise ValueError("objective profile or protocol changed after registration")
+    if (
+        task.task_id != candidate["task_id"]
+        or task.release.base_commit != candidate["base_commit"]
+        or task.release.repository != candidate["repository"]
+    ):
+        raise ValueError("objective scoring task/source identity differs")
+    checkpoints, grids, observations = {}, {}, {}
+    problems = []
+    registered_at = datetime.fromisoformat(registration["registered_at"])
+    for label in ("initial", "repeat"):
+        if not evidence.get(f"{label}_checkpoint_path"):
+            problems.append(f"{label}: full Judge checkpoint missing.")
+            continue
+        marker = json.loads(
+            _objective_artifact(
+                evidence, f"{label}_checkpoint", repository_root
+            ).read_text()
+        )
+        grid_path = _objective_artifact(evidence, f"{label}_grid", repository_root)
+        observations_path = _objective_artifact(
+            evidence, f"{label}_observations", repository_root
+        )
+        if (
+            marker.get("expected_grid_sha256") != evidence[f"{label}_grid_sha256"]
+            or marker.get("observations_sha256")
+            != evidence[f"{label}_observations_sha256"]
+        ):
+            raise ValueError("objective run artifacts differ from the Judge checkpoint")
+        identity = marker["identity"]
+        if (
+            identity.get("candidate_patch_sha256") != candidate["source_patch_sha256"]
+            or identity.get("task_config_sha256") != registration["task_config_sha256"]
+            or identity.get("judge_image") != task.repository.judge_image
+            or not re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(identity.get("judge_image"))
+            )
+            or set(identity.get("code_states", [])) != {"base", "agent"}
+            or identity.get("instances_per_instance_set") is not None
+            or identity.get("solver_seed_limit") is not None
+            or identity.get("reliability_only") is not False
+        ):
+            raise ValueError(
+                "objective qualification is not a full pinned Base/PR Judge run"
+            )
+        started = marker.get("measurement_started_at")
+        if started is None or datetime.fromisoformat(started) <= registered_at:
+            problems.append(
+                f"{label}: measurements lack evidence of starting after registration."
+            )
+        checkpoints[label] = identity
+        grids[label] = ExpectedRunGrid.model_validate_json(grid_path.read_text())
+        observations[label] = [
+            RunObservation.model_validate(item)
+            for item in read_jsonl(observations_path)
+        ]
+        if marker.get("observation_count") != len(observations[label]):
+            raise ValueError("objective checkpoint observation count differs")
+    repeat_verified = False
+    if set(checkpoints) == {"initial", "repeat"}:
+        initial, repeat = checkpoints["initial"], checkpoints["repeat"]
+        if {key: value for key, value in initial.items() if key != "code_states"} != {
+            key: value for key, value in repeat.items() if key != "code_states"
+        } or repeat["code_states"] != list(reversed(initial["code_states"])):
+            raise ValueError(
+                "objective repeat changed Judge identity or did not reverse run order"
+            )
+        repeat_verified = True
+    validity_accepted = None
+    if evidence.get("evaluation_path"):
+        evaluation = json.loads(
+            _objective_artifact(evidence, "evaluation", repository_root).read_text()
+        )
+        payload = evaluation.get("payload", {})
+        if (
+            evaluation.get("completed") is not True
+            or payload.get("task_id") != task.task_id
+        ):
+            raise ValueError(
+                "objective evaluation is incomplete or belongs to another task"
+            )
+        artifacts, summary = payload.get("artifacts", {}), payload.get("summary", {})
+        measured_path = _objective_artifact(
+            evidence, "evaluation_observations", repository_root
+        )
+        if (
+            artifacts.get("candidate_patch", {}).get("sha256")
+            != candidate["source_patch_sha256"]
+            or artifacts.get("expected_run_grid", {}).get("sha256")
+            != evidence.get("initial_grid_sha256")
+            or artifacts.get("observations", {}).get("sha256")
+            != evidence["evaluation_observations_sha256"]
+            or ObservationStore.read(measured_path) != observations.get("initial")
+            or summary.get("observation_count") != len(observations.get("initial", []))
+            or summary.get("performance_confirmation_observation_count")
+            != len(observations.get("repeat", []))
+        ):
+            raise ValueError(
+                "objective evaluation does not describe the pinned patch and run artifacts"
+            )
+        validity_accepted = ValidityResult.model_validate(payload["validity"]).accepted
+    report = compute_objective_qualification(
+        task=task,
+        observations=observations.get("initial", []),
+        expected_run_grid=grids.get("initial"),
+        repeat_observations=observations.get("repeat"),
+        repeat_expected_run_grid=grids.get("repeat"),
+        repeat_identity_verified=repeat_verified,
+        validity_accepted=validity_accepted,
+    )
+    assert isinstance(report, ObjectiveQualificationReport)
+    if problems and report.classification != "needs_protocol":
+        report.classification = "incomplete"
+        report.confirmed = report.performance_confirmed = False
+        report.reasons.extend(problems)
+    return report.model_dump(mode="json")
+
+
+def build_objective_qualification_evidence(
+    candidate: dict[str, Any],
+    repository_root: Path,
+    run_directory: Path,
+) -> dict[str, Any]:
+    evidence = {
+        "schema_version": 1,
+        "kind": "objective_qualification",
+        **{
+            name: candidate[name]
+            for name in (
+                "repository",
+                "pr_number",
+                "base_commit",
+                "head_commit",
+                "task_id",
+                "source_patch_sha256",
+            )
+        },
+    }
+    _record_artifact(
+        evidence,
+        "registration",
+        repository_root / candidate["objective_registration_path"],
+        repository_root,
+    )
+    for label, directory in (
+        ("initial", run_directory),
+        ("repeat", run_directory / "performance-confirmation"),
+    ):
+        if (directory / "judge-checkpoint.json").is_file():
+            for suffix, filename in (
+                ("checkpoint", "judge-checkpoint.json"),
+                ("grid", "expected-run-grid.json"),
+                ("observations", "judge-observations.jsonl"),
+            ):
+                _record_artifact(
+                    evidence, f"{label}_{suffix}", directory / filename, repository_root
+                )
+    if (run_directory / "evaluation.json").is_file():
+        _record_artifact(
+            evidence, "evaluation", run_directory / "evaluation.json", repository_root
+        )
+        _record_artifact(
+            evidence,
+            "evaluation_observations",
+            run_directory / "trials.parquet",
+            repository_root,
+        )
+    evidence["objective_qualification"] = recompute_objective_qualification_evidence(
+        evidence, candidate, repository_root
+    )
+    return evidence
+
+
+def validate_objective_qualification_evidence(
+    evidence: dict[str, Any],
+    candidate: dict[str, Any],
+    repository_root: Path,
+) -> None:
+    report = recompute_objective_qualification_evidence(
+        evidence, candidate, repository_root
+    )
+    if report != evidence.get("objective_qualification"):
+        raise ValueError(
+            "objective qualification summary differs from recomputed evidence"
+        )
+    if report.get("performance_confirmed") is not True:
+        raise ValueError(
+            "objective qualification has no confirmed improvement within declared guardrails"
+        )
+    correctness = json.loads(
+        (repository_root / candidate["correctness_evidence_path"]).read_text()
+    )
+    validate_independent_correctness_evidence(correctness, candidate, repository_root)
+
+
 def validate_evidence_stage(
     row: dict[str, Any], repository_root: Path | None = None
 ) -> None:
@@ -1874,6 +2769,8 @@ def validate_evidence_stage(
         digest = hashlib.sha256(patch.read_bytes()).hexdigest()
         if digest != row["source_patch_sha256"]:
             raise ValueError(f"{key} source patch hash mismatch")
+        if review is not None and review.get("schema_version") == 3:
+            validate_metadata_selection_review(review, row, patch.read_bytes())
     if review is not None and STAGES.index(stage) >= STAGES.index("build_verified"):
         evidence = json.loads(
             (repository_root / row["build_evidence_path"]).read_text()
@@ -1890,11 +2787,7 @@ def validate_evidence_stage(
         evidence = json.loads(
             (repository_root / row["correctness_evidence_path"]).read_text()
         )
-        obligations = {
-            SEMANTIC_OBLIGATIONS[risk]
-            for risk in review["correctness_failure_modes"]
-            if risk in SEMANTIC_OBLIGATIONS
-        }
+        obligations = required_semantic_obligations(review, row, repository_root)
         validate_independent_correctness_evidence(
             evidence,
             row,
@@ -1935,13 +2828,29 @@ def validate_evidence_stage(
         evidence = json.loads(
             (repository_root / row["performance_evidence_path"]).read_text()
         )
-        confirmed = evidence.get("pitbench_performance", {}).get(
-            "confirmed_classification"
-        )
-        if confirmed != "improved":
-            raise ValueError(f"{key} has no confirmed human performance gain")
+        task = yaml.safe_load((repository_root / row["task_config_path"]).read_text()) if row.get("task_config_path") else {}
+        if task.get("optimization_profile") is not None:
+            validate_objective_qualification_evidence(evidence, row, repository_root)
+            if stage == "task_ready":
+                if not row.get("integration_evidence_path"):
+                    raise ValueError(f"{key} objective-qualified task lacks real integration evidence")
+                integration = json.loads((repository_root / row["integration_evidence_path"]).read_text())
+                validate_task_integration_evidence(integration, row, repository_root)
+        else:
+            confirmed = evidence.get("pitbench_performance", {}).get("confirmed_classification")
+            if confirmed != "improved":
+                raise ValueError(f"{key} has no confirmed human performance gain")
     if stage == "task_ready":
         task = yaml.safe_load((repository_root / row["task_config_path"]).read_text())
+        if review is not None and review.get("schema_version") == 3 and task.get("optimization_profile") is None:
+            raise ValueError(f"{key} metadata candidate needs a frozen objective scoring contract")
+        if task.get("optimization_profile") is not None:
+            from pitbench.metrics.objective_qualification import objective_protocol_gaps
+            from pitbench.schema.task import PitBenchTask
+
+            gaps = objective_protocol_gaps(PitBenchTask.model_validate(task))
+            if gaps:
+                raise ValueError(f"{key} objective scoring remains pending: {gaps}")
         if (
             task.get("task_id") != row["task_id"]
             or task.get("release", {}).get("base_commit") != row["base_commit"]
@@ -1956,6 +2865,7 @@ def _ready_task_input_fingerprint(task: dict[str, Any]) -> str:
     identity = {
         "instruction": task.get("instruction"),
         "optimization_scope": task.get("optimization_scope"),
+        "optimization_profile": task.get("optimization_profile"),
         "task_type": task.get("task_type"),
         "problem_family": task.get("problem_family"),
         "problem_variant": task.get("problem_variant"),
@@ -1985,13 +2895,19 @@ def _ready_task_input_fingerprint(task: dict[str, Any]) -> str:
 
 
 def summarize_registry(
-    rows: list[dict[str, Any]], target: int, repository_root: Path | None = None
+    rows: list[dict[str, Any]],
+    target: int,
+    repository_root: Path | None = None,
+    *,
+    validate_evidence_files: bool = True,
 ) -> dict[str, Any]:
     keys = [candidate_key(row) for row in rows]
     if len(keys) != len(set(keys)):
         raise ValueError("duplicate PR in evidence registry")
     for row in rows:
-        validate_evidence_stage(row, repository_root)
+        validate_evidence_stage(
+            row, repository_root if validate_evidence_files else None
+        )
     counts = Counter(row["stage"] for row in rows)
     selection_counts = Counter(
         row.get("selection_decision", "unreviewed")
@@ -2246,7 +3162,9 @@ def verify_source_patch(
     audit_path: Path,
     intent_note: str,
 ) -> dict[str, Any]:
-    """Extract a source-only PR diff and compare its result with the PR head."""
+    """Extract a source-only PR diff and verify its integrated Git identity."""
+    git_environment = {**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": "", "GIT_TERMINAL_PROMPT": "0"}
+    git_warnings = []
     key = candidate_key(record)
     base, head = record.get("base_commit"), record.get("head_commit")
     if not base or not head or not editable_roots or not intent_note.strip():
@@ -2257,17 +3175,47 @@ def verify_source_patch(
         path = PurePosixPath(root)
         if root in {"", "."} or path.is_absolute() or ".." in path.parts:
             raise ValueError(f"invalid editable root for {key}: {root!r}")
-    for commit in (base, head):
+    merge = record.get("merge_commit")
+    for commit in (base, head, merge):
+        if not commit:
+            continue
         subprocess.run(
             ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
             cwd=repository_checkout,
             check=True,
             capture_output=True,
+            env=git_environment,
         )
+    target = head
+    integration_base = base
+    if merge:
+        commit_text = subprocess.check_output(
+            ["git", "cat-file", "-p", merge],
+            cwd=repository_checkout,
+            text=True,
+            env=git_environment,
+        )
+        parents = [
+            line[7:] for line in commit_text.splitlines() if line.startswith("parent ")
+        ]
+        if not parents:
+            raise ValueError(f"{key} merge commit has no parent")
+        integration_base = parents[0]
+        if (len(parents) == 2 and parents[1] != head) or len(parents) not in {1, 2}:
+            raise ValueError(f"{key} merge parents do not match pinned head")
+        if integration_base != base:
+            subprocess.run(
+                ["git", "cat-file", "-e", f"{integration_base}^{{commit}}"],
+                cwd=repository_checkout, check=True, capture_output=True,
+                env=git_environment,
+            )
+        else:
+            target = merge
     changed = subprocess.check_output(
-        ["git", "diff", "--name-only", base, head],
+        ["git", "diff", "--no-renames", "--name-only", base, target],
         cwd=repository_checkout,
         text=True,
+        env=git_environment,
     ).splitlines()
     source_files = [
         path
@@ -2277,18 +3225,52 @@ def verify_source_patch(
     if not source_files:
         raise ValueError(f"{key} has no changes inside the editable roots")
     patch = subprocess.check_output(
-        ["git", "diff", "--binary", base, head, "--", *editable_roots],
+        [
+            "git", "diff", "--no-renames", "--full-index", "--binary",
+            base, target, "--", *editable_roots,
+        ],
         cwd=repository_checkout,
+        env=git_environment,
     )
     if not patch:
         raise ValueError(f"{key} produced an empty source patch")
-    archive = subprocess.check_output(
-        ["git", "archive", "--format=tar", base], cwd=repository_checkout
-    )
+    if integration_base != base:
+        integrated_changed = subprocess.check_output(
+            ["git", "diff", "--no-renames", "--name-only", integration_base, merge],
+            cwd=repository_checkout, text=True,
+            env=git_environment,
+        ).splitlines()
+        if set(changed) != set(integrated_changed):
+            raise ValueError(f"{key} branch and integrated changed paths differ")
+        branch_full = _git_diff(repository_checkout, base, head)
+        integrated_full = _git_diff(repository_checkout, integration_base, merge)
+        if branch_full.returncode or integrated_full.returncode or branch_full.stdout != integrated_full.stdout:
+            raise ValueError(f"{key} branch and integrated source patches differ")
+    base_paths = [
+        path
+        for path in source_files
+        if subprocess.run(
+            ["git", "cat-file", "-e", f"{base}:{path}"],
+            cwd=repository_checkout,
+            check=False,
+            capture_output=True,
+            env=git_environment,
+        ).returncode
+        == 0
+    ]
     with tempfile.TemporaryDirectory(prefix="pitbench-pr-source-") as directory:
         workspace = Path(directory)
-        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as handle:
-            handle.extractall(workspace, filter="data")
+        if base_paths:
+            archive_result = subprocess.run(
+                ["git", "archive", "--format=tar", base, "--", *base_paths],
+                cwd=repository_checkout,
+                capture_output=True, check=True, env=git_environment,
+            )
+            archive = archive_result.stdout
+            if archive_result.stderr:
+                git_warnings.append(archive_result.stderr.decode(errors="replace"))
+            with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as handle:
+                handle.extractall(workspace, filter="data")
         candidate = workspace / "candidate.patch"
         candidate.write_bytes(patch)
         subprocess.run(
@@ -2305,10 +3287,11 @@ def verify_source_patch(
         )
         for path in source_files:
             expected = subprocess.run(
-                ["git", "show", f"{head}:{path}"],
+                ["git", "show", f"{target}:{path}"],
                 cwd=repository_checkout,
                 check=False,
                 capture_output=True,
+                env=git_environment,
             )
             actual = workspace / path
             if expected.returncode:
@@ -2318,12 +3301,21 @@ def verify_source_patch(
                 raise ValueError(f"{key} source bytes differ from PR head: {path}")
     patch_path.parent.mkdir(parents=True, exist_ok=True)
     patch_path.write_bytes(patch)
+    full = _git_diff(repository_checkout, integration_base, merge or target)
+    if full.returncode:
+        raise ValueError(f"{key} full integrated patch is unavailable")
+    full_path = patch_path.with_name(patch_path.stem + ".full.patch")
+    full_path.write_bytes(full.stdout)
     audit = {
         "repository": key[0],
         "pr_number": key[1],
         "pr_title": record.get("title"),
         "base_commit": base,
         "head_commit": head,
+        "integration_base_commit": integration_base,
+        "integrated_commit": merge or target,
+        "source_reference_commit": target,
+        "patch_range": f"{base}..{target}",
         "manual_intent_note": intent_note.strip(),
         "changed_source_files": source_files,
         "excluded_non_source_files": [
@@ -2331,7 +3323,16 @@ def verify_source_patch(
         ],
         "source_patch_path": str(patch_path),
         "source_patch_sha256": hashlib.sha256(patch).hexdigest(),
-        "source_verification": "standalone_patch_applies_and_source_bytes_match_pr_head",
+        "git_warnings": git_warnings,
+        "full_integrated_patch_path": str(full_path),
+        "full_integrated_patch_sha256": hashlib.sha256(full.stdout).hexdigest(),
+        "full_integrated_patch_base": integration_base,
+        "full_integrated_patch_head": merge or target,
+        "source_verification": (
+            "standalone_patch_applies_and_branch_matches_integrated_patch"
+            if integration_base != base else
+            "standalone_patch_applies_and_source_bytes_match_integrated_commit"
+        ),
         "build_status": "untested",
         "workload_exposure": "untested",
         "performance_status": "untested",
