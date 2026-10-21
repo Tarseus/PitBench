@@ -31,6 +31,24 @@ agent_tools: [inspect, workspace, bench]
 # switch only between outcome_only and solver_behavior.
 agent_feedback_mode: solver_behavior
 
+# Named wall-budget profiles live in configs/research/budgets.json.
+# Default: standard 4h; lite 1h; research 8h; smoke remains 300s.
+# Explicit track selection takes precedence over all per-task budget overrides.
+# research_track: standard
+# For calibration with concrete resource choices, omit research_track and set:
+# research_budget:
+#   track: standard
+#   wall_time_sec: 14400
+#   cpus: 4
+#   memory_gib: 16
+#   max_parallel_runs: 4
+#   development_cpu_time_sec: 14400  # 4 core-hours: a separate experiment scope
+#   checkpoints_sec: [1800, 3600, 7200, 14400]
+# CPU/memory values above are calibration examples, not frozen formal limits.
+# The container cap is applied, and total sandbox CPU is recorded. Experiment
+# CPU attribution, its cumulative cap and max_parallel_runs are not enforced yet.
+# Use --n-attempts 3 for the recommended independent formal-attempt count.
+
 tasks:
   pyvrp_v0_14_0:
     agent_image: ghcr.io/tarseus/pitbench-pyvrp@sha256:776623be0e47b5f907efc3855886b6cd635b6c09c17f2b8fd4c0597f2f74f445
@@ -64,7 +82,8 @@ agents:
     container_runner_image: python:3.13-slim-bookworm
     profile_path: null
     proxy_url: null
-    # Quota waits do not consume the task's active agent-time budget.
+    # Research tracks count quota waits inside their host wall deadline.
+    # These retry settings do not grant extra research time.
     quota_retries: 1
     quota_max_wait_sec: 7200
     quota_retry_buffer_sec: 5

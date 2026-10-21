@@ -1246,12 +1246,13 @@ rejections, Ruff and compilation were checked. No new test suite, solver run or
 Agent study was performed for this prototype. Earlier unit-test counts below
 refer to the source-recovery version.
 
-Both cases remain **draft**. By user instruction, total Agent research budgets
-remain undeclared; existing per-solve budgets and seeds are unchanged. Guided
+Both cases remain **draft**. They now declare the initial Standard wall-budget
+track below; existing per-solve budgets and seeds are unchanged. Guided
 context is withheld until its exact released text and source snapshots have
 reviewed time-bounded evidence. Three frozen private assets per case are absent;
 controlled structure and scale panels have not been bound. Container integration,
-host CPU accounting and budget enforcement are not validated. These drafts do
+trusted experiment CPU attribution and cumulative budget enforcement are not
+validated. These drafts do
 not add any `task_ready` tasks or establish a mathematical/performance result.
 
 The optional frozen-prediction track specifies an evaluator receipt before
@@ -1269,6 +1270,74 @@ evaluates stages of experimental research; and
 [FIRE-Bench](https://arxiv.org/html/2602.02905) studies independent rediscovery
 from high-level questions. RQ1–RQ3 in the protocol are proposed comparisons,
 not evidence that these components are individually new.
+
+### Agent research budgets
+
+The versioned [budget catalog](configs/research/budgets.json) declares three
+initial tracks. Standard is the default when a task has no explicit research
+budget; these initial values still need budget–performance calibration.
+
+| Track | Agent wall budget | Offline source checkpoints |
+| --- | ---: | --- |
+| Lite | 1 hour | 0.5h, 1h |
+| Standard | 4 hours | 0.5h, 1h, 2h, 4h |
+| Research | 8 hours | 0.5h, 1h, 2h, 4h, 8h |
+
+```bash
+pitbench evaluate TASK_ID --agent codex --research-track standard --n-attempts 3
+```
+
+This is a configuration example, not a completed research experiment. Explicit
+track selection chooses the catalog profile and takes precedence over budget
+overrides. For concrete calibration resources, omit `--research-track` and set
+`research_budget` globally or per task in the evaluation YAML, or in the task
+configuration. See [evaluate.example.yaml](config/evaluate.example.yaml). The
+precedence is explicit track, per-task evaluation budget, global evaluation
+budget, task budget, then catalog default. Changed wall times require `custom`.
+Smoke remains 300 seconds and setup remains 1800 seconds. Legacy materialized
+tasks retain their existing YAML until rematerialized.
+
+The host deadline includes ordinary model/API waiting, retries, compilation,
+profiling, generation, local verification and solver experiments. It overrides
+native client timeout defaults and grants no extra research time for quota
+backoffs. Fixed image/toolchain/dependency preparation occurs before that
+deadline. The final evaluator-owned hidden Judge runs afterwards and does not
+consume the Agent research budget. Retain quota/infrastructure failures rather
+than silently giving an agent more time.
+
+CPU and memory are separate resources. The suggested 4–8 vCPU and 16–32 GiB
+ranges remain calibration candidates, not frozen caps. Concrete `cpus` and
+`memory_gib` declarations are emitted as Docker Compose limits. Standard also
+records an initial **4 core-hour development-experiment** candidate: 14,400
+cumulative CPU seconds across processes and threads. Compilation CPU must not
+be charged to that experiment scope. Lite/Research experiment CPU allowances
+have not been chosen and are not automatically scaled from Standard.
+
+Host-owned traces now record whole-container Docker CPU deltas, sampled memory,
+the budget declaration, checkpoint target/observed times and retained source
+state IDs in `agent-trace/<execution-id>/`. `research-budget.json` records
+missing coverage. Whole-container CPU includes compilation and instrumentation;
+it excludes host/sidecar inference and cannot establish experiment CPU usage.
+**Separate experiment CPU attribution, cumulative CPU enforcement and the
+declared parallel-run cap remain unimplemented.** Doctor reports this limitation;
+a named wall track alone is not a validated formal resource comparison. Real
+Docker enforcement and checkpoint timing have not been validated in this pilot.
+
+Retain native provider usage/request evidence and AgentResult token/cost data;
+missing request counts and cost provenance must stay explicit. Billed costs and
+price-snapshot estimates are different observations; no dollar cap is implied.
+The existing relay request/token limits remain separately configured and must
+be reported. Recommended formal experiments use at least three independent
+Agent attempts per task and track, retaining every failure and separating Agent
+randomness from the frozen solver seeds. The CLI retains one attempt unless
+`--n-attempts` is supplied; it does not silently launch the full matrix.
+
+Checkpoints reuse content-addressed repository tracing, report capture lateness
+and non-atomic observations, and receive no hidden feedback. They describe a
+run's trajectory: an 8h agent at 4h is not an independent 4h agent. Compare the
+three tracks with independent runs. The proposed next calibration covers 6–10
+representative cases across five solvers after prerequisites are satisfied;
+no 1h/4h/8h Agent calibration has been run here.
 
 ---
 

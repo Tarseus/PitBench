@@ -10,10 +10,26 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 class ResearchBudget(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
+    track: Literal["lite", "standard", "research", "custom"] = "custom"
     wall_time_sec: float = Field(gt=0)
-    cpu_time_sec: float = Field(gt=0)
-    max_parallel_runs: int = Field(gt=0)
+    # Total sandbox CPU and development-experiment CPU are different scopes.
+    cpu_time_sec: float | None = Field(default=None, gt=0)
+    development_cpu_time_sec: float | None = Field(default=None, gt=0)
+    cpus: float | None = Field(default=None, gt=0)
+    memory_gib: float | None = Field(default=None, gt=0)
+    max_parallel_runs: int | None = Field(default=None, gt=0)
     model_token_limit: int | None = Field(default=None, gt=0)
+    checkpoints_sec: list[float] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_checkpoints(self):
+        if any(not 0 < point <= self.wall_time_sec for point in self.checkpoints_sec):
+            raise ValueError(
+                "checkpoints must be positive and within the research budget"
+            )
+        if self.checkpoints_sec != sorted(set(self.checkpoints_sec)):
+            raise ValueError("research checkpoints must be unique and increasing")
+        return self
 
 
 class GeneratorCapability(BaseModel):

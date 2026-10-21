@@ -60,6 +60,15 @@ class BaseAgent(ABC):
         self._trace_cancelled = threading.Event()
         self._trace_session = None
 
+    def set_execution_timeout(self, timeout_sec: float) -> None:
+        """Propagate the host budget to native clients with an inner timeout."""
+        if hasattr(self, "_timeout_sec"):
+            self._timeout_sec = timeout_sec
+        self._trace_configuration = {
+            **getattr(self, "_trace_configuration", {}),
+            "effective_host_timeout_sec": timeout_sec,
+        }
+
     def execute_task(
         self,
         *,
@@ -176,7 +185,16 @@ class BaseAgent(ABC):
                         or result.failure_mode != FailureMode.NONE
                         else "completed",
                     )
+                except BaseException as collection_error:
+                    error = error or collection_error
+                    raise
                 finally:
+                    try:
+                        trace.record_research_summary(result=result, error=error)
+                    except Exception:
+                        logging.getLogger(__name__).exception(
+                            "Research budget report failed: %s", trace.path
+                        )
                     session._agent_trace = None
                     session._trace_cancelled = None
                     self._trace_session = None

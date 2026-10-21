@@ -25,6 +25,8 @@ from pitbench.agent_tools import (
 )
 from pitbench.instances import materialize_instance_set
 from pitbench.repositories.base import RepositoryPluginRegistry
+from pitbench.research import resolve_research_budget
+from pitbench.schema.research import ResearchBudget
 from pitbench.schema.task import InstanceSetKind, PerformanceProtocol, PitBenchTask
 from pitbench.tasks import TaskCatalog
 
@@ -90,11 +92,19 @@ class PitBenchAdapter:
         smoke_test: bool = False,
         agent_tools: Iterable[AgentTool | str] = (),
         agent_feedback_mode: str = "solver_behavior",
+        research_track: str | None = None,
+        research_budget: ResearchBudget | None = None,
     ) -> Path:
         if agent_feedback_mode not in {"outcome_only", "solver_behavior"}:
             raise ValueError("unknown agent feedback mode")
         record = self.catalog.validate_one(task_id)
         task = record.task
+        budget = resolve_research_budget(
+            self.repository_root,
+            track=research_track,
+            configured=research_budget or task.research_budget,
+            smoke_test=smoke_test,
+        )
         tools = normalize_agent_tools(agent_tools)
         task_dir = destination.resolve()
         if task_dir.exists():
@@ -139,6 +149,7 @@ class PitBenchAdapter:
             use_base_cache=use_base_cache,
             smoke_test=smoke_test,
             agent_tools=tools,
+            research_budget=budget,
         )
         if tools:
             write_agent_tooling(
@@ -164,7 +175,9 @@ class PitBenchAdapter:
             (task_dir / ".dockerignore").write_text(
                 self._dockerignore(tools, submodule_paths, module_metadata)
             )
-        (task_dir / "docker-compose.yaml").write_text(self._compose(tools))
+        (task_dir / "docker-compose.yaml").write_text(
+            self._compose(tools, research_budget=budget)
+        )
         if prepared_image is not None:
             digest = image_context_digest(task_dir)
             with (task_dir / "Dockerfile").open("a") as dockerfile:
@@ -418,8 +431,22 @@ class PitBenchAdapter:
         use_base_cache: bool = False,
         smoke_test: bool = False,
         agent_tools: frozenset[AgentTool] = frozenset(),
+        research_budget: ResearchBudget | None = None,
     ) -> None:
+        budget = research_budget or resolve_research_budget(
+            self.repository_root,
+            configured=task.research_budget,
+            smoke_test=smoke_test,
+        )
         instruction = self._format_instruction(task, agent_tools=agent_tools)
+        instruction += (
+            "\n\n### Agent Research Budget\n"
+            f"- Track: {budget.track}; total wall time: {budget.wall_time_sec:g} seconds.\n"
+            "- Model waits, compilation, local validation and experiments count. "
+            "Fixed environment preparation and final hidden Judge are separate.\n"
+            "- Intermediate source checkpoints receive no hidden feedback.\n"
+            f"- Resource declaration: {budget.model_dump_json()}"
+        )
         payload = {
             "instruction": instruction,
             "author_name": "PitBench",
@@ -434,7 +461,8 @@ class PitBenchAdapter:
                 "private_root": str(self.private_root),
                 "use_base_cache": use_base_cache,
             },
-            "max_agent_timeout_sec": 300 if smoke_test else 3600,
+            "max_agent_timeout_sec": budget.wall_time_sec,
+            "research_budget": budget.model_dump(mode="json"),
             "max_setup_timeout_sec": 1800,
         }
         if judge_image is not None:
@@ -688,7 +716,19 @@ USER pitbench-agent
         return "\n".join(paths) + "\n"
 
     @staticmethod
-    def _compose(agent_tools: Iterable[AgentTool | str] = ()) -> str:
+    def _compose(
+        agent_tools: Iterable[AgentTool | str] = (),
+        *,
+        research_budget: ResearchBudget | None = None,
+    ) -> str:
+        resources = ""
+        if research_budget is not None:
+            if research_budget.cpus is not None:
+                resources += f"    cpus: {research_budget.cpus}\n"
+            if research_budget.memory_gib is not None:
+                resources += (
+                    f"    mem_limit: {int(research_budget.memory_gib * 1024**3)}\n"
+                )
         runs_environment = (
             '      PITBENCH_RUNS: "/pitbench/runs"\n'
             if needs_run_directory(agent_tools)
@@ -704,7 +744,7 @@ USER pitbench-agent
         PITBENCH_AGENT_GID: ${{T_BENCH_AGENT_GID:-1000}}
     image: ${{T_BENCH_TASK_DOCKER_CLIENT_IMAGE_NAME}}
     container_name: ${{T_BENCH_TASK_DOCKER_CLIENT_CONTAINER_NAME}}
-    network_mode: none
+{resources}    network_mode: none
     security_opt:
       - no-new-privileges:true
     command: ["sh", "-c", "sleep infinity"]

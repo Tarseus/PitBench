@@ -16,7 +16,7 @@ from pitbench.instances.generate import (
     materialize_generated_instance_set,
     materialize_instance_set,
 )
-from pitbench.schema.research import ResearchCasePlan
+from pitbench.schema.research import ResearchBudget, ResearchCasePlan
 from pitbench.schema.task import InstanceSetKind, PitBenchTask
 
 
@@ -36,6 +36,50 @@ def _public_asset(root: Path, value: str) -> Path:
     if not candidate.is_relative_to(root.resolve()):
         raise ValueError("public research asset escapes repository root")
     return candidate
+
+
+def resolve_research_budget(
+    root: Path,
+    *,
+    track: str | None = None,
+    configured: ResearchBudget | None = None,
+    smoke_test: bool = False,
+) -> ResearchBudget:
+    """Resolve a named wall budget without inventing unresolved resource caps."""
+    catalog = json.loads((root / "configs/research/budgets.json").read_text())
+    if catalog.get("schema_version") != "1.0":
+        raise ValueError("unsupported research budget catalog")
+    if smoke_test:
+        return ResearchBudget(wall_time_sec=catalog["smoke_wall_time_sec"])
+    if track is not None:
+        if track not in catalog["tracks"]:
+            raise ValueError(f"unknown research track: {track}")
+        # Explicit track selection chooses its full profile; do not silently
+        # inherit resource overrides from a different track.
+        return ResearchBudget.model_validate(catalog["tracks"][track])
+    budget = configured or ResearchBudget.model_validate(
+        catalog["tracks"][catalog["default_track"]]
+    )
+    if budget.track != "custom":
+        expected = catalog["tracks"].get(budget.track)
+        if expected is None or budget.wall_time_sec != expected["wall_time_sec"]:
+            raise ValueError("named track wall time differs; use a custom budget")
+    return budget
+
+
+def research_budget_gaps(budget: ResearchBudget | None) -> list[str]:
+    if budget is None:
+        return ["research_budget_not_declared"]
+    return [
+        f"research_{key}_not_declared"
+        for key in (
+            "cpus",
+            "memory_gib",
+            "max_parallel_runs",
+            "development_cpu_time_sec",
+        )
+        if getattr(budget, key) is None
+    ]
 
 
 def construct_research_case(
@@ -171,9 +215,7 @@ def _construct_research_case(
             path = _public_asset(root, "private/" + uri.removeprefix("private://"))
             if not path.is_file() or (expected and _sha(path) != expected):
                 private_missing.append(uri)
-    gaps = []
-    if plan.research_budget is None:
-        gaps.append("research_budget_not_declared")
+    gaps = research_budget_gaps(plan.research_budget)
     if "full_integrated" not in patches:
         gaps.append("complete_human_patch_missing")
     if private_missing:

@@ -644,6 +644,12 @@ def evaluate_task(
     n_attempts: Annotated[
         int, typer.Option(min=1, help="Attempts for the selected task")
     ] = 1,
+    research_track: Annotated[
+        str | None,
+        typer.Option(
+            "--research-track", help="Agent wall-budget track: lite, standard, research"
+        ),
+    ] = None,
     agent_kwargs: Annotated[
         list[str],
         typer.Option(
@@ -712,6 +718,12 @@ def evaluate_task(
         if resolved_config_path is not None
         else EvaluationConfig()
     )
+    if research_track is not None:
+        if research_track not in {"lite", "standard", "research"}:
+            raise typer.BadParameter(
+                "expected lite, standard or research", param_hint="--research-track"
+            )
+        evaluation_config.research_track = research_track
     if resolved_config_path is not None:
         typer.echo(f"Loaded evaluation config {resolved_config_path}")
     else:
@@ -821,6 +833,15 @@ def evaluate_task(
             "agent_tools": evaluation_config.agent_tools,
             "agent_feedback_mode": evaluation_config.agent_feedback_mode,
         }
+        if effective_config.research_track is not None:
+            materialize_kwargs["research_track"] = effective_config.research_track
+        elif (
+            resources.research_budget is not None
+            or effective_config.research_budget is not None
+        ):
+            materialize_kwargs["research_budget"] = (
+                resources.research_budget or effective_config.research_budget
+            )
         judge_cpus_val = resources.judge_cpus or effective_config.judge_cpus
         if judge_cpus_val is not None:
             materialize_kwargs["judge_cpus"] = judge_cpus_val

@@ -9,6 +9,7 @@ import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from pitbench.schema.objectives import OptimizationProfile
+from pitbench.schema.research import ResearchBudget
 
 
 class TaskType(str, Enum):
@@ -317,6 +318,7 @@ class PitBenchTask(BaseModel):
     formulation_id: str | None = None
     optimization_scope: str
     optimization_profile: OptimizationProfile | None = None
+    research_budget: ResearchBudget | None = None
     instruction: str
     repository: RepositorySpec
     oracle: OracleReference

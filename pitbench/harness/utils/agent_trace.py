@@ -106,6 +106,14 @@ class AgentTrace:
         self._transcript_results: set[tuple] = set()
         self.native_inbox = self.root / "native-inbox"
         self.native_inbox.mkdir(mode=0o700)
+        self._research_budget = self.context.get("research_budget")
+        self._research_cpu_start: int | None = None
+        self._research_cpu_sec: float | None = None
+        self._research_memory_bytes: int | None = None
+        self._research_checkpoints: set[float] = set()
+        self._research_stats_available = False
+        self._research_cpu_baseline_elapsed_sec: float | None = None
+        self._research_stats_errors = 0
 
     @property
     def latest_state_id(self) -> str | None:
@@ -651,6 +659,96 @@ class AgentTrace:
                 return None
             return state_id
 
+    def collect_research_resources(self) -> None:
+        """Host-owned whole-container counters; never infer experiment CPU."""
+        if not self._research_budget:
+            return
+        elapsed = time.monotonic() - self._started
+        try:
+            sample = self._container.stats(stream=False, one_shot=True)
+            total_ns = sample["cpu_stats"]["cpu_usage"]["total_usage"]
+            if type(total_ns) is not int or total_ns < 0:
+                raise ValueError("invalid Docker CPU counter")
+            if self._research_cpu_start is None:
+                self._research_cpu_start = total_ns
+                self._research_cpu_baseline_elapsed_sec = time.monotonic() - self._started
+            if total_ns < self._research_cpu_start:
+                raise ValueError("Docker CPU counter moved backwards")
+            self._research_cpu_sec = (total_ns - self._research_cpu_start) / 1e9
+            memory = sample.get("memory_stats", {}).get("usage")
+            if type(memory) is int and memory >= 0:
+                self._research_memory_bytes = max(
+                    self._research_memory_bytes or 0, memory
+                )
+            self._research_stats_available = True
+            self.record(
+                "research.resources",
+                elapsed_sec=elapsed,
+                sandbox_cpu_sec=self._research_cpu_sec,
+                sandbox_memory_bytes=memory,
+                source="Docker daemon cumulative CPU delta; sampled memory",
+            )
+        except Exception as error:
+            self._research_stats_errors += 1
+            self._gap("research.resource_accounting", error)
+        for target in self._research_budget.get("checkpoints_sec", []):
+            if target in self._research_checkpoints or elapsed < target:
+                continue
+            state = self.checkpoint("research_budget_checkpoint")
+            observed = time.monotonic() - self._started
+            self.record(
+                "research.checkpoint",
+                target_elapsed_sec=target,
+                observed_elapsed_sec=observed,
+                capture_lateness_sec=observed - target,
+                state_id=state,
+                status="captured" if state else "capture_failed",
+                consistency="non_atomic_observation_at_observed_time",
+                hidden_feedback=False,
+            )
+            self._research_checkpoints.add(target)
+
+    def record_research_summary(self, *, result=None, error=None) -> None:
+        if not self._research_budget:
+            return
+        summary = {
+            "budget": self._research_budget,
+            "observed_wall_time_sec": time.monotonic() - self._started,
+            "sandbox_cpu_time_sec": self._research_cpu_sec,
+            "sampled_sandbox_memory_max_bytes": self._research_memory_bytes,
+            "stats_available": self._research_stats_available,
+            "stats_collection_errors": self._research_stats_errors,
+            "cpu_baseline_elapsed_sec": self._research_cpu_baseline_elapsed_sec,
+            "development_experiment_cpu_time_sec": None,
+            "compile_cpu_time_sec": None,
+            "model_host_or_sidecar_cpu_time_sec": None,
+            "resource_enforcement": {
+                "wall_time": "harness_deadline",
+                "cpus_and_memory": "container_configuration_when_declared",
+                "total_cpu_time": "recorded_not_enforced",
+                "development_cpu_time": "requires_trusted_experiment_accounting",
+                "max_parallel_runs": "not_enforced_by_trace",
+            },
+            "llm_usage": {
+                "input_tokens": getattr(result, "total_input_tokens", None),
+                "output_tokens": getattr(result, "total_output_tokens", None),
+                "reported_cost_usd": getattr(result, "total_cost", None),
+                "requests": None,
+                "coverage": "AgentResult and retained provider evidence; defaults are not independent usage verification",
+            },
+            "unreached_checkpoints_sec": [
+                point
+                for point in self._research_budget.get("checkpoints_sec", [])
+                if point not in self._research_checkpoints
+            ],
+            "missing_checkpoint_reason": "execution_ended_before_successful_scheduled_collection",
+            "error": str(error) if error else None,
+            "hidden_judge_included": False,
+        }
+        path = self.root / "research-budget.json"
+        path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+        self.record("research.budget_summary", summary=summary)
+
     def collect_files(self) -> None:
         with self._source_lock:
             self._collect_files()
@@ -725,6 +823,7 @@ class AgentTrace:
         self._container, self._workdir = container, workdir
         self._sources = dict(sources)
         self._remote_sources = remote_sources
+        self.collect_research_resources()
         self.checkpoint("initial")
         self.start_filesystem_journal()
 
@@ -734,6 +833,7 @@ class AgentTrace:
                 try:
                     self.collect_files()
                     if time.monotonic() >= next_snapshot:
+                        self.collect_research_resources()
                         self.harvest_recorder()
                         self.harvest_recorder(native=False)
                         self.checkpoint("sampled")
@@ -820,6 +920,7 @@ class AgentTrace:
         self.collect_remote_files()
         self._record_local_artifacts()
         self._record_filesystem_activity()
+        self.collect_research_resources()
         shutil.rmtree(self.native_inbox, ignore_errors=True)
 
     def close(self) -> None:

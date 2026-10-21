@@ -7,6 +7,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from pitbench.agent_tools import AgentTool
+from pitbench.schema.research import ResearchBudget
 
 ConfigValue: TypeAlias = str | int | float | bool | None
 
@@ -29,6 +30,7 @@ class TaskResources(BaseModel):
     judge_memory: str | None = None
     judge_parallel_runs: int | None = None
     base_observations_path: Path | None = None
+    research_budget: ResearchBudget | None = None
 
 
 class SolverImageBuildConfig(BaseModel):
@@ -79,6 +81,8 @@ class EvaluationConfig(BaseModel):
     judge_memory: str | None = None
     judge_parallel_runs: int | None = None
     base_cache: bool = False
+    research_track: Literal["lite", "standard", "research"] | None = None
+    research_budget: ResearchBudget | None = None
 
     @classmethod
     def from_yaml(cls, path: Path) -> EvaluationConfig:

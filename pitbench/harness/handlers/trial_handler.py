@@ -6,6 +6,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from pitbench.harness.utils.logger import logger
+from pitbench.schema.research import ResearchBudget
 
 
 class TaskDifficulty(str, Enum):
@@ -49,6 +50,7 @@ class Task(BaseModel):
     max_setup_timeout_sec: float = Field(
         default=600.0, description="Maximum timeout in seconds for the setup script"
     )
+    research_budget: ResearchBudget | None = None
     disable_asciinema: bool = Field(
         default=False,
         description="Disable asciinema recording for this task while keeping Docker "

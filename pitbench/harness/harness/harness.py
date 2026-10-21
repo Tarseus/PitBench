@@ -1113,6 +1113,11 @@ class Harness:
                             "run_id": self._run_id,
                             "task_id": trial_handler.task_id,
                             "trial_name": trial_handler.trial_name,
+                            "research_budget": trial_handler.task.research_budget.model_dump(
+                                mode="json"
+                            )
+                            if getattr(trial_handler.task, "research_budget", None)
+                            else None,
                         },
                         portkey_metadata=portkey_metadata,
                         portkey_trace_id=portkey_trace_id,
@@ -1188,7 +1193,18 @@ class Harness:
                 trial_handler.task.max_agent_timeout_sec
                 * self._global_timeout_multiplier
             )
-        wall_timeout_sec = agent.wall_timeout_sec(agent_timeout_sec)
+        budget = getattr(trial_handler.task, "research_budget", None)
+        if budget is not None:
+            if agent_timeout_sec != budget.wall_time_sec:
+                raise ValueError(
+                    "global timeout overrides cannot relabel a research track"
+                )
+            # One host deadline includes normal waits and quota backoffs. Native
+            # clients must also receive the selected timeout instead of 3500s.
+            agent.set_execution_timeout(agent_timeout_sec)
+            wall_timeout_sec = agent_timeout_sec
+        else:
+            wall_timeout_sec = agent.wall_timeout_sec(agent_timeout_sec)
 
         try:
             result = asyncio.run(

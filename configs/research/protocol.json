@@ -23,10 +23,12 @@
     "custom_instances": "A generated instance does not automatically have a trusted optimum or BKS. Feasibility checks alone do not verify valid bounds, optimality or infeasibility."
   },
   "research_budget": {
-    "status": "not_declared",
-    "required_before_agent_execution": ["wall_time_sec", "cpu_time_sec", "max_parallel_runs"],
+    "status": "wall_tracks_declared_resources_pending_calibration",
+    "budget_catalog": "configs/research/budgets.json",
+    "default_track": "standard",
+    "required_before_formal_resource_comparison": ["wall_time_sec", "cpus", "memory_gib", "development_cpu_time_sec", "max_parallel_runs", "hardware_identity", "trusted_accounting_and_enforcement"],
     "additional_accounting": ["model_tokens_and_calls", "generation", "builds", "profiling", "solver_runs", "failed_runs"],
-    "enforcement": "An evaluator-owned runtime must account for CPU across all parallel processes and enforce the declared limits. Agent-written ledgers and materialization helpers do not enforce a compute budget.",
+    "enforcement": "The harness enforces the chosen wall deadline, including model waits and quota retries; setup and final hidden Judge are outside it. Container CPU/memory controls are emitted only when explicitly declared. Whole-container CPU deltas are not development-experiment CPU: trusted attribution and cumulative experiment CPU enforcement remain incomplete. Missing counters are not zeros. Agent-written ledgers do not enforce a compute budget.",
     "solver_budgets": "The pilot inherits each existing task's exact frozen solver budgets, seeds, objective semantics and verifier. These do not define the total Agent research budget."
   },
   "falsifiable_prediction_track": {

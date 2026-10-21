@@ -37,6 +37,7 @@ from pitbench.harness.agents.containers import (
 )
 from pitbench.harness.agents.profiles import CodexProfile
 from pitbench.repositories.base import RepositoryPluginRegistry
+from pitbench.research import research_budget_gaps, resolve_research_budget
 from pitbench.schema.task import PitBenchTask
 from pitbench.tasks import TaskCatalog, TaskRecord
 
@@ -1384,6 +1385,29 @@ def evaluation_checks(
                 _reliability_plan_check(context),
                 _pinned_source_check(context, source_cache),
             ]
+            try:
+                resources = config.resources_for(task_id)
+                budget = resolve_research_budget(
+                    repository_root,
+                    track=config.research_track,
+                    configured=resources.research_budget
+                    or config.research_budget
+                    or record.task.research_budget,
+                )
+                gaps = research_budget_gaps(budget)
+                task_checks.append(
+                    _check(
+                        CheckStatus.WARN,
+                        "research budget",
+                        f"track={budget.track}; wall={budget.wall_time_sec:g}s; "
+                        f"resource gaps={gaps}; experiment CPU attribution/enforcement is not implemented; "
+                        "calibration configuration, not a validated formal resource comparison",
+                    )
+                )
+            except ValueError as error:
+                task_checks.append(
+                    _check(CheckStatus.FAIL, "research budget", str(error))
+                )
             task_checks.extend(_image_checks(context, client, runtime_cache)[0])
             protocol = record.task.evaluation
             task_checks.append(

@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "status": "initial_tracks_pending_resource_calibration",
+  "default_track": "standard",
+  "smoke_wall_time_sec": 300,
+  "tracks": {
+    "lite": {"track": "lite", "wall_time_sec": 3600, "checkpoints_sec": [1800, 3600]},
+    "standard": {"track": "standard", "wall_time_sec": 14400, "development_cpu_time_sec": 14400, "checkpoints_sec": [1800, 3600, 7200, 14400]},
+    "research": {"track": "research", "wall_time_sec": 28800, "checkpoints_sec": [1800, 3600, 7200, 14400, 28800]}
+  },
+  "calibration_candidates": {
+    "cpus": [4, 8],
+    "memory_gib": [16, 32],
+    "standard_development_cpu_core_hours": 4,
+    "development_cpu_status": "initial_candidate_requires_calibration_and_trusted_experiment_accounting",
+    "lite_and_research_development_cpu_budgets": "not_declared_no_automatic_linear_scaling",
+    "required_before_formal_resource_comparison": ["exact_cpu_and_hardware", "exact_memory_gib", "max_parallel_runs", "trusted_development_cpu_enforcement", "model_and_scaffold_identity"]
+  },
+  "accounting": {
+    "clock": "Host monotonic wall clock, from Agent execution entry to termination. Count model waits, ordinary API retries, compilation, generation, profiling, local checks and experiments. No quota-wait extension in these tracks.",
+    "excluded": ["fixed_image_toolchain_and_dependency_preparation", "final_evaluator_owned_hidden_judge"],
+    "cpu": "One core-hour is 3600 cumulative CPU seconds, summed over processes and threads. cpu_time_sec is optional total sandbox CPU; development_cpu_time_sec is a separate experiment scope and must not be enforced by charging compilation to that scope.",
+    "coverage": "Whole-container Docker CPU deltas include sandbox command and instrumentation CPU, excluding setup via a start baseline. Host/sidecar model inference, compiler/experiment attribution and request counts need separate trusted collectors; missing coverage stays explicit.",
+    "llm": "Record provider/model revision, input/output/cached/reasoning tokens where available, requests, failures and model latency. Distinguish billed cost from estimates with price snapshot and currency. Dollars are not a default hard cap.",
+    "quota_failures": "Retain provider quota and infrastructure failures. Any future pause policy requires a common preregistered rule and evaluator timestamps; never silently extend a track."
+  },
+  "attempts": {"formal_recommended_minimum": 3, "aggregation": "Report independent attempts and Agent randomness separately from solver seeds; no best-of-three selection for the primary result."},
+  "checkpoints": {
+    "owner": "evaluator",
+    "feedback": "Offline hidden scoring only, with no hidden feedback during research.",
+    "capture": "Reuse host-owned content-addressed repository traces. Record target and observed times, lateness, failed captures, early exits and non-atomic working-tree observations. Do not infer an exact historical state from a later snapshot.",
+    "interpretation": "An 8h run at 4h is a longitudinal observation, not an independently budgeted 4h attempt. Run tracks independently for the budget comparison."
+  },
+  "calibration_plan": {
+    "status": "not_run",
+    "target_cases": "6-10 representative source-bound cases across five solvers, after their correctness and runtime prerequisites are met",
+    "tracks": ["lite", "standard", "research"],
+    "measurements": ["verified_hidden_gain", "valid_patch_rate", "compile_time", "experimental_cpu", "total_sandbox_cpu", "model_usage_and_cost", "checkpoint_missingness", "operational_failures"],
+    "freeze": "Calibrate resource limits on pilot cases before freezing a formal comparison matrix; retain existing per-solve metric definitions, budgets, seeds and degradation rules."
+  },
+  "sources": [
+    {"name": "FormulaCode B.5", "url": "https://arxiv.org/html/2603.16011v3", "note": "Six-hour cap; reported average 38 minutes. This does not establish PitBench's optimal budget."},
+    {"name": "ALE-Bench C.3", "url": "https://arxiv.org/html/2506.09050v2", "note": "Iterative refinement uses four hours or original contest duration, whichever is shorter."},
+    {"name": "RE-Bench", "url": "https://arxiv.org/abs/2411.15114", "note": "2/8/32 total-hour comparisons include best-of-k allocation across attempts; they are not all single continuous runs."},
+    {"name": "MLE-bench official benchmarking protocol", "url": "https://github.com/openai/mle-bench#benchmarking", "note": "Recommends 24 hours and at least three seeds; hardware recommendations differ from PitBench."}
+  ]
+}
