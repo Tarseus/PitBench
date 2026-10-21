@@ -1,0 +1,142 @@
+{
+  "kind": "research_pilot_construction_receipt",
+  "cases": [
+    {
+      "case_id": "cvrp_research_001",
+      "repository": "PyVRP/PyVRP",
+      "pr_number": 701,
+      "private_assets_missing": 3,
+      "status": "draft",
+      "agent_views": {
+        "guided": {
+          "sha256": "22e20aa3bf5cfaf11f7c36744651e9f9546cdd242647c35f6c3b6abebdd73b3f",
+          "readiness_gaps": [
+            "research_budget_not_declared",
+            "frozen_private_assets_unavailable",
+            "controlled_structure_and_scale_panels_not_bound",
+            "research_runtime_not_validated",
+            "research_budget_enforcement_not_validated",
+            "pre_solution_guided_context_not_verified"
+          ]
+        },
+        "open_ended": {
+          "sha256": "dc64a093e710732d96ec1c96439a02e4d838f7776a5ca73bcc61e5d32a7cd0d5",
+          "readiness_gaps": [
+            "research_budget_not_declared",
+            "frozen_private_assets_unavailable",
+            "controlled_structure_and_scale_panels_not_bound",
+            "research_runtime_not_validated",
+            "research_budget_enforcement_not_validated"
+          ]
+        }
+      },
+      "historical_request_sha256": "0a65ff8af6843515e4b56efdf0bd231f69c2eb9705e781f079010dcd37eade5f",
+      "patches": {
+        "full_integrated": {
+          "path": "human_reference/full_integrated.patch",
+          "sha256": "70a3064f282a9b3666f75865378aceceea330990e9ad228ed8ba7c6435a187f4"
+        },
+        "solver_source": {
+          "path": "human_reference/solver_source.patch",
+          "sha256": "70a3064f282a9b3666f75865378aceceea330990e9ad228ed8ba7c6435a187f4"
+        }
+      }
+    },
+    {
+      "case_id": "mip_research_001",
+      "repository": "ERGO-Code/HiGHS",
+      "pr_number": 577,
+      "private_assets_missing": 3,
+      "status": "draft",
+      "agent_views": {
+        "guided": {
+          "sha256": "701b967df8189884c00e0d0a98eac903f509f26a3b01d544d046b1814620688c",
+          "readiness_gaps": [
+            "research_budget_not_declared",
+            "frozen_private_assets_unavailable",
+            "controlled_structure_and_scale_panels_not_bound",
+            "research_runtime_not_validated",
+            "research_budget_enforcement_not_validated",
+            "pre_solution_guided_context_not_verified"
+          ]
+        },
+        "open_ended": {
+          "sha256": "be3857383df79e545ced3f9c65d5b0388d57dee458391d98afb297e464cf3bf2",
+          "readiness_gaps": [
+            "research_budget_not_declared",
+            "frozen_private_assets_unavailable",
+            "controlled_structure_and_scale_panels_not_bound",
+            "research_runtime_not_validated",
+            "research_budget_enforcement_not_validated"
+          ]
+        }
+      },
+      "historical_request_sha256": "6d8fa19ed2d08b712e4aaad97de0f8611d59f0fbebbb7d50a923e6a19c344ccc",
+      "patches": {
+        "full_integrated": {
+          "path": "human_reference/full_integrated.patch",
+          "sha256": "832e654de049de98e8b758fcd51a7258e0689d1f08a4b1753d52271aee1c17ae"
+        },
+        "solver_source": {
+          "path": "human_reference/solver_source.patch",
+          "sha256": "832e654de049de98e8b758fcd51a7258e0689d1f08a4b1753d52271aee1c17ae"
+        }
+      }
+    }
+  ],
+  "guidance_views": 4,
+  "public_development_panels": 4,
+  "public_archive_files": 78,
+  "experiments": [
+    {
+      "experiment": "cvrp_uniform",
+      "instances": 3,
+      "solver_runs": 0
+    },
+    {
+      "experiment": "cvrp_clustered",
+      "instances": 3,
+      "solver_runs": 0
+    },
+    {
+      "experiment": "cvrp_larger",
+      "instances": 3,
+      "solver_runs": 0
+    },
+    {
+      "experiment": "mip_scheduling",
+      "instances": 3,
+      "solver_runs": 0
+    },
+    {
+      "experiment": "mip_knapsack",
+      "instances": 3,
+      "solver_runs": 0
+    }
+  ],
+  "generated_instances": 15,
+  "rejected_inputs": [
+    "hidden_visibility",
+    "undeclared_parameter",
+    "selection_arm",
+    "duplicate_case_id",
+    "tampered_source_hash_without_partial_publication"
+  ],
+  "solver_runs": 0,
+  "agent_runs": 0,
+  "new_task_ready": 0,
+  "research_budget": "pending_by_user_instruction",
+  "claim_boundary": "Real source-bound case construction, generator execution and artifact checks only. No solver correctness, optimization gain, research-runtime isolation or methodological novelty experiment was run.",
+  "protocol_sha256": "79ac7356615fe0f65dca83d3edb100cc331b8c9d25924c176b7cb8693f884a24",
+  "pilot_plan_sha256": "665255dc27d1529c1f6ae5feeeeb571767d29b7931873095b9800edcc5077f6e",
+  "static_checks": {
+    "ruff": "passed",
+    "syntax_compilation": "passed",
+    "new_test_suite_run": false
+  },
+  "curation_export": {
+    "kind": "research_case_requests",
+    "prepared": 2,
+    "real_cli_executed": true
+  }
+}

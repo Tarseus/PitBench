@@ -1196,6 +1196,82 @@ observations are excluded from performance, resource, and seed-IQR aggregation.
 
 ---
 
+## Research Case pilot — draft protocol
+
+The [research protocol](configs/research/protocol.json) proposes three linked
+experiments: construct solver research questions from historical evidence, let
+agents select or construct development experiments, and evaluate improvements
+by unseen instance condition and solve budget. This is a methodological pilot;
+the proposed contribution has not been demonstrated by an Agent study.
+
+The [pilot plan](configs/research/pilot.json) binds PyVRP PR #701 and HiGHS PR #577
+to their existing frozen tasks. Each case has separate Guided and Open-ended
+public projections, counted as two conditions of one source case. An explicit
+allowlist excludes the original mechanism-bearing task instructions, PR text,
+Head/merge identity, human patches and hidden evaluation configuration. Complete
+human patches are retained with hashes under `evaluator_only/`. Mount only the
+selected `agent/<mode>/` directory into a future research runtime.
+
+To prepare historical construction inputs in the standalone curation project:
+
+```bash
+pitbench-curation export --database PATH_TO_PREPARED_DATABASE \
+  --kind research --output-dir PATH_TO_RESEARCH_EXPORT
+```
+
+Set each plan's `historical_request` and `historical_bundle_root` to that
+export. The checked-in plan records the local pilot paths; neither those
+generated exports nor private Judge assets are part of the Git checkout.
+
+```bash
+python -m scripts.prepare_research_cases construct \
+  --plan configs/research/pilot.json --root . --output-dir report/research-cases
+
+python -m scripts.prepare_research_cases generate \
+  --agent-view report/research-cases/cvrp_research_001/agent/open_ended/case.json \
+  --generator-config PUBLIC_GENERATOR.json --output-dir report/development-experiment
+```
+
+Generator JSON uses the existing `visibility: agent` and `generator` format.
+Capabilities come from the public plan; this helper reuses the existing instance
+generators and runs no solver. CVRP supports public geometry, demand, capacity
+and size choices. The existing scheduling generator supports job counts and
+seeds, not deadline/window-tightness interventions. Generated instances do not
+automatically acquire a trusted optimum or BKS.
+
+The [construction record](configs/research/pilot_status.json) records two real
+source-bound cases, four public projections, and five public generator exercises
+producing 15 instances. Artifact hashes, visibility checks, invalid-input
+rejections, Ruff and compilation were checked. No new test suite, solver run or
+Agent study was performed for this prototype. Earlier unit-test counts below
+refer to the source-recovery version.
+
+Both cases remain **draft**. By user instruction, total Agent research budgets
+remain undeclared; existing per-solve budgets and seeds are unchanged. Guided
+context is withheld until its exact released text and source snapshots have
+reviewed time-bounded evidence. Three frozen private assets per case are absent;
+controlled structure and scale panels have not been bound. Container integration,
+host CPU accounting and budget enforcement are not validated. These drafts do
+not add any `task_ready` tasks or establish a mathematical/performance result.
+
+The optional frozen-prediction track specifies an evaluator receipt before
+hidden feedback, observable predicates, contradictory/missing evidence and
+controlled ablations. It has no implemented aggregate Research Process Score.
+Patch qualification continues to use each task's existing independent verifier,
+primary metric and declared tradeoff protocol.
+
+Related work already covers substantial parts of this design:
+[FormulaCode](https://arxiv.org/html/2603.16011v3) includes multi-workload
+objectives and regressions; [ALE-Bench](https://arxiv.org/abs/2506.09050)
+evaluates long-horizon algorithm engineering;
+[EXP-Bench](https://symbioticlab.org/publications/files/expbench:iclr26/expbench-iclr26.pdf)
+evaluates stages of experimental research; and
+[FIRE-Bench](https://arxiv.org/html/2602.02905) studies independent rediscovery
+from high-level questions. RQ1–RQ3 in the protocol are proposed comparisons,
+not evidence that these components are individually new.
+
+---
+
 ## 🛠️ Verification & Developer Tooling
 
 The 2026-10-21 curation review fixes are published on

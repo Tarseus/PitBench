@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "status": "draft_for_pilot",
+  "name": "Research-oriented solver improvement protocol",
+  "claim_boundary": "A proposed experimental method, not evidence of validated methodological novelty, new algorithm invention, classification accuracy or a completed Agent study.",
+  "objects": {
+    "research_question": "Agent-visible question and independently approved problem context.",
+    "research_opportunity": "Evaluator-only mechanism and structural evidence. Success is not limited to reproducing that mechanism.",
+    "human_discovery": "Evaluator-only complete integrated patch, historical context and separately qualified human result. A historical rediscovery is not a claim of previously unknown invention."
+  },
+  "knowledge_conditions": {
+    "guided": "Release only reviewed problem phenomena, reproductions and context established before the solution cutoff. PR creation time does not prove that the first solution commit was later. Without verified context the Guided setting remains a draft.",
+    "open_ended": "Release the historical Base source snapshot, problem family, broad research goal, public tools and the declared experimental budget. Do not include the reference mechanism, original optimization_scope, PR title/body, head/merge commit, hidden assets or later discussion.",
+    "historical_issue_edits": "An edited issue whose original text cannot be recovered must not be treated as pre-cutoff text merely because its creation timestamp is early.",
+    "environment": "Use the existing censored Git snapshot without remotes, a network-disabled Agent container, public-only mounts and evaluator-owned hidden execution. File separation alone does not prove isolation of an actual deployed runtime.",
+    "counting": "Guided and Open-ended are paired settings of the same Research Case. Correlated Base snapshots and historical PR lineages remain grouped in inference."
+  },
+  "experimental_arms": {
+    "fixed_workload": "Agent uses the assigned development workload.",
+    "select_instances": "Agent selects experiments from the public candidate pool.",
+    "construct_instances": "Agent chooses supported public generator configurations, seeds, per-run solver budgets and source modifications.",
+    "controls": "Hold Agent model/scaffold, mathematical problem definition, available public information, total research budget and final hidden protocol fixed across arms. Count failures, build/profiling/generation costs and missing runs.",
+    "custom_instances": "A generated instance does not automatically have a trusted optimum or BKS. Feasibility checks alone do not verify valid bounds, optimality or infeasibility."
+  },
+  "research_budget": {
+    "status": "not_declared",
+    "required_before_agent_execution": ["wall_time_sec", "cpu_time_sec", "max_parallel_runs"],
+    "additional_accounting": ["model_tokens_and_calls", "generation", "builds", "profiling", "solver_runs", "failed_runs"],
+    "enforcement": "An evaluator-owned runtime must account for CPU across all parallel processes and enforce the declared limits. Agent-written ledgers and materialization helpers do not enforce a compute budget.",
+    "solver_budgets": "The pilot inherits each existing task's exact frozen solver budgets, seeds, objective semantics and verifier. These do not define the total Agent research budget."
+  },
+  "falsifiable_prediction_track": {
+    "status": "protocol_only_not_scored",
+    "optional_for_patch_only_agents": true,
+    "prediction_fields": ["prediction_id", "observable_structural_predicate", "metric_id", "budget_sec", "expected_direction", "expected_nonbenefit_or_regression_conditions", "patch_sha256", "experiment_artifact_hashes"],
+    "commitment": "The evaluator records an immutable acceptance receipt for the patch, predictions and evidence before any hidden result is released. Agent timestamps do not prove commitment.",
+    "validation": "Use fixed measurable predicates and the task's preregistered metric evidence; record supported, contradicted, inconclusive and unmeasurable separately. An improvement somewhere does not validate the proposed mechanism. No prose-quality LLM score is used.",
+    "controls": "Freeze all submitted predictions; retain contradictions and missing groups. Report prediction coverage and trivial or uninformative predictions. Run controlled ablations before interpreting mechanism claims causally.",
+    "scoring": "Keep research evidence reporting separate from improvement qualification. No aggregate Research Process Score or new acceptance threshold has been defined."
+  },
+  "distributional_evaluation": {
+    "target": "Report verified improvement as a function of declared distribution condition and solver budget.",
+    "loss": "Use each task's existing exact, anytime or declared resource protocol. Do not introduce one runtime loss or combine incompatible units across problem families.",
+    "required_views": ["id", "controlled_structure", "controlled_scale"],
+    "optional_view": "joint_structure_and_scale",
+    "design": "Bind and verify the generator/configuration for every view. Hold nuisance variables fixed when claiming a controlled structural or scale intervention. A judge_shift name alone proves neither intervention.",
+    "interpretation": "Structural distribution distance and algorithmic difficulty are distinct. OT or instance metrics may describe distribution change; they do not directly define optimization quality.",
+    "statistics": "Retain the frozen paired-seed, complete-grid, confirmation and allowed-degradation protocols. Report uncertainty, invalidity, negative transfer and missingness per condition and budget.",
+    "panels": "Qualification and final reporting remain separate. The Agent never changes or queries final hidden instances during research."
+  },
+  "paper_experiments": {
+    "rq1": "Compare rankings from a clearly specified workload-aggregate comparator and the distributional protocol on the same patches. Report ranking uncertainty and correctness/transfer failures; do not misrepresent FormulaCode as lacking workload tradeoff analysis.",
+    "rq2": "Compare fixed, selected and constructed development experiments at equal declared research budgets, retaining their costs and failures.",
+    "rq3": "Compare Base, Agent source changes, human PRs and an appropriately budgeted parameter-tuning baseline across the same hidden conditions. Historical human engineering effort is not assumed to be budget matched.",
+    "status": "not_run"
+  },
+  "related_work_boundaries": [
+    {"name": "FormulaCode", "source": "https://arxiv.org/html/2603.16011v3", "overlap": "Historical code optimization tasks, expert references, multi-workload objectives, hierarchical analysis and workload regressions are already evaluated."},
+    {"name": "ALE-Bench", "source": "https://arxiv.org/abs/2506.09050", "overlap": "Long-horizon algorithm engineering and iterative feedback on hard optimization tasks are already evaluated."},
+    {"name": "EXP-Bench", "source": "https://symbioticlab.org/publications/files/expbench:iclr26/expbench-iclr26.pdf", "overlap": "Hypothesis formation, experiment design, implementation and research conclusions are already evaluated."},
+    {"name": "FIRE-Bench", "source": "https://arxiv.org/html/2602.02905", "overlap": "Independent experimental rediscovery from high-level questions is already evaluated; its published conclusion matching uses LLM-based extraction and entailment."}
+  ]
+}
