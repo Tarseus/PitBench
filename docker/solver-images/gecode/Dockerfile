@@ -5,7 +5,7 @@ ARG BASE_COMMIT
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-       build-essential cmake git python3 tmux \
+       asciinema build-essential cmake git python3 tmux \
     && rm -rf /var/lib/apt/lists/*
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \

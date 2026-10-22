@@ -591,10 +591,17 @@ CMD ["sh", "-c", "sleep infinity"]
             + "    && ! grep -Eq '^[+U-]' /tmp/pitbench-submodules \\\n"
             + "    && rm /tmp/pitbench-submodules\n"
         )
+        clean_checkout = (
+            "RUN git -C /workspace/repo reset --hard HEAD \\\n"
+            "    && git -C /workspace/repo submodule foreach --recursive "
+            "'git reset --hard HEAD' \\\n"
+            "    && git -C /workspace/repo clean -f -- .dockerignore \\\n"
+            "    && test -z \"$(git -C /workspace/repo status --porcelain)\"\n"
+        )
         return f"""FROM {image}
 USER root
 RUN mkdir -p /logs /agent-logs
-{submodule_copy}{tooling_layers}{development_copy}{workspace_permissions}LABEL {IMAGE_REVISION_LABEL}="{IMAGE_REVISION}" \
+{submodule_copy}{clean_checkout}{tooling_layers}{development_copy}{workspace_permissions}LABEL {IMAGE_REVISION_LABEL}="{IMAGE_REVISION}" \
       {IMAGE_SOURCE_LABEL}="{image}" \
       {IMAGE_TOOLS_LABEL}="{agent_tools_label(agent_tools)}"
 {pythonpath}WORKDIR /workspace/repo
