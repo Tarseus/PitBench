@@ -9,6 +9,8 @@ COPY ${SOURCE_VARIANT}/ /workspace/repo/
 RUN cd /workspace/repo \
     && mvn -q -o -Dmaven.repo.local=/opt/pitbench-maven \
        -pl solver -am package -Dmaven.test.skip=true \
-    && python3 /opt/pitbench-jvm/runner.py compile --solver choco
+    && python3 /opt/pitbench-jvm/runner.py compile --solver choco \
+    && git -C /workspace/repo reset --hard HEAD \
+    && git -C /workspace/repo submodule foreach --recursive 'git reset --hard HEAD'
 
 WORKDIR /workspace/repo
