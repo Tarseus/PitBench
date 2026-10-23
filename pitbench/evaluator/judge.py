@@ -5,7 +5,7 @@ import json
 import math
 import os
 import shutil
-import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -17,6 +17,17 @@ from typing import Callable
 
 import yaml
 
+from pitbench.evaluator.artifacts import (
+    output_directory,
+    write_bytes_atomic,
+    write_text_atomic,
+)
+from pitbench.evaluator.isolation import (
+    DEFAULT_ARTIFACT_BYTES,
+)
+from pitbench.evaluator.isolation import (
+    execute as isolated_execute,
+)
 from pitbench.evaluator.private_assets import (
     PrivateAssetResolver,
     load_private_seed_robustness_config,
@@ -95,9 +106,7 @@ def validate_candidate_source_patch(
                 f"{result.stderr.decode(errors='replace').strip()}"
             )
         changed.update(
-            PurePosixPath(os.fsdecode(raw))
-            for raw in result.stdout.split(b"\0")
-            if raw
+            PurePosixPath(os.fsdecode(raw)) for raw in result.stdout.split(b"\0") if raw
         )
     if not changed:
         raise RuntimeError("candidate patch contains no source changes")
@@ -712,34 +721,12 @@ class LocalProcessJudge:
             self.family.verifier = self.resolver.resolve(task.evaluation.verifier)
 
     @staticmethod
-    def _run(command: CommandSpec, workspace: Path) -> subprocess.CompletedProcess[str]:
-        environment = os.environ.copy()
-        environment.update(command.env)
-        with subprocess.Popen(
-            command.argv,
-            cwd=workspace / command.cwd,
-            env=None if not environment else environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            errors="replace",
-            start_new_session=True,
-        ) as process:
-            try:
-                stdout, stderr = process.communicate(timeout=command.timeout_sec)
-            except subprocess.TimeoutExpired as error:
-                # A timed-out wrapper must not leave a native solver running behind it.
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                stdout, stderr = process.communicate()
-                raise subprocess.TimeoutExpired(
-                    command.argv, command.timeout_sec, output=stdout, stderr=stderr
-                ) from error
-            return subprocess.CompletedProcess(
-                command.argv, process.returncode, stdout, stderr
-            )
+    def _run(
+        command: CommandSpec, workspace: Path, *, readable=(), writable=()
+    ) -> subprocess.CompletedProcess[str]:
+        return isolated_execute(
+            command, workspace, readable=readable, writable=writable
+        )
 
     def _state_patch(self, state: CodeState) -> Path | None:
         if state == CodeState.BASE:
@@ -780,8 +767,57 @@ class LocalProcessJudge:
                 raise RuntimeError(
                     f"{state.value} validation test patch failed: {applied.stderr}"
                 )
-        for command in self.repository.build_commands(build_kind):
-            built = self._run(command, workspace)
+        for index, command in enumerate(self.repository.build_commands(build_kind)):
+            log_dir = output_directory(
+                self.output_dir, Path("build") / state.value / build_kind.value
+            )
+            try:
+                built = self._run(command, workspace, writable=(workspace,))
+            except subprocess.TimeoutExpired as error:
+                write_text_atomic(log_dir / f"{index}.stdout.log", error.stdout or "")
+                write_text_atomic(log_dir / f"{index}.stderr.log", error.stderr or "")
+                write_text_atomic(
+                    log_dir / f"{index}.process.json",
+                    json.dumps(
+                        {
+                            "argv": command.argv,
+                            "timed_out": True,
+                            "isolation": getattr(error, "isolation", None),
+                        },
+                        indent=2,
+                    )
+                    + "\n",
+                )
+                raise
+            except OSError as error:
+                write_text_atomic(log_dir / f"{index}.stderr.log", str(error))
+                write_text_atomic(
+                    log_dir / f"{index}.process.json",
+                    json.dumps(
+                        {
+                            "argv": command.argv,
+                            "isolation_error": str(error),
+                        },
+                        indent=2,
+                    )
+                    + "\n",
+                )
+                raise
+            write_text_atomic(log_dir / f"{index}.stdout.log", built.stdout)
+            write_text_atomic(log_dir / f"{index}.stderr.log", built.stderr)
+            write_text_atomic(
+                log_dir / f"{index}.process.json",
+                json.dumps(
+                    {
+                        "argv": command.argv,
+                        "returncode": built.returncode,
+                        "timed_out": False,
+                        "isolation": getattr(built, "isolation", None),
+                    },
+                    indent=2,
+                )
+                + "\n",
+            )
             if built.returncode:
                 details = built.stderr.strip() or built.stdout.strip()
                 raise RuntimeError(
@@ -806,7 +842,7 @@ class LocalProcessJudge:
         observations: list[RunObservation] = []
         if self.observations_path is not None:
             self.observations_path.parent.mkdir(parents=True, exist_ok=True)
-            self.observations_path.write_text("")
+            write_text_atomic(self.observations_path, "")
         with tempfile.TemporaryDirectory(prefix="pitbench-judge-") as temporary:
             root = Path(temporary)
             completed_runs = completed_runs or set()
@@ -837,8 +873,9 @@ class LocalProcessJudge:
                 evaluation_seeds=self.evaluation_seeds,
             )
             self.output_dir.mkdir(parents=True, exist_ok=True)
-            (self.output_dir / "expected-run-grid.json").write_text(
-                expected_run_grid.model_dump_json(indent=2) + "\n"
+            write_text_atomic(
+                self.output_dir / "expected-run-grid.json",
+                expected_run_grid.model_dump_json(indent=2) + "\n",
             )
             total_solver_runs = sum(
                 (
@@ -996,19 +1033,61 @@ class LocalProcessJudge:
         *,
         cpu_ids: tuple[int, ...] | None = None,
     ) -> RunObservation:
+        with tempfile.TemporaryDirectory(prefix="pitbench-case-") as temporary:
+            return self._run_staged_case(
+                workspace,
+                case,
+                state,
+                seed,
+                budget,
+                io_root=Path(temporary),
+                cpu_ids=cpu_ids,
+            )
+
+    def _run_staged_case(
+        self,
+        workspace: Path,
+        case: InstanceCase,
+        state: CodeState,
+        seed: int,
+        budget: float,
+        *,
+        io_root: Path,
+        cpu_ids: tuple[int, ...] | None,
+    ) -> RunObservation:
         run_dir = (
             self.output_dir / state.value / case.instance_set.name / case.instance_id
         )
-        run_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            run_dir = output_directory(
+                self.output_dir, run_dir.relative_to(self.output_dir)
+            )
+        except OSError as error:
+            return self._failure(
+                case, state, seed, budget, RunStatus.INFRASTRUCTURE_ERROR, str(error)
+            )
         stem = f"seed-{seed}-budget-{budget:g}"
-        output = run_dir / f"{stem}.json"
+        inputs = io_root / "input"
+        outputs = io_root / "output" / case.instance_id
+        inputs.mkdir()
+        outputs.mkdir(parents=True)
+        if case.path is None:
+            raise ValueError("real judge case has no instance path")
+        instance = inputs / case.path.name
+        shutil.copyfile(case.path, instance)
+        output = outputs / f"{stem}.json"
         trajectory = run_dir / f"{stem}.trajectory.jsonl"
-        for artifact in (output, output.with_suffix(".solution.json"), trajectory):
+        for artifact in (
+            run_dir / output.name,
+            run_dir / output.with_suffix(".solution.json").name,
+            trajectory,
+        ):
             artifact.unlink(missing_ok=True)
+        trajectory = outputs / trajectory.name
         threads = self.task.evaluation.threads
         parameters_path = None
         if self.task.evaluation.fixed_solver_parameters is not None:
-            parameters_path = output.with_suffix(".parameters.json")
+            parameters_path = inputs / output.with_suffix(".parameters.json").name
             parameters_path.write_text(
                 json.dumps(self.task.evaluation.fixed_solver_parameters, sort_keys=True)
                 + "\n"
@@ -1016,7 +1095,7 @@ class LocalProcessJudge:
         command = _limit_solver_cpus(
             self.repository.run_command(
                 SolverRunSpec(
-                    instance_path=case.path,
+                    instance_path=instance,
                     output_path=output,
                     trajectory_path=trajectory,
                     solver_seed=seed,
@@ -1031,39 +1110,68 @@ class LocalProcessJudge:
         started = time.monotonic()
         launch_error = None
         timed_out = False
+        isolation = None
         try:
-            completed = self._run(command, workspace)
+            completed = self._run(
+                command, workspace, readable=(inputs,), writable=(outputs,)
+            )
         except subprocess.TimeoutExpired as error:
             completed = None
             timed_out = True
             stdout, stderr = error.stdout or "", error.stderr or ""
+            isolation = getattr(error, "isolation", None)
         except OSError as error:
             completed = None
             launch_error = error
             stdout, stderr = "", str(error)
         else:
             stdout, stderr = completed.stdout, completed.stderr
+            isolation = getattr(completed, "isolation", None)
         elapsed = time.monotonic() - started
+        unsafe = []
+        for path in (output, output.with_suffix(".solution.json"), trajectory):
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                unsafe.append(f"{path.name}: output is not a regular single-link file")
+                continue
+            if info.st_size > DEFAULT_ARTIFACT_BYTES:
+                unsafe.append(
+                    f"{path.name}: output size {info.st_size} exceeds {DEFAULT_ARTIFACT_BYTES} bytes"
+                )
+                continue
+            write_bytes_atomic(run_dir / path.name, path.read_bytes())
+        if parameters_path is not None:
+            shutil.copyfile(parameters_path, run_dir / parameters_path.name)
+        output = run_dir / output.name
+        trajectory = run_dir / trajectory.name
         stdout_path = output.with_suffix(".stdout.log")
         stderr_path = output.with_suffix(".stderr.log")
         for path, content in ((stdout_path, stdout), (stderr_path, stderr)):
-            path.write_text(
+            write_text_atomic(
+                path,
                 content.decode(errors="replace")
                 if isinstance(content, bytes)
-                else content
+                else content,
             )
         exit_code = completed.returncode if completed is not None else None
-        output.with_suffix(".process.json").write_text(
+        write_text_atomic(
+            output.with_suffix(".process.json"),
             json.dumps(
                 {
                     "argv": command.argv,
                     "returncode": exit_code,
                     "timed_out": timed_out,
                     "elapsed_sec": elapsed,
+                    "isolation": isolation,
+                    "unsafe_artifacts": unsafe,
+                    "artifact_limit_bytes": DEFAULT_ARTIFACT_BYTES,
                 },
                 indent=2,
             )
-            + "\n"
+            + "\n",
         )
 
         def failure(status, detail, parsed=None):
@@ -1090,6 +1198,9 @@ class LocalProcessJudge:
                     "resource_scope": parsed.resource_scope if parsed else None,
                 }
             )
+
+        if unsafe:
+            return failure(RunStatus.OUTPUT_ERROR, "; ".join(unsafe))
 
         if launch_error is not None:
             return failure(

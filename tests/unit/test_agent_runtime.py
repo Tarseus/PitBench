@@ -115,6 +115,7 @@ def run_agent(agent, container, logdir):
     return asyncio.run(
         harness._run_agent_with_timeout(
             trial_handler=SimpleNamespace(
+                task=SimpleNamespace(research_budget=None),
                 task_id="task-1",
                 trial_name=logdir.parent.name,
                 instruction="Improve this code",
@@ -519,6 +520,7 @@ def test_timeout_cancels_before_executor_shutdown_and_flushes_partial_trace(
         asyncio.run(
             harness._run_agent_with_timeout(
                 trial_handler=SimpleNamespace(
+                    task=SimpleNamespace(research_budget=None),
                     task_id="task", trial_name="timeout", instruction="wait"
                 ),
                 session=SimpleNamespace(container=repository[1]),

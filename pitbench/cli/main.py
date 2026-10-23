@@ -26,6 +26,7 @@ from pitbench.cli.evaluate_config import (
 from pitbench.cli.profiles import profiles_app
 from pitbench.cli.solver_images import build_solver_image
 from pitbench.cli.task_image import prepare_task_image
+from pitbench.contracts import export_contract, import_measurement_bundle
 from pitbench.evaluator.evaluator import PitBenchEvaluator
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.harness.agents import AgentName
@@ -70,10 +71,12 @@ from pitbench.tasks import TaskCatalog, TaskNotFoundError
 app = typer.Typer(help="PitBench task, execution harness, and evaluation tooling.")
 tasks_app = typer.Typer(help="Validate and smoke-test benchmark tasks.")
 images_app = typer.Typer(help="Build pinned source images for solver tasks.")
+contracts_app = typer.Typer(help="Export shared schemas and import curation requests.")
 app.add_typer(tasks_app, name="tasks")
 app.add_typer(images_app, name="images")
 app.add_typer(profiles_app, name="profiles")
 app.add_typer(auth_app, name="auth")
+app.add_typer(contracts_app, name="contracts")
 
 # Direct unified run command: `pitbench run --dataset-path ... --agent ...`
 app.command(
@@ -1342,6 +1345,45 @@ def validate_tasks(
     for record in records:
         typer.echo(f"OK {record.task.task_id} {record.task_config_sha256[:12]}")
     typer.echo(f"Validated {len(records)} task configs")
+
+
+@contracts_app.command("export")
+def export_shared_contract(
+    output: Annotated[Path, typer.Option(help="New contract directory")],
+    root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
+) -> None:
+    typer.echo(
+        json.dumps(export_contract(output, repository_root=_root(root)), indent=2)
+    )
+
+
+@contracts_app.command("import")
+def import_curation_requests(
+    bundle: Annotated[
+        Path, typer.Option(help="Evaluator-only curation export directory")
+    ],
+    output: Annotated[Path, typer.Option(help="Evaluator-owned request store")],
+) -> None:
+    typer.echo(json.dumps(import_measurement_bundle(bundle, output)))
+
+
+@tasks_app.command("inventory")
+def inventory_tasks(
+    output: Annotated[Path, typer.Option(help="Inventory JSON destination")],
+    root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
+    registry: Annotated[
+        Path | None, typer.Option(help="Historical PR evidence registry")
+    ] = None,
+    baseline_commit: Annotated[
+        str | None, typer.Option(help="Git baseline for task comparisons")
+    ] = None,
+) -> None:
+    inventory = TaskCatalog(_root(root)).inventory(
+        registry_path=registry, baseline_commit=baseline_commit
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(inventory, indent=2) + "\n")
+    typer.echo(f"Inventoried {inventory['task_count']} tasks: {output}")
 
 
 @tasks_app.command("fixture")

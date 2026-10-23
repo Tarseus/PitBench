@@ -1,0 +1,1466 @@
+{
+  "as_of": "2026-10-22",
+  "compatibility": {
+    "measurement_request": {
+      "accepted_versions": [
+        1
+      ]
+    },
+    "objective_catalog_sha256": "91c3525f7691e42ab4d1635172c65f330ee60323b3333c770ecfb40110469b35",
+    "qualification_protocols_sha256": "a8a7d69fd06a787eede1ce9b003096267e1c887ef40a51e9521791a73fd3ee58",
+    "request_bundle": {
+      "accepted_versions": [
+        1
+      ]
+    },
+    "research_case_request": {
+      "accepted_versions": [
+        1
+      ]
+    },
+    "selection_review": {
+      "accepted_versions": [
+        2,
+        3
+      ],
+      "migration": "none; preserve the original review and evidence stage",
+      "validator": "pitbench.repositories.pr_curation:validate_selection_review"
+    },
+    "task": {
+      "accepted_versions": [
+        "3.0"
+      ]
+    },
+    "unknown_versions": "reject"
+  },
+  "curation_commit": "7172600f656b4da8b5bd4c42b4a26cad8a53ecc3",
+  "implementation_status": "B0 intake and export developed in working tree; contract release and G0 acceptance remain pending",
+  "integration_commit": "12fcf4ad18e7c174daace5514ee62917db4f0cb6",
+  "kind": "integration_baseline_snapshot",
+  "producer_consumer_fingerprints": {
+    "classification": {
+      "byte_identical": true,
+      "curation_sha256": "b2fcc87461e3e146ba7d357222e68ec7ca4995a51613940ceceb26e6cf72fb89",
+      "pitbench_sha256": "b2fcc87461e3e146ba7d357222e68ec7ca4995a51613940ceceb26e6cf72fb89"
+    },
+    "objective_catalog": {
+      "byte_identical": true,
+      "curation_sha256": "91c3525f7691e42ab4d1635172c65f330ee60323b3333c770ecfb40110469b35",
+      "pitbench_sha256": "91c3525f7691e42ab4d1635172c65f330ee60323b3333c770ecfb40110469b35"
+    },
+    "qualification_protocols": {
+      "byte_identical": true,
+      "curation_sha256": "a8a7d69fd06a787eede1ce9b003096267e1c887ef40a51e9521791a73fd3ee58",
+      "pitbench_sha256": "a8a7d69fd06a787eede1ce9b003096267e1c887ef40a51e9521791a73fd3ee58"
+    }
+  },
+  "remaining_g0_evidence": [
+    "Five recorded build evidence chains fail current Dockerfile hash checks; retain original records and obtain new build evidence.",
+    "Tasks without supplied historical registry evidence remain unknown.",
+    "Contract implementation release commit and consumer dependency lock.",
+    "Native Codex and Claude Code live resource/trace calibration.",
+    "Runner/verifier/oracle process and permission isolation validation."
+  ],
+  "schema_version": "1.0",
+  "task_inventory": {
+    "baseline_commit": "6fba9a990b8721bcb68ba7a64c0fec39ee492909",
+    "claim_boundary": "Historical evidence recheck only; no new solver/Agent execution or readiness promotion.",
+    "registry_sha256": "5a77d40c8d88fce963876fa2316fa85bed972e4e1c2a60ef8a25718fd1201ce0",
+    "removed_task_ids": [],
+    "schema_version": "1.0",
+    "task_count": 49,
+    "tasks": [
+      {
+        "base_commit": "782d275a8efa569eb818551561b424948e19653c",
+        "baseline_task_config_sha256": "0686ed4c6f4af561a8c5579d1a7b14e4d1623683037d857c7649d3c666e63165",
+        "changed_fields": [],
+        "evidence": [],
+        "evidence_status": "unknown",
+        "repository": "coin-or/Cbc",
+        "task_config_sha256": "0686ed4c6f4af561a8c5579d1a7b14e4d1623683037d857c7649d3c666e63165",
+        "task_id": "cbc_v2_10_12"
+      },
+      {
+        "base_commit": "f77428e2c0b6a9ae41580d7bfc46d220cd28c59b",
+        "baseline_task_config_sha256": "f8e0ab8fc81a7d6e6a9899ede17c506a881692b0ae8092ae122f1f51691cc09d",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1178_pinned_build_v2.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1178_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1178_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/choco_pr1178.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1178_opportunity.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/choco_pr1178.patch",
+              "source_patch_sha256": "00efefa85a43138ab611c4d5d3e7f1f21dcb5a9db63fb49c6963f25dc55caa25",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1178_workload_evidence.json"
+            },
+            "error": "('chocoteam/choco-solver', 1178) build Dockerfile hash differs from evidence",
+            "pr_number": 1178,
+            "recheck": "failed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "chocoteam/choco-solver"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "chocoteam/choco-solver",
+        "task_config_sha256": "f8e0ab8fc81a7d6e6a9899ede17c506a881692b0ae8092ae122f1f51691cc09d",
+        "task_id": "choco_arithmetic_propagation_20260115"
+      },
+      {
+        "base_commit": "1fd78330da44afc9776a3d311e04a1815a790f78",
+        "baseline_task_config_sha256": "ac6dac5626413b3d356c0f61d31189504318a9d81b09ba4863853db5cd215f31",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1152_pinned_build_v2.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1152_correctness_v2.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1152_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/choco_pr1152.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1152_opportunity_v2.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/choco_pr1152.patch",
+              "source_patch_sha256": "a4a081b81663f768a9206e19049d24377190707223a21afb32b0803060324c86",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1152_workload_evidence_v2.json"
+            },
+            "error": "('chocoteam/choco-solver', 1152) build Dockerfile hash differs from evidence",
+            "pr_number": 1152,
+            "recheck": "failed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "chocoteam/choco-solver"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "chocoteam/choco-solver",
+        "task_config_sha256": "ac6dac5626413b3d356c0f61d31189504318a9d81b09ba4863853db5cd215f31",
+        "task_id": "choco_decision_path_20250326"
+      },
+      {
+        "base_commit": "6a17dc66b6a6e34c8141e0c5666662fa62535650",
+        "baseline_task_config_sha256": "788a8c6d78cbfa1bf690d0003ab543a0766817602201cb2ac22d64a20c5fe915",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr493_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr493_correctness_clean.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr493_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/choco_pr493.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr493_opportunity_v3.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/choco_pr493.patch",
+              "source_patch_sha256": "75733d935772ef40ea6b43fad9c847dae3c920173add70fadefe14d50fb230ef",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr493_workload.json"
+            },
+            "error": null,
+            "pr_number": 493,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "chocoteam/choco-solver"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "chocoteam/choco-solver",
+        "task_config_sha256": "788a8c6d78cbfa1bf690d0003ab543a0766817602201cb2ac22d64a20c5fe915",
+        "task_id": "choco_first_fail_selector_20170117"
+      },
+      {
+        "base_commit": "05e356a859cc3363453ae1cfc5d8f2118264f005",
+        "baseline_task_config_sha256": "472b7dc74af7cbff534cf16c6115625a90120adb46d5f1c6a26e491f0c15d669",
+        "changed_fields": [],
+        "evidence": [],
+        "evidence_status": "unknown",
+        "repository": "chocoteam/choco-solver",
+        "task_config_sha256": "472b7dc74af7cbff534cf16c6115625a90120adb46d5f1c6a26e491f0c15d669",
+        "task_id": "choco_graph_coloring_v6_0_1"
+      },
+      {
+        "base_commit": "05e356a859cc3363453ae1cfc5d8f2118264f005",
+        "baseline_task_config_sha256": "96e29796f23f7fb3d2062e40dea261f482777114f59f707e955914d3ec9f83da",
+        "changed_fields": [],
+        "evidence": [],
+        "evidence_status": "unknown",
+        "repository": "chocoteam/choco-solver",
+        "task_config_sha256": "96e29796f23f7fb3d2062e40dea261f482777114f59f707e955914d3ec9f83da",
+        "task_id": "choco_v6_0_1"
+      },
+      {
+        "base_commit": "2693dd252d24bf569546ae50a86779c591cf4e2c",
+        "baseline_task_config_sha256": "3f7630822d14027b2ead21048356c0ade1aa434699af620addf22fdcd2c003d8",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1154_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1154_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1154_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/choco_solver_pr1154.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1154_opportunity.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/choco_pr1154.patch",
+              "source_patch_sha256": "e896d70c8a4e60f99006d1f81492b51d74e2a1bb93431eabc1184708ba0b43b2",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/choco_pr1154_workload_evidence.json"
+            },
+            "error": "('chocoteam/choco-solver', 1154) build Dockerfile hash differs from evidence",
+            "pr_number": 1154,
+            "recheck": "failed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "chocoteam/choco-solver"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "chocoteam/choco-solver",
+        "task_config_sha256": "3f7630822d14027b2ead21048356c0ade1aa434699af620addf22fdcd2c003d8",
+        "task_id": "choco_weighted_search_20250327"
+      },
+      {
+        "base_commit": "744e5efef8efd067a75b6aa5ff8f90fad1c46c5c",
+        "baseline_task_config_sha256": "2301da4e66da71b9e9625488ce30c046b14f72e25b69334d605b09cf54712e0f",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/gecode_pr224_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/gecode_pr224_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/gecode_pr224_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/gecode_pr224.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/gecode_pr224_baseline_evidence_v3.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/gecode_pr224.patch",
+              "source_patch_sha256": "9d4c93055ff7a09f6d61e765c7e461d9faf7db1ae2ce6f5762d69e0d12ce474b",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/gecode_pr224_workload.json"
+            },
+            "error": null,
+            "pr_number": 224,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "Gecode/gecode"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "Gecode/gecode",
+        "task_config_sha256": "2301da4e66da71b9e9625488ce30c046b14f72e25b69334d605b09cf54712e0f",
+        "task_id": "gecode_binpacking_dff_20260711"
+      },
+      {
+        "base_commit": "fd860f9b111eba744a781b65f575c39afe366394",
+        "baseline_task_config_sha256": "2565249e950f81b5269120ea19a9443e3e98bdc19f702293dc8fbddfea4258f2",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3286_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3286_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3286_integration_v3.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/highs_pr3286.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3286_opportunity_v2.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/highs_pr3286.patch",
+              "source_patch_sha256": "96f5674dc3a410158aafdea86e3136d1cd8c14f897ab921fc98e47bf53bc0a80",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3286_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 3286,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "ERGO-Code/HiGHS"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "2565249e950f81b5269120ea19a9443e3e98bdc19f702293dc8fbddfea4258f2",
+        "task_id": "highs_binary_clique_presolve_20260921"
+      },
+      {
+        "base_commit": "eba2504508da8cf94b267c4b6347cf78eb902da4",
+        "baseline_task_config_sha256": "67189ac3849ab9b753071ca88522b2bdf4c95633ab55be31dfcfab2f95dddabf",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr2522_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr2522_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr2522_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/highs_pr2522.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr2522_opportunity.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/highs_pr2522.patch",
+              "source_patch_sha256": "659fa212ab47d2ce252b45d754a396a4ee3c82aeb610645e6ce3e229d6c8f9e3",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr2522_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 2522,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "ERGO-Code/HiGHS"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "67189ac3849ab9b753071ca88522b2bdf4c95633ab55be31dfcfab2f95dddabf",
+        "task_id": "highs_chvatal_gomory_20250901"
+      },
+      {
+        "base_commit": "1d77a4e561b498ec737d1e81fcf10a982088517f",
+        "baseline_task_config_sha256": "febf05f9970079118ce1556a7ed0afb3ec4bdaf45de241ea7b4f14f4fe05dd82",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr690_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr690_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr690_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/highs_pr690.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/highs_pr690_baseline/opportunity_exact.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/highs_pr690.patch",
+              "source_patch_sha256": "707cbb7134a654e7cbb04ee37b01f0633fef8bc9fc2e14498c3197590e004848",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr690_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 690,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "ERGO-Code/HiGHS"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "febf05f9970079118ce1556a7ed0afb3ec4bdaf45de241ea7b4f14f4fe05dd82",
+        "task_id": "highs_cut_aging_20220125"
+      },
+      {
+        "base_commit": "3d5e111a0e35385498b8959f8e50deed946d2fd1",
+        "baseline_task_config_sha256": "cc57a598ce6aaf250993dd06e640827e1408ad44cfdebca4693d9ec5038e6329",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr618_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr618_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr618_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/highs_pr618.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/highs_pr618_baseline/opportunity_exact.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/highs_pr618.patch",
+              "source_patch_sha256": "7609cd20617b6e83b714e17ddd090490501e03300dac11f41db1a320fb48d989",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr618_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 618,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "ERGO-Code/HiGHS"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "cc57a598ce6aaf250993dd06e640827e1408ad44cfdebca4693d9ec5038e6329",
+        "task_id": "highs_directional_branch_20211127"
+      },
+      {
+        "base_commit": "9fcc3c86ea796642493926956946f8c8636cd1c0",
+        "baseline_task_config_sha256": "50adab3a62ace0c60d3f63f53dfee57e31b977448bd4a0aa8cd3d13f9328e838",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/highs_pr685_build_evidence.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/highs_pr685_correctness/correctness_evidence.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr685_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/highs_pr685.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr685_opportunity.json",
+              "source_patch_path": "report/pr-scale-20261018/highs_pr685_source.patch",
+              "source_patch_sha256": "e60a093f50f6eada2de9e5e51b8b7c67682a4641d219d904ccb474e79eb693e1",
+              "workload_evidence_path": "report/pr-scale-20261018/highs_pr685_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 685,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "ERGO-Code/HiGHS"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "50adab3a62ace0c60d3f63f53dfee57e31b977448bd4a0aa8cd3d13f9328e838",
+        "task_id": "highs_dse_weight_preservation_20220123"
+      },
+      {
+        "base_commit": "5f87d07de9cdb77994b91e3213716cefac0c8a43",
+        "baseline_task_config_sha256": "21d0664a27665d3385b19864e05c4addcddc41758998458bc0f9b7fea76e770e",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3213_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3213_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3213_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/highs_pr3213.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3213_opportunity.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/highs_pr3213.patch",
+              "source_patch_sha256": "dab5c8318799c2e47f7880834aca5230b1a2c3dc8d8b17ac8b20c8f9ace2b170",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3213_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 3213,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "ERGO-Code/HiGHS"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "21d0664a27665d3385b19864e05c4addcddc41758998458bc0f9b7fea76e770e",
+        "task_id": "highs_early_branch_budget_20260817"
+      },
+      {
+        "base_commit": "f453037bd202196a506b6cd0f20baf5b55090450",
+        "baseline_task_config_sha256": "8c85303ced00834513953324490792aa49b8a551035f2125093e052dd54bc795",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr2861_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/public_controls/highs_pr2861_correctness_v2/analysis.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr2861_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/highs_pr2861.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/highs-pr2861-baseline/opportunity_exact.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/highs_pr2861.patch",
+              "source_patch_sha256": "3b0262cb932c8182b92e019748c947e9988ccda22fe75f850e751db6937ded13",
+              "workload_evidence_path": "report/pr-scale-20261018/instrumentation/highs_pr2861/knapsack_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 2861,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "ERGO-Code/HiGHS"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "8c85303ced00834513953324490792aa49b8a551035f2125093e052dd54bc795",
+        "task_id": "highs_enumeration_20260219"
+      },
+      {
+        "base_commit": "4cc106ed1599ccaf8a20122c6754a217218a24bc",
+        "baseline_task_config_sha256": "fad948547a099a3a81415316fce01de78146e5422a42fcbc357426eb77aba150",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3255_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3255_correctness_public.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/highs_pr3255.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3255_baseline_opportunity_v2.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/highs_pr3255.patch",
+              "source_patch_sha256": "2c86c25c87047ff588ff033a10a1da06eb23ac18dd9bc780d496558535884df5",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr3255_workload_evidence_task_dev_v2.json"
+            },
+            "error": null,
+            "pr_number": 3255,
+            "recheck": "passed",
+            "recorded_stage": "correctness_verified",
+            "recorded_track": "open_opportunity",
+            "repository": "ERGO-Code/HiGHS"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "fad948547a099a3a81415316fce01de78146e5422a42fcbc357426eb77aba150",
+        "task_id": "highs_fourier_motzkin_presolve_20261020"
+      },
+      {
+        "base_commit": "7421e44b09563f637dc6422ea461a8832b29e543",
+        "baseline_task_config_sha256": "3102763abdb6ed5080647e896f08ff730a1e529c3164e65b71e5a3c49a9b2945",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr651_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr651_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr651_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/highs_pr651.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr651_opportunity.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/highs_pr651.patch",
+              "source_patch_sha256": "5bc763887f874fcafe8446b11f1c2fdb352adb8f5e63a1491a87ad037df1cff3",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr651_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 651,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "ERGO-Code/HiGHS"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "3102763abdb6ed5080647e896f08ff730a1e529c3164e65b71e5a3c49a9b2945",
+        "task_id": "highs_heuristic_effort_20220112"
+      },
+      {
+        "base_commit": "1d77a4e561b498ec737d1e81fcf10a982088517f",
+        "baseline_task_config_sha256": "cfbdcd023be601bf72c3773a5061769ba2471122155e7e1ed7cf916ffd8b2faf",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr693_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr693_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr693_integration_v2.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/highs_pr693.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/highs_pr693_baseline/opportunity_exact.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/highs_pr693.patch",
+              "source_patch_sha256": "a509f27c1652a4856be5aa3d8e5f45ff3da10b15603147b88d43897e4eeff33d",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr693_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 693,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "ERGO-Code/HiGHS"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "cfbdcd023be601bf72c3773a5061769ba2471122155e7e1ed7cf916ffd8b2faf",
+        "task_id": "highs_implications_20220125"
+      },
+      {
+        "base_commit": "ff73913f6373c423da0a2115280cf31cc681a948",
+        "baseline_task_config_sha256": "c2490e97b77a519a098634e8a7614df6dd6769ca5c6d20a1b0a6f83a2c870553",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/highs_pr577_build_evidence.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/highs_pr577_correctness/correctness_evidence.json",
+              "integration_evidence_path": "report/pr-scale-20261018/highs_pr577_integration/integration_evidence.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/highs_pr577.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/highs_pr577_hidden_baseline/opportunity_evidence.json",
+              "source_patch_path": "report/pr-scale-20261018/highs_pr577_source.patch",
+              "source_patch_sha256": "c29e5b1e5eec5f724e87c4b2e9954533c33fd2417fb8130906f15cb67e124835",
+              "workload_evidence_path": "report/pr-scale-20261018/highs_pr577_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 577,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "ERGO-Code/HiGHS"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "c2490e97b77a519a098634e8a7614df6dd6769ca5c6d20a1b0a6f83a2c870553",
+        "task_id": "highs_mip_row_aggregation_20210916"
+      },
+      {
+        "base_commit": "04024d701f79feb8e2f18bc3df0dffc04ef05088",
+        "baseline_task_config_sha256": "0b045fc18cd827247c40b321dc8b6cd11cf3573f6df9dc710e3d639aeaa6d089",
+        "changed_fields": [],
+        "evidence": [],
+        "evidence_status": "unknown",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "0b045fc18cd827247c40b321dc8b6cd11cf3573f6df9dc710e3d639aeaa6d089",
+        "task_id": "highs_multidimensional_knapsack_v1_15_1"
+      },
+      {
+        "base_commit": "5013b8c62fd44a551a13cef3b40a55027c5dfa84",
+        "baseline_task_config_sha256": "567bc9e5dbc4d43eceb5356510dc0c61ca6c654ba8d65673272af725f6efd11d",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr1992_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr1992_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr1992_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/highs_pr1992.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr1992_opportunity_v2.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/highs_pr1992.patch",
+              "source_patch_sha256": "6bbd88fd3779e83e93100bda342fa96bb27de7f6731553262c0633026f7dd8ee",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr1992_workload.json"
+            },
+            "error": null,
+            "pr_number": 1992,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "ERGO-Code/HiGHS"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "567bc9e5dbc4d43eceb5356510dc0c61ca6c654ba8d65673272af725f6efd11d",
+        "task_id": "highs_transformed_integer_repair_20241031"
+      },
+      {
+        "base_commit": "1fb0fe40ce28ae64ca45bf22ae29da894a0b1244",
+        "baseline_task_config_sha256": "4e4e2ac5cd58baa6b70bfcc3cee86f30f4249e59ead1a21a45867152c843066c",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr2027_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr2027_correctness_v2.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr2027_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/highs_highs_pr2027.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr2027_opportunity_v2.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/highs_pr2027.patch",
+              "source_patch_sha256": "710dfd415885bbbe26ccfa4d7f73225d29e318d1dedb784322c05f6ce29fd20d",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/highs_pr2027_workload.json"
+            },
+            "error": null,
+            "pr_number": 2027,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "ERGO-Code/HiGHS"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "4e4e2ac5cd58baa6b70bfcc3cee86f30f4249e59ead1a21a45867152c843066c",
+        "task_id": "highs_trivial_heuristics_20241106"
+      },
+      {
+        "base_commit": "04024d701f79feb8e2f18bc3df0dffc04ef05088",
+        "baseline_task_config_sha256": "4252290c5630b2afd695cffa92eb65a7d739c70c423b32668276d305a3b86132",
+        "changed_fields": [],
+        "evidence": [],
+        "evidence_status": "unknown",
+        "repository": "ERGO-Code/HiGHS",
+        "task_config_sha256": "4252290c5630b2afd695cffa92eb65a7d739c70c423b32668276d305a3b86132",
+        "task_id": "highs_v1_15_1"
+      },
+      {
+        "base_commit": "551ad10d94835c99e5e1e684500d3db398c0e345",
+        "baseline_task_config_sha256": "e9113b035e80d60c858e84602cb02da33fb52815d9fdbf09ed23b708c7b02ee5",
+        "changed_fields": [],
+        "evidence": [],
+        "evidence_status": "unknown",
+        "repository": "google/or-tools",
+        "task_config_sha256": "e9113b035e80d60c858e84602cb02da33fb52815d9fdbf09ed23b708c7b02ee5",
+        "task_id": "ortools_cp_sat_solve_v9_15"
+      },
+      {
+        "base_commit": "d4fb14abc9d72865536dd9ea7b1cc86bc06833f9",
+        "baseline_task_config_sha256": "df93fd896b61cc1c7cdd3c554cf8e538760d7d70d37aa7923bc3ff1b104e49c1",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr511_pinned_build_v2.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr511_correctness_v2.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr511_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/pyvrp_pr511.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr511_opportunity_v2.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr511.patch",
+              "source_patch_sha256": "32356f081bb544c7ee2a62f792bde81d008af508b7622cfff21de7e1fc0da41e",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr511_workload_evidence_v2.json"
+            },
+            "error": null,
+            "pr_number": 511,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "df93fd896b61cc1c7cdd3c554cf8e538760d7d70d37aa7923bc3ff1b104e49c1",
+        "task_id": "pyvrp_default_operators_20240305"
+      },
+      {
+        "base_commit": "27abe0abf5842bd35e4b978d2036ce6151986eeb",
+        "baseline_task_config_sha256": "afbece99950ac155ea3589f82f29230861da4a7ef25bf43a20a93726dea4df27",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr845_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr845_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr845_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/pyvrp_pyvrp_pr845.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr845_opportunity.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr845.patch",
+              "source_patch_sha256": "1ed6566376b8457f80d3d8b462e81c18fe02a823b2a2c30aadca4068c14088d4",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr845_workload.json"
+            },
+            "error": null,
+            "pr_number": 845,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "afbece99950ac155ea3589f82f29230861da4a7ef25bf43a20a93726dea4df27",
+        "task_id": "pyvrp_duration_proposal_20250605"
+      },
+      {
+        "base_commit": "24b02d32e1e54392023161d22423e4cd4c5fb5f0",
+        "baseline_task_config_sha256": "7bd9e52a843e7ca60a499a37e4902e29542fbe36b395c682889fb40d72d5afb6",
+        "changed_fields": [],
+        "evidence": [],
+        "evidence_status": "unknown",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "7bd9e52a843e7ca60a499a37e4902e29542fbe36b395c682889fb40d72d5afb6",
+        "task_id": "pyvrp_load_penalty_shortcut_20250712"
+      },
+      {
+        "base_commit": "285a4cadd6b5fe1c6b1a2ac42dd48a46125a6777",
+        "baseline_task_config_sha256": "256452b901e0fae01f430a4896f55fc45ab42833ab3e1adfa73e8c13fc81f446",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr962_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr962_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr962_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/pyvrp_pyvrp_pr962.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr962_opportunity_v4.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr962.patch",
+              "source_patch_sha256": "471c0a122e44e54de89f11c78ea7a301c655691659d7eae1c194b4ffd991fd43",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr962_workload.json"
+            },
+            "error": null,
+            "pr_number": 962,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "256452b901e0fae01f430a4896f55fc45ab42833ab3e1adfa73e8c13fc81f446",
+        "task_id": "pyvrp_nonpromising_pruning_20251218"
+      },
+      {
+        "base_commit": "ea81aba4b51c15e24a8bcdfde92f1c9b2983132f",
+        "baseline_task_config_sha256": "c1d30b2abf126f32a837d0790869be8131f0685eeb4fcd300a8f6cd922070150",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr998_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr998_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr998_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/pyvrp_pyvrp_pr998.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr998_opportunity.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr998.patch",
+              "source_patch_sha256": "2ed8181ce6543b48c50d735471643e69170cf8a0be0f10a6365d13b674cab69e",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr998_workload.json"
+            },
+            "error": null,
+            "pr_number": 998,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "c1d30b2abf126f32a837d0790869be8131f0685eeb4fcd300a8f6cd922070150",
+        "task_id": "pyvrp_random_initial_solution_20260116"
+      },
+      {
+        "base_commit": "aacb7dcefe6ecc889af5dfceb203bfe348ee087e",
+        "baseline_task_config_sha256": "2cf3d7a6ad015ecd32cd663635c4a61a0147bdc4c14d9927cf254beb1e861c53",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr701_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr701_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr701_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/pyvrp_pr701.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr701_opportunity.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr701.patch",
+              "source_patch_sha256": "1f80270eb75edad506d8f9228a0bd69ff7fdcbbf4f7f8d217ce5a0a6157e89a6",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr701_workload.json"
+            },
+            "error": "('PyVRP/PyVRP', 701) build Dockerfile hash differs from evidence",
+            "pr_number": 701,
+            "recheck": "failed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "2cf3d7a6ad015ecd32cd663635c4a61a0147bdc4c14d9927cf254beb1e861c53",
+        "task_id": "pyvrp_route_distance_storage_20241117"
+      },
+      {
+        "base_commit": "245cde9997b4cf6dcfbbd1286d80eaf1e9245904",
+        "baseline_task_config_sha256": "1ea25ae9e25c3d40377eb494379dc35a64fd81e6b5b1294d783d145601f5929f",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/pr865-judge-smoke-v2/judge-checkpoint.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/pr865-judge-smoke-v2/judge-observations.jsonl",
+              "intent_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr865.json",
+              "performance_evidence_path": "report/pr-scale-20261018/pr865-hidden-primary/analysis.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr865.patch",
+              "source_patch_sha256": "fed4438c564404943bed2de36c0a1ab232e691e16ebd959a55e5d3d9b2fd58d7",
+              "workload_evidence_path": "report/pr-scale-20261018/pr865-hidden-primary-manifest.json"
+            },
+            "error": null,
+            "pr_number": 865,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "expert_reference",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "1ea25ae9e25c3d40377eb494379dc35a64fd81e6b5b1294d783d145601f5929f",
+        "task_id": "pyvrp_search_20250717"
+      },
+      {
+        "base_commit": "0f84c35356c5be16255b02aee3475aa2d69cc632",
+        "baseline_task_config_sha256": "18c8d8fc8777939fae668ad43fab4516b92234d242352fdec679aea9e0b8de72",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/pr919-judge-smoke/judge-checkpoint.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/pr919-judge-smoke/judge-observations.jsonl",
+              "intent_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr919.json",
+              "performance_evidence_path": "report/pr-scale-20261018/pr919-hidden-primary/analysis.json",
+              "source_patch_path": "configs/references/pyvrp_pr919_source.patch",
+              "source_patch_sha256": "0e69dffa245ac2269475af662edd9bd0b636dcddb36c462a3a9675e27717a586",
+              "workload_evidence_path": "report/pr-scale-20261018/pr919-hidden-primary-manifest.json"
+            },
+            "error": null,
+            "pr_number": 919,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "expert_reference",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "18c8d8fc8777939fae668ad43fab4516b92234d242352fdec679aea9e0b8de72",
+        "task_id": "pyvrp_search_20251020"
+      },
+      {
+        "base_commit": "1e46138e71502850584a4c270c98573578dccc5e",
+        "baseline_task_config_sha256": "c74603603012d114be1cf70fd01cb4cdbaee1403e021260e00f37e288c0b5d7a",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr966_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/public_controls/pr966_correctness/analysis.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr966_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/pyvrp_pr966.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/pr966-hidden-primary/opportunity.json",
+              "performance_screen_evidence_path": "report/pr-scale-20261018/pr966-hidden-primary/analysis.json",
+              "performance_screen_evidence_sha256": "7de6be1bbde72bf3f038fcd4e6a0b86c5de91b4ca2a6720548c72ac503734608",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr966.patch",
+              "source_patch_sha256": "e594f310b7ccc2ef4ac131a561d89d3a9765faae3bb1b28126087d19992caee5",
+              "workload_evidence_path": "report/pr-scale-20261018/instrumentation/pyvrp_pr966_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 966,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "c74603603012d114be1cf70fd01cb4cdbaee1403e021260e00f37e288c0b5d7a",
+        "task_id": "pyvrp_search_20251219"
+      },
+      {
+        "base_commit": "9959c8cf0ba87a0669ec446c6066fe939bf9f951",
+        "baseline_task_config_sha256": "da4d7c10af7219d52cf7addb8772a416085809a9501862b47948490926fb2a2d",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr967_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr967_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr967_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/pyvrp_pr967.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/pr967-baseline-final/opportunity_baseline.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr967.patch",
+              "source_patch_sha256": "fdaef84bb1f4f4d103e2b3353a9c78708df15629ed8bd554b6c7d4496d0054b9",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr967_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 967,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "da4d7c10af7219d52cf7addb8772a416085809a9501862b47948490926fb2a2d",
+        "task_id": "pyvrp_search_20251221"
+      },
+      {
+        "base_commit": "c0d9b692898ead1748d3f54443607d4d314fd87d",
+        "baseline_task_config_sha256": "69c82f8854cb25733a9ec2d1d087da7ee4aba64374c5dde6fae5793f35332a57",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr974_pinned_build_v2.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr974_correctness_v2.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr974_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/pyvrp_pr974.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/pr974-baseline-v3/opportunity_baseline.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr974.patch",
+              "source_patch_sha256": "2d175e365b6ec960ef56ee01e9b2e12648e02b1b3490b6ced6c4079edc2acb70",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr974_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 974,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "69c82f8854cb25733a9ec2d1d087da7ee4aba64374c5dde6fae5793f35332a57",
+        "task_id": "pyvrp_search_20251223"
+      },
+      {
+        "base_commit": "b071e951ed0dc5843f9ff5bb2ae6767d87234beb",
+        "baseline_task_config_sha256": "7be12ed91326c97dd9fbd059451542dc1fa4f94c905a51acae27418d2ed4a47f",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr988_pinned_build_v2.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/public_controls/pr988_correctness_v2/analysis.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr988_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/pyvrp_pr988.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/pr988-baseline-qualification/opportunity_baseline.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr988.patch",
+              "source_patch_sha256": "61b486d239c87118dfc7306a15b01f3269aa51dbee36adceb6dd08290a6e8258",
+              "workload_evidence_path": "report/pr-scale-20261018/instrumentation/pr988/workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 988,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "7be12ed91326c97dd9fbd059451542dc1fa4f94c905a51acae27418d2ed4a47f",
+        "task_id": "pyvrp_search_20260112"
+      },
+      {
+        "base_commit": "b7b597f34281288616303ba409e9876e0a9a36b1",
+        "baseline_task_config_sha256": "5ab20c13a7bded23c1d9072ab0703d169a7bf927f5a2de4d78c54e46845780cc",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/curation-20261017/pr-1146/reference-task-smoke/judge-checkpoint.json",
+              "correctness_evidence_path": "report/curation-20261017/pr-1146/reference-task-smoke/judge-observations.jsonl",
+              "intent_evidence_path": "configs/references/pyvrp_pr1146.yaml",
+              "performance_evidence_path": "report/curation-20261017/pr-1146/hidden-primary/analysis.json",
+              "source_patch_path": "configs/references/pyvrp_pr1146_source.patch",
+              "source_patch_sha256": "76680dbfbb96dc7a9cd5d7e9f92a4b4bb33997e15dc41fe262d756f4873720e6",
+              "workload_evidence_path": "report/curation-20261017/pr-1146/hidden-primary-manifest.json"
+            },
+            "error": null,
+            "pr_number": 1146,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "expert_reference",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "5ab20c13a7bded23c1d9072ab0703d169a7bf927f5a2de4d78c54e46845780cc",
+        "task_id": "pyvrp_search_20260728"
+      },
+      {
+        "base_commit": "80f42f2891734f5e20dd4c85ffe86800070572f0",
+        "baseline_task_config_sha256": "16dda24d944b0df76fdfac576fdfea0f2d2f022aa4443343f718245d0f68df2a",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr1155_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr1155_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr1155_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/pyvrp_pr1155.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/pr1155-baseline-final/opportunity_baseline.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr1155.patch",
+              "source_patch_sha256": "08fc5ce4d2a411814a4a7c413da0c8e2ad04cbafc0605753b2681f0dc7970b7f",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr1155_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 1155,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "16dda24d944b0df76fdfac576fdfea0f2d2f022aa4443343f718245d0f68df2a",
+        "task_id": "pyvrp_search_20260803"
+      },
+      {
+        "base_commit": "5a8c327692d044cff09786ed470413fe941269e7",
+        "baseline_task_config_sha256": "73f875439bf6b26d80aa0f4841ce60c19455230d019595a6d3005c832e9d6598",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/curation-20261017/pr-1156/reference-task-smoke-v2/judge-checkpoint.json",
+              "correctness_evidence_path": "report/curation-20261017/pr-1156/reference-task-smoke-v2/judge-observations.jsonl",
+              "intent_evidence_path": "configs/references/pyvrp_pr1156.yaml",
+              "performance_evidence_path": "report/curation-20261017/pr-1156/hidden-primary/analysis.json",
+              "source_patch_path": "configs/references/pyvrp_pr1156_source.patch",
+              "source_patch_sha256": "9cea99c0d74e1bbbc32f5318f2edba7efe10e1281b5d5968064ea4b14daf4ff6",
+              "workload_evidence_path": "report/curation-20261017/pr-1156/hidden-primary-manifest.json"
+            },
+            "error": null,
+            "pr_number": 1156,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "expert_reference",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "73f875439bf6b26d80aa0f4841ce60c19455230d019595a6d3005c832e9d6598",
+        "task_id": "pyvrp_search_20260806"
+      },
+      {
+        "base_commit": "4da76f9b411e364826b38af9e89a8aa87117ac02",
+        "baseline_task_config_sha256": "48ee3ec6ead7acbdf1d5a0393d8039f00ab5f26292070de08d679a2202545957",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr1190_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr1190_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr1190_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/pyvrp_pr1190.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/pr1190-baseline-final/opportunity_baseline.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr1190.patch",
+              "source_patch_sha256": "fdf36a5d8e1e73944b930e934452ba0f3c86b86b627c3675e33af3b946a746f3",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr1190_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 1190,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "48ee3ec6ead7acbdf1d5a0393d8039f00ab5f26292070de08d679a2202545957",
+        "task_id": "pyvrp_search_20260826"
+      },
+      {
+        "base_commit": "561fc780babf76c0777a66b555b60a96689be712",
+        "baseline_task_config_sha256": "ba2fc4bdd8434eb648dee9310468069288b2372da2998a0a1a9d9e132f755a1d",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr232_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr232_correctness_v2.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr232_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/pyvrp_pr232.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr232_opportunity_v2.json",
+              "previous_correctness_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr232_correctness_pre_agent_image.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr232.patch",
+              "source_patch_sha256": "20b57c745accfb7a1139ab36bbc9d2fa389cf43d9979aac33df457e4938e7b3f",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr232_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 232,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "ba2fc4bdd8434eb648dee9310468069288b2372da2998a0a1a9d9e132f755a1d",
+        "task_id": "pyvrp_solution_constructor_20230602"
+      },
+      {
+        "base_commit": "46e0df95672ace7ebacd3f85f2bc375fcad797a1",
+        "baseline_task_config_sha256": "a0dfdd75bdb982f0ae0ad913023b6020f2409f8859855f80f04f3c0b64ef8dd9",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr783_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr783_correctness_v2.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr783_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/pyvrp_pr783.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr783_opportunity_v2.json",
+              "previous_correctness_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr783_correctness_pre_agent_image.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/pyvrp_pr783_structured.patch",
+              "source_patch_sha256": "225e897c9de331051018a7d2f9e546dad8a8d4dee52cef3c946840420483a546",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/pyvrp_pr783_workload_evidence.json"
+            },
+            "error": "('PyVRP/PyVRP', 783) build Dockerfile hash differs from evidence",
+            "pr_number": 783,
+            "recheck": "failed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "PyVRP/PyVRP"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "a0dfdd75bdb982f0ae0ad913023b6020f2409f8859855f80f04f3c0b64ef8dd9",
+        "task_id": "pyvrp_solution_constructor_20250513"
+      },
+      {
+        "base_commit": "5d9776a954b810bdb3fe71d47b1e7de7cffe90d2",
+        "baseline_task_config_sha256": "3deb6e00994a573e98a8c621c8e1c0335799c2554d20aaaa4c82a3a8735822b4",
+        "changed_fields": [],
+        "evidence": [],
+        "evidence_status": "unknown",
+        "repository": "PyVRP/PyVRP",
+        "task_config_sha256": "3deb6e00994a573e98a8c621c8e1c0335799c2554d20aaaa4c82a3a8735822b4",
+        "task_id": "pyvrp_v0_14_0"
+      },
+      {
+        "base_commit": "a94f778ac864f6c488e64f10f683c9d05253aa79",
+        "baseline_task_config_sha256": "0aa2c73ca2ef4558f1fb4b11a5491911828338ccb27a8e53e1fce4bef0ebee78",
+        "changed_fields": [],
+        "evidence": [],
+        "evidence_status": "unknown",
+        "repository": "scipopt/scip",
+        "task_config_sha256": "0aa2c73ca2ef4558f1fb4b11a5491911828338ccb27a8e53e1fce4bef0ebee78",
+        "task_id": "scip_v9_2_4"
+      },
+      {
+        "base_commit": "4463af7e80abba19be284db40d3a8c9136f34b5f",
+        "baseline_task_config_sha256": "624c2ff851bb07a1fee58cf42ba1a7e6e1eb9a98f45054329939a3ca8517207c",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr146_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr146_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr146_integration_v1.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/vroom_pr146.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr146_opportunity_v2.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/vroom_pr146.patch",
+              "source_patch_sha256": "b8e22eb1cdeccbe59a77bf9bf41acd735310196d18c22929c21ac22dfd7afdb2",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr146_workload_evidence_v2.json"
+            },
+            "error": null,
+            "pr_number": 146,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "VROOM-Project/vroom"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "VROOM-Project/vroom",
+        "task_config_sha256": "624c2ff851bb07a1fee58cf42ba1a7e6e1eb9a98f45054329939a3ca8517207c",
+        "task_id": "vroom_cvrp_regret_insertion_20180813"
+      },
+      {
+        "base_commit": "9905815687607d675b49fc7faf09a309f69460f9",
+        "baseline_task_config_sha256": "762bfcc65290f61f61d8e665cd5959732729071498470c7c7ee5e6aee3084bfa",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr1222_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/public_controls/vroom_pr1222_correctness/analysis.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr1222_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/vroom_pr1222.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/vroom-pr1222-baseline/opportunity_baseline.json",
+              "source_patch_path": "report/curation-20261017/vroom-pr1222-source.patch",
+              "source_patch_sha256": "dadc96bdebfb30aa76b08f666f04457ab5454367eb803492fe276154cc15d97e",
+              "workload_evidence_path": "report/pr-scale-20261018/instrumentation/vroom_pr1222/workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 1222,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "VROOM-Project/vroom"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "VROOM-Project/vroom",
+        "task_config_sha256": "762bfcc65290f61f61d8e665cd5959732729071498470c7c7ee5e6aee3084bfa",
+        "task_id": "vroom_heuristic_20250313"
+      },
+      {
+        "base_commit": "da628ea1cd42168f9ee85fa05c1d665620f23b4e",
+        "baseline_task_config_sha256": "8a093546c76dc1324bbe07e84991fd9c613bb768560306a1003ac543a688be25",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr112_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr112_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr112_integration_final4.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/vroom_pr112.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr112_opportunity_final4.json",
+              "performance_screen_evidence_path": "report/pr-scale-20261018/vroom_pr112_hidden/paired_runs_final4/analysis.json",
+              "performance_screen_evidence_sha256": "72d42a73bdac64fffd924136b60f0fe95be60bb0eda969dded350c192e5bc7f4",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/vroom_pr112.patch",
+              "source_patch_sha256": "1014d176c065408b54b848cca42723337b33d9e205623b33de54db1e12a47d48",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr112_workload.json"
+            },
+            "error": null,
+            "pr_number": 112,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "VROOM-Project/vroom"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "VROOM-Project/vroom",
+        "task_config_sha256": "8a093546c76dc1324bbe07e84991fd9c613bb768560306a1003ac543a688be25",
+        "task_id": "vroom_pr112_clustering_20180509"
+      },
+      {
+        "base_commit": "0662ae0360ff9dd8dbe5138e9fcd20757bd83122",
+        "baseline_task_config_sha256": "90f5374170d43ab00e52c06aeafa28c1d276707d48c0d1a03a062b7feee6e582",
+        "changed_fields": [],
+        "evidence": [
+          {
+            "artifacts": {
+              "build_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr978_pinned_build.json",
+              "correctness_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr978_correctness.json",
+              "integration_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr978_integration.json",
+              "intent_evidence_path": "configs/pr_curation/reviews/vroom_pr978.json",
+              "opportunity_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr978_opportunity.json",
+              "source_patch_path": "report/pr-scale-20261018/source_patches/vroom_pr978.patch",
+              "source_patch_sha256": "1070013803e7fdcf436ddc7245327f94c1f8ee80ed012901a6d26434f65ce4c3",
+              "workload_evidence_path": "report/pr-scale-20261018/source_audit/vroom_pr978_workload_evidence.json"
+            },
+            "error": null,
+            "pr_number": 978,
+            "recheck": "passed",
+            "recorded_stage": "task_ready",
+            "recorded_track": "open_opportunity",
+            "repository": "VROOM-Project/vroom"
+          }
+        ],
+        "evidence_status": "recorded",
+        "repository": "VROOM-Project/vroom",
+        "task_config_sha256": "90f5374170d43ab00e52c06aeafa28c1d276707d48c0d1a03a062b7feee6e582",
+        "task_id": "vroom_tspfix_20230918"
+      },
+      {
+        "base_commit": "43dd7d0b8b560431eb555bf335cf4797eb7343c4",
+        "baseline_task_config_sha256": "adb05f591ccd521b8a781c86d00cc218fe2793a15c1bb19240c508953019408d",
+        "changed_fields": [],
+        "evidence": [],
+        "evidence_status": "unknown",
+        "repository": "VROOM-Project/vroom",
+        "task_config_sha256": "adb05f591ccd521b8a781c86d00cc218fe2793a15c1bb19240c508953019408d",
+        "task_id": "vroom_v1_15_0"
+      }
+    ]
+  },
+  "validation": {
+    "agent_runs": 0,
+    "final_contract_tests": {
+      "failed": 0,
+      "passed": 27
+    },
+    "fresh_source_recovery_runs": 0,
+    "new_task_ready": 0,
+    "real_export_replays": [
+      {
+        "first": {
+          "imported": 1,
+          "reused": 0,
+          "tasks_created": 0
+        },
+        "id": "ERGO-Code/HiGHS#577",
+        "manifest_sha256": "5fd6473b9d9a069ea8d875243fa1d21e3b0b47a3a4a57dea566767eee746c78f",
+        "replay": {
+          "imported": 0,
+          "reused": 1,
+          "tasks_created": 0
+        }
+      },
+      {
+        "first": {
+          "imported": 1,
+          "reused": 0,
+          "tasks_created": 0
+        },
+        "id": "ERGO-Code/HiGHS#618",
+        "manifest_sha256": "a74dee0dff04e126793319f8776c6545282c84a6bd3a73e0b16d26c13215573e",
+        "replay": {
+          "imported": 0,
+          "reused": 1,
+          "tasks_created": 0
+        }
+      },
+      {
+        "first": {
+          "imported": 1,
+          "reused": 0,
+          "tasks_created": 0
+        },
+        "id": "ERGO-Code/HiGHS#651",
+        "manifest_sha256": "2916f19123fb05c1ac3b7a50f11127e6c5a65e2abd73b433088e45081050a04f",
+        "replay": {
+          "imported": 0,
+          "reused": 1,
+          "tasks_created": 0
+        }
+      },
+      {
+        "first": {
+          "imported": 1,
+          "reused": 0,
+          "tasks_created": 0
+        },
+        "id": "ERGO-Code/HiGHS#685",
+        "manifest_sha256": "726d5011606fffcc8fbf2ecf164eafff54ea170b4f114f39b37297b965260565",
+        "replay": {
+          "imported": 0,
+          "reused": 1,
+          "tasks_created": 0
+        }
+      },
+      {
+        "first": {
+          "imported": 1,
+          "reused": 0,
+          "tasks_created": 0
+        },
+        "id": "ERGO-Code/HiGHS#690",
+        "manifest_sha256": "412d3b4e418e277da184f4e7bb20ddd50ae46fae46fae37e65dd1c635ae4839c",
+        "replay": {
+          "imported": 0,
+          "reused": 1,
+          "tasks_created": 0
+        }
+      },
+      {
+        "first": {
+          "imported": 1,
+          "reused": 0,
+          "tasks_created": 0
+        },
+        "id": "ERGO-Code/HiGHS#1992",
+        "manifest_sha256": "8c8fb129083cbb25ca357a6ce42b94f382581d748b7999ce23100d18dc94b877",
+        "replay": {
+          "imported": 0,
+          "reused": 1,
+          "tasks_created": 0
+        }
+      },
+      {
+        "first": {
+          "imported": 1,
+          "reused": 0,
+          "tasks_created": 0
+        },
+        "id": "ERGO-Code/HiGHS#2027",
+        "manifest_sha256": "5cc7cdd02bd6b7cbc0bdd8a504f6b48d1df36037e5648bd93b12980286b0aa04",
+        "replay": {
+          "imported": 0,
+          "reused": 1,
+          "tasks_created": 0
+        }
+      },
+      {
+        "first": {
+          "imported": 1,
+          "reused": 0,
+          "tasks_created": 0
+        },
+        "id": "ERGO-Code/HiGHS#2522",
+        "manifest_sha256": "ddd62ba7fad3d1e6a80af3f7b902855541903481fbb26a698801f691dbbff5be",
+        "replay": {
+          "imported": 0,
+          "reused": 1,
+          "tasks_created": 0
+        }
+      },
+      {
+        "first": {
+          "imported": 1,
+          "reused": 0,
+          "tasks_created": 0
+        },
+        "id": "ERGO-Code/HiGHS#3213",
+        "manifest_sha256": "3042dd361c3b3c81f24d072bda526d3869f0a63e10e06d86c5531e585dd44cf1",
+        "replay": {
+          "imported": 0,
+          "reused": 1,
+          "tasks_created": 0
+        }
+      },
+      {
+        "first": {
+          "imported": 1,
+          "reused": 0,
+          "tasks_created": 0
+        },
+        "id": "ERGO-Code/HiGHS#3255",
+        "manifest_sha256": "354abdc8f9b1cf410ee056b80eb282c72718bfb3d2ae156eda19247641934c5e",
+        "replay": {
+          "imported": 0,
+          "reused": 1,
+          "tasks_created": 0
+        }
+      }
+    ],
+    "replay_method": "Ten cached real historical PR records and hash-pinned source patches passed through curation export; each bundle imported twice.",
+    "solver_runs": 0,
+    "unit_suite": {
+      "command": "python -m pytest -q tests/unit -m 'not docker and not external'",
+      "failed": 0,
+      "note": "Localhost socket permission required for the MCP loopback test.",
+      "passed": 568
+    }
+  }
+}

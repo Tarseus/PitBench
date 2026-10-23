@@ -1,0 +1,206 @@
+{
+  "architecture": "x86_64",
+  "artifact_owner_uid": 65532,
+  "as_of": "2026-10-22",
+  "candidate_artifact_limit_bytes": 134217728,
+  "candidate_gid": 65531,
+  "candidate_supplementary_groups": [],
+  "claim_boundary": "B1 permission-boundary acceptance on the recorded kernel and four fixed images. Public-instance solver smoke and independent verification only; no hidden-cohort qualification or native Agent study.",
+  "claude_code_runs": 0,
+  "docker_tests": {
+    "command": "python -m pytest -q tests/integration/test_isolation.py",
+    "failed": 0,
+    "log": "report/b1-isolation-20261022/docker-root-group-final.log",
+    "passed": 4
+  },
+  "failed_attempt_records": "report/b1-isolation-20261022/ (initial logs and per-image timestamped attempt records retained)",
+  "final_regression_runs": [
+    {
+      "access_checks_passed": [
+        "private_path",
+        "traversal",
+        "symlink",
+        "proc_root",
+        "reference_patch",
+        "environment",
+        "network",
+        "private_metadata",
+        "old_artifact_metadata",
+        "root_group_artifact_metadata"
+      ],
+      "budget_sec": 10.0,
+      "build_commands_executed": 2,
+      "descendants_remaining": 0,
+      "evidence_path": "report/b1-isolation-20261022/pyvrp_v0_14_0.json",
+      "evidence_sha256": "c8f491766d161c99569522689c705daf4bacef2ef8e45a4249a172486f995d49",
+      "image": "ghcr.io/tarseus/pitbench-pyvrp-judge@sha256:c7a4f9abecc90cfcc5e4368ba46a9f35d5f7be2883ac53cff49e7f365f1c79a3",
+      "independent_verification": {
+        "detail": "independent CVRP verification passed",
+        "feasible": true,
+        "infrastructure_error": false,
+        "objective": 83167.0
+      },
+      "instance_sha256": "4768e758625096d40fc577ab2b40693816bf1df55ac4b48b5f685d4ac74c26ca",
+      "landlock_abi": 8,
+      "private_asset": "oracles/cbc_v2_10_12.yaml",
+      "private_asset_sha256": "6f83ed50e1df72a0e52cac6735e33711fa795e9ce0de72dfc468bcb3b2d7a995",
+      "solver_seed": 3687993774,
+      "task_config_sha256": "3deb6e00994a573e98a8c621c8e1c0335799c2554d20aaaa4c82a3a8735822b4",
+      "task_id": "pyvrp_v0_14_0",
+      "threads": 1,
+      "toolchains": [
+        "native_cpp_compile_and_denied_read"
+      ]
+    },
+    {
+      "access_checks_passed": [
+        "private_path",
+        "traversal",
+        "symlink",
+        "proc_root",
+        "reference_patch",
+        "environment",
+        "network",
+        "private_metadata",
+        "old_artifact_metadata",
+        "root_group_artifact_metadata"
+      ],
+      "budget_sec": 30.0,
+      "build_commands_executed": 0,
+      "descendants_remaining": 0,
+      "evidence_path": "report/b1-isolation-20261022/highs_v1_15_1.json",
+      "evidence_sha256": "08040073efd0b2154530feb1e3d258133d7a79fa66349c64de6de87d9a3c87ae",
+      "image": "sha256:cdac06326fc876dec1a1f689d18e8b3c9e9082c61707f2d8ead0a1efaa8432c7",
+      "independent_verification": {
+        "detail": "exact integer scheduling verification passed",
+        "feasible": true,
+        "infrastructure_error": false,
+        "objective": 276.0
+      },
+      "instance_sha256": "7e5b0fa3eee2b41f49782c0cbd067e81d35886a2b70971c0b5d28cb0511497d8",
+      "landlock_abi": 8,
+      "private_asset": "oracles/cbc_v2_10_12.yaml",
+      "private_asset_sha256": "6f83ed50e1df72a0e52cac6735e33711fa795e9ce0de72dfc468bcb3b2d7a995",
+      "solver_seed": 0,
+      "task_config_sha256": "4252290c5630b2afd695cffa92eb65a7d739c70c423b32668276d305a3b86132",
+      "task_id": "highs_v1_15_1",
+      "threads": 1,
+      "toolchains": [
+        "native_cpp_compile_and_denied_read"
+      ]
+    },
+    {
+      "access_checks_passed": [
+        "private_path",
+        "traversal",
+        "symlink",
+        "proc_root",
+        "reference_patch",
+        "environment",
+        "network",
+        "private_metadata",
+        "old_artifact_metadata",
+        "root_group_artifact_metadata"
+      ],
+      "budget_sec": 20.0,
+      "build_commands_executed": 0,
+      "descendants_remaining": 0,
+      "evidence_path": "report/b1-isolation-20261022/choco_v6_0_1.json",
+      "evidence_sha256": "f8e816b9f805781ea25809195d30cd502d67b8b898f5f6a00f82f6a1396d7fa0",
+      "image": "sha256:f72f0c675b547373436a1b0a8c44f7eb4c0406d3ee5c455ecaadff630ee3fe60",
+      "independent_verification": {
+        "detail": "exact integer bin packing verification passed",
+        "feasible": true,
+        "infrastructure_error": false,
+        "objective": 26.0
+      },
+      "instance_sha256": "3af9aaa2f07bd84a97f26e305f556188e219325e4af42c0f75001f3ac8017050",
+      "landlock_abi": 8,
+      "private_asset": "oracles/cbc_v2_10_12.yaml",
+      "private_asset_sha256": "6f83ed50e1df72a0e52cac6735e33711fa795e9ce0de72dfc468bcb3b2d7a995",
+      "solver_seed": 0,
+      "task_config_sha256": "96e29796f23f7fb3d2062e40dea261f482777114f59f707e955914d3ec9f83da",
+      "task_id": "choco_v6_0_1",
+      "threads": 1,
+      "toolchains": [
+        "java_compile_and_denied_read"
+      ]
+    },
+    {
+      "access_checks_passed": [
+        "private_path",
+        "traversal",
+        "symlink",
+        "proc_root",
+        "reference_patch",
+        "environment",
+        "network",
+        "private_metadata",
+        "old_artifact_metadata",
+        "root_group_artifact_metadata"
+      ],
+      "budget_sec": 30.0,
+      "build_commands_executed": 0,
+      "descendants_remaining": 0,
+      "evidence_path": "report/b1-isolation-20261022/ortools_cp_sat_solve_v9_15.json",
+      "evidence_sha256": "8650c269048a75a70b57e8f5fdb62c38587fd36257cb1e7b5350c3d541461928",
+      "image": "sha256:da8bbadfc64615cdab145bc542d3365aa6ae3866c658ced6958cabcde0379b59",
+      "independent_verification": {
+        "detail": "independent fixed-proto assignment verification passed",
+        "feasible": true,
+        "infrastructure_error": false,
+        "objective": 666.0
+      },
+      "instance_sha256": "b9467a3b24f8aea04f072918e23afd6aabbb7f363c4e29464e0fb0299a519276",
+      "landlock_abi": 8,
+      "private_asset": "oracles/cbc_v2_10_12.yaml",
+      "private_asset_sha256": "6f83ed50e1df72a0e52cac6735e33711fa795e9ce0de72dfc468bcb3b2d7a995",
+      "solver_seed": 0,
+      "task_config_sha256": "e9113b035e80d60c858e84602cb02da33fb52815d9fdbf09ed23b708c7b02ee5",
+      "task_id": "ortools_cp_sat_solve_v9_15",
+      "threads": 1,
+      "toolchains": [
+        "native_cpp_compile_and_denied_read",
+        "java_compile_and_denied_read"
+      ]
+    }
+  ],
+  "g0_status": "pending_remaining_B0_and_native_runtime_evidence",
+  "host_group_conflict": "Reject host output gid 65531; root/host gid 0 remains supported",
+  "implementation_state": "working_tree_uncommitted",
+  "integration_commit": "12fcf4ad18e7c174daace5514ee62917db4f0cb6",
+  "isolation_version": "landlock6-seccomp-v1",
+  "kernel": "7.0.0-34-generic",
+  "kind": "b1_isolation_validation",
+  "minimum_landlock_abi": 6,
+  "new_task_ready": 0,
+  "observed_landlock_abi": 8,
+  "oracle_review": {
+    "attempted": "architecture",
+    "reason": "Opus API credential not configured; no retries or Claude Code invocation",
+    "request_sent": false
+  },
+  "private_asset_mount": "/run/pitbench-private/assets",
+  "private_parent_mode": "0700",
+  "published_directory_mode": "0770",
+  "published_group": "host caller primary gid",
+  "schema_version": "1.0",
+  "source_sha256": {
+    "pitbench/evaluator/artifacts.py": "c71ba5b1742bc48151586d5dc76b0e14aa9fce356203aa2a24d5a318ff502b6b",
+    "pitbench/evaluator/docker_judge.py": "2193739b0417ef2efae7ef204888d440f689190dd22026a6e3a476b69f516319",
+    "pitbench/evaluator/isolation.py": "21b928e0521111cdd047dd32651ddcda7a1043f24bd147fee8234b37cdbe272a",
+    "pitbench/evaluator/judge.py": "094fcdb60f6610c2b5b084fdfdefd3c398cb696ec2d0a788fc2f6b292885c349",
+    "pitbench/evaluator/runner.py": "31462ddac17f2809b8935cfe208b173205f94d532c7ca3641707158f52ef4f65",
+    "pitbench/repositories/plugins.py": "c6b820cd26eeb24bdb4e6c418ce6868d237aeae4a6c9003403f001030c1e6a8c",
+    "scripts/validate_seed_robustness_real_solver.py": "8029def54245f85cc8a7a67c60812cd2761483af18f5f69c4889dbb77c114d5f"
+  },
+  "status": "passed_in_recorded_scope",
+  "stdout_stderr_limit_bytes_each": 4194304,
+  "task_config_or_metric_files_changed": [],
+  "unit_tests": {
+    "command": "python -m pytest -q tests/unit -m 'not docker and not external'",
+    "failed": 0,
+    "log": "report/b1-isolation-20261022/unit-tests-root-group-final.log",
+    "passed": 591
+  }
+}

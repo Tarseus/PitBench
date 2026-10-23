@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pitbench.evaluator.isolation import ARTIFACT_OWNER_UID, protect_output
 from pitbench.evaluator.judge import LocalProcessJudge, _development_seeds
 from pitbench.evaluator.reliability import prepare_boundary_cases
 from pitbench.evaluator.representation import run_with_representation
@@ -29,12 +30,15 @@ def main() -> None:
     parser.add_argument("--instances-per-instance-set", type=int)
     parser.add_argument("--solver-seed-limit", type=int)
     parser.add_argument("--checkpoint-identity")
+    parser.add_argument("--artifact-gid", type=int)
     parser.add_argument(
         "--code-state",
         action="append",
         choices=[state.value for state in CodeState],
     )
     args = parser.parse_args()
+    if args.artifact_gid is not None:
+        protect_output(args.output_dir, args.artifact_gid)
     measurement_started_at = datetime.now(timezone.utc).isoformat()
     task = PitBenchTask.from_yaml(args.task_config)
     boundary_cases = (
@@ -101,12 +105,18 @@ def main() -> None:
         temporary.replace(marker)
     for root_dir, dirs, files in os.walk(args.output_dir):
         try:
-            os.chmod(root_dir, 0o777)
+            if args.artifact_gid is not None:
+                os.chown(root_dir, ARTIFACT_OWNER_UID, args.artifact_gid)
+            os.chmod(root_dir, 0o770 if args.artifact_gid is not None else 0o777)
         except OSError:
             pass
         for f in files:
             try:
-                os.chmod(Path(root_dir) / f, 0o666)
+                path = Path(root_dir) / f
+                if not path.is_symlink():
+                    if args.artifact_gid is not None:
+                        os.chown(path, ARTIFACT_OWNER_UID, args.artifact_gid)
+                    os.chmod(path, 0o660 if args.artifact_gid is not None else 0o666)
             except OSError:
                 pass
 
