@@ -13,10 +13,10 @@ problem_variant: balanced_subset_sum
 formulation_id: balanced_subset_sum_cp
 optimization_scope: integer_arithmetic_propagation_efficiency
 instruction: >-
-  Improve arithmetic constraint propagation and exact CP search performance
-  in this pinned Choco source snapshot. Preserve feasibility, objective
-  values, and valid optimality claims on the original instances. Choose source
-  changes autonomously and use only visible development instances.
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/chocoteam/choco-solver.git
   plugin: pitbench.repositories.plugins:ChocoRepositoryPlugin

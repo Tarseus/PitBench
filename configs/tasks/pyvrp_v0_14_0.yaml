@@ -12,9 +12,10 @@ task_type: heuristic_solver
 problem_family: cvrp
 optimization_scope: local_search_and_search_efficiency
 instruction: >-
-  Improve solver performance while preserving buildability, feasibility, objective
-  semantics, and solution format compatibility. Search policies and trajectories may
-  change. Use only the visible development instances.
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/PyVRP/PyVRP.git
   plugin: pitbench.repositories.plugins:PyVRPRepositoryPlugin

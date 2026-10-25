@@ -1061,6 +1061,17 @@ timeouts and start failures also leave per-run feedback and available logs.
 If the configured results directory is read-only, `pitbench bench` automatically
 uses a task-specific directory under the container's temporary directory and
 prints the selected path.
+
+Task prompts are written in English and use a goal-only instruction: improve
+the declared solver performance while preserving mathematical correctness.
+They state the existing metric, solve budgets, source edit boundaries, and
+available development tools, while the agent chooses the optimization direction
+and implementation. The configuration's `optimization_scope` remains task
+metadata and is not included in the prompt. At completion, the retained source
+diff is the submission; the agent must leave its selected candidate in place
+and explain an outcome with no retained changes. Rematerialize existing tasks
+to use the updated instructions; archived runs retain their original prompts.
+
 After paired Base and Agent runs, `pitbench diagnose` aggregates results by
 independent development instance. It reports better/equal/worse instance
 counts, whether an apparent gain is concentrated in one instance, runtime and
@@ -1135,6 +1146,227 @@ Agent execution evidence is recorded automatically for every agent through one
 harness entry, including custom imported agents. See [Agent execution
 traces](AGENT_TRACING.md) for the event format, reconstruction, and observation
 boundaries.
+
+### Generate controlled instance distributions
+
+The shared instance generators can materialize a configurable grid of
+distributions and problem sizes without running a solver:
+
+```bash
+uv run python -m scripts.generate_instances \
+  --config configs/experiments/instance_generation.yaml \
+  --output-dir report/instance-generation/cvrp
+```
+
+The example produces 135 CVRP instances: three spatial distributions, three
+demand distributions, five customer counts (50, 100, 200, 400, 800), and three
+replicates per condition. Coordinates lie in `[0, 100]` in each dimension;
+vehicle capacity is fixed at 50 and distances use `EUC_2D`. The plan is an
+inspectable example, not a frozen development/hidden split.
+
+Each `axes` entry maps level names to generator parameter overrides. All axes
+are crossed; parameters inside a level override the base `generator` config.
+Different axes cannot override the same parameter. `generator.count` sets
+replicates per condition. Seeds are reused across conditions, so changing
+spatial distribution preserves the sampled uncorrelated demands, and changing
+customer count preserves the coordinate and uncorrelated-demand prefixes.
+Depot-correlated demands preserve the sampled demand multiset but reassign it
+according to depot distance; their customer assignments can change with geometry
+or size.
+
+CVRP generation supports these settings:
+
+| Parameter | Values and meaning |
+|---|---|
+| `coordinate_distribution` | `uniform`, `clustered`, or `mixed`; `cluster_count` and `cluster_spread` control clusters, and `uniform_fraction` controls the uniform share of a mixture. |
+| `demand_distribution` | `uniform_integer`, `bimodal`, `discrete`, `depot_correlated`, or `depot_anticorrelated`. |
+| `demand_parameters` | Uniform/correlated demands accept integer `low` and `high`; bimodal demands accept two integer ranges `low`/`high` and `high_probability`; discrete demands accept positive integer `values` and nonnegative `weights`. |
+| `capacity` or `capacity_ratio` | Specify exactly one. Fixed capacity keeps vehicle capacity constant as customer count grows; a ratio derives capacity from total demand, with the historical minimum of 10. Each customer demand must fit in one vehicle. |
+| `depot_mode` | `center`, `corner`, or `random`. |
+| `customers` | A list used by the existing generator; use a single customer count in each scale level for a controlled size grid. |
+
+For example, a custom discrete demand distribution can use:
+
+```yaml
+demand_distribution: discrete
+demand_parameters:
+  values: [1, 2, 5, 10]
+  weights: [0.5, 0.2, 0.2, 0.1]
+```
+
+The output retains the generation plan, each effective generator configuration,
+instance files and hashes, a `manifest.json`, and per-instance `features.csv`.
+CVRP descriptors include demand statistics, spatial dispersion, demand/depot
+distance correlation, capacity load, and an independently checked feasibility
+witness using one customer per route. That witness is not a BKS or an optimality
+certificate. No optimum or BKS is computed. Completed, failed, and pending
+conditions remain in the manifest if generation stops; use a new output directory
+for a new run. The same entry point selects other existing generators by `kind`.
+
+`configs/experiments/problem_generation.yaml` groups grids under `panels` and
+covers all eight mathematical problem families used by current tasks. It produces
+114 instances, with two replicates in each of 57 conditions. The older
+`repeated_constants_cumulative` fixture generator remains available; current
+OR-Tools tasks use job-shop scheduling.
+
+| Generator | Structure controls | Scale controls |
+|---|---|---|
+| `euclidean_cvrp` | Coordinate and demand distributions, depot position, capacity | `customers` |
+| `bin_packing` | Weight distribution, weight ranges, capacity | `items` |
+| `single_machine_scheduling_mip` | Processing-time distribution and ranges | `jobs` |
+| `multidimensional_knapsack_mip` | Weight distribution, independent/shared dimensions, planted/ratio capacities | `items`, `dimensions` |
+| `binary_clique_cover_mip` | Group sizes, cross-edge density, coefficient range, FME extensions | `groups`, `group_sizes`, `fme_auxiliary_pairs` |
+| `graph_coloring` | Mycielski, Erdos–Renyi, or planted partitions; edge probability | `vertex_counts` for random/partitioned graphs; Mycielski size follows `colors` |
+| `balanced_subset_sum` | Weight distribution, granularity, cardinality, target offset, domain representation | `item_counts` |
+| `job_shop_scheduling` | Random/shared machine routes, processing-time distribution | `jobs`, `machines` |
+
+Integer marginals accept `uniform_integer`, `bimodal`, or `discrete`, with the
+same range/probability settings as CVRP demands. Use `weight_distribution` and
+`weight_parameters` for packing, knapsack and subset sum; use
+`processing_distribution` and `processing_parameters` for scheduling.
+Subset-sum samples are multiplied by `weight_step`. Knapsack preserves the
+current objective (minimize negative sums of item coefficients); `capacity_mode:
+ratio` removes the planted optimal witness. Random graphs only carry a feasible
+coloring. The trusted-optimum preparation commands reject these modes when their
+existing theorem-based optimum certificate does not apply.
+
+Job-shop generation writes classic text machine/duration pairs compatible with
+the existing `prepare_cp_sat_job_shop_panel` converter. The formal OR-Tools driver
+consumes the converted fixed CP-SAT protocol buffer. For controlled scale tests,
+keep distribution parameters fixed; for example, a fixed random-graph edge
+probability preserves density while expected vertex degree grows with size.
+
+Generate and search the multi-family example with:
+
+```bash
+uv run python -m scripts.generate_instances \
+  --config configs/experiments/problem_generation.yaml \
+  --output-dir report/problem-generation/instances
+uv run python -m scripts.collect_reference_solutions \
+  --manifest report/problem-generation/instances/suite.json \
+  --output-dir report/problem-generation/references \
+  --seconds 1 --max-exact-customers 12
+```
+
+The offline reference module uses route/subset DP for small integer-distance
+CVRP, branch and bound for packing and knapsack, exhaustive DSATUR coloring,
+job-shop dispatch enumeration, and existing SPT, subset-sum DP and clique-cover
+certificates. `--seconds` limits each search; construction, proof preparation,
+verification and serialization add wall time, which is recorded. The customer
+limit bounds CVRP DP size; larger inputs retain a singleton-route incumbent until
+a routing backend supplies a better solution. A search timeout keeps its best
+feasible solution and marks it `best_found`, unless a valid bound already proves
+optimality. These references are not published BKS values.
+
+An optional `--hgs-binary /path/to/HGS-CVRP/hgs --seeds 0 1` also runs
+[HGS-CVRP](https://github.com/vidalt/HGS-CVRP) on CVRP inputs. Its MIT-licensed
+source is public; the collector records its Git commit, binary hash, seed,
+CPU budget, command, raw output and independently verified routes. It supplies
+an explicit fleet upper bound of one vehicle per customer and preserves integer
+`EUC_2D` semantics. HGS results remain `best_found` without an optimality proof.
+
+Every attempt and failure is retained in `attempts.jsonl`; `references.json`
+selects the best independently checked result per instance and distinguishes
+`proven_optimal`, `best_found`, and `missing`. Instances and solutions are bound
+by SHA-256. These are research artifacts; formal task anchors continue to use
+`AnchorCollection` and `TrustedOptimumOracle`. This example neither freezes
+hidden seeds nor changes benchmark budgets or scoring. Planted certificates
+make some generated instances easy, so proof coverage alone does not establish
+benchmark difficulty or distribution coverage.
+
+Public sources for additional instances and algorithms include
+[DIMACS VRP](https://dimacs.rutgers.edu/programs/implementation-challenges/vehicle-routing/implementation-challenge-vehicle-routing/capacitated-vrp),
+[BPPLIB](https://github.com/mdelorme2/BPPLIB),
+[MIPLIB](https://miplib.zib.de/download.html),
+[DIMACS coloring](https://mat.tepper.cmu.edu/COLOR/instances.html),
+[MiniZinc Challenge](https://www.minizinc.org/challenge/), and
+[JSPLIB](https://github.com/tamy0612/JSPLIB). Competition reports, source code,
+instance data and solution certificates have separate availability: some
+algorithms are downloadable, some require author contact or external solvers.
+Published bounds apply to their exact source instances and objective semantics;
+newly generated instances need their own reference search.
+
+Long reference searches use the same collection process runner and CPU scheduler:
+
+```bash
+uv run python -m scripts.collect_reference_solutions \
+  --campaign-config configs/experiments/reference_campaign_long.yaml \
+  --output-dir report/reference-campaign-20261025-long
+uv run python -m scripts.collect_reference_solutions \
+  --status --output-dir report/reference-campaign-20261025-long
+```
+
+Run these commands with a Python environment containing the backends declared
+in the plan. The example expects the materialized source manifests listed in
+that plan; `reference_generation.yaml` describes the additional difficulty probes.
+The local experiment uses `.pitbench/reference-env/bin/python`, with optional
+solver dependencies isolated from the benchmark environment.
+
+Campaigns retain a code snapshot, backend/package identities, input hashes,
+allocated physical CPU IDs, and every attempt. Independent solver processes
+receive disjoint CPU allocations; the default example reserves 96 physical cores,
+with eight per CP-SAT job and one per other job. Solver callbacks persist checked
+incumbents; PyVRP uses five-minute rounds with its previous best solution. HGS and
+FILO2 retain solutions when each run finishes. A 30-second heartbeat updates
+`status.json` and `bks.json` throughout the campaign, including incumbents from
+unfinished searches. Watchdog termination kills the worker's entire process group.
+
+`reference_campaign.yaml` records the initial certificate and 60-second calibration
+plan. `reference_campaign_long.yaml` continues its verified incumbents with
+one-hour searches over four seeds and four-hour searches over two further seeds.
+It uses SCIP/HiGHS for subset sum after high-precision cases exposed long CP-SAT
+domain computations during calibration. Prior records remain available.
+Later jobs skip instances already proved optimal. Rerunning the same command
+resumes completed work without repeating successful attempts. Corrected worker
+code gets a new retained source revision; configuration
+changes require a new campaign directory. Creating an empty `STOP` file in the
+campaign directory stops dispatch of queued jobs and allows active jobs to finish.
+Removing it and rerunning resumes the queue. A detached terminal or equivalent
+supervisor keeps a long campaign alive after the interactive session closes.
+
+Competition dimensions guide the probes, while observed feasibility, solution
+quality and bound progress determine which instances are informative. Larger
+dimensions alone do not guarantee difficulty: the SPT and planted-certificate
+families keep their known mathematical structure. Public research seeds and
+reference answers do not constitute a hidden evaluation split.
+
+The active reference search now uses the SSH fleet configured in
+`configs/experiments/reference_remote.yaml`, after a local host restart interrupted
+the earlier run. The local machine performs deployment, result collection and
+verification. Each remote host runs an independent shard through the same
+`ReferenceCollection` process runner, scheduler and problem verifiers.
+
+```bash
+.pitbench/reference-env/bin/python -m scripts.collect_reference_solutions \
+  --remote-config configs/experiments/reference_remote.yaml \
+  --output-dir report/reference-distributed-20261025 --deploy
+.pitbench/reference-env/bin/python -m scripts.collect_reference_solutions \
+  --remote-config configs/experiments/reference_remote.yaml \
+  --output-dir report/reference-distributed-20261025 --sync-loop
+```
+
+The coordinator environment requires the optional `paramiko` package. Credentials
+and SSH host keys are stored under the Git-ignored `.pitbench/remote/` directory;
+the credential file must have mode `0600`. Credentials are excluded from deployment
+archives. The example assigns 32 of 128 physical cores per host, spreads them
+across the available cores, and starts workers at nice level 10. Admission pauses
+on excessive load/temperature or insufficient memory/disk; active searches retain
+their configured budgets. Host resource limits are operational controls, separate
+from benchmark scoring rules.
+
+Job IDs, seeds and solve budgets survive sharding. Finished jobs and instances
+already proved optimal are omitted with recorded reasons. Each host retains raw
+logs, checkpoints, versions and binary hashes; the coordinator copies completion
+records and rechecks returned witnesses against the original input. Verification
+caches bind both instance and solution hashes. Repeating deployment reuses a
+matching installation instead of replacing active executables.
+
+The fleet continues if the coordinator goes offline. Restart `--sync-loop` after
+a coordinator reboot to resume collection. Stale remote controllers are relaunched
+when reachable; their interrupted attempts and retained incumbents are recorded
+before pending work resumes. A host's `campaign/STOP` file stops its new dispatch;
+the coordinator's `STOP_SYNC` file stops collection without stopping remote solvers.
+Current fleet state and results are in `report/reference-distributed-20261025/`.
 
 ### Schedule multiple agents externally
 

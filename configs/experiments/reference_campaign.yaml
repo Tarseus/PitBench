@@ -1,0 +1,60 @@
+schema_version: "1.0"
+physical_cores: 96
+schedule_seed: 20261025
+watchdog_grace_sec: 300
+seeds: [0, 1, 2, 3]
+manifests:
+  - report/problem-generation-20261025/instances/suite.json
+  - report/instance-generation-20261025/cvrp/manifest.json
+  - report/reference-difficulty-20261025/instances/suite.json
+  - report/reference-difficulty-20261025/public/manifest.json
+prior_references:
+  - report/problem-generation-20261025/summary.json
+backends:
+  - name: native
+    threads: 1
+    kinds: [single_machine_scheduling_mip, binary_clique_cover_mip]
+  - name: hgs
+    binary: .pitbench/cache/reference-solvers/HGS-CVRP/hgs
+    repository: .pitbench/cache/reference-solvers/HGS-CVRP
+    threads: 1
+    kinds: [euclidean_cvrp]
+  - name: filo2
+    binary: .pitbench/cache/reference-solvers/filo2/build/filo2
+    repository: .pitbench/cache/reference-solvers/filo2
+    threads: 1
+    kinds: [euclidean_cvrp]
+  - name: pyvrp
+    package: pyvrp
+    threads: 1
+    checkpoint_sec: 300
+    kinds: [euclidean_cvrp]
+  - name: scip
+    package: pyscipopt
+    threads: 1
+    kinds: [bin_packing, multidimensional_knapsack_mip]
+  - name: highs
+    package: highspy
+    threads: 1
+    kinds: [bin_packing, multidimensional_knapsack_mip]
+  - name: cp_sat
+    package: ortools
+    threads: 8
+    kinds: [job_shop_scheduling, graph_coloring, balanced_subset_sum, multidimensional_knapsack_mip]
+phases:
+  - name: certificates
+    seconds: 10
+    backends: [native]
+    seeds: [0]
+  - name: calibration
+    seconds: 60
+    backends: [hgs, filo2, pyvrp, scip, highs, cp_sat]
+    seeds: [0]
+  - name: long
+    seconds: 3600
+    backends: [hgs, filo2, pyvrp, scip, highs, cp_sat]
+    seeds: [0, 1, 2, 3]
+  - name: deep
+    seconds: 14400
+    backends: [hgs, filo2, pyvrp, scip, highs, cp_sat]
+    seeds: [4, 5]

@@ -1,0 +1,139 @@
+schema_version: "1.0"
+description: >-
+  Reference-search difficulty probes inspired by DIMACS/CVRPLIB, BPPLIB and
+  classical coloring/job-shop scales. Similar dimensions do not establish equal
+  hardness. These public research seeds do not define a hidden benchmark split.
+panels:
+  routing_reference:
+    visibility: agent
+    generator:
+      kind: euclidean_cvrp
+      count: 2
+      capacity: 50
+      distance_metric: EUC_2D
+      randomness: {coordinate_seed: 20261026, demand_seed: 20262026}
+    axes:
+      structure:
+        uniform_center: {coordinate_distribution: uniform, depot_mode: center}
+        uniform_corner: {coordinate_distribution: uniform, depot_mode: corner}
+        clustered_center: {coordinate_distribution: clustered, depot_mode: center, cluster_count: 8, cluster_spread: 4.0}
+        clustered_random: {coordinate_distribution: clustered, depot_mode: random, cluster_count: 8, cluster_spread: 4.0}
+        mixed_center: {coordinate_distribution: mixed, depot_mode: center, cluster_count: 8, cluster_spread: 4.0}
+        mixed_correlated: {coordinate_distribution: mixed, depot_mode: corner, demand_distribution: depot_correlated, cluster_count: 8, cluster_spread: 4.0}
+      scale:
+        n100: {customers: [100]}
+        n500: {customers: [500]}
+        n1000: {customers: [1000]}
+  packing_reference:
+    visibility: agent
+    generator:
+      kind: bin_packing
+      count: 2
+      capacity: 150
+      randomness: {instance_seed: 20261026}
+    axes:
+      structure:
+        wide: {weight_parameters: {low: 1, high: 150}}
+        falkenauer_range: {weight_parameters: {low: 20, high: 100}}
+        bimodal: {weight_distribution: bimodal, weight_parameters: {low: [30, 45], high: [75, 90], high_probability: 0.5}}
+      scale:
+        n120: {items: [120]}
+        n500: {items: [500]}
+        n1000: {items: [1000]}
+  scheduling_reference:
+    visibility: agent
+    generator:
+      kind: single_machine_scheduling_mip
+      count: 1
+      processing_parameters: {low: 1, high: 99}
+      randomness: {instance_seed: 20261026}
+    axes:
+      structure:
+        uniform: {processing_distribution: uniform_integer}
+        bimodal: {processing_distribution: bimodal, processing_parameters: {low: [1, 10], high: [80, 99]}}
+      scale:
+        n50: {jobs: [50]}
+        n100: {jobs: [100]}
+        n300: {jobs: [300]}
+  knapsack_reference:
+    visibility: agent
+    generator:
+      kind: multidimensional_knapsack_mip
+      count: 2
+      dimensions: [10]
+      weight_max: 100
+      capacity_mode: ratio
+      randomness: {instance_seed: 20261026}
+    axes:
+      structure:
+        tight: {capacity_ratio: 0.25}
+        half: {capacity_ratio: 0.5}
+        loose: {capacity_ratio: 0.75}
+      scale:
+        n100: {items: [100]}
+        n500: {items: [500]}
+        n1000: {items: [1000]}
+  conflicts_reference:
+    visibility: agent
+    generator:
+      kind: binary_clique_cover_mip
+      count: 1
+      group_sizes: [4]
+      coefficient_min: 10
+      coefficient_max: 15
+      cross_edge_sampler: geometric_skip_v1
+      randomness: {instance_seed: 20261026}
+    axes:
+      structure:
+        sparse: {cross_edge_density: [0.02]}
+        fme: {cross_edge_density: [0.2], fme_auxiliary_pairs: 10, fme_paper_block: true}
+      scale:
+        g50: {groups: [50]}
+        g100: {groups: [100]}
+        g300: {groups: [300]}
+  coloring_reference:
+    visibility: agent
+    generator:
+      kind: graph_coloring
+      count: 2
+      randomness: {instance_seed: 20261026}
+    axes:
+      structure:
+        sparse: {graph_model: erdos_renyi, edge_probability: 0.1}
+        medium: {graph_model: erdos_renyi, edge_probability: 0.5}
+        dense: {graph_model: erdos_renyi, edge_probability: 0.9}
+        partitioned: {graph_model: planted_partition, colors: [10], edge_probability: 0.5}
+      scale:
+        n125: {vertex_counts: [125]}
+        n250: {vertex_counts: [250]}
+        n500: {vertex_counts: [500]}
+  subset_reference:
+    visibility: agent
+    generator:
+      kind: balanced_subset_sum
+      count: 2
+      randomness: {instance_seed: 20261026}
+    axes:
+      structure:
+        small_integer: {max_weight: 1000}
+        high_precision: {max_weight: 100000000}
+      scale:
+        n40: {item_counts: [40]}
+        n60: {item_counts: [60]}
+        n100: {item_counts: [100]}
+  jobshop_reference:
+    visibility: agent
+    generator:
+      kind: job_shop_scheduling
+      count: 2
+      processing_parameters: {low: 1, high: 99}
+      randomness: {instance_seed: 20261026}
+    axes:
+      structure:
+        jobshop: {machine_order: random_per_job}
+        flowshop: {machine_order: shared}
+      scale:
+        j10m10: {jobs: [10], machines: [10]}
+        j15m15: {jobs: [15], machines: [15]}
+        j20m20: {jobs: [20], machines: [20]}
+        j30m20: {jobs: [30], machines: [20]}

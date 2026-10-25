@@ -75,34 +75,32 @@ def test_feedback_arm_configs_must_match_except_feedback_mode(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
-    ("task_id", "metric"),
-    [
-        ("vroom_v1_15_0", "paired reduction in normalized gap"),
-        ("pyvrp_v0_14_0", "paired reduction in normalized gap"),
-        ("pyvrp_search_20260728", "paired reduction in normalized gap"),
-        ("pyvrp_search_20260806", "paired reduction in normalized gap"),
-        ("choco_v6_0_1", "independently verified solved coverage"),
-        ("highs_v1_15_1", "independently verified solved coverage"),
-        ("scip_v9_2_4", "independently verified solved coverage"),
-        ("cbc_v2_10_12", "independently verified solved coverage"),
-        ("ortools_cp_sat_solve_v9_15", "independently verified solved coverage"),
-    ],
+    "task_config",
+    sorted((ROOT / "configs" / "tasks").glob("*.yaml")),
+    ids=lambda path: path.stem,
 )
 def test_instruction_matches_protocol_and_visible_files(
-    task_id: str, metric: str
+    task_config: Path,
 ) -> None:
-    task = PitBenchTask.from_yaml(ROOT / "configs" / "tasks" / f"{task_id}.yaml")
+    task = PitBenchTask.from_yaml(task_config)
     instruction = PitBenchAdapter._format_instruction(task, DEFAULT_TOOLS)
-    assert metric in instruction
+    assert "Optimization Scope" not in instruction
+    assert task.optimization_scope not in instruction
+    assert instruction.isascii()
     assert f"{task.evaluation.primary_budget_sec:.1f}s" in instruction
     assert "/pitbench/dev_instances" in instruction
     assert "pitbench bench --label base" in instruction
     assert "pitbench bench --label agent --build" in instruction
     assert "pitbench diagnose" in instruction
     assert "incumbent or bound progress" in instruction
+    assert "git diff HEAD" in instruction
+    assert "If no source changes are retained" in instruction
     if task.task_type.value == "exact_solver":
+        assert "independently verified solved coverage" in instruction
         assert "paired PAR-2 runtime" in instruction
         assert "normalized gap" not in instruction
+    else:
+        assert "paired reduction in normalized gap" in instruction
 
     without_tools = PitBenchAdapter._format_instruction(task)
     assert "No PitBench development instances are mounted" in without_tools

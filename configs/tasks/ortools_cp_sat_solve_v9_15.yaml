@@ -11,9 +11,10 @@ task_type: exact_solver
 problem_family: cp
 optimization_scope: cp_sat_solve_efficiency
 instruction: >-
-  Improve only CP-SAT solving performance while preserving the fixed model
-  construction, feasibility, and objective semantics. Do not optimize model
-  construction. Use only the visible development instances.
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/google/or-tools.git
   plugin: pitbench.repositories.plugins:OrToolsCpSatExactRepositoryPlugin

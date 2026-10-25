@@ -316,7 +316,6 @@ class PitBenchAdapter:
                 else "Keep all implementation changes inside them."
             )
         )
-        scope = getattr(task, "optimization_scope", None) or "solver performance"
         primary_budget = getattr(task.evaluation, "primary_budget_sec", None)
         budget_info = (
             f"{primary_budget:.1f}s" if primary_budget else "the evaluation budget"
@@ -390,7 +389,6 @@ class PitBenchAdapter:
             "### Task Context\n"
             f"- Target Solver: {task.release.repository} v{task.release.version}\n"
             f"- Problem Family: {task.problem_family.value.upper()}\n"
-            f"- Optimization Scope: {scope}\n"
             f"- Performance Protocol: {protocol.value}\n"
             f"- Primary Evaluation Budget: {budget_info} per instance",
             "### Evaluation & Correctness Requirements\n"
@@ -400,12 +398,22 @@ class PitBenchAdapter:
             "- Robustness: The candidate will be evaluated across unseen test instances, multiple random seeds, and perturbed representations. Do not overfit hyperparameters or hardcode behaviors for specific instances.",
             "### Recommended Performance Engineering SOP\n"
             + development
-            + f"2. Diagnose: Inspect both computational cost and solver behavior in `{scope}`: incumbent or bound progress, search work, time to useful solutions, and the instance structures that stall or regress.\n"
+            + "2. Diagnose: Investigate the solver's computational cost and behavior: incumbent or bound progress, search work, time to useful solutions, and the instance structures that stall or regress. Choose the optimization direction yourself.\n"
             "3. Targeted Optimization: Make a bounded, semantics-preserving change that addresses the diagnosed mechanism. Distinguish implementation throughput from search-policy changes, and do not treat more iterations or lower runtime alone as a solver improvement. Avoid blind parameter guessing or disruptive rewrites.\n"
             + rerun
             + "5. Regression & Cleanup: Run existing repository unit/integration tests"
             f"{validation} to check for regressions. Remove scratch scripts, "
             "profiling traces, and generated files from the submitted source changes.",
+            "### Final Submission\n"
+            "Your submission is the source diff left in the task repository when "
+            "execution ends. Leave the selected candidate implementation in place "
+            "when cleaning temporary files. Do not create commits or change "
+            "repository HEAD. Before finishing, inspect `git diff HEAD` and "
+            "`git status --short`, and confirm that the retained changes match "
+            "your final report. If no source changes are retained, state that "
+            "explicitly and explain the attempted changes, why they were "
+            "reverted or abandoned, and any unresolved blockers. Distinguish "
+            "completed validation and measured results from untested claims.",
         ]
 
         if agent_tools:
@@ -596,7 +604,7 @@ CMD ["sh", "-c", "sleep infinity"]
             "    && git -C /workspace/repo submodule foreach --recursive "
             "'git reset --hard HEAD' \\\n"
             "    && git -C /workspace/repo clean -f -- .dockerignore \\\n"
-            "    && test -z \"$(git -C /workspace/repo status --porcelain)\"\n"
+            '    && test -z "$(git -C /workspace/repo status --porcelain)"\n'
         )
         return f"""FROM {image}
 USER root

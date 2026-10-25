@@ -11,8 +11,10 @@ task_type: exact_solver
 problem_family: mip
 optimization_scope: mip_search_efficiency
 instruction: >-
-  Improve exact-solver performance while preserving feasibility, certificates, and
-  objective semantics. Use only the visible development instances.
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/ERGO-Code/HiGHS.git
   plugin: pitbench.repositories.plugins:HighsRepositoryPlugin

@@ -10,8 +10,11 @@ release:
 task_type: heuristic_solver
 problem_family: cvrp
 optimization_scope: routing_search_efficiency
-instruction: Improve routing solver performance while preserving feasibility and objective
-  semantics. Use only the visible development instances.
+instruction: >-
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/VROOM-Project/vroom.git
   plugin: pitbench.repositories.plugins:VroomRepositoryPlugin

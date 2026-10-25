@@ -11,10 +11,10 @@ task_type: exact_solver
 problem_family: cp
 optimization_scope: exact_search_decision_construction
 instruction: >-
-  Improve the efficiency of exact CP search decisions in this pinned Choco
-  source snapshot while preserving original-instance feasibility, objective
-  values, and optimality claims. Choose source changes autonomously and use
-  only visible development instances.
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/chocoteam/choco-solver.git
   plugin: pitbench.repositories.plugins:ChocoRepositoryPlugin

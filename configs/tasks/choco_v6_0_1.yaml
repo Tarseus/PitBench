@@ -11,8 +11,10 @@ task_type: exact_solver
 problem_family: cp
 optimization_scope: constraint_propagation_efficiency
 instruction: >-
-  Improve constraint-solver performance while preserving feasibility and solution
-  semantics. Use only the visible development instances.
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/chocoteam/choco-solver.git
   plugin: pitbench.repositories.plugins:ChocoRepositoryPlugin

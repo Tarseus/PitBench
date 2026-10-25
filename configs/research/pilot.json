@@ -32,15 +32,18 @@
             "count",
             "customers",
             "capacity_ratio",
+            "capacity",
             "coordinate_distribution",
             "cluster_count",
             "cluster_spread",
+            "uniform_fraction",
             "depot_mode",
             "demand_distribution",
+            "demand_parameters",
             "distance_metric",
             "randomness"
           ],
-          "description": "Existing public Euclidean CVRP generator. The caller chooses supported geometry, demand, capacity, size and random seeds. These choices are not hidden panel parameters. Generated instances without verified anchors do not acquire an optimum or BKS automatically."
+          "description": "Public Euclidean CVRP generator with uniform, clustered or mixed coordinates; parameterized uniform, bimodal, discrete or depot-correlated integer demands; and either fixed capacity or capacity proportional to total demand. The caller chooses size and random seeds. These choices are not hidden panel parameters. Generated instances without verified anchors do not acquire an optimum or BKS automatically."
         }
       ],
       "hidden_view_roles": {
@@ -76,10 +79,12 @@
           "parameters": [
             "count",
             "jobs",
+            "processing_distribution",
+            "processing_parameters",
             "randomness",
             "selected_instance_seeds"
           ],
-          "description": "Existing scheduling formulation. The caller chooses job counts and instance seeds. Deadline or window tightness is not an exposed parameter of this generator."
+          "description": "Single-machine sum-of-start-times formulation with configurable job counts, processing-time marginals and seeds."
         },
         {
           "kind": "multidimensional_knapsack_mip",
@@ -88,10 +93,15 @@
             "items",
             "dimensions",
             "weight_max",
+            "weight_distribution",
+            "weight_parameters",
+            "dimension_correlation",
+            "capacity_mode",
+            "capacity_ratio",
             "randomness",
             "selected_instance_seeds"
           ],
-          "description": "Existing planted knapsack formulation. The caller chooses supported size and coefficient parameters. Validity and optimality claims require the independent verifier."
+          "description": "Knapsack formulation with configurable sizes, weight marginals, dimension correlation and planted or ratio capacities. Ratio capacities carry no planted optimum certificate; solutions require independent verification."
         }
       ],
       "hidden_view_roles": {

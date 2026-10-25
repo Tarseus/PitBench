@@ -10,10 +10,11 @@ release:
 task_type: exact_solver
 problem_family: mip
 optimization_scope: mip_row_aggregation_modk_cut_and_clique_merge_efficiency
-instruction: Improve exact MIP solving in this pinned HiGHS 1.0 source snapshot while
-  preserving original-model feasibility, valid bounds, objective semantics, and truthful
-  solve statuses. Choose source changes autonomously and use only the visible development
-  instances.
+instruction: >-
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/ERGO-Code/HiGHS.git
   plugin: pitbench.repositories.plugins:HighsRepositoryPlugin

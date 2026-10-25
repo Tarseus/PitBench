@@ -13,9 +13,10 @@ problem_variant: multidimensional_knapsack
 formulation_id: multidimensional_knapsack_mip
 optimization_scope: mip_source_search_and_implementation_efficiency
 instruction: >-
-  Improve CBC solver source code for exact MIP solving. Preserve model semantics,
-  valid bounds, and truthful solve status. Do not change the input model, default
-  parameters, tests, or benchmark harness. Use only visible development instances.
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/coin-or/Cbc.git
   plugin: pitbench.repositories.plugins:CbcRepositoryPlugin

@@ -1,0 +1,30 @@
+schema_version: "1.0"
+source_campaign: report/reference-campaign-20261025-long
+inventory_file: .pitbench/remote/inventory.json
+credentials_file: .pitbench/remote/credentials.json
+known_hosts_file: .pitbench/remote/known_hosts
+expected_hosts: 8
+cpu_fraction: 0.25
+max_physical_cores_per_host: 32
+deployment_workers: 4
+sync_interval_sec: 60
+stale_heartbeat_sec: 180
+python_runtime: .venv/.managed-python/cpython-3.13.16-linux-x86_64-gnu
+wheels: .pitbench/remote/wheels
+requirements: report/reference-campaign-20261025-long/environment.txt
+resource_guard:
+  max_load1: 64
+  max_temperature_celsius: 75
+  min_memory_available_gib: 16
+  min_disk_free_gib: 4
+native_builds:
+  hgs:
+    source: .pitbench/cache/reference-solvers/HGS-CVRP
+    files: ["Program/*.cpp", "Program/*.h", "LICENSE"]
+    sources: ["Program/*.cpp"]
+    flags: ["-O3", "-march=native", "-std=c++17"]
+  filo2:
+    source: .pitbench/cache/reference-solvers/filo2
+    files: ["*.cpp", "*.hpp", "LICENSE", "base/**/*", "instance/**/*", "localsearch/**/*", "movegen/**/*", "opt/**/*", "solution/**/*"]
+    sources: ["main.cpp", "base/KDTree.cpp", "instance/Instance.cpp", "instance/Parser.cpp", "solution/Solution.cpp"]
+    flags: ["-O3", "-march=native", "-std=c++17", "-DTIMELIMIT", "-DVERBOSE"]

@@ -12,11 +12,11 @@ problem_family: cp
 problem_variant: balanced_subset_sum
 formulation_id: balanced_subset_sum_cp
 optimization_scope: first_fail_variable_selection_efficiency
-instruction: Improve exact CP search efficiency in this pinned Choco source snapshot
-  by optimizing FirstFail variable selection. Preserve leftmost minimum-domain selection,
-  backtracking correctness, original-instance feasibility, and optimality claims.
-  The task fixes search_strategy=min_dom_lb. Choose source changes autonomously and
-  use only visible development instances.
+instruction: >-
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/chocoteam/choco-solver.git
   plugin: pitbench.repositories.plugins:ChocoRepositoryPlugin

@@ -10,10 +10,11 @@ release:
 task_type: heuristic_solver
 problem_family: cvrp
 optimization_scope: route_segment_distance_storage_and_query_efficiency
-instruction: Improve the computational efficiency and memory use of local-search route-segment
-  distance queries in this pinned PyVRP source snapshot while preserving route-distance
-  semantics, feasibility, and returned solution correctness. Choose source changes
-  autonomously and use only visible development instances.
+instruction: >-
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/PyVRP/PyVRP.git
   plugin: pitbench.repositories.plugins:PyVRPClassicRepositoryPlugin

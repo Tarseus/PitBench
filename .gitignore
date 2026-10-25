@@ -25,6 +25,7 @@ __pycache__/
 
 /papers/
 /report/
+/imports/
 
 # LaTeX build products
 *.aux

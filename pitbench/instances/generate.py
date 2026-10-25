@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import csv
 import hashlib
+import itertools
 import json
 import math
+import platform
 import random
+import re
 import shutil
+import statistics
 import subprocess
 import tempfile
 from pathlib import Path
@@ -13,6 +18,7 @@ from typing import Any
 import yaml
 
 from pitbench.problem_families.public_verification import (
+    check_cvrp,
     format_multidimensional_knapsack_lp,
 )
 
@@ -33,29 +39,101 @@ def _instance_seed(config: dict[str, Any], index: int) -> int:
     return int(config["randomness"]["instance_seed"]) + index
 
 
+def _integer_samples(
+    rng: random.Random,
+    count: int,
+    distribution: str,
+    parameters: dict[str, Any],
+    maximum: int,
+) -> list[int]:
+    """Shared positive-integer marginals for weights and processing times."""
+
+    def interval(value: Any) -> tuple[int, int]:
+        if (
+            not isinstance(value, (list, tuple))
+            or len(value) != 2
+            or any(type(item) is not int for item in value)
+            or not 1 <= value[0] <= value[1]
+        ):
+            raise ValueError("ranges require two positive ordered integers")
+        return value[0], value[1]
+
+    if distribution == "uniform_integer":
+        if set(parameters) - {"low", "high"}:
+            raise ValueError("unknown uniform integer parameter")
+        low, high = interval(
+            [parameters.get("low", 1), parameters.get("high", maximum)]
+        )
+        return [rng.randint(low, high) for _ in range(count)]
+    if distribution == "bimodal":
+        if set(parameters) - {"low", "high", "high_probability"}:
+            raise ValueError("unknown bimodal integer parameter")
+        low = interval(parameters["low"])
+        high = interval(parameters["high"])
+        probability = parameters.get("high_probability", 0.5)
+        if not 0 <= probability <= 1:
+            raise ValueError("high_probability must be in [0, 1]")
+        return [
+            rng.randint(*(low if rng.random() < 1 - probability else high))
+            for _ in range(count)
+        ]
+    if distribution == "discrete":
+        if set(parameters) - {"values", "weights"}:
+            raise ValueError("unknown discrete integer parameter")
+        values, weights = parameters["values"], parameters["weights"]
+        if (
+            not isinstance(values, list)
+            or not values
+            or any(type(value) is not int or value < 1 for value in values)
+            or not isinstance(weights, list)
+            or len(values) != len(weights)
+            or any(
+                type(weight) not in {int, float}
+                or not math.isfinite(weight)
+                or weight < 0
+                for weight in weights
+            )
+            or not 0 < sum(weights) < math.inf
+        ):
+            raise ValueError(
+                "discrete integers require positive values and finite weights"
+            )
+        return rng.choices(values, weights=weights, k=count)
+    raise ValueError(f"unsupported integer distribution: {distribution}")
+
+
 def make_euclidean_cvrp_instance(
     *,
     name: str,
     customers: int,
     coordinate_seed: int,
     demand_seed: int,
-    capacity_ratio: float,
+    capacity_ratio: float | None = None,
+    capacity: int | None = None,
     coordinate_distribution: str = "uniform",
     cluster_count: int = 4,
     cluster_spread: float = 9.0,
+    uniform_fraction: float = 0.5,
     depot_mode: str = "center",
     demand_distribution: str = "uniform_integer",
+    demand_parameters: dict[str, Any] | None = None,
     distance_metric: str | None = None,
 ) -> dict[str, Any]:
     """Generate a deterministic normalized CVRP instance.
 
-    Uniform and clustered coordinates share the same RNG dimensions so validation
-    panels can hold demand realization fixed while changing only spatial structure.
+    Independent spatial and demand streams allow matched distribution experiments.
+    Existing defaults preserve historical generated instances byte for byte.
     """
-    if customers <= 0:
-        raise ValueError("customers must be positive")
-    if not 0 < capacity_ratio <= 1:
+    if type(customers) is not int or customers <= 0:
+        raise ValueError("customers must be a positive integer")
+    if (capacity is None) == (capacity_ratio is None):
+        raise ValueError("specify exactly one of capacity and capacity_ratio")
+    if capacity_ratio is not None and not 0 < capacity_ratio <= 1:
         raise ValueError("capacity_ratio must be in (0, 1]")
+    if capacity is not None and (type(capacity) is not int or capacity <= 0):
+        raise ValueError("capacity must be a positive integer")
+    if distance_metric not in {None, "EXACT_2D", "EUC_2D"}:
+        raise ValueError("unsupported CVRP distance metric")
     coordinate_rng = random.Random(coordinate_seed)
     demand_rng = random.Random(demand_seed)
     if coordinate_distribution == "uniform":
@@ -63,15 +141,31 @@ def make_euclidean_cvrp_instance(
             [coordinate_rng.uniform(0, 100), coordinate_rng.uniform(0, 100)]
             for _ in range(customers)
         ]
-    elif coordinate_distribution == "clustered":
-        if cluster_count <= 0 or cluster_spread <= 0:
+    elif coordinate_distribution in {"clustered", "mixed"}:
+        if (
+            type(cluster_count) is not int
+            or cluster_count <= 0
+            or not math.isfinite(cluster_spread)
+            or cluster_spread <= 0
+        ):
             raise ValueError("cluster_count and cluster_spread must be positive")
+        if not 0 <= uniform_fraction <= 1:
+            raise ValueError("uniform_fraction must be in [0, 1]")
         centers = [
             [coordinate_rng.uniform(15, 85), coordinate_rng.uniform(15, 85)]
             for _ in range(cluster_count)
         ]
         customer_coordinates = []
+        mixture_rng = random.Random(f"cvrp-mixture:{coordinate_seed}")
         for index in range(customers):
+            if (
+                coordinate_distribution == "mixed"
+                and mixture_rng.random() < uniform_fraction
+            ):
+                customer_coordinates.append(
+                    [coordinate_rng.uniform(0, 100), coordinate_rng.uniform(0, 100)]
+                )
+                continue
             center_x, center_y = centers[index % cluster_count]
             customer_coordinates.append(
                 [
@@ -99,18 +193,72 @@ def make_euclidean_cvrp_instance(
     else:
         raise ValueError(f"unknown depot_mode: {depot_mode}")
 
-    if demand_distribution == "uniform_integer":
-        customer_demands = [demand_rng.randint(1, 10) for _ in range(customers)]
+    parameters = demand_parameters or {}
+
+    def positive_range(value: Any) -> tuple[int, int]:
+        if (
+            not isinstance(value, (list, tuple))
+            or len(value) != 2
+            or any(type(item) is not int for item in value)
+            or not 1 <= value[0] <= value[1]
+        ):
+            raise ValueError("demand ranges require two positive ordered integers")
+        return value[0], value[1]
+
+    if demand_distribution in {
+        "uniform_integer",
+        "depot_correlated",
+        "depot_anticorrelated",
+    }:
+        if set(parameters) - {"low", "high"}:
+            raise ValueError("unknown uniform demand parameter")
+        low, high = positive_range(
+            [parameters.get("low", 1), parameters.get("high", 10)]
+        )
+        customer_demands = [demand_rng.randint(low, high) for _ in range(customers)]
     elif demand_distribution == "bimodal":
+        if set(parameters) - {"low", "high", "high_probability"}:
+            raise ValueError("unknown bimodal demand parameter")
+        low = positive_range(parameters.get("low", [1, 3]))
+        high = positive_range(parameters.get("high", [8, 10]))
+        high_probability = parameters.get("high_probability", 0.5)
+        if not 0 <= high_probability <= 1:
+            raise ValueError("high_probability must be in [0, 1]")
         customer_demands = [
-            demand_rng.randint(1, 3)
-            if demand_rng.random() < 0.5
-            else demand_rng.randint(8, 10)
+            demand_rng.randint(*low)
+            if demand_rng.random() < 1 - high_probability
+            else demand_rng.randint(*high)
             for _ in range(customers)
         ]
-    elif demand_distribution in {"depot_correlated", "depot_anticorrelated"}:
-        # Preserve the uniform-integer marginal while coupling its order to location.
-        sampled = sorted(demand_rng.randint(1, 10) for _ in range(customers))
+    elif demand_distribution == "discrete":
+        if set(parameters) - {"values", "weights"}:
+            raise ValueError("unknown discrete demand parameter")
+        values = parameters.get("values")
+        weights = parameters.get("weights")
+        if (
+            not isinstance(values, list)
+            or not values
+            or any(type(value) is not int or value <= 0 for value in values)
+            or not isinstance(weights, list)
+            or len(weights) != len(values)
+            or any(
+                type(weight) not in {int, float}
+                or not math.isfinite(weight)
+                or weight < 0
+                for weight in weights
+            )
+            or not 0 < sum(weights) < math.inf
+        ):
+            raise ValueError(
+                "discrete demands require positive values and finite weights"
+            )
+        customer_demands = demand_rng.choices(values, weights=weights, k=customers)
+    else:
+        raise ValueError(f"unknown demand_distribution: {demand_distribution}")
+
+    if demand_distribution in {"depot_correlated", "depot_anticorrelated"}:
+        # Keep the sampled marginal while coupling its order to depot distance.
+        sampled = sorted(customer_demands)
         by_distance = sorted(
             range(customers),
             key=lambda index: (
@@ -122,11 +270,12 @@ def make_euclidean_cvrp_instance(
         customer_demands = [0] * customers
         for index, demand in zip(by_distance, sampled, strict=True):
             customer_demands[index] = demand
-    else:
-        raise ValueError(f"unknown demand_distribution: {demand_distribution}")
-
     demands = [0, *customer_demands]
-    capacity = max(10, math.ceil(sum(demands) * capacity_ratio))
+    if capacity is None:
+        assert capacity_ratio is not None
+        capacity = max(10, math.ceil(sum(demands) * capacity_ratio))
+    if max(customer_demands) > capacity:
+        raise ValueError("customer demand exceeds vehicle capacity")
     instance = {
         "name": name,
         "depot": 0,
@@ -146,12 +295,15 @@ def _cvrp(config: dict[str, Any], index: int, destination: Path) -> None:
         customers=_choice(config["customers"], index),
         coordinate_seed=seeds["coordinate_seed"] + index,
         demand_seed=seeds["demand_seed"] + index,
-        capacity_ratio=float(config["capacity_ratio"]),
+        capacity_ratio=config.get("capacity_ratio"),
+        capacity=config.get("capacity"),
         coordinate_distribution=config.get("coordinate_distribution", "uniform"),
         cluster_count=int(config.get("cluster_count", 4)),
         cluster_spread=float(config.get("cluster_spread", 9.0)),
+        uniform_fraction=float(config.get("uniform_fraction", 0.5)),
         depot_mode=config.get("depot_mode", "center"),
         demand_distribution=config.get("demand_distribution", "uniform_integer"),
+        demand_parameters=config.get("demand_parameters"),
         distance_metric=config.get("distance_metric"),
     )
     destination.write_text(json.dumps(instance, indent=2))
@@ -163,20 +315,25 @@ def make_bin_packing_instance(
     item_count: int,
     capacity: int,
     instance_seed: int,
+    weight_distribution: str = "uniform_integer",
+    weight_parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if item_count <= 0 or capacity <= 0:
         raise ValueError("item count and capacity must be positive")
     rng = random.Random(instance_seed)
+    weights = _integer_samples(
+        rng, item_count, weight_distribution, weight_parameters or {}, capacity
+    )
+    if max(weights) > capacity:
+        raise ValueError("bin packing item exceeds capacity")
     return {
         "name": name,
         "capacity": capacity,
-        "weights": [rng.randint(1, capacity) for _ in range(item_count)],
+        "weights": weights,
     }
 
 
 def _bin_packing(config: dict[str, Any], index: int, destination: Path) -> None:
-    if config.get("weight_distribution", "uniform_integer") != "uniform_integer":
-        raise ValueError("unsupported bin packing weight distribution")
     item_count = _choice(config["items"], index)
     capacity = int(config["capacity"])
     destination.write_text(
@@ -186,6 +343,10 @@ def _bin_packing(config: dict[str, Any], index: int, destination: Path) -> None:
                 item_count=item_count,
                 capacity=capacity,
                 instance_seed=_instance_seed(config, index),
+                weight_distribution=config.get(
+                    "weight_distribution", "uniform_integer"
+                ),
+                weight_parameters=config.get("weight_parameters"),
             ),
             indent=2,
         )
@@ -214,7 +375,13 @@ def scheduling_processing_times(
 ) -> list[int]:
     rng = random.Random(_instance_seed(config, index))
     jobs = _choice(config["jobs"], index)
-    return [rng.randint(1, 20) for _ in range(jobs)]
+    return _integer_samples(
+        rng,
+        jobs,
+        config.get("processing_distribution", "uniform_integer"),
+        config.get("processing_parameters", {}),
+        20,
+    )
 
 
 def _scheduling_lp(config: dict[str, Any], index: int, destination: Path) -> None:
@@ -265,11 +432,32 @@ def multidimensional_knapsack_data(
     if item_count < 2 or dimensions < 2 or weight_max < 2:
         raise ValueError("invalid multidimensional knapsack generator settings")
     weights = [
-        [rng.randint(1, weight_max) for _ in range(item_count)]
+        _integer_samples(
+            rng,
+            item_count,
+            config.get("weight_distribution", "uniform_integer"),
+            config.get("weight_parameters", {}),
+            weight_max,
+        )
         for _ in range(dimensions)
     ]
+    correlation = config.get("dimension_correlation", "independent")
+    if correlation == "shared":
+        weights = [weights[0].copy() for _ in range(dimensions)]
+    elif correlation != "independent":
+        raise ValueError("unsupported dimension_correlation")
     selected = sorted(rng.sample(range(item_count), item_count // 2))
-    capacities = [sum(row[item] for item in selected) for row in weights]
+    mode = config.get("capacity_mode", "planted")
+    if mode == "planted":
+        capacities = [sum(row[item] for item in selected) for row in weights]
+    elif mode == "ratio":
+        ratio = config.get("capacity_ratio", 0.5)
+        if not 0 < ratio < 1:
+            raise ValueError("knapsack capacity_ratio must be in (0, 1)")
+        capacities = [max(1, int(sum(row) * ratio)) for row in weights]
+        selected = []  # No optimal witness is planted in this mode.
+    else:
+        raise ValueError("unsupported knapsack capacity_mode")
     return weights, capacities, selected
 
 
@@ -445,9 +633,7 @@ def _binary_clique_cover_mps(
     config: dict[str, Any], index: int, destination: Path
 ) -> None:
     groups, planted, cross_edges = binary_clique_cover_data(config, index)
-    fme_extensions = binary_clique_cover_fme_extensions(
-        config, index, groups, planted
-    )
+    fme_extensions = binary_clique_cover_fme_extensions(config, index, groups, planted)
     fme_paper_block = config.get("fme_paper_block", False)
     if type(fme_paper_block) is not bool:
         raise ValueError("fme_paper_block must be a boolean")
@@ -501,7 +687,9 @@ def _binary_clique_cover_mps(
     }
     row_by_variable.update({item["column"]: [] for item in fme_extensions})
     if fme_paper_block:
-        row_by_variable.update({name: [] for name in ("fme_i", "fme_x", "fme_y", "fme_z")})
+        row_by_variable.update(
+            {name: [] for name in ("fme_i", "fme_x", "fme_y", "fme_z")}
+        )
     extension_columns = {item["column"] for item in fme_extensions}
     for row_name, terms, _ in rows:
         for name, value in terms:
@@ -569,6 +757,38 @@ def graph_coloring_data(
     """Relabel a graph with a theorem-backed chromatic lower bound."""
 
     rng = random.Random(_instance_seed(config, index))
+    model = config.get("graph_model", "mycielski")
+    if model in {"erdos_renyi", "planted_partition"}:
+        vertices = _choice(config["vertex_counts"], index)
+        probability = float(config["edge_probability"])
+        if vertices < 2 or not 0 <= probability <= 1:
+            raise ValueError("invalid random graph dimensions or density")
+        if model == "planted_partition":
+            partitions = _choice(config["colors"], index)
+            if not 1 <= partitions <= vertices:
+                raise ValueError("invalid graph partition count")
+            colors = [vertex % partitions for vertex in range(vertices)]
+            rng.shuffle(colors)
+        else:
+            colors = list(range(vertices))  # Feasible witness, no optimality claim.
+        edges = [
+            (a, b)
+            for a in range(vertices)
+            for b in range(a + 1, vertices)
+            if colors[a] != colors[b] and rng.random() < probability
+        ]
+        return (
+            {
+                "name": f"graph_{index:04d}",
+                "problem_kind": "graph_coloring",
+                "vertex_count": vertices,
+                "edge_endpoints": [value for edge in edges for value in edge],
+            },
+            colors,
+            {"kind": "feasible_coloring_only", "graph_model": model},
+        )
+    if model != "mycielski":
+        raise ValueError(f"unsupported graph_model: {model}")
     chromatic_number = _choice(config["colors"], index)
     probability_config = config.get("extra_edge_probability", 0)
     extra_edge_probability = float(
@@ -619,10 +839,8 @@ def _graph_coloring(config: dict[str, Any], index: int, destination: Path) -> No
     destination.write_text(json.dumps(instance, indent=2) + "\n")
 
 
-def balanced_subset_sum_data(
-    config: dict[str, Any], index: int
-) -> tuple[dict[str, Any], list[int], dict[str, Any]]:
-    """Generate a fixed-cardinality subset-sum objective with an exact DP proof."""
+def balanced_subset_sum_instance(config: dict[str, Any], index: int) -> dict[str, Any]:
+    """Generate data without allocating a reachability proof over its weight sum."""
     rng = random.Random(_instance_seed(config, index))
     item_count = int(_choice(config["item_counts"], index))
     maximum = int(config["max_weight"])
@@ -635,10 +853,40 @@ def balanced_subset_sum_data(
     domain_mode = _choice(config.get("domain_modes", ["bounded"]), index)
     if domain_mode not in {"bounded", "enumerated"}:
         raise ValueError("invalid balanced subset-sum domain mode")
-    weights = [step * rng.randint(1, maximum // step) for _ in range(item_count)]
+    weights = [
+        step * value
+        for value in _integer_samples(
+            rng,
+            item_count,
+            config.get("weight_distribution", "uniform_integer"),
+            config.get("weight_parameters", {}),
+            maximum // step,
+        )
+    ]
     total = sum(weights)
     offset = int(_choice(config.get("target_offsets", [0]), index))
     target = max(0, min(total, total * cardinality // item_count + offset))
+    return {
+        "name": f"subset_{index:04d}",
+        "problem_kind": "balanced_subset_sum",
+        "weights": weights,
+        "cardinality": cardinality,
+        "target": target,
+        "domain_mode": domain_mode,
+    }
+
+
+def balanced_subset_sum_data(
+    config: dict[str, Any], index: int
+) -> tuple[dict[str, Any], list[int], dict[str, Any]]:
+    """Generate a fixed-cardinality subset-sum objective with an exact DP proof."""
+    instance = balanced_subset_sum_instance(config, index)
+    weights, cardinality, target = (
+        instance["weights"],
+        instance["cardinality"],
+        instance["target"],
+    )
+    total, item_count = sum(weights), len(weights)
 
     layers = [1] + [0] * cardinality
     snapshots = [layers.copy()]
@@ -673,14 +921,6 @@ def balanced_subset_sum_data(
     if remaining_count or remaining_sum:
         raise ValueError("subset-sum proof reconstruction is incomplete")
     selected.sort()
-    instance = {
-        "name": f"subset_{index:04d}",
-        "problem_kind": "balanced_subset_sum",
-        "weights": weights,
-        "cardinality": cardinality,
-        "target": target,
-        "domain_mode": domain_mode,
-    }
     basis = {
         "kind": "fixed_cardinality_subset_sum_dp",
         "total_weight": total,
@@ -694,9 +934,56 @@ def balanced_subset_sum_data(
 
 
 def _balanced_subset_sum(config: dict[str, Any], index: int, destination: Path) -> None:
-    instance, _, _ = balanced_subset_sum_data(config, index)
+    instance = balanced_subset_sum_instance(config, index)
     instance["name"] = destination.stem
     destination.write_text(json.dumps(instance, indent=2) + "\n")
+
+
+def job_shop_data(config: dict[str, Any], index: int) -> list[list[list[int]]]:
+    """Random job-shop routes; a shared route produces a flow-shop structure."""
+    jobs = _choice(config["jobs"], index)
+    machines = _choice(config["machines"], index)
+    if jobs < 1 or machines < 1:
+        raise ValueError("job-shop dimensions must be positive")
+    seed = _instance_seed(config, index)
+    order_rng = random.Random(f"job-shop-order:{seed}")
+    duration_rng = random.Random(seed)
+    mode = config.get("machine_order", "random_per_job")
+    if mode not in {"random_per_job", "shared"}:
+        raise ValueError("unsupported job-shop machine_order")
+    shared = list(range(machines))
+    order_rng.shuffle(shared)
+    result = []
+    for _ in range(jobs):
+        route = shared.copy()
+        if mode == "random_per_job":
+            order_rng.shuffle(route)
+        durations = _integer_samples(
+            duration_rng,
+            machines,
+            config.get("processing_distribution", "uniform_integer"),
+            config.get("processing_parameters", {}),
+            20,
+        )
+        result.append(
+            [
+                [machine, duration]
+                for machine, duration in zip(route, durations, strict=True)
+            ]
+        )
+    return result
+
+
+def _job_shop(config: dict[str, Any], index: int, destination: Path) -> None:
+    jobs = job_shop_data(config, index)
+    destination.write_text(
+        f"{len(jobs)} {len(jobs[0])}\n"
+        + "\n".join(
+            " ".join(str(value) for operation in job for value in operation)
+            for job in jobs
+        )
+        + "\n"
+    )
 
 
 _GENERATORS = {
@@ -708,7 +995,93 @@ _GENERATORS = {
     "binary_clique_cover_mip": ("mps", _binary_clique_cover_mps),
     "graph_coloring": ("json", _graph_coloring),
     "balanced_subset_sum": ("json", _balanced_subset_sum),
+    "job_shop_scheduling": ("txt", _job_shop),
 }
+
+
+def _cvrp_instance_features(path: Path) -> dict[str, Any]:
+    instance = json.loads(path.read_text())
+    depot = instance.get("depot", 0)
+    customers = [i for i in range(len(instance["coordinates"])) if i != depot]
+    demands = [instance["demands"][i] for i in customers]
+    coordinates = [instance["coordinates"][i] for i in customers]
+    distances = [
+        math.dist(point, instance["coordinates"][depot]) for point in coordinates
+    ]
+    checked = check_cvrp(instance, {"routes": [[i] for i in customers]})
+    if not checked["feasible"]:
+        raise ValueError(f"generated CVRP instance is infeasible: {checked['detail']}")
+    correlation = (
+        statistics.correlation(demands, distances)
+        if len(demands) > 1 and len(set(demands)) > 1 and len(set(distances)) > 1
+        else None
+    )
+    return {
+        "customers": len(customers),
+        "capacity": instance["capacity"],
+        "total_demand": sum(demands),
+        "demand_min": min(demands),
+        "demand_max": max(demands),
+        "demand_mean": statistics.fmean(demands),
+        "demand_std": statistics.pstdev(demands),
+        "capacity_to_total_demand": instance["capacity"] / sum(demands),
+        "route_count_capacity_lower_bound": math.ceil(
+            sum(demands) / instance["capacity"]
+        ),
+        "coordinate_x_mean": statistics.fmean(p[0] for p in coordinates),
+        "coordinate_y_mean": statistics.fmean(p[1] for p in coordinates),
+        "coordinate_x_std": statistics.pstdev(p[0] for p in coordinates),
+        "coordinate_y_std": statistics.pstdev(p[1] for p in coordinates),
+        "distance_to_depot_mean": statistics.fmean(distances),
+        "demand_depot_distance_correlation": correlation,
+        "distance_metric": instance.get("distance_metric", "EXACT_2D"),
+        "feasibility_witness": "one_customer_per_route",
+        "feasibility_witness_objective": checked["objective"],
+    }
+
+
+_INSTANCE_FEATURES = {"euclidean_cvrp": _cvrp_instance_features}
+
+
+def materialize_instance_suite(
+    plan: dict[str, Any], output_dir: Path
+) -> dict[str, Any]:
+    """Generate several problem-family grids with the same manifest format."""
+    panels = plan["panels"]
+    if not panels or any(
+        re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name) is None for name in panels
+    ):
+        raise ValueError("suite panels require safe nonempty names")
+    output_dir.mkdir(parents=True, exist_ok=False)
+    result = {"schema_version": "1.0", "status": "incomplete", "panels": {}}
+    try:
+        for name, panel in panels.items():
+            result["panels"][name] = {
+                "status": "started",
+                "manifest": f"{name}/manifest.json",
+            }
+            manifest = materialize_instance_grid(panel, output_dir / name)
+            result["panels"][name].update(
+                status=manifest["status"],
+                generated_instances=manifest["generated_instances"],
+            )
+        result["status"] = "completed"
+    finally:
+        (output_dir / "suite.json").write_text(json.dumps(result, indent=2) + "\n")
+    return result
+
+
+def _require_planted_optimum(config: dict[str, Any]) -> None:
+    if (
+        config["kind"] == "multidimensional_knapsack_mip"
+        and config.get("capacity_mode", "planted") != "planted"
+    ):
+        raise ValueError("capacity-dual optimum requires planted capacities")
+    if (
+        config["kind"] == "graph_coloring"
+        and config.get("graph_model", "mycielski") != "mycielski"
+    ):
+        raise ValueError("chromatic optimum requires a Mycielski lower-bound proof")
 
 
 def materialize_generated_instance_set(
@@ -741,13 +1114,157 @@ def materialize_generated_instance_set(
         yaml.safe_dump(
             {
                 "schema_version": "1.0",
-                "visibility": "agent",
+                "visibility": expected_visibility,
                 "instances": [{"id": path.stem, "path": path.name} for path in paths],
             },
             sort_keys=False,
         )
     )
     return paths
+
+
+def materialize_instance_grid(plan: dict[str, Any], output_dir: Path) -> dict[str, Any]:
+    """Cross configured generator overrides, preserving paired replicate seeds.
+
+    Each axis maps level names to generator parameter overrides. All cells reuse
+    the declared randomness; the existing generator adds the replicate index.
+    Generated data and descriptors do not establish an optimum or a BKS.
+    """
+    if plan.get("schema_version", "1.0") != "1.0":
+        raise ValueError("unsupported instance generation plan version")
+    visibility = plan.get("visibility")
+    if visibility not in {"agent", "judge"}:
+        raise ValueError("generation plan visibility must be agent or judge")
+    base = plan["generator"]
+    axes = plan.get("axes", {})
+    names = list(axes)
+    assigned: set[str] = set()
+    for name, levels in axes.items():
+        if (
+            not isinstance(name, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name) is None
+            or not isinstance(levels, dict)
+            or not levels
+        ):
+            raise ValueError("axes require nonempty named levels")
+        keys: set[str] = set()
+        for label, overrides in levels.items():
+            if (
+                not isinstance(label, str)
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", label) is None
+                or not isinstance(overrides, dict)
+            ):
+                raise ValueError("axis levels require a name and parameter overrides")
+            keys.update(overrides)
+        if keys & assigned:
+            raise ValueError(
+                "different axes cannot override the same generator parameter"
+            )
+        assigned.update(keys)
+    conditions = []
+    for labels in itertools.product(*(axes[name] for name in names)):
+        selected = dict(zip(names, labels, strict=True))
+        config = dict(base)
+        for name, label in selected.items():
+            config.update(axes[name][label])
+        if config.get("kind") not in _GENERATORS:
+            raise ValueError(f"unknown instance-set generator: {config.get('kind')}")
+        if type(config.get("count")) is not int or config["count"] <= 0:
+            raise ValueError("each condition requires a positive integer count")
+        identity = (
+            "__".join(f"{name}-{label}" for name, label in selected.items())
+            or "baseline"
+        )
+        conditions.append(
+            {
+                "condition_id": identity,
+                "axes": selected,
+                "generator": config,
+                "status": "pending",
+                "instances": [],
+            }
+        )
+    if len({cell["condition_id"] for cell in conditions}) != len(conditions):
+        raise ValueError("generation conditions must have distinct directory names")
+    manifest = {
+        "schema_version": "1.0",
+        "visibility": visibility,
+        "plan": plan,
+        "plan_sha256": hashlib.sha256(
+            json.dumps(plan, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "generator_module_sha256": hashlib.sha256(
+            Path(__file__).read_bytes()
+        ).hexdigest(),
+        "python_version": platform.python_version(),
+        "reference_status": "optimum_and_bks_not_computed",
+        "solver_runs": 0,
+        "expected_instances": sum(cell["generator"]["count"] for cell in conditions),
+        "conditions": conditions,
+        "status": "incomplete",
+    }
+    output_dir.mkdir(parents=True, exist_ok=False)
+    (output_dir / "generation_plan.yaml").write_text(
+        yaml.safe_dump(plan, sort_keys=False)
+    )
+    rows = []
+    try:
+        for cell in conditions:
+            cell["status"] = "started"
+            payload = {"visibility": visibility, "generator": cell["generator"]}
+            destination = output_dir / "conditions" / cell["condition_id"]
+            paths = materialize_generated_instance_set(
+                payload, destination, expected_visibility=visibility
+            )
+            (destination / "generation_config.yaml").write_text(
+                yaml.safe_dump(payload, sort_keys=False)
+            )
+            cell["instance_set_config"] = str(
+                (destination / "instance_set_config.yaml").relative_to(output_dir)
+            )
+            describe = _INSTANCE_FEATURES.get(cell["generator"]["kind"])
+            for index, path in enumerate(paths):
+                features = describe(path) if describe is not None else {}
+                entry = {
+                    "id": path.stem,
+                    "replicate_index": index,
+                    "path": str(path.relative_to(output_dir)),
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "features": features,
+                }
+                cell["instances"].append(entry)
+                rows.append(
+                    {
+                        "condition_id": cell["condition_id"],
+                        "instance_id": entry["id"],
+                        "replicate_index": index,
+                        "path": entry["path"],
+                        "sha256": entry["sha256"],
+                        **{
+                            f"axis_{name}": label
+                            for name, label in cell["axes"].items()
+                        },
+                        **features,
+                    }
+                )
+            cell["status"] = "completed"
+        manifest["status"] = "completed"
+    except Exception as error:
+        cell["status"] = "failed"
+        cell["error"] = {"type": type(error).__name__, "message": str(error)}
+        manifest["status"] = "failed"
+        raise
+    finally:
+        manifest["generated_instances"] = sum(
+            len(cell["instances"]) for cell in conditions
+        )
+        (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        fields = list(dict.fromkeys(key for row in rows for key in row))
+        with (output_dir / "features.csv").open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+    return manifest
 
 
 def materialize_instance_set(
@@ -1184,6 +1701,7 @@ def prepare_trusted_optimum_oracle(
     task = PitBenchTask.from_yaml(task_config_path)
     instance_set_config = yaml.safe_load(instance_set_config_path.read_text())
     generator = instance_set_config["generator"]
+    _require_planted_optimum(generator)
     if instance_set_config.get("visibility") != "judge":
         raise ValueError("trusted optimum generation requires a judge instance set")
     if generator["kind"] not in {
@@ -1259,9 +1777,7 @@ def prepare_trusted_optimum_oracle(
                 fme_extensions = binary_clique_cover_fme_extensions(
                     generator, index, groups, planted
                 )
-                values.update(
-                    {extension["column"]: 0 for extension in fme_extensions}
-                )
+                values.update({extension["column"]: 0 for extension in fme_extensions})
                 optimal_objective = -len(groups)
                 problem_kind = "binary_clique_cover"
                 optimality_basis = {
@@ -1271,9 +1787,7 @@ def prepare_trusted_optimum_oracle(
                 if generator.get("fme_paper_block", False):
                     problem_kind = "binary_clique_cover_fme"
                     optimal_objective += 12
-                    values.update(
-                        {"fme_i": 12, "fme_x": 0, "fme_y": 14, "fme_z": 18}
-                    )
+                    values.update({"fme_i": 12, "fme_x": 0, "fme_y": 14, "fme_z": 18})
                     optimality_basis = {
                         "kind": "binary_clique_cover_fme",
                         "groups": groups,
@@ -1282,7 +1796,12 @@ def prepare_trusted_optimum_oracle(
                             "continuous_variables": ["fme_x", "fme_y", "fme_z"],
                             "rows": ["FMEPAPER1", "FMEPAPER2", "FMEPAPER3"],
                             "lower_bound": 12,
-                            "witness": {"fme_i": 12, "fme_x": 0, "fme_y": 14, "fme_z": 18},
+                            "witness": {
+                                "fme_i": 12,
+                                "fme_x": 0,
+                                "fme_y": 14,
+                                "fme_z": 18,
+                            },
                         },
                     }
                 reference_solution = {
@@ -1432,6 +1951,7 @@ def prepare_generated_development_panel(
     if payload.get("visibility") != "agent":
         raise ValueError("development panel generator must be agent-visible")
     config = payload["generator"]
+    _require_planted_optimum(config)
     kind = config["kind"]
     if kind not in {
         "multidimensional_knapsack_mip",

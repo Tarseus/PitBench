@@ -10,10 +10,11 @@ release:
 task_type: heuristic_solver
 problem_family: cvrp
 optimization_scope: solution_state_memory_and_construction_efficiency
-instruction: Improve memory use and construction efficiency for candidate routing
-  solutions in this pinned PyVRP source snapshot while preserving original routing
-  feasibility, objective semantics, and returned solution format. Choose source changes
-  autonomously and use only visible development instances.
+instruction: >-
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/PyVRP/PyVRP.git
   plugin: pitbench.repositories.plugins:PyVRPClassicRepositoryPlugin

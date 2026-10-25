@@ -10,10 +10,11 @@ release:
 task_type: exact_solver
 problem_family: mip
 optimization_scope: continuous_column_fourier_motzkin_presolve
-instruction: Improve exact MIP solving and proof efficiency in this pinned HiGHS source
-  snapshot while preserving feasibility, valid bounds, objective semantics, and truthful
-  solve statuses. Choose source changes autonomously and use only visible development
-  instances.
+instruction: >-
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/ERGO-Code/HiGHS.git
   plugin: pitbench.repositories.plugins:HighsRepositoryPlugin

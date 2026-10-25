@@ -1,0 +1,145 @@
+schema_version: "1.0"
+description: >-
+  Research examples spanning every mathematical problem family in current tasks.
+  This is not a frozen benchmark split. References are collected separately.
+panels:
+  routing:
+    schema_version: "1.0"
+    visibility: agent
+    generator:
+      kind: euclidean_cvrp
+      count: 2
+      capacity: 50
+      distance_metric: EUC_2D
+      randomness: {coordinate_seed: 20261025, demand_seed: 20262025}
+    axes:
+      structure:
+        uniform: {coordinate_distribution: uniform}
+        clustered: {coordinate_distribution: clustered, cluster_count: 4, cluster_spread: 6.0}
+      scale:
+        tiny: {customers: [8]}
+        medium: {customers: [50]}
+        large: {customers: [200]}
+  packing:
+    schema_version: "1.0"
+    visibility: agent
+    generator:
+      kind: bin_packing
+      count: 2
+      capacity: 100
+      randomness: {instance_seed: 20261025}
+    axes:
+      structure:
+        uniform: {weight_distribution: uniform_integer}
+        bimodal:
+          weight_distribution: bimodal
+          weight_parameters: {low: [10, 20], high: [60, 80], high_probability: 0.5}
+      scale:
+        tiny: {items: [12]}
+        medium: {items: [50]}
+        large: {items: [200]}
+  scheduling:
+    schema_version: "1.0"
+    visibility: agent
+    generator:
+      kind: single_machine_scheduling_mip
+      count: 2
+      randomness: {instance_seed: 20261025}
+    axes:
+      structure:
+        uniform: {processing_distribution: uniform_integer}
+        bimodal:
+          processing_distribution: bimodal
+          processing_parameters: {low: [1, 3], high: [15, 20], high_probability: 0.5}
+      scale:
+        tiny: {jobs: [10]}
+        medium: {jobs: [30]}
+        large: {jobs: [100]}
+  knapsack:
+    schema_version: "1.0"
+    visibility: agent
+    generator:
+      kind: multidimensional_knapsack_mip
+      count: 2
+      dimensions: [3]
+      weight_max: 20
+      randomness: {instance_seed: 20261025}
+    axes:
+      structure:
+        planted: {capacity_mode: planted}
+        independent: {capacity_mode: ratio, capacity_ratio: 0.5, dimension_correlation: independent}
+        correlated: {capacity_mode: ratio, capacity_ratio: 0.5, dimension_correlation: shared}
+      scale:
+        tiny: {items: [12]}
+        medium: {items: [30]}
+        large: {items: [100]}
+  conflicts:
+    schema_version: "1.0"
+    visibility: agent
+    generator:
+      kind: binary_clique_cover_mip
+      count: 2
+      group_sizes: [3]
+      coefficient_min: 10
+      coefficient_max: 15
+      cross_edge_sampler: geometric_skip_v1
+      randomness: {instance_seed: 20261025}
+    axes:
+      structure:
+        sparse: {cross_edge_density: [0.05]}
+        dense: {cross_edge_density: [0.5]}
+        fme: {cross_edge_density: [0.2], fme_auxiliary_pairs: 1, fme_paper_block: true}
+      scale:
+        tiny: {groups: [4]}
+        medium: {groups: [10]}
+        large: {groups: [30]}
+  coloring:
+    schema_version: "1.0"
+    visibility: agent
+    generator:
+      kind: graph_coloring
+      count: 2
+      randomness: {instance_seed: 20261025}
+    axes:
+      structure:
+        sparse: {graph_model: erdos_renyi, edge_probability: 0.2}
+        dense: {graph_model: erdos_renyi, edge_probability: 0.65}
+        partitioned: {graph_model: planted_partition, colors: [4], edge_probability: 0.5}
+      scale:
+        tiny: {vertex_counts: [10]}
+        medium: {vertex_counts: [30]}
+        large: {vertex_counts: [100]}
+  subset:
+    schema_version: "1.0"
+    visibility: agent
+    generator:
+      kind: balanced_subset_sum
+      count: 2
+      max_weight: 100
+      domain_modes: [bounded]
+      randomness: {instance_seed: 20261025}
+    axes:
+      structure:
+        uniform: {weight_distribution: uniform_integer}
+        bimodal:
+          weight_distribution: bimodal
+          weight_parameters: {low: [1, 10], high: [80, 100], high_probability: 0.5}
+      scale:
+        tiny: {item_counts: [20]}
+        medium: {item_counts: [50]}
+        large: {item_counts: [100]}
+  jobshop:
+    schema_version: "1.0"
+    visibility: agent
+    generator:
+      kind: job_shop_scheduling
+      count: 2
+      randomness: {instance_seed: 20261025}
+    axes:
+      structure:
+        jobshop: {machine_order: random_per_job}
+        flowshop: {machine_order: shared}
+      scale:
+        tiny: {jobs: [3], machines: [3]}
+        medium: {jobs: [5], machines: [5]}
+        large: {jobs: [10], machines: [10]}

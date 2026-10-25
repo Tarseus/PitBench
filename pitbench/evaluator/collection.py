@@ -11,6 +11,7 @@ import platform
 import random
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from queue import Queue
+from threading import Condition
 
 from pitbench.evaluator.artifacts import write_json
 from pitbench.problem_families.verification import _check_bin_packing_solution
@@ -43,7 +45,7 @@ def run_collection_process(
     started = time.perf_counter()
     try:
         with (directory / "process.log").open("w") as log:
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 command,
                 cwd=ROOT,
                 stdout=log,
@@ -55,14 +57,23 @@ def run_collection_process(
                     "OPENBLAS_NUM_THREADS": "1",
                     "MKL_NUM_THREADS": "1",
                 },
-                timeout=timeout,
-                check=False,
+                start_new_session=True,
             )
-        result.update(execution_status="process_error", returncode=completed.returncode)
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                raise
+        result.update(execution_status="process_error", returncode=process.returncode)
         if (directory / "result.json").exists():
             result.update(json.loads((directory / "result.json").read_text()))
-            result["returncode"] = completed.returncode
-            if completed.returncode:
+            result["returncode"] = process.returncode
+            if process.returncode:
                 result["execution_status"] = "process_error"
     except subprocess.TimeoutExpired:
         result.update(execution_status="watchdog_timeout", verified_feasible=False)
@@ -76,7 +87,9 @@ def run_collection_process(
     return result
 
 
-def run_collection_jobs(jobs: list[dict], cpus: list[int], execute) -> list[dict]:
+def run_collection_jobs(
+    jobs: list[dict], cpus: list[int], execute, *, cpu_request=None
+) -> list[dict]:
     """Shared bounded scheduling for isolated observation workers."""
     if (
         not cpus
@@ -84,6 +97,30 @@ def run_collection_jobs(jobs: list[dict], cpus: list[int], execute) -> list[dict
         or not set(cpus) <= os.sched_getaffinity(0)
     ):
         raise ValueError("cpus must be distinct available CPUs")
+    if cpu_request is not None:
+        requests = [cpu_request(job) for job in jobs]
+        if any(
+            type(count) is not int or not 1 <= count <= len(cpus) for count in requests
+        ):
+            raise ValueError("job CPU requests must fit the available CPU pool")
+        available = cpus.copy()
+        changed = Condition()
+
+        def run_group(pair):
+            job, count = pair
+            with changed:
+                changed.wait_for(lambda: len(available) >= count)
+                allocated = available[:count]
+                del available[:count]
+            try:
+                return execute(job, allocated)
+            finally:
+                with changed:
+                    available.extend(allocated)
+                    changed.notify_all()
+
+        with ThreadPoolExecutor(max_workers=len(cpus)) as pool:
+            return list(pool.map(run_group, zip(jobs, requests, strict=True)))
     slots = Queue()
     for cpu in cpus:
         slots.put(cpu)
@@ -97,6 +134,490 @@ def run_collection_jobs(jobs: list[dict], cpus: list[int], execute) -> list[dict
 
     with ThreadPoolExecutor(max_workers=len(cpus)) as pool:
         return list(pool.map(run, jobs))
+
+
+def reference_resource_state(limits: dict, root: Path) -> dict:
+    """Admission limits for reference preparation, independent of scoring budgets."""
+    import shutil
+
+    memory = {
+        line.split(":")[0]: int(line.split()[1])
+        for line in Path("/proc/meminfo").read_text().splitlines()
+        if line.startswith("MemAvailable:")
+    }
+    temperatures = []
+    for path in Path("/sys/class/hwmon").glob("hwmon*/temp*_input"):
+        try:
+            value = int(path.read_text()) / 1000
+            if 0 < value < 150:
+                temperatures.append(value)
+        except (OSError, ValueError):
+            pass
+    state = {
+        "load1": os.getloadavg()[0],
+        "memory_available_gib": memory["MemAvailable"] / 1024**2,
+        "disk_free_gib": shutil.disk_usage(root).free / 1024**3,
+        "max_temperature_celsius": max(temperatures, default=None),
+        "blocked_by": [],
+    }
+    for name, actual, limit, greater in [
+        ("load", state["load1"], limits.get("max_load1"), True),
+        (
+            "temperature",
+            state["max_temperature_celsius"],
+            limits.get("max_temperature_celsius"),
+            True,
+        ),
+        (
+            "memory",
+            state["memory_available_gib"],
+            limits.get("min_memory_available_gib"),
+            False,
+        ),
+        ("disk", state["disk_free_gib"], limits.get("min_disk_free_gib"), False),
+    ]:
+        if (
+            actual is not None
+            and limit is not None
+            and (actual > limit if greater else actual < limit)
+        ):
+            state["blocked_by"].append(name)
+    return state
+
+
+class ReferenceCollection:
+    """Resumable reference portfolio using the common isolated-worker scheduler."""
+
+    @staticmethod
+    def recover_interrupted(output: Path) -> list[dict]:
+        """Retain stale attempts after a reboot; never start over live workers."""
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        recovered = []
+        for directory in sorted((output / "jobs").glob("**/attempt-*")):
+            if (directory / "result.json").exists() or not (
+                directory / "running.json"
+            ).exists():
+                continue
+            record = json.loads((directory / "running.json").read_text())
+            command_path = Path(f"/proc/{record['pid']}/cmdline")
+            if (
+                record.get("worker_boot_id") in {None, boot_id}
+                and command_path.exists()
+            ):
+                try:
+                    command = (
+                        command_path.read_bytes()
+                        .replace(b"\x00", b" ")
+                        .decode(errors="replace")
+                    )
+                except OSError:
+                    command = ""
+                if "--worker-job" in command and str(directory) in command:
+                    raise RuntimeError(
+                        "prior reference workers are still active; waiting avoids duplicate searches"
+                    )
+            if (directory / "incumbent.json").exists():
+                record.update(json.loads((directory / "incumbent.json").read_text()))
+            record.update(
+                execution_status="interrupted",
+                recovered_at=time.time(),
+                recovery_boot_id=boot_id,
+                interruption="controller_or_host_restart",
+            )
+            write_json(directory / "result.json", record)
+            recovered.append({"job_id": record["job_id"], "directory": str(directory)})
+        if recovered:
+            with (output / "recovery.jsonl").open("a") as stream:
+                stream.write(
+                    json.dumps(
+                        {"time": time.time(), "boot_id": boot_id, "attempts": recovered}
+                    )
+                    + "\n"
+                )
+        return recovered
+
+    @staticmethod
+    def prepare(config_path: Path, output: Path) -> dict:
+        import importlib.metadata
+        import shutil
+
+        import yaml
+
+        from pitbench.solver_drivers.reference import (
+            generated_reference_instances,
+            verify_reference_file,
+        )
+
+        config_path, output = config_path.resolve(), output.resolve()
+        config = yaml.safe_load(config_path.read_text())
+        if (output / "campaign.json").exists():
+            saved = json.loads((output / "campaign.json").read_text())
+            if saved["config"] != config:
+                raise ValueError("existing campaign configuration differs")
+            return saved
+        output.mkdir(parents=True, exist_ok=False)
+        cpus = config.get("cpus")
+        if cpus is None:
+            physical = {}
+            for cpu in sorted(os.sched_getaffinity(0)):
+                topology = Path(f"/sys/devices/system/cpu/cpu{cpu}/topology")
+                key = tuple(
+                    (topology / name).read_text().strip()
+                    for name in ("physical_package_id", "core_id")
+                )
+                physical.setdefault(key, cpu)
+            cpus = list(physical.values())[: config["physical_cores"]]
+        if (
+            not cpus
+            or len(cpus) != len(set(cpus))
+            or not set(cpus) <= os.sched_getaffinity(0)
+        ):
+            raise ValueError("campaign CPUs must be distinct available CPUs")
+        instances = []
+        for source in config["manifests"]:
+            instances.extend(generated_reference_instances(ROOT / source))
+        if len({instance["id"] for instance in instances}) != len(instances):
+            raise ValueError(
+                "campaign instance identities must be unique across sources"
+            )
+        for instance in instances:
+            if (
+                hashlib.sha256(Path(instance["path"]).read_bytes()).hexdigest()
+                != instance["sha256"]
+            ):
+                raise ValueError(f"input hash mismatch: {instance['id']}")
+        snapshot = output / "code_snapshot"
+        shutil.copytree(
+            ROOT / "pitbench",
+            snapshot / "pitbench",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+        source_hashes = {
+            str(path.relative_to(snapshot)): hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+            for path in sorted(snapshot.rglob("*"))
+            if path.is_file()
+        }
+        backends = []
+        for backend in config["backends"]:
+            identity = dict(backend)
+            if backend.get("binary"):
+                binary = (ROOT / backend["binary"]).resolve()
+                identity["binary"] = str(binary)
+                identity["binary_sha256"] = hashlib.sha256(
+                    binary.read_bytes()
+                ).hexdigest()
+                source = ROOT / backend.get("repository", str(binary.parent))
+                identity["source_commit"] = subprocess.run(
+                    ["git", "-C", str(source), "rev-parse", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout.strip()
+            elif backend.get("package"):
+                identity["package_version"] = importlib.metadata.version(
+                    backend["package"]
+                )
+            backends.append(identity)
+        jobs = []
+        for phase in config["phases"]:
+            for instance in instances:
+                for backend in backends:
+                    if instance["generator"]["kind"] not in backend["kinds"]:
+                        continue
+                    if (
+                        phase.get("backends")
+                        and backend["name"] not in phase["backends"]
+                    ):
+                        continue
+                    for seed in phase.get("seeds", config["seeds"]):
+                        identity = f"{phase['name']}/{instance['id']}/{backend['name']}/seed-{seed}"
+                        jobs.append(
+                            {
+                                "id": identity,
+                                "phase": phase["name"],
+                                "instance": instance,
+                                "backend": backend,
+                                "seed": seed,
+                                "seconds": phase["seconds"],
+                                "threads": backend.get("threads", 1),
+                            }
+                        )
+        manifest = {
+            "schema_version": "1.0",
+            "config": config,
+            "config_path": str(config_path),
+            "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+            "cpus": cpus,
+            "instances": instances,
+            "backends": backends,
+            "jobs": jobs,
+            "source_hashes": source_hashes,
+            "python": sys.executable,
+            "python_version": platform.python_version(),
+            "created_at": time.time(),
+        }
+        write_json(output / "campaign.json", manifest)
+        imported = {}
+        known = {instance["id"]: instance for instance in instances}
+        for source_name in config.get("prior_references", []):
+            source = (ROOT / source_name).resolve()
+            source_records = json.loads(source.read_text())["references"]
+            if isinstance(source_records, dict):
+                source_records = source_records.values()
+            for record in source_records:
+                instance = known.get(record["instance"])
+                if instance is None or record["instance_sha256"] != instance["sha256"]:
+                    continue
+                solution = Path(record["solution"])
+                if not solution.is_absolute():
+                    solution = source.parent / solution
+                if (
+                    hashlib.sha256(solution.read_bytes()).hexdigest()
+                    != record["solution_sha256"]
+                ):
+                    raise ValueError("prior reference solution hash mismatch")
+                checked = verify_reference_file(
+                    Path(instance["path"]), solution, instance["generator"]["kind"]
+                )
+                if (
+                    not checked["feasible"]
+                    or checked["objective"] != record["objective"]
+                ):
+                    raise ValueError("prior reference failed independent verification")
+                imported[record["instance"]] = {
+                    **record,
+                    "solution": str(solution.resolve()),
+                    "reference_source": str(source),
+                    "verification": checked,
+                }
+        write_json(output / "prior_references.json", imported)
+        write_json(output / "bks.json", {"references": imported})
+        write_json(
+            output / "status.json",
+            {
+                "state": "prepared",
+                "instances": len(instances),
+                "jobs": len(jobs),
+                "cpus": cpus,
+            },
+        )
+        return manifest
+
+    @staticmethod
+    def status(output: Path) -> dict:
+        from collections import Counter
+
+        output = output.resolve()
+        manifest = json.loads((output / "campaign.json").read_text())
+        prior = output / "prior_references.json"
+        best = json.loads(prior.read_text()) if prior.exists() else {}
+        finished, running = {}, []
+        for directory in sorted((output / "jobs").glob("**/attempt-*")):
+            incumbent = directory / "incumbent.json"
+            if incumbent.exists():
+                record = json.loads(incumbent.read_text())
+                old = best.get(record["instance"])
+                if old is None or (
+                    record["objective"],
+                    not record["proven_optimal"],
+                ) < (old["objective"], not old["proven_optimal"]):
+                    best[record["instance"]] = record
+            result = directory / "result.json"
+            if result.exists():
+                record = json.loads(result.read_text())
+                finished[record["job_id"]] = record
+            elif (directory / "running.json").exists():
+                running.append(json.loads((directory / "running.json").read_text()))
+        counts = dict(Counter(r["execution_status"] for r in finished.values()))
+        controller = output / "controller.lock"
+        controller_pid = controller.read_text().strip() if controller.exists() else ""
+        summary = {
+            "updated_at": time.time(),
+            "pid": int(controller_pid) if controller_pid else None,
+            "instances": len(manifest["instances"]),
+            "jobs": len(manifest["jobs"]),
+            "finished_jobs": len(finished),
+            "running_jobs": len(running),
+            "pending_jobs": len(manifest["jobs"]) - len(finished) - len(running),
+            "execution_counts": counts,
+            "instances_with_reference": len(best),
+            "proven_optimal": sum(r["proven_optimal"] for r in best.values()),
+            "best_found": sum(not r["proven_optimal"] for r in best.values()),
+            "cpus": manifest["cpus"],
+            "running": running,
+        }
+        write_json(
+            output / "bks.json",
+            {
+                "schema_version": "1.0",
+                "updated_at": time.time(),
+                "objective_sense": "minimize",
+                "references": best,
+            },
+        )
+        write_json(output / "status.json", summary)
+        return summary
+
+    @staticmethod
+    def run(config_path: Path, output: Path) -> dict:
+        import fcntl
+        import threading
+
+        output = output.resolve()
+        manifest = ReferenceCollection.prepare(config_path, output)
+        lockfile = (output / "controller.lock").open("a+")
+        fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lockfile.seek(0)
+        lockfile.truncate()
+        lockfile.write(str(os.getpid()))
+        lockfile.flush()
+        ReferenceCollection.recover_interrupted(output)
+        state_lock = threading.Lock()
+        stop_heartbeat = threading.Event()
+        snapshot = output / "code_snapshot"
+        # Keep the source of old attempts while allowing corrected resumed workers.
+        current_hashes = {
+            str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted((ROOT / "pitbench").rglob("*"))
+            if path.is_file()
+            and "__pycache__" not in path.parts
+            and path.suffix != ".pyc"
+        }
+        revision = hashlib.sha256(
+            json.dumps(current_hashes, sort_keys=True).encode()
+        ).hexdigest()
+        if current_hashes != manifest["source_hashes"]:
+            import shutil
+
+            snapshot = output / "code_revisions" / revision
+            if not snapshot.exists():
+                shutil.copytree(
+                    ROOT / "pitbench",
+                    snapshot / "pitbench",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                )
+                write_json(
+                    snapshot / "provenance.json",
+                    {
+                        "created_at": time.time(),
+                        "source_hashes": current_hashes,
+                        "revision": revision,
+                    },
+                )
+
+        def heartbeat():
+            while not stop_heartbeat.wait(30):
+                with state_lock:
+                    ReferenceCollection.status(output)
+
+        ticker = threading.Thread(target=heartbeat, daemon=True)
+        ticker.start()
+
+        def execute(job, cpus):
+            base = output / "jobs" / job["id"]
+            attempts = sorted(base.glob("attempt-*"))
+            if attempts and (attempts[-1] / "result.json").exists():
+                previous = json.loads((attempts[-1] / "result.json").read_text())
+                if previous["execution_status"] in {
+                    "completed",
+                    "skipped_proven_optimal",
+                }:
+                    return previous
+            limits = manifest["config"].get("resource_guard", {})
+            while limits and not (output / "STOP").exists():
+                resource = reference_resource_state(limits, output)
+                with state_lock:
+                    write_json(
+                        output / "resource_state.json",
+                        {**resource, "time": time.time()},
+                    )
+                if not resource["blocked_by"]:
+                    break
+                time.sleep(15)
+            directory = base / f"attempt-{len(attempts):04d}"
+            directory.mkdir(parents=True)
+            with state_lock:
+                best_file = output / "bks.json"
+                best = (
+                    json.loads(best_file.read_text())["references"].get(
+                        job["instance"]["id"]
+                    )
+                    if best_file.exists()
+                    else None
+                )
+            if (best and best["proven_optimal"]) or (output / "STOP").exists():
+                result = {
+                    "job_id": job["id"],
+                    "instance": job["instance"]["id"],
+                    "execution_status": "skipped_proven_optimal"
+                    if best and best["proven_optimal"]
+                    else "stopped_before_start",
+                    "proof_reference": best,
+                    "cpus": cpus,
+                }
+                write_json(directory / "result.json", result)
+            else:
+                worker_job = {
+                    **job,
+                    "cpus": cpus,
+                    "directory": str(directory),
+                    "warm_start": best["solution"] if best else None,
+                    "code_revision": revision,
+                    "host_id": manifest.get("host_id"),
+                }
+                write_json(directory / "job.json", worker_job)
+                command = [
+                    manifest["python"],
+                    str(snapshot / "pitbench/solver_drivers/reference.py"),
+                    "--worker-job",
+                    str(directory / "job.json"),
+                ]
+                environment = {
+                    **os.environ,
+                    "PYTHONPATH": str(snapshot),
+                    "OMP_NUM_THREADS": str(len(cpus)),
+                    "OPENBLAS_NUM_THREADS": "1",
+                    "MKL_NUM_THREADS": "1",
+                    "MPLCONFIGDIR": str(output / "matplotlib"),
+                }
+                result = run_collection_process(
+                    command,
+                    directory,
+                    {"job_id": job["id"], "instance": job["instance"]["id"]},
+                    timeout=job["seconds"]
+                    + manifest["config"].get("watchdog_grace_sec", 300),
+                    environment=environment,
+                )
+            with state_lock:
+                with (output / "attempts.jsonl").open("a") as stream:
+                    stream.write(json.dumps(result) + "\n")
+            return result
+
+        try:
+            for phase in manifest["config"]["phases"]:
+                jobs = [
+                    job for job in manifest["jobs"] if job["phase"] == phase["name"]
+                ]
+                random.Random(manifest["config"].get("schedule_seed", 0)).shuffle(jobs)
+                run_collection_jobs(
+                    jobs,
+                    manifest["cpus"],
+                    execute,
+                    cpu_request=lambda job: job["threads"],
+                )
+                with state_lock:
+                    ReferenceCollection.status(output)
+                if (output / "STOP").exists():
+                    break
+        finally:
+            stop_heartbeat.set()
+            ticker.join()
+            with state_lock:
+                summary = ReferenceCollection.status(output)
+            lockfile.close()
+        return summary
 
 
 class NuisanceCollection:

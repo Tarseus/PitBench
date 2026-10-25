@@ -10,10 +10,11 @@ release:
 task_type: exact_solver
 problem_family: cp
 optimization_scope: weighted_variable_selection_efficiency
-instruction: Improve exact CP variable-selection and proof efficiency in this pinned
-  Choco source snapshot while preserving original-instance feasibility, objectives,
-  and truthful optimality claims. Choose source changes autonomously and use only
-  visible development instances.
+instruction: >-
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/chocoteam/choco-solver.git
   plugin: pitbench.repositories.plugins:ChocoRepositoryPlugin

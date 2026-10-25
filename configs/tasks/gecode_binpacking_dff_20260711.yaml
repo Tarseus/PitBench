@@ -12,10 +12,11 @@ problem_family: cp
 problem_variant: bin_packing
 formulation_id: gecode_binpacking_propagator
 optimization_scope: dff_binpacking_propagation_and_proof_efficiency
-instruction: Improve exact bin-packing propagation and proof efficiency in this pinned
-  Gecode source snapshot. Preserve the feasibility and objective semantics of the
-  original bin-packing constraints. Use only visible development instances and leave
-  the propagation level fixed at full.
+instruction: >-
+  Improve this solver's performance on the declared problem family under the
+  specified solve budgets. Identify and validate source-level improvements
+  autonomously while preserving original-problem feasibility, objective semantics,
+  and truthful solve statuses.
 repository:
   clone_url: https://github.com/Gecode/gecode.git
   plugin: pitbench.repositories.plugins:GecodeRepositoryPlugin
