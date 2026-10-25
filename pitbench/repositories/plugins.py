@@ -381,7 +381,6 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
         "solver/target",
         "parsers/target",
         "examples/target",
-        ".pitbench-maven",
     )
     judge_environment_requirements = {"MAVEN_CONFIG": "/tmp/choco-maven"}
     collection_backend = "pitbench.evaluator.collection:ChocoCollectionBackend"
@@ -393,21 +392,21 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
         del kind
         goals = ["package", "-DskipTests", "-Dlicense.skip=true"]
         return [
-            CommandSpec(argv=["mkdir", "-p", ".pitbench-maven"]),
+            CommandSpec(argv=["mkdir", "-p", "/tmp/choco-maven"]),
             CommandSpec(
-                argv=["cp", "-a", "--no-preserve=ownership", "/root/.m2/repository/.", ".pitbench-maven"]
+                argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/choco-maven"]
             ),
             CommandSpec(
                 argv=[
                     "sh",
                     "-c",
                     "if [ -d /opt/pitbench-maven ]; then "
-                    "cp -a --no-preserve=ownership /opt/pitbench-maven/. .pitbench-maven/; fi",
+                    "cp -a /opt/pitbench-maven/. /tmp/choco-maven/; fi",
                 ]
             ),
             CommandSpec(
                 argv=["mvn", "-q", *goals],
-                env={"MAVEN_OPTS": "-Dmaven.repo.local=.pitbench-maven"},
+                env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/choco-maven"},
             ),
             CommandSpec(
                 argv=[
@@ -432,7 +431,7 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
     name = "ortools"
     driver_python = "python3"
     agent_requirement = "env:PITBENCH_ORTOOLS_CP_SAT_RUNNER"
-    agent_build_paths = ("build", ".pitbench-maven")
+    agent_build_paths = ("build",)
     agent_artifact_globs = (
         "build/java/ortools-java/target/ortools-java-*.jar",
         "build/java/ortools-linux-x86-64/target/ortools-linux-x86-64-*.jar",
@@ -444,23 +443,23 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
         # The prepared task image has a configured Ninja build. Reconfiguring
         # it would write to root-owned dependency directories under /opt.
         return [
-            CommandSpec(argv=["mkdir", "-p", ".pitbench-maven"]),
+            CommandSpec(argv=["mkdir", "-p", "/tmp/ortools-maven"]),
             CommandSpec(
-                argv=["cp", "-a", "--no-preserve=ownership", "/root/.m2/repository/.", ".pitbench-maven"]
+                argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/ortools-maven"]
             ),
             CommandSpec(
                 argv=["cmake", "--build", "build", "--target", "java_package", "-j6"],
-                env={"MAVEN_OPTS": "-Dmaven.repo.local=.pitbench-maven"},
+                env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/ortools-maven"},
             ),
         ]
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         del kind
         return [
-            CommandSpec(argv=["mkdir", "-p", "build/_deps"]),
-            CommandSpec(argv=["mkdir", "-p", ".pitbench-maven"]),
+            CommandSpec(argv=["mkdir", "-p", "/tmp/ortools-deps"]),
+            CommandSpec(argv=["mkdir", "-p", "/tmp/ortools-maven"]),
             CommandSpec(
-                argv=["cp", "-a", "--no-preserve=ownership", "/root/.m2/repository/.", ".pitbench-maven"]
+                argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/ortools-maven"]
             ),
             CommandSpec(
                 argv=[
@@ -472,7 +471,7 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
                     "-G",
                     "Ninja",
                     "-DCMAKE_BUILD_TYPE=Release",
-                    "-DFETCHCONTENT_BASE_DIR=build/_deps",
+                    "-DFETCHCONTENT_BASE_DIR=/tmp/ortools-deps",
                     "-DFETCHCONTENT_SOURCE_DIR_ZLIB=/opt/ortools-deps/zlib-src",
                     "-DFETCHCONTENT_SOURCE_DIR_BZIP2=/opt/ortools-deps/bzip2-src",
                     "-DFETCHCONTENT_SOURCE_DIR_ABSL=/opt/ortools-deps/absl-src",
@@ -497,7 +496,7 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
             ),
             CommandSpec(
                 argv=["cmake", "--build", "build", "--target", "java_package", "-j6"],
-                env={"MAVEN_OPTS": "-Dmaven.repo.local=.pitbench-maven"},
+                env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/ortools-maven"},
             ),
         ]
 

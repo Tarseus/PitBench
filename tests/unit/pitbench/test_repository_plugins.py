@@ -112,12 +112,9 @@ def test_fixed_solver_parameters_follow_repository_capability(tmp_path) -> None:
     highs_command = HighsRepositoryPlugin().run_command(run)
     assert HighsRepositoryPlugin.supports_fixed_solver_parameters
     assert highs_command.argv[-2:] == ["--parameters", str(parameters)]
-    assert (
-        HighsDriver.options_file_content(
-            {"simplex_dual_edge_weight_strategy": 2, "parallel": "off"}
-        )
-        == "parallel = off\nsimplex_dual_edge_weight_strategy = 2\n"
-    )
+    assert HighsDriver.options_file_content(
+        {"simplex_dual_edge_weight_strategy": 2, "parallel": "off"}
+    ) == "parallel = off\nsimplex_dual_edge_weight_strategy = 2\n"
     with pytest.raises(ValueError, match="invalid HiGHS option name"):
         HighsDriver.options_file_content({"invalid option": 1})
 
@@ -142,9 +139,7 @@ def test_highs_validation_build_keeps_tests_and_legacy_catch_compatibility():
         "highs",
         "highs-bin",
     ]
-    assert (
-        "--target highs highs-bin" in HighsRepositoryPlugin.agent_environment.prebuild
-    )
+    assert "--target highs highs-bin" in HighsRepositoryPlugin.agent_environment.prebuild
 
 
 def test_solver_driver_registry_rejects_duplicate_names():
@@ -214,7 +209,10 @@ def test_jvm_probe_rejects_missing_or_stale_compiled_adapter(
 
 
 def test_choco_identity_accepts_historical_prerelease_jar(tmp_path):
-    jar = tmp_path / "solver/target/choco-solver-5.0.0-beta.2-jar-with-dependencies.jar"
+    jar = (
+        tmp_path
+        / "solver/target/choco-solver-5.0.0-beta.2-jar-with-dependencies.jar"
+    )
     jar.parent.mkdir(parents=True)
     jar.touch()
 
@@ -248,40 +246,28 @@ def test_choco_builds_official_source_and_generic_jvm_adapter() -> None:
     assert (
         validation[0]
         == performance[0]
-        == CommandSpec(argv=["mkdir", "-p", ".pitbench-maven"])
+        == CommandSpec(argv=["mkdir", "-p", "/tmp/choco-maven"])
     )
     assert (
         validation[1]
         == performance[1]
-        == CommandSpec(
-            argv=[
-                "cp",
-                "-a",
-                "--no-preserve=ownership",
-                "/root/.m2/repository/.",
-                ".pitbench-maven",
-            ]
-        )
+        == CommandSpec(argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/choco-maven"])
     )
-    assert (
-        validation[2]
-        == performance[2]
-        == CommandSpec(
-            argv=[
-                "sh",
-                "-c",
-                "if [ -d /opt/pitbench-maven ]; then "
-                "cp -a --no-preserve=ownership /opt/pitbench-maven/. .pitbench-maven/; fi",
-            ]
-        )
+    assert validation[2] == performance[2] == CommandSpec(
+        argv=[
+            "sh",
+            "-c",
+            "if [ -d /opt/pitbench-maven ]; then "
+            "cp -a /opt/pitbench-maven/. /tmp/choco-maven/; fi",
+        ]
     )
     assert validation[3] == CommandSpec(
         argv=["mvn", "-q", "package", "-DskipTests", "-Dlicense.skip=true"],
-        env={"MAVEN_OPTS": "-Dmaven.repo.local=.pitbench-maven"},
+        env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/choco-maven"},
     )
     assert performance[3] == CommandSpec(
         argv=["mvn", "-q", "package", "-DskipTests", "-Dlicense.skip=true"],
-        env={"MAVEN_OPTS": "-Dmaven.repo.local=.pitbench-maven"},
+        env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/choco-maven"},
     )
     assert (
         validation[4].argv
@@ -434,17 +420,16 @@ def test_ortools_build_reuses_evaluator_owned_dependency_cache() -> None:
         OrToolsRepositoryPlugin().build_commands(BuildKind.PERFORMANCE)
     )
 
-    assert prepare_cache.argv == ["mkdir", "-p", "build/_deps"]
-    assert prepare_maven.argv == ["mkdir", "-p", ".pitbench-maven"]
+    assert prepare_cache.argv == ["mkdir", "-p", "/tmp/ortools-deps"]
+    assert prepare_maven.argv == ["mkdir", "-p", "/tmp/ortools-maven"]
     assert copy_maven.argv == [
         "cp",
         "-a",
-        "--no-preserve=ownership",
         "/root/.m2/repository/.",
-        ".pitbench-maven",
+        "/tmp/ortools-maven",
     ]
     assert configure.argv[:6] == ["cmake", "-S", ".", "-B", "build", "-G"]
-    assert "-DFETCHCONTENT_BASE_DIR=build/_deps" in configure.argv
+    assert "-DFETCHCONTENT_BASE_DIR=/tmp/ortools-deps" in configure.argv
     assert "-DCMAKE_BUILD_TYPE=Release" in configure.argv
     assert "-DFETCHCONTENT_SOURCE_DIR_ZLIB=/opt/ortools-deps/zlib-src" in configure.argv
     assert (
@@ -474,7 +459,7 @@ def test_ortools_build_reuses_evaluator_owned_dependency_cache() -> None:
         "java_package",
         "-j6",
     ]
-    assert build.env == {"MAVEN_OPTS": "-Dmaven.repo.local=.pitbench-maven"}
+    assert build.env == {"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/ortools-maven"}
 
     exact_commands = OrToolsCpSatExactRepositoryPlugin().build_commands(
         BuildKind.PERFORMANCE

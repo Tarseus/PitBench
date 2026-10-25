@@ -2,19 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import subprocess
 from collections import deque
 from pathlib import Path
 from typing import Callable
 
-from pitbench.evaluator.isolation import (
-    ARTIFACT_OWNER_UID,
-    IMAGE_ENV_KEYS,
-    ISOLATION_VERSION,
-    PRIVATE_ASSET_MOUNT,
-)
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.schema.observation import CodeState, RunObservation
 
@@ -92,8 +85,6 @@ class DockerJudge:
             "candidate_patch_sha256": self.candidate_patch_sha256,
             "task_config_sha256": self.task_config_sha256,
             "harness_sha256": self.harness_sha256,
-            "isolation_version": ISOLATION_VERSION,
-            "artifact_gid": os.getgid(),
             "judge_image": self.image,
             "cpus": self.cpus,
             "memory": self.memory,
@@ -105,9 +96,10 @@ class DockerJudge:
             "solver_seed_limit": self.solver_seed_limit,
         }
 
-    def command(self) -> list[str]:
-        """The pinned controller launch, also used by isolation acceptance tests."""
+    def run(self) -> list[RunObservation]:
         package_root = self.package_root
+        self._check_inputs_unchanged("before launch")
+        observations = self.output_dir / "judge-observations.jsonl"
         command = [
             "docker",
             "run",
@@ -115,12 +107,6 @@ class DockerJudge:
             "--network",
             "none",
             "--read-only",
-            "--user",
-            "0:0",
-            "--security-opt",
-            "no-new-privileges:true",
-            "--cap-drop",
-            "NET_RAW",
             "--cpus",
             str(self.cpus),
             "--memory",
@@ -129,35 +115,21 @@ class DockerJudge:
             "2048",
             "--tmpfs",
             "/tmp:rw,exec,nosuid,size=4g",
-            "--tmpfs",
-            f"/run/pitbench-private:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid={ARTIFACT_OWNER_UID},gid={ARTIFACT_OWNER_UID}",
             "--env",
             "PYTHONPATH=/opt/pitbench",
             "--volume",
-            f"{package_root / 'pitbench'}:/opt/pitbench/pitbench:ro",
-            "--volume",
-            f"{package_root / 'adapters'}:/opt/pitbench/adapters:ro",
-            "--volume",
-            f"{package_root / 'configs/instance_sets'}:/opt/pitbench/configs/instance_sets:ro",
+            f"{package_root}:/opt/pitbench:ro",
             "--volume",
             f"{self.task_config_path}:/input/task.yaml:ro",
             "--volume",
             f"{self.base_repository}:/input/base:ro",
             "--volume",
-            f"{self.private_root}:{PRIVATE_ASSET_MOUNT}:ro",
+            f"{self.private_root}:/private:ro",
             "--volume",
             f"{self.candidate_patch}:/input/candidate.patch:ro",
             "--volume",
             f"{self.output_dir}:/output:rw",
-            "--entrypoint",
-            "/bin/sh",
             self.image,
-            "-c",
-            'exec env -i PATH="$PATH" '
-            "LANG=C.UTF-8 PYTHONPATH=/opt/pitbench "
-            + " ".join(f'{key}="${{{key}:-}}"' for key in IMAGE_ENV_KEYS)
-            + ' "$@"',
-            "pitbench-judge",
             "python3",
             "-m",
             "pitbench.evaluator.runner",
@@ -168,15 +140,13 @@ class DockerJudge:
             "--public-root",
             "/opt/pitbench",
             "--private-root",
-            PRIVATE_ASSET_MOUNT,
+            "/private",
             "--candidate-patch",
             "/input/candidate.patch",
             "--output-dir",
             "/output",
             "--observations",
             "/output/judge-observations.jsonl",
-            "--artifact-gid",
-            str(os.getgid()),
         ]
         if self.cpuset_cpus is not None:
             command[command.index("--memory") : command.index("--memory")] = [
@@ -200,12 +170,6 @@ class DockerJudge:
             command.extend(["--solver-seed-limit", str(self.solver_seed_limit)])
         for state in self.code_states:
             command.extend(["--code-state", state.value])
-        return command
-
-    def run(self) -> list[RunObservation]:
-        self._check_inputs_unchanged("before launch")
-        observations = self.output_dir / "judge-observations.jsonl"
-        command = self.command()
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,

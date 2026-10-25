@@ -9,8 +9,6 @@ from pathlib import Path
 
 from adapters.pitbench.adapter import PitBenchAdapter
 from pitbench.evaluator.artifacts import write_text_atomic
-from pitbench.evaluator.docker_judge import DockerJudge
-from pitbench.evaluator.isolation import PRIVATE_ASSET_MOUNT, protect_output
 from pitbench.evaluator.judge import JudgePlan, LocalProcessJudge
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.evaluator.storage import ObservationStore
@@ -104,7 +102,6 @@ def _parse_args() -> argparse.Namespace:
         "--generation-seed", type=int, default=VALIDATION_GENERATION_SEED
     )
     parser.add_argument("--inside-judge", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--artifact-gid", type=int, help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -113,37 +110,53 @@ def _run_in_judge_image(args: argparse.Namespace) -> None:
         raise ValueError("--repository is required when running the real solver")
     if args.judge_cpus <= 0:
         raise ValueError("judge_cpus must be positive")
-    no_change = args.output_dir / "no_change.patch"
-    write_text_atomic(no_change, "")
-    judge = DockerJudge(
-        image=args.judge_image,
-        task_config_path=args.task_config,
-        base_repository=args.repository,
-        private_root=args.private_root,
-        candidate_patch=no_change,
-        output_dir=args.output_dir,
-        cpus=args.judge_cpus,
-        memory=args.judge_memory,
-        parallel_runs=args.parallel_runs,
-    )
-    command = judge.command()
-    image_index = command.index(args.judge_image)
-    script = ROOT / "scripts/validate_seed_robustness_real_solver.py"
-    command[image_index:image_index] = [
+    pinned_image = re.fullmatch(r"sha256:[0-9a-f]{64}", args.judge_image)
+    if pinned_image is None:
+        raise ValueError("judge_image must be pinned by sha256")
+
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--read-only",
+        "--cpus",
+        str(args.judge_cpus),
+        "--memory",
+        args.judge_memory,
+        "--pids-limit",
+        "2048",
+        "--tmpfs",
+        "/tmp:rw,exec,nosuid,size=4g",
+        "--env",
+        "PYTHONPATH=/opt/pitbench",
+        "--env",
+        "GIT_CONFIG_COUNT=1",
+        "--env",
+        "GIT_CONFIG_KEY_0=safe.directory",
+        "--env",
+        "GIT_CONFIG_VALUE_0=/input/base",
         "--volume",
-        f"{script}:/opt/pitbench/scripts/{script.name}:ro",
-    ]
-    start = command.index("python3")
-    command[start:] = [
-        "python3",
-        f"/opt/pitbench/scripts/{script.name}",
+        f"{ROOT}:/opt/pitbench:ro",
+        "--volume",
+        f"{args.task_config.resolve()}:/input/task.yaml:ro",
+        "--volume",
+        f"{args.repository.resolve()}:/input/base:ro",
+        "--volume",
+        f"{args.private_root.resolve()}:/private:ro",
+        "--volume",
+        f"{args.output_dir.resolve()}:/output:rw",
+        args.judge_image,
+        "python",
+        "/opt/pitbench/scripts/validate_seed_robustness_real_solver.py",
         "--inside-judge",
         "--task-config",
         "/input/task.yaml",
         "--repository",
         "/input/base",
         "--private-root",
-        PRIVATE_ASSET_MOUNT,
+        "/private",
         "--output-dir",
         "/output",
         "--instance-limit",
@@ -158,24 +171,12 @@ def _run_in_judge_image(args: argparse.Namespace) -> None:
         str(args.test_list_count),
         "--generation-seed",
         str(args.generation_seed),
-        "--artifact-gid",
-        str(os.getgid()),
     ]
     subprocess.run(command, check=True)
 
 
 def main() -> None:
     args = _parse_args()
-    if args.inside_judge:
-        os.environ.update(
-            {
-                "GIT_CONFIG_COUNT": "1",
-                "GIT_CONFIG_KEY_0": "safe.directory",
-                "GIT_CONFIG_VALUE_0": "/input/base",
-            }
-        )
-    if args.artifact_gid is not None:
-        protect_output(args.output_dir, args.artifact_gid)
     if args.instance_limit < 2:
         raise ValueError("instance_limit must be at least two for confidence intervals")
     if args.parallel_runs < 1:

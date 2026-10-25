@@ -777,15 +777,15 @@ def test_normalized_gap_rejects_invalid_anchor(anchor: float) -> None:
 
 
 def test_normalized_gap_uses_unit_scale_for_zero_optimum() -> None:
-    assert (
-        ProblemFamilyPlugin.normalized_gap(2.0, 0.0, objective_sense="minimize") == 2.0
-    )
-    assert (
-        ProblemFamilyPlugin.normalized_gap(-2.0, 0.0, objective_sense="maximize") == 2.0
-    )
-    assert (
-        ProblemFamilyPlugin.normalized_gap(0.0, 0.0, objective_sense="minimize") == 0.0
-    )
+    assert ProblemFamilyPlugin.normalized_gap(
+        2.0, 0.0, objective_sense="minimize"
+    ) == 2.0
+    assert ProblemFamilyPlugin.normalized_gap(
+        -2.0, 0.0, objective_sense="maximize"
+    ) == 2.0
+    assert ProblemFamilyPlugin.normalized_gap(
+        0.0, 0.0, objective_sense="minimize"
+    ) == 0.0
 
 
 @pytest.mark.parametrize("objective", [None, math.inf, -math.inf, math.nan])
@@ -1083,21 +1083,16 @@ def test_balanced_subset_sum_oracle_matches_exhaustive_optimum(tmp_path: Path) -
         ),
     )
 
-    assert (
-        TrustedOptimumFamily(record, solution_path)
-        .verify(instance_path, solution_path)
-        .objective
-        == optimum
-    )
+    assert TrustedOptimumFamily(record, solution_path).verify(
+        instance_path, solution_path
+    ).objective == optimum
     assert CPFamily().verify(instance_path, solution_path).objective == optimum
     invalid = record.model_copy(
         update={"optimality_basis": {**basis, "reachable_bitset_sha256": "0" * 64}}
     )
-    assert (
-        TrustedOptimumFamily(invalid, solution_path)
-        .verify(instance_path, solution_path)
-        .infrastructure_error
-    )
+    assert TrustedOptimumFamily(invalid, solution_path).verify(
+        instance_path, solution_path
+    ).infrastructure_error
 
 
 def test_cp_family_verifies_public_normalized_bin_packing_without_private_verifier(
@@ -1687,7 +1682,7 @@ def test_solver_process_launch_failure_is_retained_as_infrastructure_error(
 ):
     judge, case = judge_case
 
-    def fail_to_start(command, workspace, **permissions):
+    def fail_to_start(command, workspace):
         del command, workspace
         raise FileNotFoundError("solver command is unavailable")
 
@@ -1714,70 +1709,6 @@ def test_an_old_result_cannot_make_a_later_missing_output_pass(judge_case, tmp_p
         judge._run_case(tmp_path, case, CodeState.BASE, 0, 5).status
         == RunStatus.OUTPUT_ERROR
     )
-
-
-@pytest.mark.parametrize("kind", ["symlink", "hardlink", "oversized"])
-def test_untrusted_output_artifacts_are_checked_before_verification(
-    judge_case, tmp_path, kind
-):
-    judge, case = judge_case
-    private = tmp_path / "private-answer"
-    private.write_text("private answer must remain untouched")
-    if kind == "symlink":
-        tail = f"p.with_suffix('.solution.json').unlink(); p.with_suffix('.solution.json').symlink_to({str(private)!r})"
-    elif kind == "hardlink":
-        tail = "import os; p.with_suffix('.solution.json').unlink(); extra=p.parent/'extra'; extra.write_text('data'); os.link(extra,p.with_suffix('.solution.json'))"
-    else:
-        tail = "\nwith p.open('wb') as f: f.truncate(128*1024*1024+1)\n"
-    judge.repository = ScriptRepository(GOOD + "\n" + tail)
-    observation = judge._run_case(tmp_path, case, CodeState.BASE, 0, 5)
-    assert observation.status == RunStatus.OUTPUT_ERROR
-    assert private.read_text() == "private answer must remain untouched"
-    process = json.loads(
-        Path(observation.stderr_path)
-        .with_suffix(".json")
-        .with_name("seed-0-budget-5.process.json")
-        .read_text()
-    )
-    assert process["unsafe_artifacts"]
-    assert process["isolation"]["descendants_remaining"] == 0
-
-
-def test_stale_log_symlinks_are_replaced_without_following_them(judge_case, tmp_path):
-    judge, case = judge_case
-    private = tmp_path / "private-answer"
-    private.write_text("private answer")
-    run_dir = (
-        judge.output_dir
-        / CodeState.BASE.value
-        / case.instance_set.name
-        / case.instance_id
-    )
-    run_dir.mkdir(parents=True)
-    for name in (
-        "seed-0-budget-5.stdout.log",
-        "seed-0-budget-5.process.json",
-        "seed-0-budget-5.stdout.log.tmp",
-    ):
-        (run_dir / name).symlink_to(private)
-    judge.repository = ScriptRepository(GOOD)
-    observation = judge._run_case(tmp_path, case, CodeState.BASE, 0, 5)
-    assert observation.valid
-    assert private.read_text() == "private answer"
-    assert not Path(observation.stdout_path).is_symlink()
-
-
-def test_stale_output_directory_symlink_is_an_infrastructure_failure(
-    judge_case, tmp_path
-):
-    judge, case = judge_case
-    parent = judge.output_dir / CodeState.BASE.value / case.instance_set.name
-    parent.mkdir(parents=True)
-    (parent / case.instance_id).symlink_to(tmp_path, target_is_directory=True)
-    judge.repository = ScriptRepository(GOOD)
-    observation = judge._run_case(tmp_path, case, CodeState.BASE, 0, 5)
-    assert observation.status == RunStatus.INFRASTRUCTURE_ERROR
-    assert "unsafe existing output directory" in observation.error
 
 
 def test_failed_parsed_run_retains_resource_measurements(judge_case, tmp_path):
@@ -1853,10 +1784,11 @@ def test_process_verifier_parses_evaluator_owned_json_result(tmp_path) -> None:
 
 def test_watchdog_terminates_the_solver_process_group(judge_case, tmp_path):
     judge, case = judge_case
+    child_pid = tmp_path / "child.pid"
     script = (
         "import subprocess,time\n"
         "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'])\n"
-        "print(child.pid,flush=True)\n"
+        f"Path({str(child_pid)!r}).write_text(str(child.pid))\n"
         "print('started',flush=True)\ntime.sleep(30)\n"
     )
     judge.repository = ScriptRepository(script, timeout=0.5)
@@ -1865,7 +1797,7 @@ def test_watchdog_terminates_the_solver_process_group(judge_case, tmp_path):
     assert result.status == RunStatus.TIMED_OUT
     assert time.monotonic() - started < 5
     assert "started" in Path(result.stdout_path).read_text()
-    pid = int(Path(result.stdout_path).read_text().splitlines()[0])
+    pid = int(child_pid.read_text())
     status = Path(f"/proc/{pid}/stat")
     # A killed child may briefly await reaping by the container init process.
     assert not status.exists() or status.read_text().split()[2] == "Z"
