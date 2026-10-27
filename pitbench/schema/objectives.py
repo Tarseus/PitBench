@@ -25,15 +25,31 @@ def objective_catalog_sha256() -> str:
 
 
 @lru_cache(maxsize=1)
-def qualification_protocols() -> dict:
-    return json.loads(
-        files("pitbench.schema").joinpath("qualification_protocols.json").read_text()
+def qualification_protocols(version: str = "1.0") -> dict:
+    filename = (
+        "qualification_protocols.json"
+        if version == "1.0"
+        else "qualification_protocols_v1_1.json"
+        if version == "1.1"
+        else None
     )
+    if filename is None:
+        raise ValueError("unsupported objective qualification protocol version")
+    return json.loads(files("pitbench.schema").joinpath(filename).read_text())
 
 
-def qualification_protocols_sha256() -> str:
+def qualification_protocols_sha256(version: str = "1.0") -> str:
+    filename = (
+        "qualification_protocols.json"
+        if version == "1.0"
+        else "qualification_protocols_v1_1.json"
+        if version == "1.1"
+        else None
+    )
+    if filename is None:
+        raise ValueError("unsupported objective qualification protocol version")
     return hashlib.sha256(
-        files("pitbench.schema").joinpath("qualification_protocols.json").read_bytes()
+        files("pitbench.schema").joinpath(filename).read_bytes()
     ).hexdigest()
 
 
@@ -61,15 +77,25 @@ class ObjectiveScoringPlan(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    protocol_version: Literal["1.0"] = "1.0"
+    protocol_version: Literal["1.0", "1.1"] = "1.0"
     protocols_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     qualification_instance_sets: list[str] = Field(min_length=1)
     reporting_instance_sets: list[str] = Field(min_length=1)
     guardrails: list[MetricGuardrail] | None = None
+    scenario_protocols_sha256: dict[str, str] = Field(default_factory=dict)
+    reliability_scope: (
+        Literal["qualification_population", "declared_boundary_suite"] | None
+    ) = None
+    seed_dispersion_measure: (
+        Literal["normalized_gap_iqr", "exact_capped_time_iqr", "exact_final_gap_iqr"]
+        | None
+    ) = None
 
     @model_validator(mode="after")
     def validate_panels(self) -> Self:
-        if self.protocols_sha256 != qualification_protocols_sha256():
+        if self.protocols_sha256 != qualification_protocols_sha256(
+            self.protocol_version
+        ):
             raise ValueError("objective qualification protocol hash mismatch")
         qualification = self.qualification_instance_sets
         reporting = self.reporting_instance_sets

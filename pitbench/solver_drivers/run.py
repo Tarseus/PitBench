@@ -18,6 +18,7 @@ from typing import Any, ClassVar
 
 from pitbench.solver_drivers.common import (
     ParameterRejected,
+    ScenarioSession,
     SolverTermination,
     append_trajectory,
     failure_reason,
@@ -220,9 +221,7 @@ class PyVRPDriver(SolverDriver):
                 return
             routes_method = getattr(result.best, "routes", None)
             solver_routes = (
-                routes_method()
-                if callable(routes_method)
-                else result.best.get_routes()
+                routes_method() if callable(routes_method) else result.best.get_routes()
             )
             routes = [PyVRPDriver._route_visits(route) for route in solver_routes]
             objective = float(result.cost())
@@ -427,9 +426,7 @@ class VroomDriver(SolverDriver):
                 response.get("summary", {}).get("cost", 0)
             )
             solver_termination = (
-                SolverTermination.OTHER
-                if legacy_cli
-                else SolverTermination.TIME_LIMIT
+                SolverTermination.OTHER if legacy_cli else SolverTermination.TIME_LIMIT
             )
             append_trajectory(
                 args.trajectory,
@@ -1127,6 +1124,137 @@ class OrToolsCpSatExactDriver(SolverDriver):
 
 
 DRIVERS = SolverDriver._drivers
+
+
+class HighsScenarioSession(ScenarioSession):
+    """Binding-based trajectories and stateful model updates in a fresh worker."""
+
+    @classmethod
+    def identity(cls) -> dict:
+        import hashlib
+
+        import highspy
+        import highspy._core
+
+        solver = highspy.Highs()
+        package = Path(highspy.__file__).parent
+        python_sources = {
+            str(path.relative_to(package)): hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+            for path in sorted(package.rglob("*.py"))
+        }
+        return {
+            "plugin": f"{cls.__module__}:{cls.__name__}",
+            "repository_plugin": "pitbench.repositories.plugins:HighsRepositoryPlugin",
+            "representations": ["row_column_permutation"],
+            "version": solver.version(),
+            "binding_git_hash": solver.githash(),
+            "binding_sha256": hashlib.sha256(
+                Path(highspy._core.__file__).read_bytes()
+            ).hexdigest(),
+            "package_code_sha256": hashlib.sha256(
+                json.dumps(python_sources, sort_keys=True).encode()
+            ).hexdigest(),
+        }
+
+    def __init__(self, *, seed, threads, budget, tolerance, options):
+        import highspy
+
+        self.solver = highspy.Highs()
+        fixed = {
+            "random_seed": seed,
+            "threads": threads,
+            "time_limit": budget,
+            "mip_feasibility_tolerance": tolerance,
+        }
+        if any(k in fixed and fixed[k] != v for k, v in options.items()):
+            raise ValueError(
+                "scenario options conflict with the declared experimental grid"
+            )
+        for key, value in {"output_flag": False, **options, **fixed}.items():
+            if self.solver.setOptionValue(key, value) != highspy.HighsStatus.kOk:
+                raise ParameterRejected(f"HiGHS rejected {key}={value}")
+
+    def load_model(self, model):
+        import highspy
+
+        from pitbench.evaluator.representations import LinearModelRepresentation
+
+        if (
+            self.solver.passModel(LinearModelRepresentation.to_highs_lp(model))
+            != highspy.HighsStatus.kOk
+        ):
+            raise ValueError("solver rejected scenario model")
+
+    def update_model(self, previous, model):
+        import highspy
+        import numpy as np
+
+        from pitbench.solver_drivers.common import ScenarioUnsupported
+
+        if previous["matrix"].shape != model["matrix"].shape or not np.array_equal(
+            previous["integrality"], model["integrality"]
+        ):
+            raise ScenarioUnsupported(
+                "in-place scenario updates require fixed dimensions and integrality"
+            )
+        s = self.solver
+        cols = np.arange(len(model["cost"]), dtype=np.int32)
+        rows = np.arange(len(model["row_lower"]), dtype=np.int32)
+        statuses = [
+            s.changeColsCost(len(cols), cols, model["cost"]),
+            s.changeColsBounds(len(cols), cols, model["col_lower"], model["col_upper"]),
+            s.changeRowsBounds(len(rows), rows, model["row_lower"], model["row_upper"]),
+            s.changeObjectiveOffset(model["offset"]),
+        ]
+        if previous["sense"] != model["sense"]:
+            raise ScenarioUnsupported(
+                "objective sense changes require another experimental contract"
+            )
+        delta = (model["matrix"] - previous["matrix"]).tocoo()
+        for i, j in zip(delta.row, delta.col, strict=True):
+            statuses.append(s.changeCoeff(int(i), int(j), float(model["matrix"][i, j])))
+        if any(status != highspy.HighsStatus.kOk for status in statuses):
+            raise ValueError("solver rejected a declared model update")
+
+    def solve(self, emit):
+        import highspy
+
+        started = time.perf_counter()
+
+        def observe(event):
+            values = event.data_out.mip_solution
+            if values is not None and len(values) == self.solver.getNumCol():
+                emit(time.perf_counter() - started, list(values), None)
+
+        self.solver.cbMipImprovingSolution.subscribe(observe)
+        try:
+            status = self.solver.run()
+        finally:
+            self.solver.cbMipImprovingSolution.unsubscribe(observe)
+        elapsed = time.perf_counter() - started
+        solution = self.solver.getSolution()
+        values = list(solution.col_value) if solution.value_valid else None
+        multipliers = list(solution.row_dual) if solution.dual_valid else None
+        if values is not None or multipliers is not None:
+            emit(elapsed, values, multipliers)
+        model_status = self.solver.getModelStatus()
+        termination = (
+            "solver_error"
+            if status == highspy.HighsStatus.kError
+            else "optimal"
+            if model_status == highspy.HighsModelStatus.kOptimal
+            else "time_limit"
+            if model_status == highspy.HighsModelStatus.kTimeLimit
+            else "infeasible"
+            if model_status == highspy.HighsModelStatus.kInfeasible
+            else "other"
+        )
+        return {"termination": termination, "values": values, "solve_time_sec": elapsed}
+
+    def reset_search(self):
+        self.solver.clearSolver()
 
 
 def driver_records_trajectory(driver_name: str) -> bool:

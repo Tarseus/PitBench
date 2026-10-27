@@ -298,5 +298,12 @@
       }
     }
   },
+  "metric_protocols": {
+    "qualification_version": "1.1",
+    "scenario_version": "1.0",
+    "existing_frozen_qualification_version": "1.0",
+    "scenario_runtime_configuration": "explicit_per_task",
+    "solver_api_capabilities": "must_be_verified_for_each_selected_release"
+  },
   "release_readiness": "not_verified"
 }

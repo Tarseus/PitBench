@@ -42,6 +42,60 @@ from pitbench.schema.task import PitBenchTask
 from pitbench.tasks import TaskCatalog, TaskRecord
 
 _GIB = 1024**3
+
+
+def _metric_scenario_checks(context) -> list:
+    """Check declared extra experiments before starting any agent work."""
+    if context.task is None or not context.task.task.metric_scenarios:
+        return []
+    task = context.task.task
+    configured = context.config.metric_scenario_configs.get(task.task_id)
+    try:
+        if configured is None:
+            raise ValueError(
+                "the task declares metric scenarios but has no runtime configuration"
+            )
+        import yaml
+
+        path = resolve_repository_path(context.repository_root, configured)
+        config = yaml.safe_load(path.read_text())
+        cpus = config["cpus"]
+        if (
+            not cpus
+            or len(set(cpus)) != len(cpus)
+            or not set(cpus) <= os.sched_getaffinity(0)
+        ):
+            raise ValueError("scenario CPU allocation is unavailable or duplicated")
+        if max(n for p in task.metric_scenarios for n in p.thread_counts) > len(cpus):
+            raise ValueError("scenario thread grid exceeds its CPU allocation")
+        for state in ("base", "agent"):
+            runtime = config["runtimes"][state]
+            if (
+                runtime["source_commit"] != task.release.base_commit
+                or not runtime.get("session_plugin")
+                or not runtime.get("expected_binding_sha256")
+            ):
+                raise ValueError(f"{state}: missing source-bound API runtime")
+        if config["order"] not in {"base_first", "agent_first"}:
+            raise ValueError("scenario run order must be declared")
+        return [
+            _check(
+                CheckStatus.PASS,
+                "metric scenario configuration",
+                f"{len(task.metric_scenarios)} declared scenarios; source, binding, CPU and thread configuration present",
+            )
+        ]
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        return [
+            _check(
+                CheckStatus.FAIL,
+                "metric scenario configuration",
+                str(error),
+                "Configure metric_scenario_configs.<task_id> with source-bound Base/Agent API runtimes and the complete declared panels.",
+            )
+        ]
+
+
 _PROXY_KEYS = (
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -252,9 +306,7 @@ def _private_assets_check(context: _DoctorContext) -> DoctorCheck:
             )
         validation_patch = context.task.task.evaluation.validation_test_patch
         if validation_patch is not None:
-            resolver.resolve(
-                validation_patch.source, validation_patch.source_sha256
-            )
+            resolver.resolve(validation_patch.source, validation_patch.source_sha256)
     except Exception as error:
         return _check(
             CheckStatus.FAIL,
@@ -1339,6 +1391,7 @@ def run_doctor(
     checks.append(_reliability_plan_check(context))
     checks.append(_pinned_source_check(context, {}))
     checks.append(_configuration_robustness_check(root, context.config))
+    checks.extend(_metric_scenario_checks(context))
     checks.extend(_configuration_collector_checks(root, context.config))
     client, docker_info, docker_result = _docker_check(client_factory)
     checks.append(docker_result)
@@ -1422,6 +1475,7 @@ def evaluation_checks(
                 )
             )
             task_checks.append(_configuration_robustness_check(repository_root, config))
+            task_checks.extend(_metric_scenario_checks(context))
             checks.extend(
                 DoctorCheck(
                     item.status, f"{task_id} / {item.name}", item.detail, item.recovery

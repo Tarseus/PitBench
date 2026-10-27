@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import statistics
 from collections import defaultdict
@@ -9,6 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from pitbench.metrics.objective_native import native_objective_measurement
 from pitbench.metrics.performance_report import (
     BOOTSTRAP_SEED,
     _cluster_mean_ci,
@@ -16,6 +19,7 @@ from pitbench.metrics.performance_report import (
     compute_performance_report,
 )
 from pitbench.metrics.resource_report import compute_resource_reports
+from pitbench.metrics.scenario_report import ScenarioReport
 from pitbench.schema.objectives import (
     qualification_protocols,
     qualification_protocols_sha256,
@@ -27,6 +31,7 @@ from pitbench.schema.observation import (
     RunObservation,
     RunStatus,
 )
+from pitbench.schema.scenarios import SCENARIO_QUALITY_GUARDS
 from pitbench.schema.task import PerformanceProtocol, PitBenchTask
 
 
@@ -54,7 +59,7 @@ class ObjectiveScore(BaseModel):
 
 
 class ObjectiveQualificationReport(BaseModel):
-    protocol_version: Literal["1.0"] = "1.0"
+    protocol_version: Literal["1.0", "1.1"] = "1.0"
     protocols_sha256: str
     primary_metric_id: str | None
     classification: str
@@ -105,7 +110,7 @@ def objective_protocol_gaps(task: PitBenchTask) -> list[str]:
             issues.append(
                 f"Declare allowed degradation for {metric}: {sorted(missing)}."
             )
-    definitions = qualification_protocols()["metrics"]
+    definitions = qualification_protocols(plan.protocol_version)["metrics"]
     for metric, comparison in [
         (profile.primary_metric_id, None),
         *((guard.metric_id, guard.comparison) for guard in plan.guardrails or []),
@@ -113,6 +118,71 @@ def objective_protocol_gaps(task: PitBenchTask) -> list[str]:
         if metric is None:
             continue
         rule = definitions[metric]
+        if rule["adapter"] == "declared_scenario":
+            matching = [p for p in task.metric_scenarios if metric in p.metrics]
+            if not matching or any(
+                plan.scenario_protocols_sha256.get(p.id) != p.digest() for p in matching
+            ):
+                issues.append(
+                    f"{metric}: freeze a matching scenario protocol and its hash in the scoring plan."
+                )
+            if any(not p.model_sequences_sha256 for p in matching):
+                issues.append(
+                    f"{metric}: freeze every original model/update sequence hash before measurement."
+                )
+            if metric in SCENARIO_QUALITY_GUARDS and any(
+                any(
+                    sha not in p.qualification_target_by_model_sha256
+                    for cases in p.model_sequences_sha256.values()
+                    for sequence in cases.values()
+                    for sha in sequence
+                )
+                for p in matching
+            ):
+                issues.append(
+                    f"{metric}: declare final quality targets for every scenario model before measurement."
+                )
+            for panel in plan.qualification_instance_sets:
+                if (
+                    metric == profile.primary_metric_id
+                    and len([p for p in matching if panel in p.instance_sets]) != 1
+                ):
+                    issues.append(
+                        f"{metric}: exactly one scenario must cover qualification panel {panel}."
+                    )
+        if metric == "seed_dispersion" and (
+            task.evaluation.seed_robustness is None
+            or plan.seed_dispersion_measure is None
+        ):
+            issues.append("Freeze the native seed protocol and dispersion coordinate.")
+        if plan.protocol_version == "1.1" and metric in {
+            "boundary_pass_counts",
+            "operational_failure_counts",
+        }:
+            if plan.reliability_scope is None or (
+                metric == "boundary_pass_counts"
+                and plan.reliability_scope != "declared_boundary_suite"
+            ):
+                issues.append(
+                    "Freeze the native reliability evidence scope before qualification."
+                )
+            if (
+                plan.reliability_scope == "declared_boundary_suite"
+                and not task.evaluation.operational_reliability
+            ):
+                issues.append(
+                    "Enable the declared native boundary suite before qualification."
+                )
+        if (
+            metric == "representation_dispersion"
+            and task.evaluation.representation_robustness is None
+        ):
+            issues.append("Freeze a native equivalence protocol.")
+        if (
+            metric == "controlled_retention"
+            and task.evaluation.controlled_transfer is None
+        ):
+            issues.append("Freeze the native controlled-transfer protocol.")
         if rule["status"] != "implemented":
             issues.append(f"{metric}: {rule['status']}; {rule['decision']}")
         elif comparison is not None and comparison != rule["comparison"]:
@@ -202,7 +272,8 @@ def _grid_problems(
             or any(len(values) != seed_count for values in seeds_by_instance.values())
             or any(values != combinations for values in cells.values())
             or any(
-                item.condition_id is not None or item.template_id is not None
+                (item.condition_id is not None or item.template_id is not None)
+                and task.optimization_profile.scoring.protocol_version == "1.0"
                 for item in runs
             )
         ):
@@ -238,8 +309,10 @@ def _metric_decision(
     grid: ExpectedRunGrid,
     metric: str,
     panel: str,
+    scenarios: ScenarioReport | None = None,
 ) -> MetricDecision:
-    rule = qualification_protocols()["metrics"][metric]
+    plan = task.optimization_profile.scoring
+    rule = qualification_protocols(plan.protocol_version)["metrics"][metric]
     result = MetricDecision(
         metric_id=metric, instance_set=panel, comparison=rule["comparison"]
     )
@@ -249,6 +322,68 @@ def _metric_decision(
         for item in observations
         if _original(item) and item.instance_set == panel and item.budget_sec == budget
     ]
+    if rule["adapter"] == "declared_scenario":
+        task_hash = hashlib.sha256(
+            json.dumps(
+                task.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        if (
+            scenarios is None
+            or scenarios.task_sha256 != task_hash
+            or scenarios.task_id != task.task_id
+        ):
+            result.detail = (
+                "Missing source-bound scenario evidence for this frozen task."
+            )
+            return result
+        matches = [
+            r
+            for r in scenarios.results
+            if r.metric_id == metric
+            and r.instance_set == panel
+            and plan.scenario_protocols_sha256.get(r.scenario_id) == r.protocol_sha256
+        ]
+        if len(matches) != 1 or not matches[0].complete or matches[0].upper is None:
+            result.detail = "Need one complete frozen scenario, all declared conditions and at least two paired instances."
+            return result
+        measured = matches[0]
+        if metric in SCENARIO_QUALITY_GUARDS and not measured.quality_qualified:
+            result.detail = "Every scenario step must independently meet its preregistered final quality target; faster or smaller solves with worse final quality cannot qualify."
+            result.complete = True
+            result.classification = "guardrail_failed"
+            return result
+        if len(measured.by_instance) != next(
+            s.size for s in task.instance_sets if s.name == panel
+        ):
+            result.detail = "Scenario qualification panel is reduced."
+            return result
+        return result.model_copy(
+            update={
+                "degradation": measured.degradation,
+                "lower": measured.lower,
+                "upper": measured.upper,
+                "confidence_level": measured.confidence_level,
+                "complete": True,
+                "classification": measured.classification,
+                "detail": "Independently recomputed declared scenario; paired instance bootstrap.",
+            }
+        )
+    if rule["adapter"] in {
+        "native_seed",
+        "native_representation",
+        "native_reliability",
+        "native_transfer",
+    }:
+        try:
+            return result.model_copy(
+                update=native_objective_measurement(
+                    task, observations, grid, metric, panel
+                )
+            )
+        except (KeyError, ValueError) as error:
+            result.detail = str(error)
+            return result
     if rule["adapter"] == "paired_resource":
         count = next(item.size for item in task.instance_sets if item.name == panel)
         seed_count = (
@@ -362,7 +497,10 @@ def _metric_decision(
 
 
 def _score(
-    task: PitBenchTask, observations: list[RunObservation], grid: ExpectedRunGrid | None
+    task: PitBenchTask,
+    observations: list[RunObservation],
+    grid: ExpectedRunGrid | None,
+    scenarios: ScenarioReport | None = None,
 ) -> ObjectiveScore:
     profile = task.optimization_profile
     assert profile and profile.scoring and profile.primary_metric_id
@@ -374,6 +512,11 @@ def _score(
     problems = _grid_problems(task, observations, grid, panels)
     if problems:
         return ObjectiveScore(classification="incomplete", reasons=problems)
+    if scenarios is not None and scenarios.invalid_runs:
+        return ObjectiveScore(
+            classification="invalid",
+            reasons=["Independent scenario solution verification failed."],
+        )
     assert grid is not None
     selected = [
         item for item in observations if _original(item) and item.instance_set in panels
@@ -390,21 +533,31 @@ def _score(
             ],
         )
     primary = [
-        _metric_decision(task, observations, grid, profile.primary_metric_id, name)
+        _metric_decision(
+            task, observations, grid, profile.primary_metric_id, name, scenarios
+        )
         for name in plan.qualification_instance_sets
     ]
     guards = []
     for guard in plan.guardrails or []:
         for name in guard.instance_sets:
-            measured = _metric_decision(task, observations, grid, guard.metric_id, name)
+            measured = _metric_decision(
+                task, observations, grid, guard.metric_id, name, scenarios
+            )
             measured.max_degradation = guard.max_degradation
             measured.guardrail_passed = (
-                measured.upper <= guard.max_degradation if measured.complete else None
+                False
+                if measured.classification == "guardrail_failed"
+                else measured.upper <= guard.max_degradation
+                if measured.complete and measured.upper is not None
+                else None
             )
             guards.append(measured)
     if any(not item.complete for item in [*primary, *guards]):
         status = "incomplete"
-    elif any(item.guardrail_passed is False for item in guards):
+    elif any(
+        item.classification == "guardrail_failed" for item in [*primary, *guards]
+    ) or any(item.guardrail_passed is False for item in guards):
         status = "guardrail_failed"
     elif all(item.classification == "improved" for item in primary):
         status = "improved"
@@ -424,20 +577,44 @@ def compute_objective_qualification(
     repeat_expected_run_grid: ExpectedRunGrid | None = None,
     repeat_identity_verified: bool = False,
     validity_accepted: bool | None = None,
+    scenario_report: ScenarioReport | None = None,
+    repeat_scenario_report: ScenarioReport | None = None,
+    candidate_sha256: str | None = None,
 ) -> ObjectiveQualificationReport | None:
     """A metric decision can satisfy performance confirmation, never other gates."""
     profile = task.optimization_profile
     if profile is None:
         return None
+    version = profile.scoring.protocol_version if profile.scoring else "1.0"
     result = ObjectiveQualificationReport(
-        protocols_sha256=qualification_protocols_sha256(),
+        protocol_version=version,
+        protocols_sha256=qualification_protocols_sha256(version),
         primary_metric_id=profile.primary_metric_id,
         classification="needs_protocol",
         reasons=objective_protocol_gaps(task),
     )
     if result.reasons:
         return result
-    result.initial = _score(task, observations, expected_run_grid)
+    scenario_metrics = {
+        profile.primary_metric_id,
+        *(g.metric_id for g in profile.scoring.guardrails or []),
+    }
+    needs_scenarios = any(
+        qualification_protocols(version)["metrics"][m]["adapter"] == "declared_scenario"
+        for m in scenario_metrics
+    )
+    if needs_scenarios and (
+        scenario_report is None
+        or not scenario_report.hardware_identity
+        or candidate_sha256 is None
+        or scenario_report.candidate_sha256 != candidate_sha256
+    ):
+        result.classification = "incomplete"
+        result.reasons.append(
+            "Scenario evidence must bind the selected candidate patch."
+        )
+        return result
+    result.initial = _score(task, observations, expected_run_grid, scenario_report)
     result.classification = result.initial.classification
     result.eligible_for_confirmation = result.initial.classification == "improved"
     if validity_accepted is False:
@@ -456,7 +633,24 @@ def compute_objective_qualification(
             "Fresh reversed-order Judge identity and identical expected grid are required."
         )
         return result
-    result.repeat = _score(task, repeat_observations, repeat_expected_run_grid)
+    if needs_scenarios:
+        if (
+            repeat_scenario_report is None
+            or repeat_scenario_report.design_sha256 != scenario_report.design_sha256
+            or repeat_scenario_report.collection_id == scenario_report.collection_id
+            or repeat_scenario_report.order == scenario_report.order
+            or scenario_report.finished_at is None
+            or repeat_scenario_report.started_at is None
+            or repeat_scenario_report.started_at < scenario_report.finished_at
+        ):
+            result.classification = "incomplete"
+            result.reasons.append(
+                "Fresh scenario confirmation with identical design and reversed order is required."
+            )
+            return result
+    result.repeat = _score(
+        task, repeat_observations, repeat_expected_run_grid, repeat_scenario_report
+    )
     if result.repeat.classification != "improved":
         result.classification = (
             result.repeat.classification

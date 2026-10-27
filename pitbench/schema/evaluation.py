@@ -13,6 +13,7 @@ from pitbench.metrics.performance_report import (
 )
 from pitbench.metrics.reliability_report import ReliabilityReport
 from pitbench.metrics.resource_report import ResourceReport
+from pitbench.metrics.scenario_report import ScenarioReport
 from pitbench.metrics.seed_robustness_report import (
     ExactSeedRobustnessReport,
     SeedRobustnessReport,
@@ -55,6 +56,8 @@ class ArtifactRef(BaseModel):
 
 
 class ArtifactManifest(BaseModel):
+    metric_scenario_campaign: ArtifactRef | None = None
+    metric_scenario_confirmation: ArtifactRef | None = None
     candidate_patch: ArtifactRef | None = None
     observations: ArtifactRef | None = None
     expected_run_grid: ArtifactRef | None = None
@@ -81,6 +84,8 @@ class EvaluationSummary(BaseModel):
     operational_reliability: ReliabilityReport | None = None
     objective_measurements: ObjectiveMeasurementReport | None = None
     behavior_geometry: BehaviorMetricReport | None = None
+    metric_scenarios: ScenarioReport | None = None
+    metric_scenario_error: str | None = None
 
 
 class EvaluationResult(BaseModel):

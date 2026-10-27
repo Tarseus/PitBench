@@ -88,6 +88,7 @@ class PitBenchAdapter:
         judge_parallel_runs: int | None = None,
         base_observations_path: Path | None = None,
         base_cache_path: Path | None = None,
+        metric_scenario_config: Path | None = None,
         use_base_cache: bool = False,
         smoke_test: bool = False,
         agent_tools: Iterable[AgentTool | str] = (),
@@ -146,6 +147,7 @@ class PitBenchAdapter:
             judge_parallel_runs=judge_parallel_runs,
             base_observations_path=base_observations_path,
             base_cache_path=base_cache_path,
+            metric_scenario_config=metric_scenario_config,
             use_base_cache=use_base_cache,
             smoke_test=smoke_test,
             agent_tools=tools,
@@ -437,6 +439,7 @@ class PitBenchAdapter:
         judge_parallel_runs: int | None = None,
         base_observations_path: Path | None = None,
         base_cache_path: Path | None = None,
+        metric_scenario_config: Path | None = None,
         use_base_cache: bool = False,
         smoke_test: bool = False,
         agent_tools: frozenset[AgentTool] = frozenset(),
@@ -488,6 +491,10 @@ class PitBenchAdapter:
             )
         if base_cache_path is not None:
             payload["evaluator_config"]["base_cache_path"] = str(base_cache_path)
+        if metric_scenario_config is not None:
+            payload["evaluator_config"]["metric_scenario_config"] = str(
+                metric_scenario_config.resolve()
+            )
         if smoke_test:
             payload["evaluator_config"].update(
                 smoke_test=True,

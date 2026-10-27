@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from pitbench.schema.objectives import OptimizationProfile
 from pitbench.schema.research import ResearchBudget
+from pitbench.schema.scenarios import ScenarioProtocol
 
 
 class TaskType(str, Enum):
@@ -211,8 +212,12 @@ class ControlledTransferConfig(BaseModel):
             raise ValueError("controlled transfer condition IDs must be unique")
         instance_sets = [condition.instance_set for condition in self.conditions]
         if len(instance_sets) != len(set(instance_sets)):
-            raise ValueError("controlled transfer conditions require unique instance sets")
-        known_conditions = {condition.condition_id: condition for condition in self.conditions}
+            raise ValueError(
+                "controlled transfer conditions require unique instance sets"
+            )
+        known_conditions = {
+            condition.condition_id: condition for condition in self.conditions
+        }
         for condition in self.conditions:
             if condition.view is ControlledTransferView.REFERENCE:
                 if condition.reference_condition_id is not None:
@@ -225,7 +230,10 @@ class ControlledTransferConfig(BaseModel):
                 raise ValueError(
                     "controlled transfer target condition requires a declared reference condition"
                 )
-            if known_conditions[reference_id].view is not ControlledTransferView.REFERENCE:
+            if (
+                known_conditions[reference_id].view
+                is not ControlledTransferView.REFERENCE
+            ):
                 raise ValueError(
                     "controlled transfer target must reference a reference condition"
                 )
@@ -236,10 +244,14 @@ class ControlledTransferConfig(BaseModel):
                 raise ValueError(
                     "controlled transfer scale condition requires scale_path_id and scale_vector"
                 )
-            if condition.view in {
-                ControlledTransferView.STRUCTURAL,
-                ControlledTransferView.JOINT,
-            } and condition.domain_id is None:
+            if (
+                condition.view
+                in {
+                    ControlledTransferView.STRUCTURAL,
+                    ControlledTransferView.JOINT,
+                }
+                and condition.domain_id is None
+            ):
                 raise ValueError(
                     "controlled transfer structural condition requires domain_id"
                 )
@@ -285,7 +297,10 @@ class EvaluationProtocol(BaseModel):
     def validate_grid(self) -> Self:
         if not self.budgets_sec or any(value <= 0 for value in self.budgets_sec):
             raise ValueError("evaluation budgets must be positive")
-        if self.fixed_solver_parameters is not None and not self.fixed_solver_parameters:
+        if (
+            self.fixed_solver_parameters is not None
+            and not self.fixed_solver_parameters
+        ):
             raise ValueError("fixed solver parameters must not be empty")
         if self.primary_budget_sec not in self.budgets_sec:
             raise ValueError("primary budget must belong to evaluation budgets")
@@ -318,6 +333,7 @@ class PitBenchTask(BaseModel):
     formulation_id: str | None = None
     optimization_scope: str
     optimization_profile: OptimizationProfile | None = None
+    metric_scenarios: list[ScenarioProtocol] = Field(default_factory=list)
     research_budget: ResearchBudget | None = None
     instruction: str
     repository: RepositorySpec
@@ -329,7 +345,9 @@ class PitBenchTask(BaseModel):
     @classmethod
     def reject_removed_task_fields(cls, data: object) -> object:
         if isinstance(data, dict) and "information_regime" in data:
-            raise ValueError("information_regime has been removed from task configuration")
+            raise ValueError(
+                "information_regime has been removed from task configuration"
+            )
         return data
 
     @model_validator(mode="after")
@@ -381,6 +399,16 @@ class PitBenchTask(BaseModel):
         scoring = (
             self.optimization_profile.scoring if self.optimization_profile else None
         )
+        if len({p.id for p in self.metric_scenarios}) != len(self.metric_scenarios):
+            raise ValueError("metric scenario IDs must be unique")
+        if any(set(p.instance_sets) - set(names) for p in self.metric_scenarios):
+            raise ValueError("metric scenario uses an unknown task instance set")
+        if scoring is not None and scoring.protocol_version == "1.1":
+            actual = {p.id: p.digest() for p in self.metric_scenarios}
+            if scoring.scenario_protocols_sha256 != actual:
+                raise ValueError(
+                    "objective scoring scenario protocol hashes differ from the task"
+                )
         if scoring is not None:
             selected = set(
                 scoring.qualification_instance_sets + scoring.reporting_instance_sets
@@ -449,9 +477,16 @@ class PitBenchTask(BaseModel):
                 and item.kind == InstanceSetKind.AGENT_DEV
                 for item in self.instance_sets
             ):
-                raise ValueError(
-                    "representation robustness requires a declared agent_dev instance set"
+                qualification_panel = (
+                    scoring is not None
+                    and scoring.protocol_version == "1.1"
+                    and representation.instance_set
+                    in scoring.qualification_instance_sets
                 )
+                if not qualification_panel:
+                    raise ValueError(
+                        "representation robustness requires a declared agent_dev panel or an explicitly frozen protocol-1.1 qualification panel"
+                    )
         return self
 
     @classmethod

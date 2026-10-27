@@ -11,6 +11,40 @@ from pathlib import Path
 from typing import Any
 
 
+class ScenarioUnsupported(RuntimeError):
+    """The selected solver API cannot execute this declared scenario."""
+
+
+class ScenarioSession:
+    """One solver object in one worker; implementations live with other drivers."""
+
+    @classmethod
+    def load(cls, import_path: str):
+        import importlib
+
+        module, name = import_path.split(":", 1)
+        implementation = getattr(importlib.import_module(module), name)
+        if not issubclass(implementation, cls):
+            raise TypeError("scenario session plugin must implement ScenarioSession")
+        return implementation
+
+    @classmethod
+    def identity(cls) -> dict:
+        raise NotImplementedError
+
+    def load_model(self, model: dict) -> None:
+        raise NotImplementedError
+
+    def update_model(self, previous: dict, model: dict) -> None:
+        raise ScenarioUnsupported("in-place updates are unavailable for this session")
+
+    def solve(self, emit) -> dict:
+        raise NotImplementedError
+
+    def reset_search(self) -> None:
+        raise ScenarioUnsupported("search reset is unavailable for this session")
+
+
 class SolverTermination(str, Enum):
     OPTIMAL = "optimal"
     TIME_LIMIT = "time_limit"

@@ -245,6 +245,10 @@ def _limited_evaluation_failures(
         failures.append("performance report is incomplete")
     if summary.get("resource_usage") is None:
         failures.append("resource report is missing")
+    if getattr(task, "metric_scenarios", []):
+        scenarios = summary.get("metric_scenarios")
+        if scenarios is None or not scenarios.get("complete"):
+            failures.append("declared metric scenario report is missing or incomplete")
     if (
         task.evaluation.seed_robustness is not None
         and summary.get("nuisance_robustness") is None
@@ -837,6 +841,10 @@ def evaluate_task(
             "agent_tools": evaluation_config.agent_tools,
             "agent_feedback_mode": evaluation_config.agent_feedback_mode,
         }
+        if task_id in effective_config.metric_scenario_configs:
+            materialize_kwargs["metric_scenario_config"] = resolve_repository_path(
+                repository_root, effective_config.metric_scenario_configs[task_id]
+            )
         if effective_config.research_track is not None:
             materialize_kwargs["research_track"] = effective_config.research_track
         elif (
@@ -1116,6 +1124,12 @@ def judge_candidate(
     if active_base_observations_path is not None:
         judge_evaluator_config["base_observations_path"] = str(
             active_base_observations_path
+        )
+    if task_id in evaluation_config.metric_scenario_configs:
+        judge_evaluator_config["metric_scenario_config"] = str(
+            resolve_repository_path(
+                repository_root, evaluation_config.metric_scenario_configs[task_id]
+            )
         )
 
     envelope = PitBenchEvaluator().envelope(
@@ -1474,6 +1488,16 @@ def report_command(
         bool,
         typer.Option("--json", help="Output report as structured JSON"),
     ] = False,
+    scenario_campaign: Annotated[
+        Path | None, typer.Option("--scenario-campaign", exists=True, dir_okay=False)
+    ] = None,
+    repeat_scenario_campaign: Annotated[
+        Path | None,
+        typer.Option("--repeat-scenario-campaign", exists=True, dir_okay=False),
+    ] = None,
+    candidate_patch: Annotated[
+        Path | None, typer.Option("--candidate-patch", exists=True, dir_okay=False)
+    ] = None,
 ) -> None:
     """Generate the performance-first PitBench evaluation report."""
     target = path.resolve()
@@ -1668,21 +1692,48 @@ def report_command(
     ):
         reliability_report, _ = compute_reliability_reports(observations, task=task)
 
+    from pitbench.evaluator.scenarios import load_report
+
+    scenario_path = (
+        scenario_campaign or target.parent / "metric-scenarios/campaign.json"
+    )
+    repeat_scenario_path = (
+        repeat_scenario_campaign
+        or target.parent / "performance-confirmation/metric-scenarios/campaign.json"
+    )
+    scenarios = load_report(scenario_path, task) if scenario_path.is_file() else None
+    repeated_scenarios = (
+        load_report(repeat_scenario_path, task)
+        if repeat_scenario_path.is_file()
+        else None
+    )
+    patch_path = candidate_patch or target.parent / "candidate.patch"
+    scenario_candidate_hash = (
+        hashlib.sha256(patch_path.read_bytes()).hexdigest()
+        if patch_path.is_file()
+        else None
+    )
     objective_report = compute_objective_report(
         task=task,
         performance=performance_report,
         resources=resource_report,
         transfer=controlled_transfer_report,
         reliability=reliability_report,
-        observations=standard,
+        observations=observations,
         expected_run_grid=expected_run_grid,
         repeat_observations=repeat_observations,
         repeat_expected_run_grid=repeat_grid,
         repeat_identity_verified=repeat_identity_verified,
+        scenario_report=scenarios,
+        repeat_scenario_report=repeated_scenarios,
+        candidate_sha256=scenario_candidate_hash,
     )
     behavior_report = compute_behavior_metric_report(standard)
     if json_output:
         combined = {
+            "metric_scenarios": scenarios.model_dump(mode="json")
+            if scenarios
+            else None,
             "performance": performance_report.model_dump()
             if performance_report
             else None,
@@ -1718,6 +1769,12 @@ def report_command(
         typer.echo("\n" + format_objective_report(objective_report))
     if behavior_report.slices:
         typer.echo("\n" + format_behavior_metric_report(behavior_report))
+    if scenarios is not None:
+        typer.echo("\nDeclared metric scenarios")
+        for measured in scenarios.results:
+            typer.echo(
+                f"{measured.scenario_id}/{measured.metric_id}/{measured.instance_set}: {measured.classification}; Base={measured.base}, Agent={measured.agent}"
+            )
 
 
 if __name__ == "__main__":

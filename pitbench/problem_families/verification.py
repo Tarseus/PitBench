@@ -1643,10 +1643,23 @@ class NumericModelFamily(ProblemFamilyPlugin):
         integer_error = float(
             np.max(np.abs(integer_values - np.rint(integer_values)), initial=0)
         )
-        objective = (
-            math.fsum(float(a) * float(b) for a, b in zip(model["cost"], values))
-            + model["offset"]
-        )
+        try:
+            objective = (
+                math.fsum(float(a) * float(b) for a, b in zip(model["cost"], values))
+                + model["offset"]
+            )
+        except OverflowError:
+            return {
+                "feasible": False,
+                "infrastructure_error": True,
+                "reason": "independent objective arithmetic overflow",
+            }
+        if not math.isfinite(objective):
+            return {
+                "feasible": False,
+                "infrastructure_error": True,
+                "reason": "nonfinite independent objective arithmetic",
+            }
         return {
             "feasible": max(bound_error, row_error, integer_error) <= tolerance,
             "tolerance": tolerance,
@@ -1655,6 +1668,51 @@ class NumericModelFamily(ProblemFamilyPlugin):
             "max_integrality_violation": integer_error,
             "objective": objective,
         }
+
+    @staticmethod
+    def certified_relaxation_bound(model: dict, row_multipliers) -> float | None:
+        """Independently evaluate a weak-duality certificate, including bounds.
+
+        Exact rational arithmetic on the stored numeric model avoids accepting a
+        solver-reported search bound. A certificate for the LP relaxation is also
+        valid for its integer restriction. Missing finite support yields no bound.
+        """
+        from fractions import Fraction
+
+        import numpy as np
+
+        y = np.asarray(row_multipliers, dtype=float)
+        if y.shape != model["row_lower"].shape or not np.isfinite(y).all():
+            return None
+
+        def q(value):
+            return Fraction.from_float(float(value))
+
+        sign = 1 if model["sense"] in {1, "minimize"} else -1
+        multipliers = [q(value) * sign for value in y]
+        reduced = [q(value) * sign for value in model["cost"]]
+        total = q(model["offset"]) * sign
+        matrix = model["matrix"].tocoo()
+        for i, j, value in zip(matrix.row, matrix.col, matrix.data, strict=True):
+            reduced[j] -= multipliers[i] * q(value)
+        for coefficients, lower, upper in (
+            (multipliers, model["row_lower"], model["row_upper"]),
+            (reduced, model["col_lower"], model["col_upper"]),
+        ):
+            for coefficient, low, high in zip(coefficients, lower, upper, strict=True):
+                if not coefficient:
+                    continue
+                bound = low if coefficient > 0 else high
+                if not math.isfinite(float(bound)):
+                    return None
+                total += coefficient * q(bound)
+        try:
+            lower_bound = math.nextafter(float(total), -math.inf)
+        except OverflowError:
+            return None
+        if not math.isfinite(lower_bound):
+            return None
+        return lower_bound * sign
 
 
 class IntegerBoundaryFamily(ProblemFamilyPlugin):

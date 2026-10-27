@@ -223,6 +223,7 @@ class PitBenchEvaluator(Evaluator):
 
         patch_exists = request.candidate_patch_path.is_file()
         fixture_mode = bool(config.get("fixture_mode", False))
+        actual_patch_sha256 = None
         if patch_exists:
             actual_patch_sha256 = hashlib.sha256(
                 request.candidate_patch_path.read_bytes()
@@ -558,10 +559,37 @@ class PitBenchEvaluator(Evaluator):
         confirmation_observations: list[RunObservation] = []
         confirmation_report = None
         confirmation_grid = None
+        scenario_report = None
+        repeat_scenario_report = None
+        scenario_error = None
+        scenario_config = config.get("metric_scenario_config")
+        if task.metric_scenarios and scenario_config and patch_exists:
+            from pitbench.evaluator.scenarios import collect_for_evaluation
+
+            try:
+                scenario_report, scenario_path = collect_for_evaluation(
+                    task,
+                    request.candidate_patch_path,
+                    request.output_dir,
+                    Path(scenario_config),
+                )
+                artifacts.metric_scenario_campaign = artifact_ref(
+                    scenario_path,
+                    root=request.output_dir,
+                    media_type="application/json",
+                    private=True,
+                )
+            except Exception as error:
+                scenario_error = f"{type(error).__name__}: {error}"
+                (request.output_dir / "metric-scenario-error.json").write_text(
+                    json.dumps({"error": scenario_error}) + "\n"
+                )
         objective_initial = compute_objective_qualification(
             task=task,
-            observations=original_observations,
+            observations=observations,
             expected_run_grid=expected_run_grid,
+            scenario_report=scenario_report,
+            candidate_sha256=actual_patch_sha256,
         )
         if (
             performance is not None
@@ -692,6 +720,32 @@ class PitBenchEvaluator(Evaluator):
                     media_type="application/json",
                     private=True,
                 )
+        if (
+            scenario_report is not None
+            and scenario_config
+            and confirmation_grid is not None
+        ):
+            from pitbench.evaluator.scenarios import collect_for_evaluation
+
+            try:
+                repeat_scenario_report, repeat_scenario_path = collect_for_evaluation(
+                    task,
+                    request.candidate_patch_path,
+                    request.output_dir / "performance-confirmation",
+                    Path(scenario_config),
+                    reverse=True,
+                )
+                artifacts.metric_scenario_confirmation = artifact_ref(
+                    repeat_scenario_path,
+                    root=request.output_dir,
+                    media_type="application/json",
+                    private=True,
+                )
+            except Exception as error:
+                scenario_error = f"confirmation: {type(error).__name__}: {error}"
+                (
+                    request.output_dir / "metric-scenario-confirmation-error.json"
+                ).write_text(json.dumps({"error": scenario_error}) + "\n")
         controlled_transfer = None
         controlled_transfer_config = getattr(
             task.evaluation,
@@ -726,6 +780,12 @@ class PitBenchEvaluator(Evaluator):
             fixture_mode=fixture_mode,
             observations=[*observations, *confirmation_observations],
             exact_qualification_failures=exact_qualification_failures,
+            scenario_verification_failures=sum(
+                r.get("code_state") == "agent"
+                for report in (scenario_report, repeat_scenario_report)
+                if report is not None
+                for r in report.invalid_runs
+            ),
         )
         return EvaluationResult(
             task_id=task.task_id,
@@ -744,6 +804,8 @@ class PitBenchEvaluator(Evaluator):
                 resource_usage=resource_usage,
                 operational_reliability=reliability,
                 behavior_geometry=compute_behavior_metric_report(original_observations),
+                metric_scenarios=scenario_report,
+                metric_scenario_error=scenario_error,
                 objective_measurements=compute_objective_report(
                     task=task,
                     performance=performance,
@@ -751,12 +813,15 @@ class PitBenchEvaluator(Evaluator):
                     seeds=nuisance_robustness,
                     transfer=controlled_transfer,
                     reliability=reliability,
-                    observations=original_observations,
+                    observations=observations,
                     validity_accepted=validity.accepted,
                     expected_run_grid=expected_run_grid,
                     repeat_observations=confirmation_observations or None,
                     repeat_expected_run_grid=confirmation_grid,
                     repeat_identity_verified=confirmation_grid is not None,
+                    scenario_report=scenario_report,
+                    repeat_scenario_report=repeat_scenario_report,
+                    candidate_sha256=actual_patch_sha256,
                 ),
             ),
         )

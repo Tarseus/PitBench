@@ -517,6 +517,8 @@ class LinearModelRepresentation(RepresentationPlugin):
         if model.a_matrix_.format_ != highspy.MatrixFormat.kColwise:
             raise ValueError("expected column-wise model matrix")
         types = np.asarray(model.integrality_, dtype=np.int32)
+        if len(types) == 0:
+            types = np.zeros(model.num_col_, dtype=np.int32)
         if len(types) != model.num_col_ or not set(types) <= {0, 1}:
             raise ValueError("collector supports continuous and integer MILP variables")
         matrix = csc_matrix(

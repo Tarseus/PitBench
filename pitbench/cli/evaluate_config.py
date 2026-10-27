@@ -81,6 +81,7 @@ class EvaluationConfig(BaseModel):
     judge_memory: str | None = None
     judge_parallel_runs: int | None = None
     base_cache: bool = False
+    metric_scenario_configs: dict[str, Path] = Field(default_factory=dict)
     research_track: Literal["lite", "standard", "research"] | None = None
     research_budget: ResearchBudget | None = None
 

@@ -22,6 +22,7 @@ import yaml
 from pitbench.problem_families.base import ProblemFamilyRegistry
 from pitbench.repositories.base import SOURCE_SUFFIXES
 from pitbench.repositories.classification import validate_metadata_selection_review
+from pitbench.schema.objectives import OptimizationProfile
 
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 STAGES = (
@@ -2419,7 +2420,11 @@ def build_objective_scoring_registration(
             )
         },
         "registered_at": datetime.now(timezone.utc).isoformat(),
-        "protocols_sha256": qualification_protocols_sha256(),
+        "protocols_sha256": qualification_protocols_sha256(
+            task.optimization_profile.scoring.protocol_version
+            if task.optimization_profile.scoring
+            else "1.0"
+        ),
         "profile": task.optimization_profile.model_dump(mode="json"),
         "protocol_gaps": objective_protocol_gaps(task),
         "supersedes_sha256": candidate.get("objective_registration_sha256"),
@@ -2512,9 +2517,16 @@ def recompute_objective_qualification_evidence(
         raise ValueError("objective task path differs from the registration")
     task = PitBenchTask.from_yaml(task_path)
     if (
-        registration.get("protocols_sha256") != qualification_protocols_sha256()
+        registration.get("protocols_sha256")
+        != qualification_protocols_sha256(
+            task.optimization_profile.scoring.protocol_version
+            if task.optimization_profile and task.optimization_profile.scoring
+            else "1.0"
+        )
         or not task.optimization_profile
-        or registration.get("profile")
+        or OptimizationProfile.model_validate(registration.get("profile")).model_dump(
+            mode="json"
+        )
         != task.optimization_profile.model_dump(mode="json")
     ):
         raise ValueError("objective profile or protocol changed after registration")
@@ -2618,6 +2630,15 @@ def recompute_objective_qualification_evidence(
                 "objective evaluation does not describe the pinned patch and run artifacts"
             )
         validity_accepted = ValidityResult.model_validate(payload["validity"]).accepted
+    from pitbench.evaluator.scenarios import load_report
+
+    scenario_reports = {}
+    for label in ("initial", "repeat"):
+        name = f"{label}_scenario_campaign"
+        if evidence.get(f"{name}_path"):
+            scenario_reports[label] = load_report(
+                _objective_artifact(evidence, name, repository_root), task
+            )
     report = compute_objective_qualification(
         task=task,
         observations=observations.get("initial", []),
@@ -2626,6 +2647,9 @@ def recompute_objective_qualification_evidence(
         repeat_expected_run_grid=grids.get("repeat"),
         repeat_identity_verified=repeat_verified,
         validity_accepted=validity_accepted,
+        scenario_report=scenario_reports.get("initial"),
+        repeat_scenario_report=scenario_reports.get("repeat"),
+        candidate_sha256=candidate["source_patch_sha256"],
     )
     assert isinstance(report, ObjectiveQualificationReport)
     if problems and report.classification != "needs_protocol":
@@ -2665,6 +2689,11 @@ def build_objective_qualification_evidence(
         ("initial", run_directory),
         ("repeat", run_directory / "performance-confirmation"),
     ):
+        scenario = directory / "metric-scenarios/campaign.json"
+        if scenario.is_file():
+            _record_artifact(
+                evidence, f"{label}_scenario_campaign", scenario, repository_root
+            )
         if (directory / "judge-checkpoint.json").is_file():
             for suffix, filename in (
                 ("checkpoint", "judge-checkpoint.json"),

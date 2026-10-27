@@ -176,10 +176,7 @@ def prepare_cases(
     development_task = task.model_copy(
         update={
             "instance_sets": [
-                item
-                for item in task.instance_sets
-                if item.kind == InstanceSetKind.AGENT_DEV
-                and item.name == config.instance_set
+                item for item in task.instance_sets if item.name == config.instance_set
             ],
         }
     )
@@ -187,6 +184,7 @@ def prepare_cases(
         development_task,
         PrivateAssetResolver(private_root),
         public_root=public_root,
+        evaluation_seeds=(config.solver_seed,),
         instances_per_instance_set=instances_per_instance_set,
     )
     originals = sorted(plan.cases, key=lambda item: item.instance_id)

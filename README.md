@@ -188,11 +188,16 @@ The versioned [qualification registry](pitbench/schema/qualification_protocols.j
 covers all 13 objective categories and 26 measurement items. Every item has an
 explicit implementation status. Exact coverage/runtime and fixed-budget gap
 reuse their existing definitions; paired peak RSS and CPU ratios can now qualify
-resource optimizations. Dedicated lifecycle, trajectory, scaling, sequence,
-numerical-stress and replay scenarios remain pending where their collection or
-decision protocol is missing. Existing seed (99% paired seed bootstrap) and
-controlled-transfer statistics remain unchanged; their descriptive availability
-alone does not define a new primary admission decision.
+resource optimizations. This protocol remains frozen. The opt-in
+[extended protocol 1.1](pitbench/schema/qualification_protocols_v1_1.json)
+adds adapters for all twenty extended measurements through explicit trajectory,
+lifecycle, thread-grid, sequence, numerical-stress and replay scenarios, plus
+native robustness/reliability adapters. Search-work counts remain diagnostic.
+See the [collection and scoring contract](docs/metrics/scenarios.md).
+Existing seed (99% paired seed bootstrap) and simultaneous controlled-transfer
+statistics retain their definitions. Availability requires complete declared
+experiments and a source-bound solver API with the necessary capabilities;
+unsupported APIs produce retained, unavailable results.
 
 One primary metric is frozen before qualification outcomes. Every declared
 qualification panel must improve; the program does not select the best metric

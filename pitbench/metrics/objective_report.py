@@ -18,11 +18,16 @@ from pitbench.metrics.performance_report import (
 )
 from pitbench.metrics.reliability_report import ReliabilityReport
 from pitbench.metrics.resource_report import ResourceReport
+from pitbench.metrics.scenario_report import ScenarioReport
 from pitbench.metrics.seed_robustness_report import (
     ExactSeedRobustnessReport,
     SeedRobustnessReport,
 )
-from pitbench.schema.objectives import objective_catalog, objective_catalog_sha256
+from pitbench.schema.objectives import (
+    objective_catalog,
+    objective_catalog_sha256,
+    qualification_protocols,
+)
 from pitbench.schema.observation import ExpectedRunGrid, RunObservation
 from pitbench.schema.task import PitBenchTask
 
@@ -72,6 +77,9 @@ def compute_objective_report(
     repeat_observations: list[RunObservation] | None = None,
     repeat_expected_run_grid: ExpectedRunGrid | None = None,
     repeat_identity_verified: bool = False,
+    scenario_report: ScenarioReport | None = None,
+    repeat_scenario_report: ScenarioReport | None = None,
+    candidate_sha256: str | None = None,
 ) -> ObjectiveMeasurementReport | None:
     """Reuse native report values; leave unsupported scenarios explicitly absent."""
     profile = task.optimization_profile
@@ -97,14 +105,31 @@ def compute_objective_report(
         if item.equivalence_parent_id is None and item.test_suite is None
     ]
     for metric_id in requested:
-        definition = catalog["metrics"][metric_id]
+        definition = dict(catalog["metrics"][metric_id])
+        if profile.scoring is not None and profile.scoring.protocol_version == "1.1":
+            rule = qualification_protocols("1.1")["metrics"][metric_id]
+            if rule["status"] == "implemented":
+                definition["qualification"] = "implemented_protocol_1.1"
+                definition["current_support"] = rule["adapter"]
         status, reference, value, detail = (
             "unavailable",
             None,
             None,
             definition["evidence"],
         )
-        if metric_id in {"exact_solved_coverage", "exact_penalized_runtime_sec"}:
+        scenario_matches = (
+            [r for r in scenario_report.results if r.metric_id == metric_id]
+            if scenario_report is not None
+            else []
+        )
+        if scenario_matches:
+            value = [r.model_dump(mode="json") for r in scenario_matches]
+            status = (
+                "reported" if all(r.complete for r in scenario_matches) else "partial"
+            )
+            reference = "metric_scenarios.results"
+            detail = "Complete declared scenario grid; solutions and bound certificates recomputed independently."
+        elif metric_id in {"exact_solved_coverage", "exact_penalized_runtime_sec"}:
             if task.evaluation.performance_protocol.value != "exact_verified_solve":
                 status, detail = (
                     "not_applicable",
@@ -278,6 +303,9 @@ def compute_objective_report(
             repeat_expected_run_grid=repeat_expected_run_grid,
             repeat_identity_verified=repeat_identity_verified,
             validity_accepted=validity_accepted,
+            scenario_report=scenario_report,
+            repeat_scenario_report=repeat_scenario_report,
+            candidate_sha256=candidate_sha256,
         ),
     )
 

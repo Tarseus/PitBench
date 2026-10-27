@@ -10,6 +10,7 @@ def evaluator_validity(
     fixture_mode: bool,
     observations: list[RunObservation] | None = None,
     exact_qualification_failures: int = 0,
+    scenario_verification_failures: int = 0,
 ) -> ValidityResult:
     checks = [
         ValidityCheck(
@@ -39,6 +40,14 @@ def evaluator_validity(
                     f"candidate produced {invalid_agent_runs} independently "
                     "verified invalid solution(s)"
                 ),
+            )
+        )
+    if scenario_verification_failures:
+        checks.append(
+            ValidityCheck(
+                code=ValidityCode.SOLUTION,
+                passed=False,
+                detail=f"candidate produced {scenario_verification_failures} invalid solution(s) in independently checked metric scenarios",
             )
         )
     additional_exact_failures = max(
