@@ -1,0 +1,302 @@
+{
+  "schema_version": "1.0",
+  "benchmark_version": "0.0.1",
+  "solver_version_policy": {
+    "versions_per_solver": 2,
+    "release_kind": "official_stable_release",
+    "excluded_release_kinds": [
+      "development_snapshot",
+      "pre_release",
+      "historical_pr_base_commit"
+    ],
+    "selection_status": "selected_upstream_metadata_verified",
+    "selection_rule": "latest_stable_plus_preceding_stable_release_line_with_documented_exceptions",
+    "selection_as_of": "2026-10-27",
+    "upstream_verified_at": "2026-10-27T09:53:03Z"
+  },
+  "solver_repositories": [
+    "PyVRP/PyVRP",
+    "VROOM-Project/vroom",
+    "ERGO-Code/HiGHS",
+    "chocoteam/choco-solver",
+    "Gecode/gecode",
+    "google/or-tools",
+    "scipopt/scip",
+    "coin-or/Cbc"
+  ],
+  "selected_releases": {
+    "PyVRP/PyVRP": {
+      "selection_reason": "Use the latest stable release and the final stable release of the preceding minor line; v0.14.1 is packaging maintenance.",
+      "latest_check_url": "https://api.github.com/repos/PyVRP/PyVRP/releases/latest",
+      "latest": {
+        "version": "0.14.1",
+        "tag": "v0.14.1",
+        "commit_sha": "a1a9a700e104e53ba908cf81b76a3d9f7132a43c",
+        "tree_sha": "b0dec3c0b0c310555084f681248b382705219944",
+        "release_id": 415277183,
+        "published_at": "2026-10-16T18:47:33Z",
+        "release_url": "https://github.com/PyVRP/PyVRP/releases/tag/v0.14.1",
+        "release_api_url": "https://api.github.com/repos/PyVRP/PyVRP/releases/415277183",
+        "tag_ref_api_url": "https://api.github.com/repos/PyVRP/PyVRP/git/ref/tags/v0.14.1",
+        "tag_object_type": "commit",
+        "tag_object_sha": "a1a9a700e104e53ba908cf81b76a3d9f7132a43c",
+        "prerelease": false,
+        "draft": false
+      },
+      "comparison": {
+        "version": "0.13.4",
+        "tag": "v0.13.4",
+        "commit_sha": "18815548d04a90a0e5eea2a0bed53a81ea9d2d49",
+        "tree_sha": "2d24f7fd1af5b69a732d6baf2ef7d870666eb515",
+        "release_id": 325910355,
+        "published_at": "2026-05-20T11:44:49Z",
+        "release_url": "https://github.com/PyVRP/PyVRP/releases/tag/v0.13.4",
+        "release_api_url": "https://api.github.com/repos/PyVRP/PyVRP/releases/325910355",
+        "tag_ref_api_url": "https://api.github.com/repos/PyVRP/PyVRP/git/ref/tags/v0.13.4",
+        "tag_object_type": "commit",
+        "tag_object_sha": "18815548d04a90a0e5eea2a0bed53a81ea9d2d49",
+        "prerelease": false,
+        "draft": false
+      }
+    },
+    "VROOM-Project/vroom": {
+      "selection_reason": "Use the latest stable minor line and its preceding stable minor line.",
+      "latest_check_url": "https://api.github.com/repos/VROOM-Project/vroom/releases/latest",
+      "latest": {
+        "version": "1.15.0",
+        "tag": "v1.15.0",
+        "commit_sha": "43dd7d0b8b560431eb555bf335cf4797eb7343c4",
+        "tree_sha": "cf39d27fd6cf7dfb12fe6ae5665a736ba159195d",
+        "release_id": 296188081,
+        "published_at": "2026-03-12T13:35:16Z",
+        "release_url": "https://github.com/VROOM-Project/vroom/releases/tag/v1.15.0",
+        "release_api_url": "https://api.github.com/repos/VROOM-Project/vroom/releases/296188081",
+        "tag_ref_api_url": "https://api.github.com/repos/VROOM-Project/vroom/git/ref/tags/v1.15.0",
+        "tag_object_type": "commit",
+        "tag_object_sha": "43dd7d0b8b560431eb555bf335cf4797eb7343c4",
+        "prerelease": false,
+        "draft": false
+      },
+      "comparison": {
+        "version": "1.14.0",
+        "tag": "v1.14.0",
+        "commit_sha": "1fd711bc8c20326dd8e9538e2c7e4cb1ebd67bdb",
+        "tree_sha": "5b078051bd215bb825654b3131512760f7088abc",
+        "release_id": 137200561,
+        "published_at": "2024-01-16T11:12:30Z",
+        "release_url": "https://github.com/VROOM-Project/vroom/releases/tag/v1.14.0",
+        "release_api_url": "https://api.github.com/repos/VROOM-Project/vroom/releases/137200561",
+        "tag_ref_api_url": "https://api.github.com/repos/VROOM-Project/vroom/git/ref/tags/v1.14.0",
+        "tag_object_type": "commit",
+        "tag_object_sha": "1fd711bc8c20326dd8e9538e2c7e4cb1ebd67bdb",
+        "prerelease": false,
+        "draft": false
+      }
+    },
+    "ERGO-Code/HiGHS": {
+      "selection_reason": "Use the latest patched stable minor line and its preceding stable minor line.",
+      "latest_check_url": "https://api.github.com/repos/ERGO-Code/HiGHS/releases/latest",
+      "latest": {
+        "version": "1.15.1",
+        "tag": "v1.15.1",
+        "commit_sha": "04024d701f79feb8e2f18bc3df0dffc04ef05088",
+        "tree_sha": "fe3b6d8835077dcf71c501521d8cd26738bbb5a3",
+        "release_id": 347996474,
+        "published_at": "2026-07-02T11:25:02Z",
+        "release_url": "https://github.com/ERGO-Code/HiGHS/releases/tag/v1.15.1",
+        "release_api_url": "https://api.github.com/repos/ERGO-Code/HiGHS/releases/347996474",
+        "tag_ref_api_url": "https://api.github.com/repos/ERGO-Code/HiGHS/git/ref/tags/v1.15.1",
+        "tag_object_type": "commit",
+        "tag_object_sha": "04024d701f79feb8e2f18bc3df0dffc04ef05088",
+        "prerelease": false,
+        "draft": false
+      },
+      "comparison": {
+        "version": "1.14.0",
+        "tag": "v1.14.0",
+        "commit_sha": "7df0786de3088c832297e5ed821db236d8fab281",
+        "tree_sha": "9444b92ea88926b81a5d6107f273174b7cfc404c",
+        "release_id": 305709380,
+        "published_at": "2026-04-06T15:40:30Z",
+        "release_url": "https://github.com/ERGO-Code/HiGHS/releases/tag/v1.14.0",
+        "release_api_url": "https://api.github.com/repos/ERGO-Code/HiGHS/releases/305709380",
+        "tag_ref_api_url": "https://api.github.com/repos/ERGO-Code/HiGHS/git/ref/tags/v1.14.0",
+        "tag_object_type": "commit",
+        "tag_object_sha": "7df0786de3088c832297e5ed821db236d8fab281",
+        "prerelease": false,
+        "draft": false
+      }
+    },
+    "chocoteam/choco-solver": {
+      "selection_reason": "Use the latest stable major line and the final stable release of the preceding major line; no preceding 6.x minor line exists.",
+      "latest_check_url": "https://api.github.com/repos/chocoteam/choco-solver/releases/latest",
+      "latest": {
+        "version": "6.0.2",
+        "tag": "v6.0.2",
+        "commit_sha": "4456ac71ba28109b6af0fb1c41196ebddcae69ae",
+        "tree_sha": "6abd2b027a06a73b97b504bcfbe676c935fcf502",
+        "release_id": 404886739,
+        "published_at": "2026-10-06T15:32:07Z",
+        "release_url": "https://github.com/chocoteam/choco-solver/releases/tag/v6.0.2",
+        "release_api_url": "https://api.github.com/repos/chocoteam/choco-solver/releases/404886739",
+        "tag_ref_api_url": "https://api.github.com/repos/chocoteam/choco-solver/git/ref/tags/v6.0.2",
+        "tag_object_type": "tag",
+        "tag_object_sha": "ff5436d743b1083507243e8724567869a60ea3fc",
+        "prerelease": false,
+        "draft": false
+      },
+      "comparison": {
+        "version": "5.0.1",
+        "tag": "v5.0.1",
+        "commit_sha": "a2d0e94fd0224dc7fb7c89bfc556fa2d3996cdc2",
+        "tree_sha": "a8a17a2bd050f05fe4810459a21b0f7818b041e3",
+        "release_id": 307704577,
+        "published_at": "2026-04-10T19:38:25Z",
+        "release_url": "https://github.com/chocoteam/choco-solver/releases/tag/v5.0.1",
+        "release_api_url": "https://api.github.com/repos/chocoteam/choco-solver/releases/307704577",
+        "tag_ref_api_url": "https://api.github.com/repos/chocoteam/choco-solver/git/ref/tags/v5.0.1",
+        "tag_object_type": "tag",
+        "tag_object_sha": "1b3224553ac8b9906915936fb593a727dec015b3",
+        "prerelease": false,
+        "draft": false
+      }
+    },
+    "Gecode/gecode": {
+      "selection_reason": "Use the latest stable minor line and its preceding stable minor line.",
+      "latest_check_url": "https://api.github.com/repos/Gecode/gecode/releases/latest",
+      "latest": {
+        "version": "6.4.0",
+        "tag": "release-6.4.0",
+        "commit_sha": "3e0e8ee76fb4ba01c53616dce02c0bb1a53f159e",
+        "tree_sha": "a46cd7e55e376c430ace40ea40b8ce7de7f1f6c9",
+        "release_id": 354402807,
+        "published_at": "2026-07-15T12:32:01Z",
+        "release_url": "https://github.com/Gecode/gecode/releases/tag/release-6.4.0",
+        "release_api_url": "https://api.github.com/repos/Gecode/gecode/releases/354402807",
+        "tag_ref_api_url": "https://api.github.com/repos/Gecode/gecode/git/ref/tags/release-6.4.0",
+        "tag_object_type": "commit",
+        "tag_object_sha": "3e0e8ee76fb4ba01c53616dce02c0bb1a53f159e",
+        "prerelease": false,
+        "draft": false
+      },
+      "comparison": {
+        "version": "6.3.0",
+        "tag": "release-6.3.0",
+        "commit_sha": "a658ba49967d8e037550441116a762f38ad57048",
+        "tree_sha": "3c08db4c192013827115e8ab8325a163ef4ef13a",
+        "release_id": 354402805,
+        "published_at": "2026-07-15T12:32:00Z",
+        "release_url": "https://github.com/Gecode/gecode/releases/tag/release-6.3.0",
+        "release_api_url": "https://api.github.com/repos/Gecode/gecode/releases/354402805",
+        "tag_ref_api_url": "https://api.github.com/repos/Gecode/gecode/git/ref/tags/release-6.3.0",
+        "tag_object_type": "commit",
+        "tag_object_sha": "a658ba49967d8e037550441116a762f38ad57048",
+        "prerelease": false,
+        "draft": false
+      }
+    },
+    "google/or-tools": {
+      "selection_reason": "Use the latest stable minor line and its preceding stable minor line.",
+      "latest_check_url": "https://api.github.com/repos/google/or-tools/releases/latest",
+      "latest": {
+        "version": "9.15",
+        "tag": "v9.15",
+        "commit_sha": "551ad10d94835c99e5e1e684500d3db398c0e345",
+        "tree_sha": "8f746840b74f32ce4b9d3ff0231ed2cabbd5072d",
+        "release_id": 275103420,
+        "published_at": "2026-01-12T15:38:30Z",
+        "release_url": "https://github.com/google/or-tools/releases/tag/v9.15",
+        "release_api_url": "https://api.github.com/repos/google/or-tools/releases/275103420",
+        "tag_ref_api_url": "https://api.github.com/repos/google/or-tools/git/ref/tags/v9.15",
+        "tag_object_type": "commit",
+        "tag_object_sha": "551ad10d94835c99e5e1e684500d3db398c0e345",
+        "prerelease": false,
+        "draft": false
+      },
+      "comparison": {
+        "version": "9.14",
+        "tag": "v9.14",
+        "commit_sha": "0d60e8afe450ec817f510aae965ab8898310cb41",
+        "tree_sha": "c9eaa36ab37e568384bd69d490693802092a16f1",
+        "release_id": 226348746,
+        "published_at": "2025-06-19T09:17:59Z",
+        "release_url": "https://github.com/google/or-tools/releases/tag/v9.14",
+        "release_api_url": "https://api.github.com/repos/google/or-tools/releases/226348746",
+        "tag_ref_api_url": "https://api.github.com/repos/google/or-tools/git/ref/tags/v9.14",
+        "tag_object_type": "commit",
+        "tag_object_sha": "0d60e8afe450ec817f510aae965ab8898310cb41",
+        "prerelease": false,
+        "draft": false
+      }
+    },
+    "scipopt/scip": {
+      "selection_reason": "Use the latest stable minor line and the final patched release of its preceding stable minor line.",
+      "latest_check_url": "https://api.github.com/repos/scipopt/scip/releases/latest",
+      "latest": {
+        "version": "10.1.0",
+        "tag": "v10.1.0",
+        "commit_sha": "c8e5737a847219d2811f7dfbd7cc6aa5b96df684",
+        "tree_sha": "332e47f096903f805ff6033f5a956e0b5b7b009e",
+        "release_id": 391368863,
+        "published_at": "2026-09-18T10:01:31Z",
+        "release_url": "https://github.com/scipopt/scip/releases/tag/v10.1.0",
+        "release_api_url": "https://api.github.com/repos/scipopt/scip/releases/391368863",
+        "tag_ref_api_url": "https://api.github.com/repos/scipopt/scip/git/ref/tags/v10.1.0",
+        "tag_object_type": "commit",
+        "tag_object_sha": "c8e5737a847219d2811f7dfbd7cc6aa5b96df684",
+        "prerelease": false,
+        "draft": false
+      },
+      "comparison": {
+        "version": "10.0.3",
+        "tag": "v10.0.3",
+        "commit_sha": "d409edf9f6f25aeab3b849c125826848299953c3",
+        "tree_sha": "3c4f5f3fdb7b6bd5cdc42632a839664561370fcc",
+        "release_id": 349402966,
+        "published_at": "2026-07-06T08:14:47Z",
+        "release_url": "https://github.com/scipopt/scip/releases/tag/v10.0.3",
+        "release_api_url": "https://api.github.com/repos/scipopt/scip/releases/349402966",
+        "tag_ref_api_url": "https://api.github.com/repos/scipopt/scip/git/ref/tags/v10.0.3",
+        "tag_object_type": "commit",
+        "tag_object_sha": "d409edf9f6f25aeab3b849c125826848299953c3",
+        "prerelease": false,
+        "draft": false
+      }
+    },
+    "coin-or/Cbc": {
+      "selection_reason": "Use consecutive stable releases within the maintained 2.10 line; an older minor line would introduce an unnecessarily large age gap.",
+      "latest_check_url": "https://api.github.com/repos/coin-or/Cbc/releases/latest",
+      "latest": {
+        "version": "2.10.13",
+        "tag": "releases/2.10.13",
+        "commit_sha": "8e898d0a4ab7bb5b202c2ebbf3f2d2c0823c1e9d",
+        "tree_sha": "37bf689201969851486e10baab5e3f27bc74c3fc",
+        "release_id": 295923101,
+        "published_at": "2026-03-11T23:59:18Z",
+        "release_url": "https://github.com/coin-or/Cbc/releases/tag/releases/2.10.13",
+        "release_api_url": "https://api.github.com/repos/coin-or/Cbc/releases/295923101",
+        "tag_ref_api_url": "https://api.github.com/repos/coin-or/Cbc/git/ref/tags/releases/2.10.13",
+        "tag_object_type": "commit",
+        "tag_object_sha": "8e898d0a4ab7bb5b202c2ebbf3f2d2c0823c1e9d",
+        "prerelease": false,
+        "draft": false
+      },
+      "comparison": {
+        "version": "2.10.12",
+        "tag": "releases/2.10.12",
+        "commit_sha": "782d275a8efa569eb818551561b424948e19653c",
+        "tree_sha": "dfb1fd9943bd00842b68383c9a23cef63d69ac3e",
+        "release_id": 171006035,
+        "published_at": "2024-08-20T07:17:43Z",
+        "release_url": "https://github.com/coin-or/Cbc/releases/tag/releases/2.10.12",
+        "release_api_url": "https://api.github.com/repos/coin-or/Cbc/releases/171006035",
+        "tag_ref_api_url": "https://api.github.com/repos/coin-or/Cbc/git/ref/tags/releases/2.10.12",
+        "tag_object_type": "commit",
+        "tag_object_sha": "782d275a8efa569eb818551561b424948e19653c",
+        "prerelease": false,
+        "draft": false
+      }
+    }
+  },
+  "release_readiness": "not_verified"
+}

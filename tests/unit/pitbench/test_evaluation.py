@@ -3023,6 +3023,7 @@ def test_exact_evaluator_uses_expected_grid_and_exact_report(tmp_path: Path) -> 
 
     assert envelope.completed is True
     performance = envelope.payload["summary"]["performance"]
+    assert envelope.payload["summary"]["behavior_geometry"]["metric_version"] == "1.0"
     assert performance["classification"] == "inconclusive"
     assert performance["primary"]["base"]["verified_solved_coverage"] == 0
     assert performance["primary"]["agent"]["verified_solved_coverage"] == 0

@@ -1,3 +1,8 @@
+from pitbench.metrics.behavior_report import (
+    BehaviorMetricReport,
+    compute_behavior_metric_report,
+    format_behavior_metric_report,
+)
 from pitbench.metrics.controlled_transfer_report import (
     ControlledTransferConditionReport,
     ControlledTransferConditionStatus,
@@ -58,6 +63,9 @@ from pitbench.metrics.seed_robustness_report import (
 )
 
 __all__ = [
+    "BehaviorMetricReport",
+    "compute_behavior_metric_report",
+    "format_behavior_metric_report",
     "BudgetPerformance",
     "ConfidenceInterval",
     "ControlledTransferConditionReport",

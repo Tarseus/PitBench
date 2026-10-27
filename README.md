@@ -173,6 +173,15 @@ optimization_profile:
 This requests measurements only. Admission additionally requires the scoring
 plan, registration, complete runs, independent correctness and confirmation.
 
+Solver behavior diagnostics are also included as `behavior_geometry` in the
+evaluation summary and `pitbench report --json`. They describe finite empirical
+distances in conditional quality, termination/validity, and wall-budget usage;
+distance alone does not establish an improvement. Their
+[mathematical definitions](docs/solver-behavior-metric-definition.md) and the
+[bounded CVRP geometry and certificate API](docs/cvrp-problem-metric-definition.md)
+are research tools. Existing performance and robustness decisions keep their
+frozen estimators, budgets, seed panels, and confirmation rules.
+
 ### Formal objective qualification protocol 1.0
 
 The versioned [qualification registry](pitbench/schema/qualification_protocols.json)

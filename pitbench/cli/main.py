@@ -35,6 +35,10 @@ from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.harness.handlers.trial_handler import TrialHandler
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
 from pitbench.instances import materialize_instance_set
+from pitbench.metrics.behavior_report import (
+    compute_behavior_metric_report,
+    format_behavior_metric_report,
+)
 from pitbench.metrics.controlled_transfer_report import (
     compute_controlled_transfer_report,
     format_controlled_transfer_report,
@@ -1676,6 +1680,7 @@ def report_command(
         repeat_expected_run_grid=repeat_grid,
         repeat_identity_verified=repeat_identity_verified,
     )
+    behavior_report = compute_behavior_metric_report(standard)
     if json_output:
         combined = {
             "performance": performance_report.model_dump()
@@ -1691,6 +1696,7 @@ def report_command(
             "objective_measurements": objective_report.model_dump()
             if objective_report
             else None,
+            "behavior_geometry": behavior_report.model_dump(),
         }
         typer.echo(json.dumps(combined, indent=2))
         return
@@ -1710,6 +1716,8 @@ def report_command(
         typer.echo("\n" + format_reliability_report(reliability_report))
     if objective_report is not None:
         typer.echo("\n" + format_objective_report(objective_report))
+    if behavior_report.slices:
+        typer.echo("\n" + format_behavior_metric_report(behavior_report))
 
 
 if __name__ == "__main__":

@@ -968,6 +968,9 @@ def test_report_command_supports_structured_performance_output(tmp_path: Path) -
     assert '"expected_seed_count": 30' in json_result.output
     assert '"mean_gap_reduction"' in json_result.output
     assert '"sensitivity"' not in json_result.output
+    behavior = json.loads(json_result.output)["behavior_geometry"]
+    assert behavior["slices"]
+    assert "does not establish an improvement" in behavior["interpretation"]
 
 
 def test_report_command_dispatches_exact_performance(tmp_path: Path) -> None:

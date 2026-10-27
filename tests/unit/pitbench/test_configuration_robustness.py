@@ -351,12 +351,12 @@ def test_materialized_fidelity_stages_are_nested_and_end_at_the_full_panel():
     stages = materialize_fidelity_stages(search)
 
     assert [stage["configuration_count"] for stage in stages] == [4, 2, 1]
-    assert {
-        item["id"] for item in stages[0]["instances"]
-    } <= {item["id"] for item in stages[1]["instances"]}
-    assert {
+    assert {item["id"] for item in stages[0]["instances"]} <= {
         item["id"] for item in stages[1]["instances"]
-    } <= {item["id"] for item in stages[2]["instances"]}
+    }
+    assert {item["id"] for item in stages[1]["instances"]} <= {
+        item["id"] for item in stages[2]["instances"]
+    }
     assert set(stages[0]["solver_seeds"]) <= set(stages[1]["solver_seeds"])
     assert set(stages[1]["solver_seeds"]) <= set(stages[2]["solver_seeds"])
 
@@ -441,7 +441,10 @@ def test_multi_fidelity_search_promotes_only_declared_complete_candidates(
     )
 
     assert state["status"] == "completed"
-    assert state["promotions"] == {"middle": ["candidate-0001", "candidate-0003"], "full": ["candidate-0001"]}
+    assert state["promotions"] == {
+        "middle": ["candidate-0001", "candidate-0003"],
+        "full": ["candidate-0001"],
+    }
     assert state["selected"]["name"] == "candidate-0001"
     assert state["selection_reason"] == "largest_full_fidelity_degradation"
     assert calls == [
@@ -502,8 +505,7 @@ def test_finite_parameter_space_exhaustion_selects_and_retests_best_candidate(
         del instances, fidelity_stage
         calls.append(name)
         return [
-            record(seed=seed, objective=100 + parameters["amount"])
-            for seed in seeds
+            record(seed=seed, objective=100 + parameters["amount"]) for seed in seeds
         ]
 
     state = run_search(search, tmp_path, evaluate, engine_factory=lambda *args: engine)
@@ -694,24 +696,23 @@ def test_run_attempts_preserve_collection_failures_and_require_explicit_retry(
     )
     invocations = []
 
-    def execute(command, **kwargs):
+    def execute(command, directory, identity, **kwargs):
         job_path = Path(command[command.index("--job") + 1])
         job = json.loads(job_path.read_text())
         invocations.append(job_path)
-        job_path.with_name("result.json").write_text(
-            json.dumps({**job, "execution_status": "collector_error"})
-        )
-        return SimpleNamespace(returncode=0)
+        result = {**identity, **job, "execution_status": "collector_error"}
+        (directory / "result.json").write_text(json.dumps(result))
+        return result
 
-    monkeypatch.setattr("pitbench.evaluator.configuration.subprocess.run", execute)
+    monkeypatch.setattr(
+        "pitbench.evaluator.configuration.run_collection_process", execute
+    )
     runner = ConfigurationRunner(tmp_path, [cpu])
     runner.panel(search, "default", {"amount": 0}, search["instances"], [1, 2], "full")
     runner.panel(search, "default", {"amount": 0}, search["instances"], [1, 2], "full")
     assert len(invocations) == 1  # The other planned slot is retained but not run.
     retry = ConfigurationRunner(tmp_path, [cpu], retry_collection_errors=True)
-    retry.panel(
-        search, "default", {"amount": 0}, search["instances"], [1, 2], "full"
-    )
+    retry.panel(search, "default", {"amount": 0}, search["instances"], [1, 2], "full")
     assert len(invocations) == 2 and all(path.exists() for path in invocations)
 
 
@@ -733,16 +734,17 @@ def test_promoted_panel_reuses_previously_completed_nested_positions(
     )
     invocations = []
 
-    def execute(command, **kwargs):
+    def execute(command, directory, identity, **kwargs):
         job_path = Path(command[command.index("--job") + 1])
         job = json.loads(job_path.read_text())
         invocations.append(job)
-        job_path.with_name("result.json").write_text(
-            json.dumps({**job, "execution_status": "returned"})
-        )
-        return SimpleNamespace(returncode=0)
+        result = {**identity, **job, "execution_status": "returned"}
+        (directory / "result.json").write_text(json.dumps(result))
+        return result
 
-    monkeypatch.setattr("pitbench.evaluator.configuration.subprocess.run", execute)
+    monkeypatch.setattr(
+        "pitbench.evaluator.configuration.run_collection_process", execute
+    )
     runner = ConfigurationRunner(tmp_path, [cpu])
     runner.panel(
         search,

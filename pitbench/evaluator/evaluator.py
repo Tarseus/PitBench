@@ -17,6 +17,7 @@ from pitbench.evaluator.private_assets import (
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.evaluator.validity import evaluator_validity
 from pitbench.harness.evaluation import EvaluationRequest, Evaluator
+from pitbench.metrics.behavior_report import compute_behavior_metric_report
 from pitbench.metrics.controlled_transfer_report import (
     compute_controlled_transfer_report,
 )
@@ -633,9 +634,7 @@ class PitBenchEvaluator(Evaluator):
                     or confirmation_judge.run()
                 )
                 confirmation_parquet = confirmation_dir / "trials.parquet"
-                ObservationStore.write(
-                    confirmation_parquet, confirmation_observations
-                )
+                ObservationStore.write(confirmation_parquet, confirmation_observations)
                 confirmation_grid_path = confirmation_dir / "expected-run-grid.json"
                 confirmation_grid = ExpectedRunGrid.model_validate_json(
                     confirmation_grid_path.read_text()
@@ -656,7 +655,10 @@ class PitBenchEvaluator(Evaluator):
                 )
                 if confirmation_report is None:
                     raise ValueError("Performance confirmation produced no report")
-                if initial_classification in {PerformanceClassification.IMPROVED, PerformanceClassification.REGRESSED}:
+                if initial_classification in {
+                    PerformanceClassification.IMPROVED,
+                    PerformanceClassification.REGRESSED,
+                }:
                     performance = adjudicate_performance_confirmation(
                         performance,
                         confirmation_report,
@@ -669,7 +671,9 @@ class PitBenchEvaluator(Evaluator):
                     json.dumps(
                         {
                             "initial_classification": initial_classification.value,
-                            "repeat_report": confirmation_report.model_dump(mode="json"),
+                            "repeat_report": confirmation_report.model_dump(
+                                mode="json"
+                            ),
                             "final_classification": performance.classification.value,
                         },
                         indent=2,
@@ -739,6 +743,7 @@ class PitBenchEvaluator(Evaluator):
                 nuisance_robustness=nuisance_robustness,
                 resource_usage=resource_usage,
                 operational_reliability=reliability,
+                behavior_geometry=compute_behavior_metric_report(original_observations),
                 objective_measurements=compute_objective_report(
                     task=task,
                     performance=performance,

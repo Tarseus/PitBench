@@ -4,6 +4,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, computed_field
 
+from pitbench.metrics.behavior_report import BehaviorMetricReport
 from pitbench.metrics.controlled_transfer_report import ControlledTransferReport
 from pitbench.metrics.objective_report import ObjectiveMeasurementReport
 from pitbench.metrics.performance_report import (
@@ -79,6 +80,7 @@ class EvaluationSummary(BaseModel):
     resource_usage: ResourceReport | None = None
     operational_reliability: ReliabilityReport | None = None
     objective_measurements: ObjectiveMeasurementReport | None = None
+    behavior_geometry: BehaviorMetricReport | None = None
 
 
 class EvaluationResult(BaseModel):
