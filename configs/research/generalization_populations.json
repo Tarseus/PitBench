@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "status": "construction_and_independent_qualification_required",
+  "source_examples": ["configs/experiments/instance_generation.yaml", "configs/experiments/problem_generation.yaml", "configs/experiments/reference_generation.yaml"],
+  "family_designs": {
+    "mip_knapsack": {
+      "within_family_axes": ["item_count", "constraint_count", "actual_nonzero_density", "coefficient_and_profit_correlation", "capacity_tightness", "solve_budget"],
+      "cross_family_layer": ["single_machine_scheduling", "set_covering"],
+      "current_generator_gap": "The current multidimensional-knapsack generator is dense and fixes profits to sums of column weights. Density and independent profit distributions need implemented generation and observed-feature checks; adding ignored YAML keys is not a distribution intervention."
+    },
+    "cvrp": {
+      "within_family_axes": ["customer_count", "spatial_mixture_and_cluster_spread", "depot_position", "demand_distribution_and_spatial_correlation", "capacity_tightness", "solve_budget"],
+      "constraint_density": "Not an independent axis of the current complete-graph CVRP model. Solver neighborhood width is a configuration axis, not input constraint density.",
+      "cross_variant_layer": ["vrptw"],
+      "cross_variant_gap": "A routing-variant transfer requires a source-bound driver and independent verifier for that variant. CVRP JSON cannot silently stand in for time-window feasibility."
+    }
+  },
+  "splits": {
+    "protocol_calibration": {"visibility": "evaluator", "manifest": null},
+    "diverse_development_v1": {"visibility": "agent", "manifest": null},
+    "unseen_id": {"visibility": "evaluator", "manifest": null},
+    "unseen_within_family": {"visibility": "evaluator", "manifest": null},
+    "unseen_cross_family_or_variant": {"visibility": "evaluator", "manifest": null}
+  },
+  "split_requirements": [
+    "Bind every instance by SHA-256, generator version/parameters, source/license and seed namespace.",
+    "No overlapping instance hashes, source groups or seed namespaces between calibration, development and evaluation.",
+    "Held-out distribution cells must include parameter levels or combinations absent from diverse development, not only different solver seeds.",
+    "Partition same-source instances and related generated variants together; do not scatter equivalent representations across train/test roles.",
+    "Use complete declared eligible public benchmark inventories with exclusion reasons and a systematic generated factor design; do not hand-pick successful instances.",
+    "Check observed size/density/coefficient/capacity descriptors against requested levels after materialization.",
+    "Different categorical shifts are not automatically ordered by severity. A severity coordinate or distance-to-reference requires an explicit pre-measurement definition.",
+    "Keep easy regression cases and difficult cases; baseline failure or nonzero gap alone does not establish attainable source-level improvement."
+  ],
+  "headroom_evidence": null,
+  "headroom_requirements": [
+    "Before Agent runs, qualify at least one non-Agent-visible, semantically valid reference intervention under the SAME per-solve budget for each scored opportunity stratum.",
+    "Use disjoint calibration/qualification instances and fresh reversed-order confirmation; retain negative references and all excluded strata.",
+    "A stronger reference solution, a larger solve budget or a configuration change is not itself proof of a source-code optimization opportunity.",
+    "For exact solved coverage use independently established optimum targets; best_found references remain distinct and cannot certify optimality."
+  ],
+  "scenario_bindings": {},
+  "upstream_review_evidence": null,
+  "scenario_requirements": {
+    "trajectory": "Export timestamped improving assignments, verify every scored incumbent independently, retain uncovered time and censoring. Uncertified solver bounds stay diagnostic; a primal integral needs frozen loss/reference rules.",
+    "lifecycle": "Use one worker and retained solver object across the declared solve sequence. Fix warmup, cleanup/reset, sampling and growth estimator before measurement; process peak RSS is not retained-memory growth.",
+    "scaling": "Verify the source build and API support the declared thread/resource grid. Compare a shared quality target with wall/CPU/memory accounting. Independent multi-process portfolios are a separate experiment, not native thread scaling.",
+    "sequence": "Replay identical model-update sequences in cold and warm modes with per-step independent quality targets. A fresh process or externally supplied incumbent does not establish in-place reoptimization.",
+    "numerical": "Bind original-model witnesses and independently recompute original-unit feasibility, integrality, objectives and status contradictions. Routing integer-range/rounding checks are not floating-point MIP conditioning tests.",
+    "replay": "Replay identical input/seed/thread/mode with declared comparison fields and tolerances; do not call different solver seeds identical-seed replay."
+  },
+  "scoring_plan": null,
+  "scoring_requirements": [
+    "Retain existing native quality/coverage/PAR2 and resource estimators and task solve budgets; no composite radar score or post-hoc best metric.",
+    "Declare additional solve-budget levels, targets, tolerances, tradeoff limits and scenario reductions before their first measured run.",
+    "Report A/B/C per realized patch, per distribution cell and family; C-B is the mechanism intervention contrast.",
+    "With one Agent start, instance/solver-seed uncertainty does not estimate Agent-generation variance; do not claim population-level enhancement significance.",
+    "Freeze state-conditioned policies before the hidden test. Separately audit feature-off, always-on and conditional variants on evaluator-owned diagnostic cases."
+  ]
+}

@@ -1,0 +1,91 @@
+schema_version: '3.0'
+task_id: release_highs_v1_14_0
+release:
+  repository: ERGO-Code/HiGHS
+  version: 1.14.0
+  tag: v1.14.0
+  base_commit: 7df0786de3088c832297e5ed821db236d8fab281
+  tree_sha: 9444b92ea88926b81a5d6107f273174b7cfc404c
+  released_at: '2026-04-06T15:40:30Z'
+  url: https://github.com/ERGO-Code/HiGHS/releases/tag/v1.14.0
+task_type: exact_solver
+problem_family: mip
+optimization_scope: mip_search_efficiency
+instruction: Improve this solver's performance on the declared problem family under the specified solve
+  budgets. Identify and validate source-level improvements autonomously while preserving original-problem
+  feasibility, objective semantics, and truthful solve statuses.
+repository:
+  clone_url: https://github.com/ERGO-Code/HiGHS.git
+  plugin: pitbench.repositories.plugins:HighsRepositoryPlugin
+  editable_paths:
+  - highs
+  - build
+  agent_image: pitbench-release:release_highs_v1_14_0
+  judge_image: null
+oracle:
+  kind: known_optimum
+  source: private://oracles/release_highs_v1_14_0.yaml
+  source_sha256: 7ab1162716e5fa20b4935cfa7d435dd3e6b01d5bea42662d2c421d6acf4830c1
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  operational_reliability: false
+  budgets_sec:
+  - 10.0
+  - 30.0
+  primary_budget_sec: 30.0
+  seed_robustness:
+    development_seeds:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    evaluation_seeds_file: private://seed_robustness/release_highs_v1_14_0.yaml
+    evaluation_seeds_file_sha256: a0a3bb3ef0ed6400c23e81348a807ef11c48407d2171b35e1b9ae128de45b2b5
+    seed_selection:
+      seed_min: 0
+      seed_max: 2147483647
+      seed_count: 30
+  threads: 1
+  verifier: trusted_optimum
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/highs_v1_15_1_dev.yaml
+  instance_set_config_sha256: f0dcec3ef24429e0810377130a4a349eb61194018fed56bd1797b2972a45d729
+  size: 5
+  randomness:
+    instance_seed: 115100
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/highs_v1_15_1/judge_id_20261014.yaml
+  instance_set_config_sha256: 53b4c4231afb275d7e70316c243f9423ab0f74d619f490565f0b539853d3bad8
+  size: 30
+  randomness:
+    instance_seed: 115110

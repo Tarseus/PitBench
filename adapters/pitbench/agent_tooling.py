@@ -22,6 +22,7 @@ def write_agent_tooling(
     agent_tools: Iterable[AgentTool | str],
     agent_feedback_mode: str = "solver_behavior",
     research_budget: ResearchBudget | None = None,
+    candidate_hypotheses_required: bool = False,
 ) -> None:
     """Bundle the explicitly enabled public developer tooling into a task."""
     tools = normalize_agent_tools(agent_tools)
@@ -35,6 +36,11 @@ def write_agent_tooling(
     for filename in ("__init__.py", "agent_cli.py", "agent_diagnostics.py"):
         shutil.copy2(repository_root / "pitbench" / filename, tooling)
     if AgentTool.BENCH in tools:
+        schema = tooling / "schema"
+        schema.mkdir()
+        (schema / "__init__.py").write_text("")
+        for name in ("research.py", "objective_catalog.json"):
+            shutil.copy2(repository_root / "pitbench/schema" / name, schema / name)
         shutil.copytree(
             repository_root / "pitbench" / "solver_drivers",
             tooling / "solver_drivers",
@@ -58,6 +64,7 @@ def write_agent_tooling(
     config: dict[str, object] = {
         "agent_tools": sorted(tool.value for tool in tools),
         "agent_feedback_mode": agent_feedback_mode,
+        "candidate_hypotheses_required": candidate_hypotheses_required,
         "development_parallel_runs": research_budget.development_parallel_runs
         if research_budget
         else 1,

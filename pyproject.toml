@@ -26,11 +26,13 @@ dependencies = [
 pitbench = "pitbench.cli.main:app"
 
 [project.optional-dependencies]
+reports = ["matplotlib>=3.9"]
 # SMAC 2.4.0 imports sklearn's private tree API, changed in newer releases.
 configuration = ["smac==2.4.0", "scikit-learn==1.7.2"]
 
 [dependency-groups]
 dev = [
+    "matplotlib>=3.9",
     "pytest>=8.3.4",
     "pytest-cov>=6.0.0",
     "pytest-timeout>=2.4.0",
@@ -47,6 +49,7 @@ include = ["pitbench*", "adapters*"]
 
 [tool.setuptools.package-data]
 "pitbench.schema" = ["objective_catalog.json", "qualification_protocols.json", "qualification_protocols_v1_1.json"]
+"pitbench.metrics" = ["templates/*.html.j2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

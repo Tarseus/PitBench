@@ -24,6 +24,212 @@ ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TOOLS = frozenset({AgentTool.INSPECT, AgentTool.WORKSPACE, AgentTool.BENCH})
 
 
+@pytest.fixture
+def candidate_hypothesis() -> dict:
+    return {
+        "id": "cache_probe",
+        "mechanism": "Retain repeated distance queries within an unchanged search state.",
+        "applicability": ["Repeated queries exceed cache maintenance cost."],
+        "failure_hypotheses": ["Low reuse increases time and retained memory."],
+        "algorithm_state_features": ["Observed hit count since the last reset."],
+        "correctness_invariants": ["Cached values equal uncached distances."],
+        "experiments": [
+            {
+                "id": "feature_off",
+                "controlled_change": "Disable only the cache under identical input and seed.",
+                "expected_observation": "The objective trajectory is identical and CPU cost falls.",
+                "falsifies_if": "Distance values differ or CPU cost does not decrease.",
+                "metric_ids": ["cpu_time_ratio", "same_seed_replay_consistency"],
+            }
+        ],
+    }
+
+
+def test_bundled_hypothesis_registration_binds_real_patch_and_prevents_overwrite(
+    tmp_path: Path,
+    candidate_hypothesis: dict,
+) -> None:
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    development = next(
+        item for item in task.instance_sets if item.kind.value == "agent_dev"
+    )
+    materialize_instance_set(
+        ROOT / development.instance_set_config, task_dir / "dev_instances"
+    )
+    write_agent_tooling(
+        repository_root=ROOT,
+        task=task,
+        task_dir=task_dir,
+        agent_tools=DEFAULT_TOOLS,
+        candidate_hypotheses_required=True,
+    )
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    for argv in [
+        ["git", "init", "-q"],
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "Base",
+        ],
+    ]:
+        subprocess.run(argv, cwd=repository, check=True, capture_output=True)
+    (repository / "search.cpp").write_text("int cache_enabled = 1;\n")
+    expected_hash = hashlib.sha256(agent_cli._candidate_patch(repository)).hexdigest()
+    plan = tmp_path / "hypothesis.json"
+    plan.write_text(json.dumps(candidate_hypothesis))
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PYTHONPATH": str(task_dir / "agent_tooling"),
+            "PITBENCH_AGENT_CONFIG": str(task_dir / "agent_config.json"),
+            "PITBENCH_REPO": str(repository),
+            "PITBENCH_RUNS": str(tmp_path / "runs"),
+        }
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "pitbench.agent_cli",
+        "hypothesis",
+        "--plan",
+        str(plan),
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=task_dir,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    printed = json.loads(completed.stdout)
+    saved = Path(printed["record_path"])
+    original = saved.read_bytes()
+    assert printed["patch_sha256"] == expected_hash
+    assert printed["hypothesis"] == candidate_hypothesis
+    assert printed["record_sha256"] == hashlib.sha256(original).hexdigest()
+    repeated = subprocess.run(
+        command, cwd=task_dir, env=environment, capture_output=True, text=True
+    )
+    assert repeated.returncode != 0
+    assert saved.read_bytes() == original
+
+
+def test_hypothesis_rejects_empty_predictions_and_duplicate_experiments(
+    candidate_hypothesis: dict,
+) -> None:
+    from pydantic import ValidationError
+
+    from pitbench.schema.research import CandidateHypothesis
+
+    candidate_hypothesis["applicability"] = ["   "]
+    with pytest.raises(ValidationError):
+        CandidateHypothesis.model_validate(candidate_hypothesis)
+    candidate_hypothesis["applicability"] = ["Repeated queries"]
+    candidate_hypothesis["experiments"] *= 2
+    with pytest.raises(ValidationError, match="unique"):
+        CandidateHypothesis.model_validate(candidate_hypothesis)
+
+
+def test_mechanism_bench_requires_current_declaration_before_build_or_solve(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    candidate_hypothesis: dict,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = {
+        "agent_tools": ["bench"],
+        "task_id": "mechanism-test",
+        "candidate_hypotheses_required": True,
+        "development_seeds": [7],
+        "budgets_sec": [5],
+        "primary_budget_sec": 5,
+        "threads": 1,
+    }
+    patch = [b"first candidate patch"]
+    monkeypatch.setattr(agent_cli, "_config", lambda: config)
+    monkeypatch.setattr(agent_cli, "_repository", lambda: tmp_path)
+    monkeypatch.setattr(agent_cli, "_candidate_patch", lambda _: patch[0])
+    monkeypatch.setenv("PITBENCH_RUNS", str(tmp_path / "runs"))
+    calls = []
+    monkeypatch.setattr(
+        agent_cli, "_run_build_steps", lambda *a, **kw: calls.append("build") or True
+    )
+    monkeypatch.setattr(agent_cli, "_instances", lambda *_: [tmp_path / "dev.json"])
+    monkeypatch.setattr(agent_cli, "_artifact_identity", lambda _: {})
+    monkeypatch.setattr(
+        agent_cli,
+        "_run_one",
+        lambda cfg, *a: calls.append(cfg.get("candidate_experiment")) or True,
+    )
+    args = agent_cli.parser().parse_args(["bench", "--build"])
+    with pytest.raises(SystemExit, match="register the candidate"):
+        agent_cli.bench_command(args)
+    assert calls == []
+    plan = tmp_path / "hypothesis.json"
+    plan.write_text(json.dumps(candidate_hypothesis))
+    assert agent_cli.hypothesis_command(argparse.Namespace(plan=plan)) == 0
+    registered = json.loads(capsys.readouterr().out)
+    args.hypothesis_id = "cache_probe"
+    args.experiment_id = "not_declared"
+    with pytest.raises(SystemExit, match="absent"):
+        agent_cli.bench_command(args)
+    assert calls == []
+    args.experiment_id = "feature_off"
+    assert agent_cli.bench_command(args) == 0
+    assert calls[0] == "build"
+    assert calls[1]["record_sha256"] == registered["record_sha256"]
+    calls.clear()
+    patch[0] = b"second candidate patch"
+    with pytest.raises(SystemExit, match="current source patch"):
+        agent_cli.bench_command(args)
+    assert calls == []
+    args.hypothesis_id = args.experiment_id = None
+    patch[0] = b""
+    args.label = "base"
+    assert agent_cli.bench_command(args) == 0
+    assert calls == ["build", None]
+    calls.clear()
+    patch[0] = b"second candidate patch"
+    args.label = "agent"
+    config["candidate_hypotheses_required"] = False
+    assert agent_cli.bench_command(args) == 0
+    assert calls == ["build", None]
+
+
+@pytest.mark.parametrize("problem", ["unknown_metric", "empty_patch"])
+def test_invalid_hypothesis_cannot_be_registered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    candidate_hypothesis: dict,
+    problem: str,
+) -> None:
+    monkeypatch.setattr(agent_cli, "_config", lambda: {"task_id": "test"})
+    monkeypatch.setattr(agent_cli, "_repository", lambda: tmp_path)
+    monkeypatch.setattr(
+        agent_cli,
+        "_candidate_patch",
+        lambda _: b"" if problem == "empty_patch" else b"patch",
+    )
+    monkeypatch.setenv("PITBENCH_RUNS", str(tmp_path / "runs"))
+    if problem == "unknown_metric":
+        candidate_hypothesis["experiments"][0]["metric_ids"] = ["invented_metric"]
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps(candidate_hypothesis))
+    with pytest.raises(SystemExit):
+        agent_cli.hypothesis_command(argparse.Namespace(plan=plan))
+    assert not (tmp_path / "runs").exists()
+
+
 def test_agent_command_materializes_fixed_solver_parameters(tmp_path: Path) -> None:
     output = tmp_path / "result.json"
     command = agent_cli._command(
@@ -1120,6 +1326,12 @@ def test_public_bench_pairs_independently_checked_cvrp_results(
     monkeypatch.setenv("PITBENCH_RUNS", "/proc/pitbench-read-only")
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     assert agent_cli._run_one(config, instance, 7, 10.0, False, "base", "clean")
+    config["candidate_experiment"] = {
+        "hypothesis_id": "cache_probe",
+        "experiment_id": "feature_off",
+        "patch_sha256": "patch",
+        "record_sha256": "a" * 64,
+    }
     assert agent_cli._run_one(config, instance, 7, 10.0, False, "agent", "patch")
     records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert records[0]["verification"] == "independent_public"
@@ -1132,6 +1344,12 @@ def test_public_bench_pairs_independently_checked_cvrp_results(
     )
     assert records[1]["verified_objective_reduction"] == 0
     assert records[1]["preview_gap_reduction"] == 0
+    assert records[1]["candidate_experiment"] == config["candidate_experiment"]
+    saved_feedback = Path(records[1]["result"]).with_suffix(".feedback.json")
+    assert (
+        json.loads(saved_feedback.read_text())["candidate_experiment"]
+        == config["candidate_experiment"]
+    )
 
     custom_instance = tmp_path / "custom.json"
     custom_instance.write_bytes(instance.read_bytes())

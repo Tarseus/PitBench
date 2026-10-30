@@ -7,3 +7,7 @@
 !adapters/
 !adapters/jvm/
 !adapters/jvm/**
+!adapters/cpp/
+!adapters/cpp/**
+!adapters/pitbench/
+!adapters/pitbench/exact_solver_runner.py

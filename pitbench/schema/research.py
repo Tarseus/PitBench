@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
+
+NonemptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class ResearchBudget(BaseModel):
@@ -92,4 +101,92 @@ class ResearchPilotPlan(BaseModel):
     def unique_cases(self):
         if len({item.case_id for item in self.cases}) != len(self.cases):
             raise ValueError("research case IDs must be unique")
+        return self
+
+
+class CandidateExperiment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,64}$")
+    controlled_change: NonemptyText
+    expected_observation: NonemptyText
+    falsifies_if: NonemptyText
+    metric_ids: list[NonemptyText] = Field(min_length=1)
+
+
+class CandidateHypothesis(BaseModel):
+    """Short, observable predictions, not a request for private reasoning."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,64}$")
+    mechanism: NonemptyText
+    applicability: list[NonemptyText] = Field(min_length=1)
+    failure_hypotheses: list[NonemptyText] = Field(min_length=1)
+    algorithm_state_features: list[NonemptyText] = Field(min_length=1)
+    correctness_invariants: list[NonemptyText] = Field(min_length=1)
+    experiments: list[CandidateExperiment] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def unique_experiments(self):
+        if len({e.id for e in self.experiments}) != len(self.experiments):
+            raise ValueError("candidate experiment IDs must be unique")
+        return self
+
+
+class StudyArm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: Literal["original", "diverse", "mechanism_aware"]
+    development_view: str
+    require_candidate_hypotheses: bool = False
+    instruction: str = Field(min_length=20)
+
+
+class GeneralizationStudyPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1.0"] = "1.0"
+    study_id: str = Field(pattern=r"^[a-z][a-z0-9_]{2,63}$")
+    claim_scope: Literal["diagnostic_single_attempt", "replicated_study"]
+    release_manifest: str
+    task_configs: list[str] = Field(min_length=1)
+    model_matrix: str
+    population_plan: str
+    research_budget: ResearchBudget
+    agent_attempts_per_condition: int = Field(gt=0)
+    arms: list[StudyArm] = Field(min_length=3, max_length=3)
+    shared_agent_tools: list[str] = Field(min_length=1)
+    required_scenario_kinds: list[
+        Literal["trajectory", "lifecycle", "scaling", "sequence", "numerical", "replay"]
+    ] = Field(min_length=1)
+    inference_scope: str = Field(min_length=20)
+
+    @model_validator(mode="after")
+    def validate_controls(self):
+        arms = {arm.id: arm for arm in self.arms}
+        if set(arms) != {"original", "diverse", "mechanism_aware"}:
+            raise ValueError("study needs original, diverse and mechanism-aware arms")
+        if arms["diverse"].development_view != arms["mechanism_aware"].development_view:
+            raise ValueError(
+                "diverse and mechanism-aware arms must receive identical data"
+            )
+        if arms["original"].development_view == arms["diverse"].development_view:
+            raise ValueError(
+                "information contrast needs a distinct original development view"
+            )
+        if (
+            any(
+                arms[key].require_candidate_hypotheses
+                for key in ("original", "diverse")
+            )
+            or not arms["mechanism_aware"].require_candidate_hypotheses
+        ):
+            raise ValueError(
+                "only the mechanism-aware intervention requires declarations"
+            )
+        if (
+            self.agent_attempts_per_condition == 1
+            and self.claim_scope != "diagnostic_single_attempt"
+        ):
+            raise ValueError("one Agent attempt only supports the diagnostic scope")
+        if len(set(self.task_configs)) != len(self.task_configs):
+            raise ValueError("study task configurations must be unique")
         return self

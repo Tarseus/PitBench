@@ -1,0 +1,9 @@
+runs:
+- agent: codex
+  model: gpt-6.1-sol
+  setting: reasoning_effort=xhigh
+  label: gpt-6-1-sol-xhigh
+- agent: codex
+  model: gpt-6.1-sol
+  setting: reasoning_effort=high
+  label: gpt-6-1-sol-high

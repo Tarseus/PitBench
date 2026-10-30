@@ -6,8 +6,12 @@ import argparse
 import json
 from pathlib import Path
 
-from pitbench.research import construct_research_case, materialize_research_experiment
-from pitbench.schema.research import ResearchPilotPlan
+from pitbench.research import (
+    construct_research_case,
+    materialize_research_experiment,
+    prepare_generalization_study,
+)
+from pitbench.schema.research import GeneralizationStudyPlan, ResearchPilotPlan
 
 
 def main():
@@ -21,6 +25,13 @@ def main():
     generate.add_argument("--agent-view", type=Path, required=True)
     generate.add_argument("--generator-config", type=Path, required=True)
     generate.add_argument("--output-dir", type=Path, required=True)
+    study = sub.add_parser(
+        "study",
+        help="Materialize a controlled generalization study and readiness inventory",
+    )
+    study.add_argument("--plan", type=Path, required=True)
+    study.add_argument("--root", type=Path, required=True)
+    study.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "construct":
         plan = ResearchPilotPlan.model_validate_json(args.plan.read_text())
@@ -39,6 +50,27 @@ def main():
                     "cases": len(results),
                     "guidance_views": 2 * len(results),
                     "statuses": {item["case_id"]: item["status"] for item in results},
+                }
+            )
+        )
+    elif args.command == "study":
+        result = prepare_generalization_study(
+            GeneralizationStudyPlan.model_validate_json(args.plan.read_text()),
+            root=args.root,
+            destination=args.output_dir,
+        )
+        print(
+            json.dumps(
+                {
+                    key: result[key]
+                    for key in [
+                        "study_id",
+                        "status",
+                        "ready_for_agent_execution",
+                        "planned_agent_runs",
+                        "maximum_agent_wall_hours",
+                        "readiness_gaps",
+                    ]
                 }
             )
         )

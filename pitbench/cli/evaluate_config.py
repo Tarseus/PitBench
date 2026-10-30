@@ -15,8 +15,8 @@ ConfigValue: TypeAlias = str | int | float | bool | None
 class EvaluationPaths(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    output_path: Path = Path("runs")
-    workspace_path: Path = Path(".pitbench/tasks")
+    output_path: Path = Path("gushengda/experiments/ad-hoc/runs")
+    workspace_path: Path = Path("gushengda/experiments/ad-hoc/workspaces")
     private_root: Path = Path("private")
     base_cache_path: Path = Path(".pitbench/cache/base")
 
@@ -29,6 +29,7 @@ class TaskResources(BaseModel):
     judge_cpus: float | None = None
     judge_memory: str | None = None
     judge_parallel_runs: int | None = None
+    judge_cpuset_cpus: str | None = None
     base_observations_path: Path | None = None
     research_budget: ResearchBudget | None = None
 
@@ -41,6 +42,7 @@ class SolverImageBuildConfig(BaseModel):
     proxy_url: str | None = None
     docker_network: str | None = None
     no_proxy: str | None = None
+    base_images: dict[str, str] = Field(default_factory=dict)
 
 
 class ConfigurationRobustnessConfig(BaseModel):
@@ -75,6 +77,8 @@ class EvaluationConfig(BaseModel):
         ]
     )
     agent_feedback_mode: Literal["outcome_only", "solver_behavior"] = "solver_behavior"
+    candidate_hypotheses_required: bool = False
+    agent_cpuset_cpus: str | None = None
     tasks: dict[str, TaskResources] = Field(default_factory=dict)
     agents: dict[str, dict[str, ConfigValue]] = Field(default_factory=dict)
     judge_cpus: float | None = None

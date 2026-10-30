@@ -51,7 +51,10 @@ class PrivateAssetError(RuntimeError):
 
 class PrivateAssetResolver:
     def __init__(self, root: Path) -> None:
-        self.root = root.resolve()
+        # A local namespace may retain old paths while its assets are relocated.
+        # Resolve this explicit storage-root link before applying URI containment.
+        storage_root = root / ".asset-root"
+        self.root = (storage_root if storage_root.is_symlink() else root).resolve()
 
     def resolve(self, uri: str, sha256: str | None = None) -> Path:
         if not uri.startswith("private://"):

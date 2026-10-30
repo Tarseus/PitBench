@@ -59,33 +59,22 @@ Existing provider logs and terminal recordings remain available.
   boundary. The workspace model relay additionally distinguishes received
   requests, transformed requests, upstream response bytes, and bytes written to
   the agent connection. These records do not claim access to hidden reasoning.
-- `source.*`: provider files and session recordings collected every 250 ms.
-  File generations distinguish appends from observed replacements and rewrites.
-  Remote Docker log directories are preserved as tar archives during execution
-  and before the agent returns, since their normal host copy happens later.
+- `source.artifact`: hashes, sizes and paths of retained local provider files and
+  session recordings, indexed at execution end without copying their contents.
+  Remote Docker logs are retained as a final `source.archive` because their
+  normal host copy happens later. Historical traces may contain `source.chunk`.
 - `repository.checkpoint`: source snapshots at execution start/end, instrumented
-  tool boundaries, and approximately once a second during execution. Each points
-  to an archive of the Git HEAD blobs and a binary patch covering tracked and non-ignored
+  tool boundaries, and approximately once a second during execution. Changed
+  states retain the Git HEAD and a binary patch covering tracked and non-ignored
   untracked files, including additions, deletions and reversions. `.pitbench` is
-  excluded, consistent with candidate capture. A state ID identifies the archive
-  and patch; call IDs associate boundary observations with operations.
-  Source archives preserve tracked files even when `.gitattributes` marks them
-  `export-ignore` or `export-subst`. Submodules are reported as a collection gap.
-- `workspace.snapshot`: full file manifests at instrumented boundaries, including
-  ignored build outputs, `.pitbench` data and initialized submodule files. Git
-  administration directories are excluded. Files are stored by content hash;
-  unchanged inode/size/mtime/ctime signatures reuse prior objects. Concurrently
-  modified files are marked unstable. `before_state_id` and `after_state_id` on
-  operation completion refer to the captured versions, not whichever snapshot
-  happens to be newest when logs are read.
-- `tool.target_snapshot`: explicit file targets of native tools, such as a CLI's
-  own tool-schema files outside the task repository. These IDs describe those
-  targets only, not the entire repository.
-- `filesystem.mutation`: Linux inotify notifications for creation, deletion,
-  moves, attribute changes and write-close events. Available file versions are
-  preserved after write-close notifications. Queue overflow, unavailable versions
-  and watcher failures produce collection gaps. The journal can expose a file
-  created and deleted entirely between periodic source snapshots.
+  excluded, consistent with candidate capture. State IDs identify HEAD/patch
+  pairs. Reconstruct the baseline from its pinned source cache or retained bundle.
+  Historical traces may additionally retain `base_archive`, `workspace.snapshot`
+  and `tool.target_snapshot` objects; their complete contents remain evidence.
+- `filesystem.activity`: counts of observed Linux inotify operations. The current
+  recorder does not copy ignored files or binaries into the trace. Queue overflow
+  and watcher failures produce collection gaps. Historical traces may retain
+  individual `filesystem.mutation` events and file versions.
 - `collection.gap`: failures to collect a source. The final execution event
   reports the number of distinct collection gaps. An agent completing its task
   does not imply that every source was observable.
@@ -101,6 +90,13 @@ index line. Native hooks write durable records before returning; their outboxes
 and available transcripts are collected before disposable runtimes are removed.
 Unacknowledged provider data and storage failure remain outside this guarantee.
 
+Native transcripts use `transcript-chunks-v1` references. Appends retain only the
+new bytes, linked to the preceding manifest by hash. Rewrites and truncation
+start a new chain, while earlier versions remain available. Use
+`recording.read_transcript(objects_directory, reference)` to reconstruct and
+verify the exact version; it also accepts historical full-file references.
+Hook export transfers the manifests and chunks needed by each new event.
+
 ## Reading and reconstructing
 
 The shared reader resolves event payloads and verifies their hashes. It ignores
@@ -111,13 +107,14 @@ objects. Nested references to raw output or archives remain references.
 from pathlib import Path
 from pitbench.harness.utils.agent_trace import read_trace
 
-path = Path("runs/<run>/<task>/<trial>/agent-trace/<execution_id>/events.jsonl")
+path = Path("gushengda/experiments/<purpose>/<study>/runs/<run>/<task>/<trial>/agent-trace/<execution_id>/events.jsonl")
 for event in read_trace(path):
     print(event["sequence"], event["event"], event["call_id"], event["data"])
 ```
 
-To reconstruct an observed source state, unpack its `base_archive` into a fresh
-directory, initialize Git there, and apply its `patch` with `git apply --binary`.
+To reconstruct an observed source state, check out its pinned `head` in a fresh
+directory and apply its `patch` with `git apply --binary`. Historical states with
+`base_archive` can instead unpack that archive and initialize Git there.
 An empty patch needs no application. Extract archives as untrusted data, without
 following external paths or links. Do not apply a reconstruction over a live
 working repository.
@@ -128,8 +125,9 @@ subsequent candidate capture and evaluation events describe the submitted patch
 and its results. Evaluation after the agent finishes was not feedback available
 to the agent. Instrumented test commands have before/after source checkpoints;
 this does not by itself establish which compiled binary a test loaded.
-Full workspace manifests preserve the actual ignored binaries present at tool
-boundaries. They do not establish every library or memory page a process loaded.
+Historical full workspace manifests preserve ignored binaries observed at tool
+boundaries. Current compact traces do not retain those files. Neither format
+establishes every library or memory page a process loaded.
 
 `coverage.json` is generated for every execution. Its
 `observed_operations_paired` field checks recorded requests, results, completion
@@ -137,6 +135,40 @@ and state references. It does **not** certify that a provider exposed all action
 Missing provider IDs, ambiguous bindings, unfinished calls and collection gaps
 remain visible. The same check is available as
 `pitbench.harness.utils.trace_validation.inspect_trace(path)`.
+
+## Compacting completed records
+
+Maintenance does not truncate events, remove failed trials, or change metrics.
+Run these commands from the repository root. Archiving requires the installed
+`tar` and `zstd` commands; no Python dependency is added.
+
+```bash
+uv run python -m scripts.compact_records deduplicate gushengda/experiments gushengda/curation
+uv run python -m scripts.compact_records archive-traces gushengda/experiments gushengda/curation
+```
+
+Deduplication verifies duplicate objects against their SHA-256 names and replaces
+copies with hard links on the same filesystem, preserving existing paths. Trace
+objects are immutable; do not edit them in place. `archive-traces` only archives
+traces whose `coverage.json` was written after closing, including failed runs.
+Interrupted traces without that marker remain unpacked. Each `<execution_id>`
+directory becomes an adjacent `<execution_id>.tar.zst` archive. A full byte and
+metadata comparison against the source, plus a check for source changes, must
+pass before loose files are removed. Archives preserve paths, links and all raw
+objects; compression and deduplication savings overlap. Archive files are created
+with owner-only permissions, preserving the privacy of the trace contents.
+
+Restore an archive before reading its index or following its object references:
+
+```bash
+uv run python -m scripts.compact_records restore PATH/EXECUTION_ID.tar.zst
+```
+
+The archive remains available, and restoring refuses to overwrite an existing
+directory. The generic `archive DIRECTORY...` command can also compact completed
+validation directories or task workspaces. Before archiving a workspace, retain
+its associated run records, exact task configuration, source identity and patch;
+the whole workspace, including its original configuration, is kept in the archive.
 
 ## Real runtime checks
 
@@ -149,7 +181,7 @@ produced binary. It uses the existing agent factory, execution entry and termina
 uv run python scripts/check-agent-tracing.py \
   --agent codex --model MODEL_FROM_YOUR_CONFIGURATION \
   --image YOUR_PREPARED_TASK_IMAGE \
-  --output runs/trace-check-unique-name --timeout 180
+  --output gushengda/experiments/benchmark-validation/trace-check-unique-name --timeout 180
 ```
 
 The output directory must be new. `--agent-kwarg key=value` selects existing

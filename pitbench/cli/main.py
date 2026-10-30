@@ -51,6 +51,7 @@ from pitbench.metrics.performance_report import (
     PerformanceClassification,
     PerformanceConfirmation,
     adjudicate_performance_confirmation,
+    compute_panel_performance_reports,
     compute_task_performance_report,
     format_performance_report,
 )
@@ -61,6 +62,10 @@ from pitbench.metrics.reliability_report import (
 from pitbench.metrics.resource_report import (
     compute_resource_report,
     format_resource_report,
+)
+from pitbench.metrics.seed_robustness_report import (
+    ExactSeedRobustnessReport,
+    compute_task_seed_robustness_report,
 )
 from pitbench.schema.observation import (
     ExpectedRun,
@@ -841,6 +846,8 @@ def evaluate_task(
             "agent_tools": evaluation_config.agent_tools,
             "agent_feedback_mode": evaluation_config.agent_feedback_mode,
         }
+        if effective_config.candidate_hypotheses_required:
+            materialize_kwargs["candidate_hypotheses_required"] = True
         if task_id in effective_config.metric_scenario_configs:
             materialize_kwargs["metric_scenario_config"] = resolve_repository_path(
                 repository_root, effective_config.metric_scenario_configs[task_id]
@@ -865,6 +872,8 @@ def evaluate_task(
         )
         if judge_par_val is not None:
             materialize_kwargs["judge_parallel_runs"] = judge_par_val
+        if resources.judge_cpuset_cpus is not None:
+            materialize_kwargs["judge_cpuset_cpus"] = resources.judge_cpuset_cpus
         if resources.base_observations_path is not None:
             materialize_kwargs["base_observations_path"] = (
                 resources.base_observations_path
@@ -912,6 +921,7 @@ def evaluate_task(
         global_setup_timeout_sec=None,
         remote_build=False,
         history_limit=None,
+        agent_cpuset_cpus=effective_config.agent_cpuset_cpus,
     )
     configuration_output = None
     configuration_error = None
@@ -1498,6 +1508,13 @@ def report_command(
     candidate_patch: Annotated[
         Path | None, typer.Option("--candidate-patch", exists=True, dir_okay=False)
     ] = None,
+    all_metrics: Annotated[
+        bool,
+        typer.Option(
+            "--all-metrics",
+            help="Include all catalog metrics and explicit measurement gaps",
+        ),
+    ] = False,
 ) -> None:
     """Generate the performance-first PitBench evaluation report."""
     target = path.resolve()
@@ -1713,10 +1730,56 @@ def report_command(
         if patch_path.is_file()
         else None
     )
+    seed_details_path = target.parent / "seed_robustness_details.json"
+    seed_details = (
+        json.loads(seed_details_path.read_text()) if seed_details_path.is_file() else {}
+    )
+    seed_report = None
+    seed_error = None
+    if task.evaluation.seed_robustness is not None:
+        if seed_details.get("metric") == "exact_seed_robustness":
+            seed_report = ExactSeedRobustnessReport.model_validate(seed_details)
+        elif expected_run_grid is not None:
+            try:
+                seed_report = compute_task_seed_robustness_report(
+                    observations,
+                    task=task,
+                    expected_run_grid=expected_run_grid,
+                    evaluation_seeds=seed_details.get("evaluation_seeds"),
+                )
+            except ValueError as error:
+                seed_error = str(error)
+        else:
+            seed_error = "Seed robustness requires the saved planned seed grid."
+    if seed_report is not None and (
+        seed_report.task_id != task.task_id
+        or seed_report.budgets_sec != task.evaluation.budgets_sec
+        or seed_report.primary_budget_sec != task.evaluation.primary_budget_sec
+    ):
+        raise typer.BadParameter(
+            "seed robustness report belongs to another task or budget grid"
+        )
+    representation = None
+    representation_details = target.parent / "representation/details.json"
+    if representation_details.is_file():
+        details = json.loads(representation_details.read_text())
+        if details.get("task_id") != task.task_id:
+            raise typer.BadParameter("representation details belong to another task")
+        if (
+            scenario_candidate_hash
+            and details.get("candidate_patch_sha256") != scenario_candidate_hash
+        ):
+            raise typer.BadParameter(
+                "representation details belong to another candidate patch"
+            )
+        representation = details.get("representation_robustness")
     objective_report = compute_objective_report(
         task=task,
         performance=performance_report,
         resources=resource_report,
+        seeds=seed_report,
+        representation=representation,
+        include_all_metrics=all_metrics,
         transfer=controlled_transfer_report,
         reliability=reliability_report,
         observations=observations,
@@ -1728,9 +1791,27 @@ def report_command(
         repeat_scenario_report=repeated_scenarios,
         candidate_sha256=scenario_candidate_hash,
     )
+    if (
+        seed_error
+        and objective_report
+        and "seed_dispersion" in objective_report.metrics
+    ):
+        objective_report.metrics["seed_dispersion"].detail = seed_error
     behavior_report = compute_behavior_metric_report(standard)
     if json_output:
         combined = {
+            "performance_by_instance_set": {
+                name: report.model_dump(mode="json")
+                for name, report in compute_panel_performance_reports(
+                    observations, task=task, expected_run_grid=expected_run_grid
+                ).items()
+            },
+            "panel_performance_interpretation": "Supplementary native panel estimates; the frozen judge-ID classification and declared controlled-retention decision are reported separately. Panel estimates do not inherit the primary result's confirmation.",
+            "nuisance_robustness": seed_report.model_dump(mode="json")
+            if seed_report
+            else None,
+            "nuisance_robustness_error": seed_error,
+            "representation_robustness": representation,
             "metric_scenarios": scenarios.model_dump(mode="json")
             if scenarios
             else None,
@@ -1763,6 +1844,16 @@ def report_command(
         typer.echo("\n" + format_controlled_transfer_report(controlled_transfer_report))
     if resource_report is not None:
         typer.echo("\n" + format_resource_report(resource_report))
+    if seed_report is not None:
+        typer.echo("\nSeed robustness (native IQR and paired 99% seed intervals)")
+        for panel, cell in seed_report.by_instance_set.items():
+            typer.echo(f"{panel}: {cell.primary.model_dump(mode='json')}")
+    if seed_error:
+        typer.echo(f"\nSeed robustness unavailable: {seed_error}")
+    if representation is not None:
+        typer.echo("\nRepresentation robustness (native Type-7 IQR)")
+        for budget, cell in representation.get("by_budget", {}).items():
+            typer.echo(f"{budget}s: {cell}")
     if reliability_report is not None:
         typer.echo("\n" + format_reliability_report(reliability_report))
     if objective_report is not None:
@@ -1775,6 +1866,37 @@ def report_command(
             typer.echo(
                 f"{measured.scenario_id}/{measured.metric_id}/{measured.instance_set}: {measured.classification}; Base={measured.base}, Agent={measured.agent}"
             )
+
+
+@app.command("report-campaign")
+def report_campaign_command(
+    source: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
+    output: Annotated[Path | None, typer.Option("--output")] = None,
+    index: Annotated[
+        Path | None, typer.Option("--index", exists=True, dir_okay=False)
+    ] = None,
+    runs_root: Annotated[
+        Path | None, typer.Option("--runs-root", exists=True, file_okay=False)
+    ] = None,
+    root: Annotated[Path | None, typer.Option("--root")] = None,
+) -> None:
+    """Generate an offline campaign report and saved native CI figures."""
+    from pitbench.metrics.campaign_report import write_campaign_report
+
+    destination = output or source / "report"
+    report = write_campaign_report(
+        source,
+        destination,
+        repository_root=_root(root),
+        index=index,
+        runs_root=runs_root,
+    )
+    typer.echo(f"Report: {destination.resolve() / 'report.html'}")
+    typer.echo(
+        f"{len(report['conditions'])} condition/trial records; "
+        f"{len(report['figures'])} confidence-interval figures; "
+        f"{report['summary']['missing_or_failed']} missing or failed evaluations."
+    )
 
 
 if __name__ == "__main__":

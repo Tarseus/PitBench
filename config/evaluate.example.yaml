@@ -5,8 +5,8 @@
 # the machine-local file and connect existing native logins automatically.
 
 paths:
-  output_path: runs
-  workspace_path: .pitbench/tasks
+  output_path: gushengda/experiments/ad-hoc/runs
+  workspace_path: gushengda/experiments/ad-hoc/workspaces
   private_root: private
   base_cache_path: .pitbench/cache/base
 

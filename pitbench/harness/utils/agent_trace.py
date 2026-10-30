@@ -473,8 +473,8 @@ class AgentTrace:
             transcript = event.get("transcript")
             if provider == "antigravity" and transcript is not None:
                 for line in (
-                    (self.root / "objects" / transcript["sha256"])
-                    .read_text()
+                    recording.read_transcript(self.root / "objects", transcript)
+                    .decode()
                     .splitlines()
                 ):
                     try:
@@ -671,7 +671,9 @@ class AgentTrace:
                 raise ValueError("invalid Docker CPU counter")
             if self._research_cpu_start is None:
                 self._research_cpu_start = total_ns
-                self._research_cpu_baseline_elapsed_sec = time.monotonic() - self._started
+                self._research_cpu_baseline_elapsed_sec = (
+                    time.monotonic() - self._started
+                )
             if total_ns < self._research_cpu_start:
                 raise ValueError("Docker CPU counter moved backwards")
             self._research_cpu_sec = (total_ns - self._research_cpu_start) / 1e9

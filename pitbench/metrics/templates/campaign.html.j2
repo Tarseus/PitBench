@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PitBench 自动评测报告</title>
+<style>
+body{margin:0;background:#fafaf8;color:#242a30;font:14px/1.65 system-ui,sans-serif}main{max-width:1400px;margin:auto;padding:30px 28px 70px}h1{font-size:25px;margin:4px 0 12px}h2{font-size:20px;margin:28px 0 12px}h3{font-size:16px}a{color:#235b78}.muted,small{color:#626970}.facts{display:flex;gap:38px;flex-wrap:wrap;border-block:1px solid #d9dddf;padding:16px 0;margin:22px 0}.facts strong{display:block;font-size:24px}.facts span{font-size:12px;color:#626970}.note{border-left:3px solid #235b78;background:#edf2f4;padding:10px 15px}nav{display:flex;gap:22px;flex-wrap:wrap;margin:20px 0}.scroll{overflow:auto;max-height:650px;border-block:1px solid #d9dddf;background:white}table{border-collapse:collapse;width:100%;font-size:12px}th,td{padding:9px 11px;border-bottom:1px solid #d9dddf;text-align:left;vertical-align:top}th{position:sticky;top:0;background:#edf2f4}td{min-width:100px}td:first-child{min-width:230px}.error{max-width:400px;white-space:pre-wrap;overflow-wrap:anywhere}.figures figure{margin:18px 0 30px;border-top:1px solid #d9dddf;padding-top:12px}.figures img{display:block;max-width:100%;height:auto;background:white}figure figcaption{max-width:1000px;color:#626970;font-size:12px}input{padding:8px 10px;min-width:300px;font:inherit;border:1px solid #bfc7cb;background:white}details{margin:10px 0;border-bottom:1px solid #d9dddf;padding:9px 0}summary{cursor:pointer}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;max-height:500px;overflow:auto}code{font-size:12px}footer{border-top:1px solid #d9dddf;margin-top:30px;padding-top:14px;color:#626970}
+</style>
+<main>
+<div class="muted">PITBENCH · 自动生成 · 既有评测证据</div>
+<h1>改进量、置信区间与测量覆盖</h1>
+<p class="muted">生成时间 {{ report.created_at }}<br>来源 {{ report.source }}</p>
+<div class="facts">
+<div><strong>{{ report.planned_conditions }}</strong><span>计划条件</span></div>
+<div><strong>{{ report.summary.evaluated }}</strong><span>评测完成</span></div>
+<div><strong>{{ report.summary.confirmed_improved }}</strong><span>主性能反序确认改善</span></div>
+<div><strong>{{ report.summary.missing_or_failed }}</strong><span>缺测或评测失败</span></div>
+</div>
+<p class="note">主性能、seed 和迁移图读取已保存的区间。补充 shift 与规模切片按原生统计函数汇总完整的既有观测，不新增求解运行，也不作为收益保留判定。效应图正值表示改善；规模切片左图展示 gap 原值（越低越好），右图展示成对改进。不同指标、单位、面板和置信水平分开绘制。</p>
+<nav><a href="#figures">置信区间与规模图</a><a href="#conditions">全部条件</a><a href="#coverage">指标覆盖</a><a href="conditions.csv" download>条件 CSV</a><a href="effects.csv" download>效应与区间 CSV</a><a href="scale-slices.csv" download>规模切片 CSV</a><a href="report.json" download>完整 JSON</a></nav>
+<h2 id="figures">原生改进量与置信区间</h2>
+<p>精确求解沿用覆盖率优先规则：覆盖率不变时，主端点图使用 PAR-2 耗时差。每个点对应一次条件／任务的原生估计，不代表独立 Agent 重复。结构迁移收益的区间不替代原有 simultaneous retention 判定。</p>
+<div class="figures">
+{% for figure in report.figures %}
+<figure>
+<h3>{{ figure.title }} · {{ figure.panel }}</h3>
+<img src="{{ figure.files.svg }}" alt="{{ figure.title }}，{{ figure.point_count }} 个原生估计及置信区间">
+<figcaption>{{ figure.point_count }} 个点；单位 {{ figure.unit }}；{{ '%g'|format(figure.confidence_level * 100) }}% 区间。{% if figure.origin == 'derived_scale' %}固定 shift 配方中的观测规模切片，按实例内 seed 均值、实例等权的原生估计量分组；单实例分组不估计跨实例区间。这不是 shift 强度梯度或正式 scalability 验收。{% elif figure.origin == 'derived' %}来自完整既有网格的补充统计，不是收益保留验收。{% else %}区间来自已保存的原生报告。实心点为已有主性能反序确认；空心点包括其他原生估计和未确认结果。{% endif %}<br><a href="{{ figure.files.png }}" download>PNG</a> · <a href="{{ figure.files.svg }}" download>SVG</a> · <a href="{{ figure.files.pdf }}" download>PDF</a></figcaption>
+</figure>
+{% endfor %}
+</div>
+<h2 id="conditions">全部条件、失败与缺测</h2>
+<p><input id="filter" placeholder="筛选任务、设置、结论或错误"></p>
+<div class="scroll"><table id="conditions-table"><thead><tr><th>任务／设置</th><th>执行／评测状态</th><th>原生性能结论</th><th>改进量与区间</th><th>CPU／RSS 变化</th><th>Seed／表示 IQR</th><th>跨结构收益保留</th><th>问题与失败原因</th></tr></thead><tbody>
+{% for condition in report.conditions %}
+<tr><td><strong>{{ condition.task_id }}</strong><br>{{ condition.setting }}<br><small>{{ condition.model or '' }}<br>{{ condition.condition_id }}</small></td>
+<td>{{ condition.execution_status }}<br>{{ condition.evaluation_status }}</td>
+<td>{{ condition.classification or '未取得' }}<br><small>{{ '已反序确认' if condition.confirmed else '没有主指标反序确认' }}</small></td>
+<td>{% if condition.primary_effect is defined %}{% set e=condition.primary_effect %}{{ e.metric_id }}<br>{{ e.estimate|number }} {{ e.unit }}<br>[{{ e.lower|number }}, {{ e.upper|number }}]<br><small>{{ e.budget_sec }} 秒</small>{% else %}未取得原生主端点{% endif %}</td>
+<td>{% for metric,prefix in [('cpu','CPU'),('memory','RSS')] %}{% set r=condition.get('primary_resources',{}).get(metric) %}{% if r %}{{ prefix }} {{ r.change_percent|number }}%<br><small>{{ r.paired_seed_count }}/{{ r.expected_pairs }} 有效配对</small><br>{% endif %}{% endfor %}</td>
+<td>{% for key,prefix in [('seed_iqr','Seed'),('representation_iqr','表示')] %}{% set s=condition.get(key) %}{% if s %}{{ prefix }} {{ s.base|magnitude }} → {{ s.agent|magnitude }}<br><small>{{ s.unit }}</small><br>{% endif %}{% endfor %}</td>
+<td>{% if condition.retention is defined %}{{ condition.retention.supported }}/{{ condition.retention.conditions }} 通过<br><small>要求 {{ condition.retention.required_fraction*100 }}% 收益保留<br>{{ condition.retention.native_classifications|join(', ') }}</small>{% else %}未声明此判定{% endif %}</td>
+<td class="error">{{ condition.error or '' }}{% for issue in condition.issues %}<br>{{ issue }}{% endfor %}</td></tr>
+{% endfor %}
+</tbody></table></div>
+<h2 id="coverage">全目录测量覆盖</h2>
+<p>reported、partial、raw_only 沿用既有 adapter 的完整性语义；未取得评测的条件也计入覆盖表。资源比值没有已保存的置信区间时，仅保留原生数值和有效配对数，不补造区间。主性能改善不代表其他指标同时改善。</p>
+<div class="scroll"><table><thead><tr><th>测量</th><th>单位／方向</th><th>覆盖状态与数量</th></tr></thead><tbody>
+{% for metric, definition in catalog.metrics.items() %}
+<tr><td>{{ definition.label }}<br><small>{{ metric }}</small></td><td>{{ definition.unit }}<br>{{ definition.direction }}</td><td>{% for status,count in report.metric_coverage[metric].items() %}{{ status }}: {{ count }}<br>{% endfor %}</td></tr>
+{% endfor %}
+</tbody></table></div>
+<h2>逐条件原生明细</h2>
+<p>包含全预算的覆盖率／PAR-2／gap、资源比值与配对数、seed、表示、迁移和已声明 API 场景。失败记录保留原原因；报告不重新运行求解器或改写原结论。</p>
+{% for condition in report.conditions %}
+<details><summary>{{ condition.task_id }} · {{ condition.setting }} · {{ condition.classification or condition.evaluation_status }}</summary><pre>{{ condition|tojson(indent=2) }}</pre></details>
+{% endfor %}
+<footer>{{ report.interpretation }}</footer>
+</main>
+<script>document.getElementById('filter').addEventListener('input',event=>{const text=event.target.value.toLowerCase();document.querySelectorAll('#conditions-table tbody tr').forEach(row=>{row.hidden=!row.textContent.toLowerCase().includes(text)})});</script>
+</html>

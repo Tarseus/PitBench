@@ -240,7 +240,7 @@ def create(
     ] = None,
     output_path: Annotated[
         Path, Option(help="Path to output directory", rich_help_panel=HelpPanel.OUTPUT)
-    ] = Path("runs"),
+    ] = Path("gushengda/experiments/ad-hoc/runs"),
     run_id: Annotated[
         str | None,
         Option(
@@ -403,6 +403,10 @@ def create(
             rich_help_panel=HelpPanel.BUILD,
         ),
     ] = None,
+    agent_cpuset_cpus: Annotated[
+        str | None,
+        Option(help="Host CPU IDs assigned to agent containers"),
+    ] = None,
 ):
     """Run the pitbench harness with the specified configuration."""
     if dataset_path is None and dataset_config is None:
@@ -519,6 +523,7 @@ def create(
             ec2_use_nvme_storage=ec2_use_nvme_storage,
             ec2_root_volume_size=ec2_root_volume_size,
             history_limit=history_limit,
+            agent_cpuset_cpus=agent_cpuset_cpus,
         )
 
         harness.run()
@@ -557,6 +562,7 @@ def create(
             ec2_use_nvme_storage=ec2_use_nvme_storage,
             ec2_root_volume_size=ec2_root_volume_size,
             history_limit=history_limit,
+            agent_cpuset_cpus=agent_cpuset_cpus,
         )
 
         harness.run()

@@ -4,6 +4,7 @@ import io
 import json
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +14,7 @@ from adapters.jvm.runner import (
     _adapter_output,
     _adapter_source_sha256,
     _choco_assembly,
+    _prepare_ortools_java_tests,
     _solver_identity,
     _verify_compiled_adapter,
 )
@@ -41,6 +43,74 @@ from pitbench.solver_drivers.run import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_generated_java_tests_use_the_built_package_instead_of_a_newer_release(
+    tmp_path,
+):
+    package = tmp_path / "build/java/ortools-java/pom.xml"
+    test = tmp_path / "build/java/sat/CpSolverTest/pom.xml"
+    package.parent.mkdir(parents=True)
+    test.parent.mkdir(parents=True)
+    package.write_text("""<project xmlns="http://maven.apache.org/POM/4.0.0">
+      <groupId>com.google.ortools</groupId><artifactId>ortools-java</artifactId>
+      <version>9.14.9999</version></project>""")
+    test.write_text("""<project xmlns="http://maven.apache.org/POM/4.0.0"><dependencies>
+      <dependency><groupId>com.google.ortools</groupId><artifactId>ortools-java</artifactId>
+        <version>[9.14.9999,)</version></dependency>
+      <dependency><groupId>com.google.truth</groupId><artifactId>truth</artifactId>
+        <version>1.4.4</version></dependency>
+      </dependencies></project>""")
+
+    _prepare_ortools_java_tests(tmp_path)
+
+    assert '<project xmlns="http://maven.apache.org/POM/4.0.0">' in test.read_text()
+    ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+    dependencies = ET.parse(test).findall("m:dependencies/m:dependency", ns)
+    assert [d.findtext("m:version", namespaces=ns) for d in dependencies] == [
+        "9.14.9999",
+        "1.4.4",
+    ]
+
+
+def test_java_legacy_tests_get_a_matching_engine_and_cannot_pass_with_zero_tests(
+    tmp_path,
+):
+    package = tmp_path / "build/java/ortools-java/pom.xml"
+    test = tmp_path / "build/java/sat/CpSolverTest/pom.xml"
+    source = tmp_path / "ortools/sat/java/CpSolverTest.java"
+    for path in (package, test, source):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    package.write_text("""<project xmlns="http://maven.apache.org/POM/4.0.0">
+      <groupId>com.google.ortools</groupId><artifactId>ortools-java</artifactId>
+      <version>9.15.9999</version></project>""")
+    test.write_text("""<project xmlns="http://maven.apache.org/POM/4.0.0"><dependencies>
+      <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-engine</artifactId>
+        <version>5.11.3</version></dependency></dependencies><build><plugins><plugin>
+      <artifactId>maven-surefire-plugin</artifactId><version>3.5.0</version>
+      </plugin></plugins></build></project>""")
+    source.write_text("import org.junit.Test;\n")
+
+    _prepare_ortools_java_tests(tmp_path)
+    _prepare_ortools_java_tests(tmp_path)
+
+    ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+    tree = ET.parse(test)
+    dependencies = tree.findall("m:dependencies/m:dependency", ns)
+    vintage = [
+        d
+        for d in dependencies
+        if d.findtext("m:artifactId", namespaces=ns) == "junit-vintage-engine"
+    ]
+    assert len(vintage) == 1
+    assert vintage[0].findtext("m:version", namespaces=ns) == "5.11.3"
+    assert (
+        tree.findtext(
+            "m:build/m:plugins/m:plugin/m:configuration/m:failIfNoTests", namespaces=ns
+        )
+        == "true"
+    )
+
 
 # Tests consolidated from tests/unit/pitbench/test_solver_drivers.py
 
@@ -112,9 +182,12 @@ def test_fixed_solver_parameters_follow_repository_capability(tmp_path) -> None:
     highs_command = HighsRepositoryPlugin().run_command(run)
     assert HighsRepositoryPlugin.supports_fixed_solver_parameters
     assert highs_command.argv[-2:] == ["--parameters", str(parameters)]
-    assert HighsDriver.options_file_content(
-        {"simplex_dual_edge_weight_strategy": 2, "parallel": "off"}
-    ) == "parallel = off\nsimplex_dual_edge_weight_strategy = 2\n"
+    assert (
+        HighsDriver.options_file_content(
+            {"simplex_dual_edge_weight_strategy": 2, "parallel": "off"}
+        )
+        == "parallel = off\nsimplex_dual_edge_weight_strategy = 2\n"
+    )
     with pytest.raises(ValueError, match="invalid HiGHS option name"):
         HighsDriver.options_file_content({"invalid option": 1})
 
@@ -139,7 +212,9 @@ def test_highs_validation_build_keeps_tests_and_legacy_catch_compatibility():
         "highs",
         "highs-bin",
     ]
-    assert "--target highs highs-bin" in HighsRepositoryPlugin.agent_environment.prebuild
+    assert (
+        "--target highs highs-bin" in HighsRepositoryPlugin.agent_environment.prebuild
+    )
 
 
 def test_solver_driver_registry_rejects_duplicate_names():
@@ -209,10 +284,7 @@ def test_jvm_probe_rejects_missing_or_stale_compiled_adapter(
 
 
 def test_choco_identity_accepts_historical_prerelease_jar(tmp_path):
-    jar = (
-        tmp_path
-        / "solver/target/choco-solver-5.0.0-beta.2-jar-with-dependencies.jar"
-    )
+    jar = tmp_path / "solver/target/choco-solver-5.0.0-beta.2-jar-with-dependencies.jar"
     jar.parent.mkdir(parents=True)
     jar.touch()
 
@@ -253,13 +325,17 @@ def test_choco_builds_official_source_and_generic_jvm_adapter() -> None:
         == performance[1]
         == CommandSpec(argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/choco-maven"])
     )
-    assert validation[2] == performance[2] == CommandSpec(
-        argv=[
-            "sh",
-            "-c",
-            "if [ -d /opt/pitbench-maven ]; then "
-            "cp -a /opt/pitbench-maven/. /tmp/choco-maven/; fi",
-        ]
+    assert (
+        validation[2]
+        == performance[2]
+        == CommandSpec(
+            argv=[
+                "sh",
+                "-c",
+                "if [ -d /opt/pitbench-maven ]; then "
+                "cp -a /opt/pitbench-maven/. /tmp/choco-maven/; fi",
+            ]
+        )
     )
     assert validation[3] == CommandSpec(
         argv=["mvn", "-q", "package", "-DskipTests", "-Dlicense.skip=true"],

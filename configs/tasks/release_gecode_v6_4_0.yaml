@@ -1,0 +1,58 @@
+schema_version: '3.0'
+task_id: release_gecode_v6_4_0
+release:
+  repository: Gecode/gecode
+  version: 6.4.0
+  tag: release-6.4.0
+  base_commit: 3e0e8ee76fb4ba01c53616dce02c0bb1a53f159e
+  tree_sha: a46cd7e55e376c430ace40ea40b8ce7de7f1f6c9
+  released_at: '2026-07-15T12:32:01Z'
+  url: https://github.com/Gecode/gecode/releases/tag/release-6.4.0
+task_type: exact_solver
+problem_family: cp
+problem_variant: bin_packing
+formulation_id: gecode_binpacking_propagator
+optimization_scope: dff_binpacking_propagation_and_proof_efficiency
+instruction: Improve this solver's performance on the declared problem family under the specified solve
+  budgets. Identify and validate source-level improvements autonomously while preserving original-problem
+  feasibility, objective semantics, and truthful solve statuses.
+repository:
+  clone_url: https://github.com/Gecode/gecode.git
+  plugin: pitbench.repositories.plugins:GecodeRepositoryPlugin
+  editable_paths:
+  - gecode/int
+  agent_image: pitbench-release:release_gecode_v6_4_0
+  judge_image: null
+oracle:
+  kind: known_optimum
+  source: private://oracles/release_gecode_v6_4_0.yaml
+  source_sha256: 4babeee554fda496851e5b69b9a74c8bac1dd78a590f03d77acd4fd7e7ed4580
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  solver_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  threads: 1
+  verifier: trusted_optimum
+  fixed_solver_parameters:
+    gecode.bin_packing_propagation_level: full
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/gecode_binpacking_dff_20260711_dev.yaml
+  instance_set_config_sha256: 68881374de32fb4eb0653c90af797ab7d8ae6c367f90cbb32b7157816fb225e5
+  size: 5
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/gecode_binpacking_dff_20260711/judge_id.yaml
+  instance_set_config_sha256: 7982359145db570830071284700367335711d668a73fd1f5b28d78d098c33de7
+  size: 30

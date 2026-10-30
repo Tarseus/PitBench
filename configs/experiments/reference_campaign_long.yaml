@@ -8,12 +8,12 @@ seeds:
 - 2
 - 3
 manifests:
-- report/problem-generation-20261025/instances/suite.json
-- report/instance-generation-20261025/cvrp/manifest.json
-- report/reference-difficulty-20261025/instances/suite.json
-- report/reference-difficulty-20261025/public/manifest.json
+- gushengda/data/generation/problem-generation-20261025/instances/suite.json
+- gushengda/data/generation/instance-generation-20261025/cvrp/manifest.json
+- gushengda/data/generation/reference-difficulty-20261025/instances/suite.json
+- gushengda/data/generation/reference-difficulty-20261025/public/manifest.json
 prior_references:
-- report/reference-campaign-20261025/bks.json
+- gushengda/data/references/reference-campaign-20261025/bks.json
 backends:
 - name: native
   threads: 1

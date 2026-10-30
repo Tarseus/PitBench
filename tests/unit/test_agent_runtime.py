@@ -739,6 +739,62 @@ def test_native_hooks_keep_tool_payloads_without_copying_workspace_files(tmp_pat
     assert not (spool / "objects").exists()
 
 
+def test_transcript_versions_reconstruct_appends_rewrites_and_truncation(tmp_path):
+    source = tmp_path / "transcript.jsonl"
+    spool = tmp_path / "spool"
+    versions = [b"a" * 100_000, b"a" * 100_000 + b"tail\n", b"rewritten\n", b""]
+    references = []
+    for content in versions:
+        source.write_bytes(content)
+        event = recording.record_hook(
+            spool, "codex", {"transcriptPath": str(source)}, None
+        )
+        references.append(event["transcript"])
+    for reference, content in zip(references, versions):
+        assert recording.read_transcript(spool / "objects", reference) == content
+    # The shared 100 KB prefix is retained once across both transcript versions.
+    assert sum(p.stat().st_size for p in (spool / "objects").iterdir()) < 105_000
+
+
+def test_incremental_transcript_export_and_antigravity_recovery(tmp_path):
+    source = tmp_path / "transcript.jsonl"
+    spool = tmp_path / "spool"
+    trace = AgentTrace(tmp_path / "traces", context={})
+    trace._container = LocalContainer(tmp_path)
+    trace._native_spool = str(spool)
+    payload = {
+        "conversationId": "s",
+        "stepIdx": 2,
+        "toolCall": {"name": "view_file", "args": {}},
+        "transcriptPath": str(source),
+    }
+    source.write_text(json.dumps({"step_index": 2, "status": "RUNNING"}) + "\n")
+    first = recording.record_hook(
+        spool, "antigravity", payload, None, hook_event="PreToolUse"
+    )
+    trace.harvest_recorder()
+    assert (
+        recording.read_transcript(trace.root / "objects", first["transcript"])
+        == source.read_bytes()
+    )
+    with source.open("a") as stream:
+        stream.write(
+            json.dumps({"step_index": 2, "status": "DONE", "content": "feedback"})
+            + "\n"
+        )
+    last = recording.record_hook(
+        spool, "antigravity", payload, None, hook_event="SessionEnd"
+    )
+    trace.harvest_recorder()
+    assert (
+        recording.read_transcript(trace.root / "objects", last["transcript"])
+        == source.read_bytes()
+    )
+    results = [row for row in read_trace(trace.path) if row["event"] == "tool.result"]
+    assert results[-1]["data"]["result"] == "feedback"
+    trace.close()
+
+
 def test_hook_install_preserves_user_hooks_and_has_passive_provider_output(tmp_path):
     config = tmp_path / "hooks.json"
     existing = {"hooks": {"PreToolUse": [{"hooks": [{"command": "existing"}]}]}}

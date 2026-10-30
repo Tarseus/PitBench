@@ -1,4 +1,5 @@
-FROM maven:3.9-eclipse-temurin-17@sha256:880934ae394bf91bc3e57d573e4fc04774f064f3c4df7ccd7cc10b3b126737bf
+ARG JAVA_BASE_IMAGE=maven:3.9-eclipse-temurin-17@sha256:880934ae394bf91bc3e57d573e4fc04774f064f3c4df7ccd7cc10b3b126737bf
+FROM ${JAVA_BASE_IMAGE}
 
 ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu/
 ARG UBUNTU_SECURITY_MIRROR=http://security.ubuntu.com/ubuntu/
@@ -21,6 +22,7 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir \
     pydantic==2.13.5 pyyaml==6.0.3
 
 COPY adapters/jvm /opt/pitbench-jvm
+RUN chmod -R a+rX /opt/pitbench-jvm
 RUN test -n "$BASE_COMMIT" \
     && git init --quiet /workspace/repo \
     && git -C /workspace/repo remote add origin "$SOURCE_REPOSITORY" \
@@ -46,9 +48,12 @@ RUN test -n "$BASE_COMMIT" \
     && git -C /workspace/repo for-each-ref --format='%(refname)' | xargs -r -n1 git -C /workspace/repo update-ref -d \
     && git -C /workspace/repo reflog expire --expire=now --all \
     && git -C /workspace/repo gc --prune=now
-RUN cd /workspace/repo \
-    && mvn -q package -DskipTests -Dlicense.skip=true \
-    && python3 /opt/pitbench-jvm/runner.py compile --solver choco
+RUN python3 /opt/pitbench-jvm/runner.py maven-settings --output /tmp/pitbench-maven-settings.xml \
+    && export MAVEN_ARGS="$MAVEN_ARGS --settings=/tmp/pitbench-maven-settings.xml" \
+    && cd /workspace/repo \
+    && mvn -e -q package -DskipTests -Dlicense.skip=true \
+    && python3 /opt/pitbench-jvm/runner.py compile --solver choco \
+    && rm /tmp/pitbench-maven-settings.xml
 
 ENV PITBENCH_CHOCO_RUNNER="python3 /opt/pitbench-jvm/runner.py run --solver choco"
 WORKDIR /workspace/repo

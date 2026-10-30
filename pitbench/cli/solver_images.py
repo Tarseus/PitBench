@@ -59,6 +59,10 @@ def docker_build_command(
     if config.no_proxy:
         for key in ("NO_PROXY", "no_proxy"):
             command.extend(["--build-arg", f"{key}={config.no_proxy}"])
+    for key, value in sorted(config.base_images.items()):
+        if not key.endswith("_BASE_IMAGE"):
+            raise ValueError("base image argument names must end in _BASE_IMAGE")
+        command.extend(["--build-arg", f"{key}={value}"])
     command.append(str(repository_root))
     return command
 

@@ -7,17 +7,180 @@ It does not certify a new task, score a research report, or enforce compute quot
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import shutil
 import tempfile
 from pathlib import Path
 
+import yaml
+
 from pitbench.instances.generate import (
     materialize_generated_instance_set,
     materialize_instance_set,
 )
-from pitbench.schema.research import ResearchBudget, ResearchCasePlan
+from pitbench.schema.research import (
+    GeneralizationStudyPlan,
+    ResearchBudget,
+    ResearchCasePlan,
+)
 from pitbench.schema.task import InstanceSetKind, PitBenchTask
+
+
+def prepare_generalization_study(
+    plan: GeneralizationStudyPlan, *, root: Path, destination: Path
+) -> dict:
+    """Materialize a controlled study design, not an assertion of run readiness."""
+    from pitbench.repositories.base import BuildKind, RepositoryPluginRegistry
+
+    root = root.resolve()
+    if destination.exists():
+        raise FileExistsError(destination)
+    manifest_path = _public_asset(root, plan.release_manifest)
+    manifest = json.loads(manifest_path.read_text())
+    pinned = {row["task_config"]: row for row in manifest["task_matrix"]}
+    matrix_path = _public_asset(root, plan.model_matrix)
+    models = yaml.safe_load(matrix_path.read_text())["runs"]
+    if not models or len({row["label"] for row in models}) != len(models):
+        raise ValueError("study model labels must be nonempty and unique")
+    populations_path = _public_asset(root, plan.population_plan)
+    populations = json.loads(populations_path.read_text())
+    budget = resolve_research_budget(root, configured=plan.research_budget)
+    references = json.loads((root / "configs/research/budgets.json").read_text())[
+        "tracks"
+    ]
+    if budget.track in references and budget.model_dump(
+        exclude_none=True
+    ) != ResearchBudget.model_validate(references[budget.track]).model_dump(
+        exclude_none=True
+    ):
+        raise ValueError("study budget differs from the shared named resource profile")
+    gaps = []
+    for role, split in populations["splits"].items():
+        if split.get("manifest") is None:
+            gaps.append(f"population_manifest_missing:{role}")
+    for key in ["headroom_evidence", "upstream_review_evidence", "scoring_plan"]:
+        if populations.get(key) is None:
+            gaps.append(key + "_missing")
+    tasks = []
+    for path in plan.task_configs:
+        if path not in pinned:
+            raise ValueError(
+                f"study task is absent from the pinned release manifest: {path}"
+            )
+        task_path = _public_asset(root, path)
+        task = PitBenchTask.from_yaml(task_path)
+        selection = manifest["selected_releases"][pinned[path]["repository"]][
+            pinned[path]["role"]
+        ]
+        if (
+            task.release.base_commit != selection["commit_sha"]
+            or task.release.tree_sha != selection["tree_sha"]
+        ):
+            raise ValueError("study source differs from the approved release pin")
+        plugin = RepositoryPluginRegistry.load(task.repository.plugin)
+        commands = plugin.build_commands(BuildKind.VALIDATION)
+        command_text = " ".join(" ".join(c.argv) for c in commands)
+        suite_declared = any(
+            token in command_text
+            for token in ["pytest", "ctest", "make test", "make check"]
+        )
+        if not suite_declared:
+            gaps.append(f"upstream_validation_suite_not_invoked:{task.task_id}")
+        exclusions = [
+            arg
+            for command in commands
+            for arg in command.argv
+            if arg.startswith("--deselect=") or arg.startswith("--ignore=")
+        ]
+        if exclusions:
+            gaps.append(f"upstream_test_exclusions_need_review:{task.task_id}")
+        bindings = populations.get("scenario_bindings", {}).get(task.task_id, {})
+        for kind in plan.required_scenario_kinds:
+            if not bindings.get(kind):
+                gaps.append(f"source_bound_scenario_missing:{task.task_id}:{kind}")
+        tasks.append(
+            {
+                "task_id": task.task_id,
+                "task_config": path,
+                "task_config_sha256": _sha(task_path),
+                "repository": task.release.repository,
+                "source_commit": task.release.base_commit,
+                "source_tree": task.release.tree_sha,
+                "solve_budgets_sec": task.evaluation.budgets_sec,
+                "solver_seeds": task.evaluation.solver_seeds,
+                "validation_commands": [c.model_dump(mode="json") for c in commands],
+                "upstream_suite_command_declared": suite_declared,
+                "test_exclusions": exclusions,
+            }
+        )
+    # Evidence files must be replayed by their native validators; mere JSON
+    # fields or a ready:true flag cannot authorize this design's execution.
+    gaps.append(
+        "evaluator_revalidation_of_population_reference_and_scenario_evidence_required"
+    )
+    jobs = []
+    for task, model, arm, attempt in itertools.product(
+        tasks, models, plan.arms, range(1, plan.agent_attempts_per_condition + 1)
+    ):
+        jobs.append(
+            {
+                "condition_id": f"{plan.study_id}-{task['task_id']}-{model['label']}-{arm.id}-r{attempt}",
+                "task_id": task["task_id"],
+                "model": model,
+                "arm": arm.id,
+                "attempt": attempt,
+                "research_budget": budget.model_dump(mode="json"),
+                "candidate_hypotheses_required": arm.require_candidate_hypotheses,
+                "development_view": arm.development_view,
+                "status": "preparation_pending",
+            }
+        )
+    destination.mkdir(parents=True)
+    for task in tasks:
+        for arm in plan.arms:
+            # No hidden cells, reference patches, test seeds or headroom answers
+            # are included in any arm's Agent-visible projection.
+            view = {
+                "study_id": plan.study_id,
+                "status": "preparation_pending",
+                "task_id": task["task_id"],
+                "source_commit": task["source_commit"],
+                "instruction": arm.instruction,
+                "research_budget": budget.model_dump(mode="json"),
+                "agent_tools": plan.shared_agent_tools,
+                "development_view": arm.development_view,
+                "candidate_hypotheses_required": arm.require_candidate_hypotheses,
+            }
+            _write(
+                destination / "agent_views" / task["task_id"] / arm.id / "case.json",
+                view,
+            )
+    receipt = {
+        "kind": "generalization_study_design",
+        "study_id": plan.study_id,
+        "status": "preparation_pending",
+        "ready_for_agent_execution": False,
+        "claim_scope": plan.claim_scope,
+        "inference_scope": plan.inference_scope,
+        "model_configurations": len(models),
+        "arms": len(plan.arms),
+        "source_tasks": len(tasks),
+        "agent_attempts_per_condition": plan.agent_attempts_per_condition,
+        "planned_agent_runs": len(jobs),
+        "maximum_agent_wall_hours": len(jobs) * budget.wall_time_sec / 3600,
+        "tasks": tasks,
+        "jobs": jobs,
+        "readiness_gaps": gaps,
+        "plan_sha256": hashlib.sha256(plan.model_dump_json().encode()).hexdigest(),
+        "release_manifest_sha256": _sha(manifest_path),
+        "population_plan_sha256": _sha(populations_path),
+        "model_matrix_sha256": _sha(matrix_path),
+        "new_agent_calls": 0,
+        "new_solver_runs": 0,
+    }
+    _write(destination / "study.json", receipt)
+    return receipt
 
 
 def _sha(path: Path) -> str:

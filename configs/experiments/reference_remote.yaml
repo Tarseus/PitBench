@@ -1,5 +1,5 @@
 schema_version: "1.0"
-source_campaign: report/reference-campaign-20261025-long
+source_campaign: gushengda/data/references/reference-campaign-20261025-long
 inventory_file: .pitbench/remote/inventory.json
 credentials_file: .pitbench/remote/credentials.json
 known_hosts_file: .pitbench/remote/known_hosts
@@ -11,7 +11,7 @@ sync_interval_sec: 60
 stale_heartbeat_sec: 180
 python_runtime: .venv/.managed-python/cpython-3.13.16-linux-x86_64-gnu
 wheels: .pitbench/remote/wheels
-requirements: report/reference-campaign-20261025-long/environment.txt
+requirements: gushengda/data/references/reference-campaign-20261025-long/environment.txt
 resource_guard:
   max_load1: 64
   max_temperature_celsius: 75

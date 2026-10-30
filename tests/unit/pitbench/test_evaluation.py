@@ -469,6 +469,24 @@ def test_workspace_permissions_reuses_existing_agent_account() -> None:
 
 
 @pytest.mark.parametrize(
+    "task_id,public_support",
+    [
+        ("choco_v6_0_1", "/opt/pitbench-jvm"),
+        ("ortools_cp_sat_solve_v9_15", "/opt/pitbench-jvm"),
+        ("gecode_binpacking_dff_20260711", "/opt/pitbench-adapters"),
+    ],
+)
+def test_agent_can_read_declared_public_support_without_write_access(task_id, public_support):
+    task = PitBenchTask.from_yaml(ROOT / f"configs/tasks/{task_id}.yaml")
+    dockerfile = PitBenchAdapter._workspace_permissions(task, include_runs=True)
+
+    assert f"chmod -R a+rX {public_support}" in dockerfile
+    assert "chmod o+x /root /root/.m2" in dockerfile
+    writable = next(line for line in dockerfile.splitlines() if "mkdir -p /workspace/repo" in line)
+    assert public_support not in writable
+
+
+@pytest.mark.parametrize(
     ("task_id", "expected_protocol"),
     [
         ("pyvrp_v0_14_0", PerformanceProtocol.HEURISTIC_FIXED_BUDGET),
@@ -1561,6 +1579,8 @@ def test_evaluator_only_test_patch_applies_to_both_validation_states(tmp_path):
     "path,error",
     [
         ("src/solver.cpp", None),
+        ("src/bindings.i", None),
+        ("src/bindings.swig", None),
         ("tests/check.py", "non-editable"),
         ("build/generated.cpp", "generated"),
         ("src/solver.so", "must change solver source"),

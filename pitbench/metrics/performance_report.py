@@ -774,6 +774,56 @@ def compute_task_performance_report(
     raise ValueError(f"unsupported performance protocol: {protocol}")
 
 
+def compute_panel_performance_reports(
+    observations: Sequence[RunObservation],
+    *,
+    task: PitBenchTask,
+    expected_run_grid: ExpectedRunGrid | None = None,
+) -> dict[str, PerformanceReport | ExactPerformanceReport]:
+    """Describe each hidden panel with the unchanged native estimator.
+
+    These panel estimates do not replace the frozen judge-ID classification or
+    define a controlled-retention protocol. Preserve all expected panel runs so
+    a missing exact observation remains missing.
+    """
+    reports = {}
+    for panel in task.instance_sets:
+        if panel.kind.value not in {"judge_id", "judge_shift"}:
+            continue
+        rows = [
+            row.model_copy(
+                update={"instance_set": "judge_id", "instance_set_kind": "judge_id"}
+            )
+            for row in observations
+            if row.instance_set == panel.name
+            and row.test_suite is None
+            and row.equivalence_parent_id is None
+        ]
+        if not rows:
+            continue
+        grid = None
+        if expected_run_grid is not None:
+            grid = ExpectedRunGrid(
+                task_id=task.task_id,
+                runs=[
+                    run.model_copy(
+                        update={
+                            "instance_set": "judge_id",
+                            "instance_set_kind": "judge_id",
+                        }
+                    )
+                    for run in expected_run_grid.runs
+                    if run.instance_set == panel.name
+                    and run.test_suite is None
+                    and run.equivalence_parent_id is None
+                ],
+            )
+        reports[panel.name] = compute_task_performance_report(
+            rows, task=task, expected_run_grid=grid
+        )
+    return reports
+
+
 def _format_gap(value: float | None) -> str:
     return "-" if value is None else f"{100 * value:.3f}%"
 

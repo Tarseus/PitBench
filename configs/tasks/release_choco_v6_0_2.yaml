@@ -1,0 +1,90 @@
+schema_version: '3.0'
+task_id: release_choco_v6_0_2
+release:
+  repository: chocoteam/choco-solver
+  version: 6.0.2
+  tag: v6.0.2
+  base_commit: 4456ac71ba28109b6af0fb1c41196ebddcae69ae
+  tree_sha: 6abd2b027a06a73b97b504bcfbe676c935fcf502
+  released_at: '2026-10-06T15:32:07Z'
+  url: https://github.com/chocoteam/choco-solver/releases/tag/v6.0.2
+task_type: exact_solver
+problem_family: cp
+optimization_scope: constraint_propagation_efficiency
+instruction: Improve this solver's performance on the declared problem family under the specified solve
+  budgets. Identify and validate source-level improvements autonomously while preserving original-problem
+  feasibility, objective semantics, and truthful solve statuses.
+repository:
+  clone_url: https://github.com/chocoteam/choco-solver.git
+  plugin: pitbench.repositories.plugins:ChocoRepositoryPlugin
+  editable_paths:
+  - solver
+  agent_image: pitbench-release:release_choco_v6_0_2
+  judge_image: null
+oracle:
+  kind: known_optimum
+  source: private://oracles/release_choco_v6_0_2.yaml
+  source_sha256: aeb6689a77f4a5cd0348c8772f5a946fe8a810e4203dec0bd8a17e0f31a412b0
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  seed_robustness:
+    development_seeds:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    evaluation_seeds_file: private://seed_robustness/release_choco_v6_0_2.yaml
+    evaluation_seeds_file_sha256: 059f209c3b0bd004f855c28f53dc2ca879be4683ac0bd043052c0f55e415844e
+    seed_selection:
+      seed_min: 0
+      seed_max: 9223372036854775807
+      seed_count: 30
+  threads: 1
+  verifier: trusted_optimum
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/choco_v6_0_1_dev.yaml
+  instance_set_config_sha256: 68881374de32fb4eb0653c90af797ab7d8ae6c367f90cbb32b7157816fb225e5
+  size: 5
+  randomness:
+    instance_seed: 60000
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/choco_v6_0_1/judge_id_20261014.yaml
+  instance_set_config_sha256: 91a183bdb79ac54c1357b2c6808d05f288a0598627d83383be4cf8537d09edf4
+  size: 30
+  randomness:
+    instance_seed: 60110

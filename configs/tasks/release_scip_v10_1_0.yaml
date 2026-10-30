@@ -1,0 +1,75 @@
+schema_version: '3.0'
+task_id: release_scip_v10_1_0
+release:
+  repository: scipopt/scip
+  version: 10.1.0
+  tag: v10.1.0
+  base_commit: c8e5737a847219d2811f7dfbd7cc6aa5b96df684
+  tree_sha: 332e47f096903f805ff6033f5a956e0b5b7b009e
+  released_at: '2026-09-18T10:01:31Z'
+  url: https://github.com/scipopt/scip/releases/tag/v10.1.0
+task_type: exact_solver
+problem_family: mip
+problem_variant: multidimensional_knapsack
+formulation_id: multidimensional_knapsack_mip
+optimization_scope: mip_source_search_and_implementation_efficiency
+instruction: Improve this solver's performance on the declared problem family under the specified solve
+  budgets. Identify and validate source-level improvements autonomously while preserving original-problem
+  feasibility, objective semantics, and truthful solve statuses.
+repository:
+  clone_url: https://github.com/scipopt/scip.git
+  plugin: pitbench.repositories.plugins:ScipRepositoryPlugin
+  editable_paths:
+  - src
+  agent_image: pitbench-release:release_scip_v10_1_0
+  judge_image: null
+oracle:
+  kind: known_optimum
+  source: private://oracles/release_scip_v10_1_0.yaml
+  source_sha256: 44d67691ebb72acd8d5af54bb502bf15ecd77062da280a9c2a3af2067bfa4f31
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  operational_reliability: false
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  threads: 1
+  verifier: trusted_optimum
+  solver_seeds:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  controlled_transfer:
+    conditions:
+    - condition_id: knapsack_reference
+      view: reference
+      instance_set: judge_id
+      budget_sec: 20.0
+      generator_version: '1.0'
+    - condition_id: scheduling_family_shift
+      view: structural
+      instance_set: judge_shift
+      budget_sec: 20.0
+      reference_condition_id: knapsack_reference
+      domain_id: single_machine_scheduling
+      generator_version: '1.0'
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/highs_multidimensional_knapsack_v1_15_1_dev.yaml
+  instance_set_config_sha256: 05f64e21f94fa9bc4f1e516eeb85e603aadd172bb717cf7c5077c2c51daef9d1
+  size: 5
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/highs_multidimensional_knapsack_v1_15_1/judge_id.yaml
+  instance_set_config_sha256: 671ec7d94db4e548eeaf0901d2a7496dcc2fcc0a0fae2c13f2ebbc0943692bd8
+  size: 30
+- name: judge_shift
+  kind: judge_shift
+  instance_set_config: private://hidden_instances/mip_cross_solver/scheduling_shift.yaml
+  instance_set_config_sha256: 1feae9ec092b66dddbbc3e8c1c8f458746d4fdd16bf000cfe9f9897a9666a370
+  size: 30

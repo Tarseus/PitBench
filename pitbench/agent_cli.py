@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,98 @@ _CANDIDATE_PATHS = (
     ":(exclude).pitbench/**",
 )
 _DEVELOPMENT_OUTPUT_LOCK = threading.Lock()
+
+
+def hypothesis_command(args: argparse.Namespace) -> int:
+    from pitbench.schema.research import CandidateHypothesis
+
+    config = _config()
+    declaration = CandidateHypothesis.model_validate_json(Path(args.plan).read_text())
+    catalog = json.loads(
+        (Path(__file__).parent / "schema/objective_catalog.json").read_text()
+    )
+    metrics = {
+        metric
+        for experiment in declaration.experiments
+        for metric in experiment.metric_ids
+    }
+    if metrics - set(catalog["metrics"]):
+        raise SystemExit("hypothesis uses unknown metric IDs")
+    patch = _candidate_patch(_repository())
+    if not patch:
+        raise SystemExit("candidate hypothesis requires a nonempty source patch")
+    patch_hash = hashlib.sha256(patch).hexdigest()
+    destination = (
+        _runs_root(config) / "hypotheses" / patch_hash / f"{declaration.id}.json"
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "schema_version": "1.0",
+        "task_id": config["task_id"],
+        "patch_sha256": patch_hash,
+        "registered_at": datetime.now(timezone.utc).isoformat(),
+        "hypothesis": declaration.model_dump(mode="json"),
+    }
+    with destination.open("x") as output:
+        json.dump(record, output, indent=2)
+    print(
+        json.dumps(
+            {
+                **record,
+                "record_path": str(destination),
+                "record_sha256": _sha256(destination),
+            }
+        )
+    )
+    return 0
+
+
+def _candidate_experiment(
+    config: dict, args: argparse.Namespace, patch: bytes, patch_hash: str
+) -> dict | None:
+    hypothesis_id = getattr(args, "hypothesis_id", None)
+    experiment_id = getattr(args, "experiment_id", None)
+    required = (
+        config.get("candidate_hypotheses_required", False)
+        and args.label == "agent"
+        and bool(patch)
+    )
+    if required and (not hypothesis_id or not experiment_id):
+        raise SystemExit(
+            "register the candidate hypothesis first and select --hypothesis-id and --experiment-id"
+        )
+    if not hypothesis_id and not experiment_id:
+        return None
+    if not hypothesis_id or not experiment_id:
+        raise SystemExit("hypothesis and experiment IDs must be supplied together")
+    if any(
+        not value
+        or any(
+            c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+            for c in value
+        )
+        for value in (hypothesis_id, experiment_id)
+    ):
+        raise SystemExit("invalid hypothesis or experiment ID")
+    path = _runs_root(config) / "hypotheses" / patch_hash / f"{hypothesis_id}.json"
+    if not path.is_file():
+        raise SystemExit("no registered hypothesis matches the current source patch")
+    record = json.loads(path.read_text())
+    if record["task_id"] != config["task_id"] or record["patch_sha256"] != patch_hash:
+        raise SystemExit(
+            "registered hypothesis identity differs from this task or patch"
+        )
+    if experiment_id not in {
+        item["id"] for item in record["hypothesis"]["experiments"]
+    }:
+        raise SystemExit("experiment ID is absent from the registered hypothesis")
+    return {
+        "hypothesis_id": hypothesis_id,
+        "experiment_id": experiment_id,
+        "patch_sha256": patch_hash,
+        "record_sha256": _sha256(path),
+        "record_path": str(path),
+    }
 
 
 def _print_development_run(payload: dict) -> None:
@@ -522,6 +615,8 @@ def _run_one(
         "wall_time_sec": time.perf_counter() - started,
         "result": str(output),
     }
+    if config.get("candidate_experiment") is not None:
+        payload["candidate_experiment"] = config["candidate_experiment"]
     if runner_error is not None:
         payload["result_error"] = runner_error
     elif output.is_file():
@@ -580,6 +675,10 @@ def bench_command(args: argparse.Namespace) -> int:
         print("base benchmark requires a clean repository", file=sys.stderr)
         return 2
     patch_sha256 = hashlib.sha256(patch).hexdigest() if not args.dry_run else None
+    if not args.dry_run:
+        experiment = _candidate_experiment(config, args, patch, patch_sha256)
+        if experiment is not None:
+            config = {**config, "candidate_experiment": experiment}
     seeds = (
         config["development_seeds"]
         if getattr(args, "all_seeds", False)
@@ -851,7 +950,15 @@ def parser() -> argparse.ArgumentParser:
         workspace = commands.add_parser("workspace")
         workspace.set_defaults(handler=workspace_command)
     if "bench" in tools:
+        hypothesis = commands.add_parser(
+            "hypothesis",
+            help="Register applicability, failure predictions and experiments for this patch",
+        )
+        hypothesis.add_argument("--plan", type=Path, required=True)
+        hypothesis.set_defaults(handler=hypothesis_command)
         bench = commands.add_parser("bench")
+        bench.add_argument("--hypothesis-id")
+        bench.add_argument("--experiment-id")
         bench.add_argument("--split", default="dev")
         bench.add_argument("--label", choices=("base", "agent"), default="agent")
         bench.add_argument(

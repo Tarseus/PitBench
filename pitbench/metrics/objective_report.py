@@ -80,10 +80,13 @@ def compute_objective_report(
     scenario_report: ScenarioReport | None = None,
     repeat_scenario_report: ScenarioReport | None = None,
     candidate_sha256: str | None = None,
+    include_all_metrics: bool = False,
+    representation: dict | None = None,
+    include_qualification: bool = True,
 ) -> ObjectiveMeasurementReport | None:
     """Reuse native report values; leave unsupported scenarios explicitly absent."""
     profile = task.optimization_profile
-    if profile is None:
+    if profile is None and not include_all_metrics:
         return None
     if any(item.task_id != task.task_id for item in observations or []):
         raise ValueError("objective report contains observations from another task")
@@ -93,10 +96,17 @@ def compute_objective_report(
                 "objective report contains a native report from another task"
             )
     catalog = objective_catalog()
-    requested = dict.fromkeys(
-        metric
-        for objective in profile.objectives
-        for metric in catalog["objectives"][objective]["metric_ids"]
+    objectives = (
+        list(catalog["objectives"]) if include_all_metrics else profile.objectives
+    )
+    requested = (
+        dict.fromkeys(catalog["metrics"])
+        if include_all_metrics
+        else dict.fromkeys(
+            metric
+            for objective in objectives
+            for metric in catalog["objectives"][objective]["metric_ids"]
+        )
     )
     metrics = {}
     original = [
@@ -106,7 +116,11 @@ def compute_objective_report(
     ]
     for metric_id in requested:
         definition = dict(catalog["metrics"][metric_id])
-        if profile.scoring is not None and profile.scoring.protocol_version == "1.1":
+        if (
+            profile is not None
+            and profile.scoring is not None
+            and profile.scoring.protocol_version == "1.1"
+        ):
             rule = qualification_protocols("1.1")["metrics"][metric_id]
             if rule["status"] == "implemented":
                 definition["qualification"] = "implemented_protocol_1.1"
@@ -211,6 +225,25 @@ def compute_objective_report(
                 "nuisance_robustness",
                 "Existing seed protocol; inspect complete-instance counts. Cross-seed dispersion does not establish identical-seed determinism.",
             )
+        elif metric_id == "representation_dispersion" and representation is not None:
+            if representation.get("task_id") != task.task_id:
+                raise ValueError("representation report belongs to another task")
+            value = representation
+            count = len(representation.get("instance_ids", []))
+            cells = representation.get("by_budget", {})
+            complete = bool(count) and set(cells) == {
+                format(budget, "g") for budget in task.evaluation.budgets_sec
+            }
+            complete = complete and all(
+                cell[state].get("complete_instance_count") == count
+                for cell in cells.values()
+                for state in ("base", "agent")
+            )
+            status, reference, detail = (
+                "reported" if complete else "partial",
+                "representation_robustness",
+                "Existing Type-7 IQR over declared equivalent representations; descriptive evidence without an inferred significance threshold.",
+            )
         elif metric_id == "controlled_retention" and transfer is not None:
             value = transfer.model_dump(mode="json")
             status, reference, detail = (
@@ -257,6 +290,31 @@ def compute_objective_report(
                 "observations.status",
                 "Observed status counts only; no boundary-grid completeness or failure-rate claim.",
             )
+        if status == "unavailable" and include_all_metrics:
+            rule = qualification_protocols("1.1")["metrics"][metric_id]
+            kind = rule.get("scenario_kind")
+            if kind and not any(s.kind == kind for s in task.metric_scenarios):
+                detail = f"Task has no declared {kind} scenario; no measurement was collected."
+            elif (
+                metric_id == "controlled_retention"
+                and task.evaluation.controlled_transfer is None
+            ):
+                detail = "Task has no declared controlled-transfer conditions; shift observations alone do not define a retention decision."
+            elif (
+                metric_id == "seed_dispersion"
+                and task.evaluation.seed_robustness is None
+            ):
+                detail = "Task has no declared cross-seed dispersion protocol."
+            elif (
+                metric_id == "representation_dispersion"
+                and task.evaluation.representation_robustness is None
+            ):
+                detail = "Task has no declared equivalent-representation experiment."
+            elif (
+                metric_id == "boundary_pass_counts"
+                and not task.evaluation.operational_reliability
+            ):
+                detail = "The task disables the operational boundary suite."
         metrics[metric_id] = ObjectiveMetricEvidence(
             **{
                 key: definition[key]
@@ -276,17 +334,17 @@ def compute_objective_report(
     return ObjectiveMeasurementReport(
         taxonomy_version=catalog["taxonomy_version"],
         taxonomy_sha256=objective_catalog_sha256(),
-        classification_basis=profile.classification_basis,
-        objectives=profile.objectives,
-        change_kinds=profile.change_kinds,
-        primary_metric_id=profile.primary_metric_id,
+        classification_basis=profile.classification_basis
+        if profile
+        else "measurement_inventory",
+        objectives=objectives,
+        change_kinds=profile.change_kinds if profile else [],
+        primary_metric_id=profile.primary_metric_id if profile else None,
         candidate_validity_accepted=validity_accepted,
         objective_metrics={
-            key: catalog["objectives"][key]["metric_ids"] for key in profile.objectives
+            key: catalog["objectives"][key]["metric_ids"] for key in objectives
         },
-        scenarios={
-            key: catalog["objectives"][key]["scenario"] for key in profile.objectives
-        },
+        scenarios={key: catalog["objectives"][key]["scenario"] for key in objectives},
         metrics=metrics,
         unavailable_metric_ids=[
             key for key, item in metrics.items() if item.status == "unavailable"
@@ -306,7 +364,9 @@ def compute_objective_report(
             scenario_report=scenario_report,
             repeat_scenario_report=repeat_scenario_report,
             candidate_sha256=candidate_sha256,
-        ),
+        )
+        if include_qualification
+        else None,
     )
 
 

@@ -95,9 +95,7 @@ def validate_candidate_source_patch(
                 f"{result.stderr.decode(errors='replace').strip()}"
             )
         changed.update(
-            PurePosixPath(os.fsdecode(raw))
-            for raw in result.stdout.split(b"\0")
-            if raw
+            PurePosixPath(os.fsdecode(raw)) for raw in result.stdout.split(b"\0") if raw
         )
     if not changed:
         raise RuntimeError("candidate patch contains no source changes")
@@ -780,13 +778,41 @@ class LocalProcessJudge:
                 raise RuntimeError(
                     f"{state.value} validation test patch failed: {applied.stderr}"
                 )
-        for command in self.repository.build_commands(build_kind):
-            built = self._run(command, workspace)
+        for index, command in enumerate(self.repository.build_commands(build_kind)):
+            log_dir = (
+                self.output_dir
+                / "build-logs"
+                / build_kind.value
+                / state.value
+                / f"{index:03d}-{time.time_ns()}"
+            )
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / "command.json").write_text(command.model_dump_json(indent=2))
+            try:
+                built = self._run(command, workspace)
+            except subprocess.TimeoutExpired as error:
+                (log_dir / "stdout.txt").write_text(
+                    error.output.decode(errors="replace")
+                    if isinstance(error.output, bytes)
+                    else error.output or ""
+                )
+                (log_dir / "stderr.txt").write_text(
+                    error.stderr.decode(errors="replace")
+                    if isinstance(error.stderr, bytes)
+                    else error.stderr or ""
+                )
+                (log_dir / "status.json").write_text(json.dumps({"timeout": True}))
+                raise
+            (log_dir / "stdout.txt").write_text(built.stdout or "")
+            (log_dir / "stderr.txt").write_text(built.stderr or "")
+            (log_dir / "status.json").write_text(
+                json.dumps({"returncode": built.returncode})
+            )
             if built.returncode:
                 details = built.stderr.strip() or built.stdout.strip()
                 raise RuntimeError(
                     f"{state.value} {build_kind.value} build failed "
-                    f"(exit {built.returncode}): {details}"
+                    f"(exit {built.returncode}; full logs: {log_dir}): {details}"
                 )
         return workspace
 

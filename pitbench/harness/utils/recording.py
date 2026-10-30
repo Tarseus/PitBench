@@ -37,6 +37,93 @@ def durable_json(path: Path, value) -> None:
         os.close(descriptor)
 
 
+def _store_content(objects: Path, content: bytes) -> str:
+    digest = hashlib.sha256(content).hexdigest()
+    destination = objects / digest
+    if not destination.exists():
+        with destination.open("xb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+    return digest
+
+
+def _read_content(objects: Path, digest: str) -> bytes:
+    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise ValueError("invalid transcript object digest")
+    content = (objects / digest).read_bytes()
+    if hashlib.sha256(content).hexdigest() != digest:
+        raise ValueError(f"corrupt transcript object: {digest}")
+    return content
+
+
+def read_transcript(objects: Path, reference: dict) -> bytes:
+    """Recover an exact transcript version, including legacy full-file objects."""
+    if reference.get("format") != "transcript-chunks-v1":
+        content = _read_content(objects, reference["sha256"])
+        if len(content) != reference["bytes"]:
+            raise ValueError("transcript size mismatch")
+        return content
+    chunks = []
+    digest = reference["sha256"]
+    while digest is not None:
+        manifest = json.loads(_read_content(objects, digest))
+        content = _read_content(objects, manifest["chunk"]["sha256"])
+        if len(content) != manifest["chunk"]["bytes"]:
+            raise ValueError("transcript chunk size mismatch")
+        chunks.append((manifest["offset"], content))
+        digest = manifest["previous"]
+    result = bytearray()
+    for offset, content in reversed(chunks):
+        if offset != len(result):
+            raise ValueError("noncontiguous transcript chunks")
+        result.extend(content)
+    if len(result) != reference["total_bytes"]:
+        raise ValueError("transcript size mismatch")
+    return bytes(result)
+
+
+def _capture_transcript(spool: Path, source: str) -> dict:
+    objects = spool / "objects"
+    objects.mkdir(exist_ok=True)
+    state_path = spool / ".transcripts.json"
+    states = json.loads(state_path.read_text()) if state_path.exists() else {}
+    key = str(Path(source).resolve())
+    content = Path(source).read_bytes()
+    previous = states.get(key)
+    offset = previous["bytes"] if previous else 0
+    appending = (
+        previous is not None
+        and len(content) >= offset
+        and hashlib.sha256(content[:offset]).hexdigest() == previous["content_sha256"]
+    )
+    if appending and len(content) == offset:
+        return previous["reference"]
+    if not appending:
+        offset = 0
+    chunk = content[offset:]
+    manifest = {
+        "previous": previous["reference"]["sha256"] if appending else None,
+        "offset": offset,
+        "chunk": {"sha256": _store_content(objects, chunk), "bytes": len(chunk)},
+    }
+    encoded = json.dumps(manifest, sort_keys=True).encode()
+    reference = {
+        "format": "transcript-chunks-v1",
+        "sha256": _store_content(objects, encoded),
+        "bytes": len(encoded),
+        "source": source,
+        "total_bytes": len(content),
+    }
+    states[key] = {
+        "bytes": len(content),
+        "content_sha256": hashlib.sha256(content).hexdigest(),
+        "reference": reference,
+    }
+    durable_json(state_path, states)
+    return reference
+
+
 def record_hook(
     spool: Path,
     provider: str,
@@ -64,21 +151,7 @@ def record_hook(
         }
         transcript = payload.get("transcriptPath") or payload.get("transcript_path")
         if transcript and Path(transcript).is_file():
-            content = Path(transcript).read_bytes()
-            digest = hashlib.sha256(content).hexdigest()
-            objects = spool / "objects"
-            objects.mkdir(exist_ok=True)
-            destination = objects / digest
-            if not destination.exists():
-                with destination.open("xb") as stream:
-                    stream.write(content)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-            event["transcript"] = {
-                "sha256": digest,
-                "bytes": len(content),
-                "source": transcript,
-            }
+            event["transcript"] = _capture_transcript(spool, transcript)
         event["completed_ns"] = time.time_ns()
         durable_json(spool / f"event-{event['timestamp_ns']}-{event['id']}.json", event)
         return event
@@ -104,12 +177,27 @@ def export_events(spool: Path, after: int) -> None:
         with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
             for path, event, digests in selected:
                 archive.add(path, arcname=path.name)
-                for digest in sorted(digests):
+                pending = [
+                    (
+                        digest,
+                        event["transcript"].get("format") == "transcript-chunks-v1",
+                    )
+                    for digest in sorted(digests)
+                ]
+                while pending:
+                    digest, chunked = pending.pop()
                     if digest not in included:
                         archive.add(
                             spool / "objects" / digest, arcname=f"objects/{digest}"
                         )
                         included.add(digest)
+                        if chunked:
+                            manifest = json.loads(
+                                _read_content(spool / "objects", digest)
+                            )
+                            pending.append((manifest["chunk"]["sha256"], False))
+                            if manifest["previous"] is not None:
+                                pending.append((manifest["previous"], True))
 
 
 def watch_workspace(root: Path, spool: Path) -> None:

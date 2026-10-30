@@ -305,5 +305,121 @@
     "scenario_runtime_configuration": "explicit_per_task",
     "solver_api_capabilities": "must_be_verified_for_each_selected_release"
   },
-  "release_readiness": "not_verified"
+  "release_readiness": "not_verified",
+  "task_matrix": [
+    {
+      "repository": "PyVRP/PyVRP",
+      "role": "latest",
+      "task_id": "release_pyvrp_v0_14_1",
+      "template_task_id": "pyvrp_v0_14_0",
+      "task_config": "configs/tasks/release_pyvrp_v0_14_1.yaml",
+      "repository_plugin": "pitbench.repositories.plugins:PyVRPDebugOptimizedRepositoryPlugin",
+      "runtime_adaptation": "Keep ASan/UBSan, O1 and debug assertions; use the existing debugoptimized validation profile because upstream 0.14.1 debug logging cannot format Measure with fmt 10. The performance build is unchanged."
+    },
+    {
+      "repository": "PyVRP/PyVRP",
+      "role": "comparison",
+      "task_id": "release_pyvrp_v0_13_4",
+      "template_task_id": "pyvrp_v0_14_0",
+      "task_config": "configs/tasks/release_pyvrp_v0_13_4.yaml"
+    },
+    {
+      "repository": "VROOM-Project/vroom",
+      "role": "latest",
+      "task_id": "release_vroom_v1_15_0",
+      "template_task_id": "vroom_v1_15_0",
+      "task_config": "configs/tasks/release_vroom_v1_15_0.yaml"
+    },
+    {
+      "repository": "VROOM-Project/vroom",
+      "role": "comparison",
+      "task_id": "release_vroom_v1_14_0",
+      "template_task_id": "vroom_v1_15_0",
+      "task_config": "configs/tasks/release_vroom_v1_14_0.yaml"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "role": "latest",
+      "task_id": "release_highs_v1_15_1",
+      "template_task_id": "highs_v1_15_1",
+      "task_config": "configs/tasks/release_highs_v1_15_1.yaml"
+    },
+    {
+      "repository": "ERGO-Code/HiGHS",
+      "role": "comparison",
+      "task_id": "release_highs_v1_14_0",
+      "template_task_id": "highs_v1_15_1",
+      "task_config": "configs/tasks/release_highs_v1_14_0.yaml"
+    },
+    {
+      "repository": "chocoteam/choco-solver",
+      "role": "latest",
+      "task_id": "release_choco_v6_0_2",
+      "template_task_id": "choco_v6_0_1",
+      "task_config": "configs/tasks/release_choco_v6_0_2.yaml"
+    },
+    {
+      "repository": "chocoteam/choco-solver",
+      "role": "comparison",
+      "task_id": "release_choco_v5_0_1",
+      "template_task_id": "choco_v6_0_1",
+      "task_config": "configs/tasks/release_choco_v5_0_1.yaml"
+    },
+    {
+      "repository": "Gecode/gecode",
+      "role": "latest",
+      "task_id": "release_gecode_v6_4_0",
+      "template_task_id": "gecode_binpacking_dff_20260711",
+      "task_config": "configs/tasks/release_gecode_v6_4_0.yaml"
+    },
+    {
+      "repository": "Gecode/gecode",
+      "role": "comparison",
+      "task_id": "release_gecode_v6_3_0",
+      "template_task_id": "gecode_binpacking_dff_20260711",
+      "task_config": "configs/tasks/release_gecode_v6_3_0.yaml"
+    },
+    {
+      "repository": "google/or-tools",
+      "role": "latest",
+      "task_id": "release_ortools_cp_sat_v9_15",
+      "template_task_id": "ortools_cp_sat_solve_v9_15",
+      "task_config": "configs/tasks/release_ortools_cp_sat_v9_15.yaml"
+    },
+    {
+      "repository": "google/or-tools",
+      "role": "comparison",
+      "task_id": "release_ortools_cp_sat_v9_14",
+      "template_task_id": "ortools_cp_sat_solve_v9_15",
+      "task_config": "configs/tasks/release_ortools_cp_sat_v9_14.yaml"
+    },
+    {
+      "repository": "scipopt/scip",
+      "role": "latest",
+      "task_id": "release_scip_v10_1_0",
+      "template_task_id": "scip_v9_2_4",
+      "task_config": "configs/tasks/release_scip_v10_1_0.yaml"
+    },
+    {
+      "repository": "scipopt/scip",
+      "role": "comparison",
+      "task_id": "release_scip_v10_0_3",
+      "template_task_id": "scip_v9_2_4",
+      "task_config": "configs/tasks/release_scip_v10_0_3.yaml"
+    },
+    {
+      "repository": "coin-or/Cbc",
+      "role": "latest",
+      "task_id": "release_cbc_v2_10_13",
+      "template_task_id": "cbc_v2_10_12",
+      "task_config": "configs/tasks/release_cbc_v2_10_13.yaml"
+    },
+    {
+      "repository": "coin-or/Cbc",
+      "role": "comparison",
+      "task_id": "release_cbc_v2_10_12",
+      "template_task_id": "cbc_v2_10_12",
+      "task_config": "configs/tasks/release_cbc_v2_10_12.yaml"
+    }
+  ]
 }

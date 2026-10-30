@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "study_id": "algorithmic_generalization_adaptation_v1",
+  "claim_scope": "diagnostic_single_attempt",
+  "release_manifest": "configs/benchmarks/0.0.1.json",
+  "task_configs": [
+    "configs/tasks/release_cbc_v2_10_12.yaml",
+    "configs/tasks/release_cbc_v2_10_13.yaml",
+    "configs/tasks/release_scip_v10_0_3.yaml",
+    "configs/tasks/release_scip_v10_1_0.yaml",
+    "configs/tasks/release_pyvrp_v0_13_4.yaml",
+    "configs/tasks/release_pyvrp_v0_14_1.yaml"
+  ],
+  "model_matrix": "configs/experiments/generalization_model_matrix.yaml",
+  "population_plan": "configs/research/generalization_populations.json",
+  "research_budget": {
+    "track": "standard", "wall_time_sec": 14400,
+    "cpus": 8, "memory_gib": 32, "development_parallel_runs": 4,
+    "checkpoints_sec": [1800, 3600, 7200, 14400]
+  },
+  "agent_attempts_per_condition": 1,
+  "shared_agent_tools": ["inspect", "workspace", "bench"],
+  "required_scenario_kinds": ["trajectory", "lifecycle", "scaling", "sequence", "numerical", "replay"],
+  "arms": [
+    {
+      "id": "original", "development_view": "original_task_development",
+      "require_candidate_hypotheses": false,
+      "instruction": "Improve the pinned solver using the visible development instances and shared tools. You may construct experiments and conditional strategies autonomously. Preserve feasibility, objective semantics and truthful statuses."
+    },
+    {
+      "id": "diverse", "development_view": "diverse_development_v1",
+      "require_candidate_hypotheses": false,
+      "instruction": "Improve the pinned solver using the visible diverse development population and shared tools. You may construct experiments and conditional strategies autonomously. Preserve feasibility, objective semantics and truthful statuses."
+    },
+    {
+      "id": "mechanism_aware", "development_view": "diverse_development_v1",
+      "require_candidate_hypotheses": true,
+      "instruction": "Improve the pinned solver with the same diverse population and tools. Before benchmarking each nonempty candidate patch, register its mechanism, applicable conditions, algorithm-state features, failure hypotheses, correctness invariants and a controlled falsification experiment with pitbench hypothesis --plan FILE. Select the registered experiment using pitbench bench --hypothesis-id ID --experiment-id ID. Adaptation may use algorithm state and observable input features; do not branch on hidden identities or reference answers. Retain failed and rejected candidates."
+    }
+  ],
+  "inference_scope": "One fresh independent Agent start per task/model/arm. Judge instance/solver-seed intervals describe the realized patch, not Agent-generation variance. Diversity is assessed with B-A; the mechanism intervention with C-B. Versions within a repository and distributions within a task are dependent, not independent software tasks. No best-of-model, best-of-arm or outcome-selected test panels."
+}

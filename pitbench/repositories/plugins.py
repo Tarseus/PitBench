@@ -368,6 +368,7 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
         prebuild="",
     )
     agent_python = "python3"
+    agent_support_paths = ("/opt/pitbench-jvm",)
     name = "choco"
     driver_python = "python3"
     agent_requirement = "env:PITBENCH_CHOCO_RUNNER"
@@ -428,6 +429,8 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
         prebuild="",
     )
     agent_python = "python3"
+    agent_support_paths = ("/opt/pitbench-jvm",)
+    judge_environment_requirements = {"MAVEN_CONFIG": "/tmp/ortools-maven"}
     name = "ortools"
     driver_python = "python3"
     agent_requirement = "env:PITBENCH_ORTOOLS_CP_SAT_RUNNER"
@@ -514,6 +517,7 @@ class GecodeRepositoryPlugin(RepositoryPlugin):
     driver_name = "gecode_exact"
     driver_python = "python3"
     agent_python = "python3"
+    agent_support_paths = ("/opt/pitbench-adapters",)
     agent_requirement = "env:PITBENCH_GECODE_RUNNER"
     agent_artifact_globs = ("build/pitbench-exact", "build/libgecode*.so")
     agent_build_paths = ("build",)
@@ -537,19 +541,19 @@ class GecodeRepositoryPlugin(RepositoryPlugin):
                     "build",
                     f"-DCMAKE_BUILD_TYPE={build_type}",
                     "-DBUILD_TESTING=ON",
+                    "-DBUILD_SHARED_LIBS=ON",
                     "-DGECODE_BUILD_SHARED=ON",
                     "-DGECODE_BUILD_STATIC=OFF",
                 ]
             ),
             CommandSpec(
                 argv=[
-                    "cmake",
-                    "--build",
-                    "build",
-                    "--target",
-                    "gecodeint_shared",
-                    "gecodesearch_shared",
-                    "-j2",
+                    "sh",
+                    "-c",
+                    "cmake --build build --target help > build/pitbench-targets.txt && "
+                    "if grep -q gecodeint_shared build/pitbench-targets.txt; then "
+                    "cmake --build build --target gecodeint_shared gecodesearch_shared -j2; "
+                    "else cmake --build build --target gecodeint gecodesearch -j2; fi",
                 ]
             ),
         ]
@@ -614,17 +618,17 @@ class OrToolsCpSatExactRepositoryPlugin(OrToolsRepositoryPlugin):
 
     def prepare_independent_verifier(self, output_dir: Path):
         """Compile a checker against the immutable OR-Tools judge runtime."""
-        from adapters.jvm.runner import _ORTOOLS_CP_SAT_ASSIGNMENT_VERIFIER_SOURCE
+        from adapters.jvm.runner import (
+            _ORTOOLS_CP_SAT_ASSIGNMENT_VERIFIER_SOURCE,
+            _ortools_java_artifact,
+        )
         from pitbench.problem_families.verification import ProcessVerifierFamily
 
         runtime_root = Path("/workspace/repo/build/java")
-        java_jar = runtime_root / "ortools-java/target/ortools-java-9.15.9999.jar"
-        native_jar = (
-            runtime_root
-            / "ortools-linux-x86-64/target/ortools-linux-x86-64-9.15.9999.jar"
+        java_jar = _ortools_java_artifact(runtime_root.parent.parent, "ortools-java")
+        native_jar = _ortools_java_artifact(
+            runtime_root.parent.parent, "ortools-linux-x86-64"
         )
-        if not java_jar.is_file() or not native_jar.is_file():
-            raise RuntimeError("immutable OR-Tools judge runtime is unavailable")
 
         def maven_jar(*path_parts: str) -> Path:
             artifacts = sorted(

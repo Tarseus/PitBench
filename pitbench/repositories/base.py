@@ -26,6 +26,8 @@ SOURCE_SUFFIXES = frozenset(
         ".pyx", ".pxd", ".pxi", ".proto", ".f", ".for", ".f77", ".f90", ".f95", ".f03", ".f08",
         ".rs",
         ".java",
+        ".i",
+        ".swig",
         ".kt",
         ".scala",
         ".jl",
@@ -93,6 +95,8 @@ class RepositoryPlugin(ABC):
     agent_environment: AgentEnvironment | None = None
     agent_requirement: str | None = None
     agent_artifact_globs: tuple[str, ...] = ()
+    # Public, evaluator-owned helpers needed by the unprivileged developer user.
+    agent_support_paths: tuple[str, ...] = ()
     # Writable generated output roots; candidate patches may not change them.
     agent_build_paths: tuple[str, ...] = ()
     agent_python: str | None = None

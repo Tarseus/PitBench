@@ -1,0 +1,86 @@
+schema_version: '3.0'
+task_id: release_ortools_cp_sat_v9_15
+release:
+  repository: google/or-tools
+  version: '9.15'
+  tag: v9.15
+  base_commit: 551ad10d94835c99e5e1e684500d3db398c0e345
+  tree_sha: 8f746840b74f32ce4b9d3ff0231ed2cabbd5072d
+  released_at: '2026-01-12T15:38:30Z'
+  url: https://github.com/google/or-tools/releases/tag/v9.15
+task_type: exact_solver
+problem_family: cp
+optimization_scope: cp_sat_solve_efficiency
+instruction: Improve this solver's performance on the declared problem family under the specified solve
+  budgets. Identify and validate source-level improvements autonomously while preserving original-problem
+  feasibility, objective semantics, and truthful solve statuses.
+repository:
+  clone_url: https://github.com/google/or-tools.git
+  plugin: pitbench.repositories.plugins:OrToolsCpSatExactRepositoryPlugin
+  editable_paths:
+  - ortools
+  - build
+  agent_image: pitbench-release:release_ortools_cp_sat_v9_15
+  judge_image: null
+oracle:
+  kind: best_known_solution
+  source: private://oracles/release_ortools_cp_sat_v9_15.yaml
+  source_sha256: 0b507ba3f327ff6dbee968563d22fc74ea8e2e9e411c74a271347e9b79a4181d
+  objective_sense: minimize
+evaluation:
+  performance_protocol: exact_verified_solve
+  operational_reliability: false
+  budgets_sec:
+  - 10.0
+  - 30.0
+  primary_budget_sec: 30.0
+  seed_robustness:
+    development_seeds:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    evaluation_seeds_file: private://seed_robustness/release_ortools_cp_sat_v9_15.yaml
+    evaluation_seeds_file_sha256: 0ff6320727fdbe98592036c8e6479085be098040ef8fc1b9effe0b3644941bbe
+    seed_selection:
+      seed_min: 0
+      seed_max: 2147483647
+      seed_count: 30
+  threads: 1
+  exact_time_basis: solve_wall_time
+  verifier: exact_target
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/ortools_cp_sat_solve_v9_15_dev.yaml
+  size: 5
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://hidden_instances/ortools_cp_sat_solve_v9_15/judge_id.yaml
+  size: 30

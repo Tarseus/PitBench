@@ -1,0 +1,56 @@
+schema_version: '3.0'
+task_id: release_vroom_v1_15_0
+release:
+  repository: VROOM-Project/vroom
+  version: 1.15.0
+  tag: v1.15.0
+  base_commit: 43dd7d0b8b560431eb555bf335cf4797eb7343c4
+  tree_sha: cf39d27fd6cf7dfb12fe6ae5665a736ba159195d
+  released_at: '2026-03-12T13:35:16Z'
+  url: https://github.com/VROOM-Project/vroom/releases/tag/v1.15.0
+task_type: heuristic_solver
+problem_family: cvrp
+optimization_scope: routing_search_efficiency
+instruction: Improve this solver's performance on the declared problem family under the specified solve
+  budgets. Identify and validate source-level improvements autonomously while preserving original-problem
+  feasibility, objective semantics, and truthful solve statuses.
+repository:
+  clone_url: https://github.com/VROOM-Project/vroom.git
+  plugin: pitbench.repositories.plugins:VroomRepositoryPlugin
+  editable_paths:
+  - src
+  - include
+  - bin
+  - obj
+  agent_image: pitbench-release:release_vroom_v1_15_0
+  judge_image: null
+oracle:
+  kind: best_known_solution
+  source: private://calibration/cvrplib_x/oracle.yaml
+  source_sha256: 84833f98c4d1f2480889ed8f5f0b9046402bc899fd06f8a6b7602f186cc8ca13
+  objective_sense: minimize
+evaluation:
+  performance_protocol: heuristic_fixed_budget
+  operational_reliability: false
+  budgets_sec:
+  - 1.0
+  - 5.0
+  - 10.0
+  primary_budget_sec: 10.0
+  solver_seeds:
+  - 0
+  threads: 1
+  verifier: cvrp_independent
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: configs/instance_sets/vroom_v1_15_0_dev.yaml
+  size: 10
+  randomness:
+    instance_seed: 11500
+    coordinate_seed: 11501
+    demand_seed: 11502
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://calibration/cvrplib_x/oracle.yaml
+  size: 38

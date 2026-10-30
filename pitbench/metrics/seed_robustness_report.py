@@ -10,15 +10,73 @@ from pydantic import BaseModel, Field
 
 from pitbench.schema.observation import (
     CodeState,
+    ExpectedRunGrid,
     RunObservation,
     RunStatus,
     SolverTermination,
 )
-from pitbench.schema.task import ExactTimeBasis, InstanceSetKind
+from pitbench.schema.task import (
+    ExactTimeBasis,
+    InstanceSetKind,
+    PerformanceProtocol,
+    PitBenchTask,
+)
 
 BOOTSTRAP_RESAMPLES = 5000
 BOOTSTRAP_SEED = 20260824
 SEED_BOOTSTRAP_METHOD = "paired seed-list bootstrap with fixed instances"
+
+
+def compute_task_seed_robustness_report(
+    observations: Sequence[RunObservation],
+    *,
+    task: PitBenchTask,
+    expected_run_grid: ExpectedRunGrid,
+    evaluation_seeds: Sequence[int] | None = None,
+) -> SeedRobustnessReport | ExactSeedRobustnessReport | None:
+    """Recompute native seed evidence using the saved planned seed list.
+
+    Derive seeds from the plan, never from successfully observed runs: missing
+    observations must not shrink the intended seed denominator.
+    """
+    config = task.evaluation.seed_robustness
+    if config is None:
+        return None
+    if expected_run_grid.task_id != task.task_id:
+        raise ValueError("seed report grid belongs to another task")
+    planned_seeds = list(
+        dict.fromkeys(
+            run.solver_seed
+            for run in expected_run_grid.runs
+            if run.instance_set_kind in {"judge_id", "judge_shift"}
+            and run.test_suite is None
+            and run.equivalence_parent_id is None
+        )
+    )
+    if evaluation_seeds is None:
+        evaluation_seeds = planned_seeds
+    elif set(evaluation_seeds) != set(planned_seeds):
+        raise ValueError("saved seed list differs from the expected run grid")
+    original = [
+        row
+        for row in observations
+        if row.test_suite is None and row.equivalence_parent_id is None
+    ]
+    kwargs = dict(
+        task_id=task.task_id,
+        budgets_sec=task.evaluation.budgets_sec,
+        primary_budget_sec=task.evaluation.primary_budget_sec,
+        seed_selection=SeedSelectionMetadata.model_validate(
+            config.seed_selection.model_dump()
+        ),
+        development_seeds=config.development_seeds,
+        evaluation_seeds=evaluation_seeds,
+    )
+    if task.evaluation.performance_protocol is PerformanceProtocol.EXACT_VERIFIED_SOLVE:
+        return compute_exact_seed_robustness_report(
+            original, time_basis=task.evaluation.exact_time_basis, **kwargs
+        )
+    return compute_seed_robustness_report(original, **kwargs)
 
 
 class SeedSelectionMetadata(BaseModel):
@@ -227,7 +285,9 @@ def _exact_state_result(
     code_state: CodeState,
     expected_seeds: tuple[int, ...],
     time_basis: ExactTimeBasis,
-) -> tuple[ExactSeedCodeStateResult, list[list[float] | None], list[list[float] | None]]:
+) -> tuple[
+    ExactSeedCodeStateResult, list[list[float] | None], list[list[float] | None]
+]:
     instances: dict[str, ExactSeedInstanceResult] = {}
     time_values: list[list[float] | None] = []
     gap_values: list[list[float] | None] = []
@@ -241,11 +301,13 @@ def _exact_state_result(
         capped_times = [
             value
             for observation in observations
-            if (value := _exact_capped_time(
-                observation,
-                budget_sec=budget_sec,
-                time_basis=time_basis,
-            ))
+            if (
+                value := _exact_capped_time(
+                    observation,
+                    budget_sec=budget_sec,
+                    time_basis=time_basis,
+                )
+            )
             is not None
         ]
         final_gaps = [
@@ -263,7 +325,9 @@ def _exact_state_result(
             capped_time_iqr_sec=(
                 seed_iqr(complete_time) if complete_time is not None else None
             ),
-            final_gap_iqr=(seed_iqr(complete_gap) if complete_gap is not None else None),
+            final_gap_iqr=(
+                seed_iqr(complete_gap) if complete_gap is not None else None
+            ),
             verified_optimal_count=sum(
                 _exact_verified_optimal(observation) for observation in observations
             ),
@@ -392,9 +456,7 @@ def compute_exact_seed_robustness_report(
             ]
             paired_gaps = [
                 (base_values, agent_values)
-                for base_values, agent_values in zip(
-                    base_gaps, agent_gaps, strict=True
-                )
+                for base_values, agent_values in zip(base_gaps, agent_gaps, strict=True)
                 if base_values is not None and agent_values is not None
             ]
             time_ci = (
@@ -408,11 +470,17 @@ def compute_exact_seed_robustness_report(
                 else None
             )
             if time_ci is not None:
-                base.capped_time_iqr_ci99, agent.capped_time_iqr_ci99, time_change_ci = time_ci
+                (
+                    base.capped_time_iqr_ci99,
+                    agent.capped_time_iqr_ci99,
+                    time_change_ci,
+                ) = time_ci
             else:
                 time_change_ci = None
             if gap_ci is not None:
-                base.final_gap_iqr_ci99, agent.final_gap_iqr_ci99, gap_change_ci = gap_ci
+                base.final_gap_iqr_ci99, agent.final_gap_iqr_ci99, gap_change_ci = (
+                    gap_ci
+                )
             else:
                 gap_change_ci = None
             by_budget[f"{budget_sec:g}"] = ExactSeedRobustnessBudget(

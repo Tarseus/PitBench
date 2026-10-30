@@ -8,7 +8,32 @@ import random
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
+from urllib.parse import urlsplit
+
+
+def write_maven_settings(output: Path, proxy_url: str | None) -> None:
+    """Pass the build proxy to Maven's resolver through its settings contract."""
+    settings = ET.Element("settings")
+    proxy = urlsplit(proxy_url or "")
+    if proxy.hostname:
+        entry = ET.SubElement(ET.SubElement(settings, "proxies"), "proxy")
+        values = {
+            "id": "pitbench-build",
+            "active": "true",
+            "protocol": proxy.scheme or "http",
+            "host": proxy.hostname,
+            "port": str(proxy.port or (443 if proxy.scheme == "https" else 80)),
+            "nonProxyHosts": "localhost|127.0.0.1",
+        }
+        if proxy.username:
+            values["username"] = proxy.username
+        if proxy.password:
+            values["password"] = proxy.password
+        for key, value in values.items():
+            ET.SubElement(entry, key).text = value
+    ET.ElementTree(settings).write(output, encoding="utf-8", xml_declaration=True)
 
 
 def _choco_assembly(repository: Path) -> Path:
@@ -66,6 +91,89 @@ def _ortools_classpath(repository: Path, output: Path) -> str:
             str(_maven_artifact("net", "java", "dev", "jna", "jna-platform")),
         ]
     )
+
+
+def _prepare_ortools_java_tests(repository: Path) -> None:
+    """Bind generated tests to the built runtime and their actual JUnit API."""
+    package_pom = repository / "build/java/ortools-java/pom.xml"
+    if not package_pom.is_file():
+        return
+    namespace = {"m": "http://maven.apache.org/POM/4.0.0"}
+    package = ET.parse(package_pom).getroot()
+    group = package.findtext("m:groupId", namespaces=namespace)
+    artifact = package.findtext("m:artifactId", namespaces=namespace)
+    version = package.findtext("m:version", namespaces=namespace)
+    if not group or not artifact or not version:
+        raise RuntimeError("built OR-Tools Java package has no Maven identity")
+    for pom in (repository / "build/java/sat").glob("*/pom.xml"):
+        tree = ET.parse(pom)
+        changed = False
+        dependencies = tree.findall("m:dependencies/m:dependency", namespace)
+        for dependency in dependencies:
+            if (
+                dependency.findtext("m:groupId", namespaces=namespace) == group
+                and dependency.findtext("m:artifactId", namespaces=namespace)
+                == artifact
+            ):
+                declaration = dependency.find("m:version", namespace)
+                if declaration is None:
+                    raise RuntimeError(f"test dependency has no version: {pom}")
+                if declaration.text != version:
+                    declaration.text = version
+                    changed = True
+        source = repository / "ortools/sat/java" / f"{pom.parent.name}.java"
+        if source.is_file() and "import org.junit.Test;" in source.read_text():
+            artifacts = {
+                dependency.findtext("m:artifactId", namespaces=namespace): dependency
+                for dependency in dependencies
+            }
+            if "junit-vintage-engine" not in artifacts:
+                platform = artifacts.get("junit-jupiter-engine")
+                engine_version = (
+                    platform.findtext("m:version", namespaces=namespace)
+                    if platform is not None
+                    else None
+                )
+                if not engine_version:
+                    raise RuntimeError(
+                        f"JUnit 4 tests need a declared platform engine: {pom}"
+                    )
+                dependency = ET.SubElement(
+                    tree.find("m:dependencies", namespace),
+                    f"{{{namespace['m']}}}dependency",
+                )
+                for name, value in {
+                    "groupId": "org.junit.vintage",
+                    "artifactId": "junit-vintage-engine",
+                    "version": engine_version,
+                    "scope": "test",
+                }.items():
+                    ET.SubElement(
+                        dependency, f"{{{namespace['m']}}}{name}"
+                    ).text = value
+                changed = True
+        for plugin in tree.findall("m:build/m:plugins/m:plugin", namespace):
+            if (
+                plugin.findtext("m:artifactId", namespaces=namespace)
+                != "maven-surefire-plugin"
+            ):
+                continue
+            configuration = plugin.find("m:configuration", namespace)
+            if configuration is None:
+                configuration = ET.SubElement(
+                    plugin, f"{{{namespace['m']}}}configuration"
+                )
+            required = configuration.find("m:failIfNoTests", namespace)
+            if required is None:
+                required = ET.SubElement(
+                    configuration, f"{{{namespace['m']}}}failIfNoTests"
+                )
+            if required.text != "true":
+                required.text = "true"
+                changed = True
+        if changed:
+            ET.register_namespace("", namespace["m"])
+            tree.write(pom, encoding="utf-8", xml_declaration=True)
 
 
 def _adapter_output(repository: Path, solver: str) -> Path:
@@ -642,22 +750,18 @@ public final class OrToolsCpSatRunner {
     solver.getParameters().setSymmetryLevel(symmetryLevel);
     solver.getParameters().setSearchBranching(branching);
     List<String> trajectory = new ArrayList<>();
-    long solveStarted = System.nanoTime();
-    solver.setBestBoundCallback(bound -> {
-      if (Double.isFinite(bound)) {
-        synchronized (trajectory) {
-          trajectory.add("{\\\"event\\\":\\\"bound\\\",\\\"time_sec\\\":"
-              + (System.nanoTime() - solveStarted) / 1_000_000_000.0
-              + ",\\\"dual_bound\\\":" + bound + "}");
-        }
-      }
-    });
+    // Capture the bound through the solution callback. The pinned Java bindings
+    // cannot safely register a Consumer<Double> best-bound callback: their JNI
+    // signature and captured local class reference are incompatible with it.
     CpSolverStatus status = solver.solve(model, new CpSolverSolutionCallback() {
       @Override
       public void onSolutionCallback() {
         synchronized (trajectory) {
           trajectory.add("{\\\"event\\\":\\\"solution\\\",\\\"time_sec\\\":"
               + wallTime() + ",\\\"objective\\\":" + objectiveValue()
+              + ",\\\"dual_bound\\\":"
+              + (Double.isFinite(bestObjectiveBound())
+                  ? Double.toString(bestObjectiveBound()) : "null")
               + ",\\\"nodes\\\":" + numBranches()
               + ",\\\"conflicts\\\":" + numConflicts() + "}");
         }
@@ -805,6 +909,7 @@ def compile_adapter(repository: Path, solver: str) -> None:
     output = _adapter_output(repository, solver)
     output.mkdir(parents=True, exist_ok=True)
     if solver == "ortools_cp_sat":
+        _prepare_ortools_java_tests(repository)
         source = output / "OrToolsCpSatRunner.java"
         source.write_text(_ORTOOLS_CP_SAT_RUNNER_SOURCE)
         subprocess.run(
@@ -1148,9 +1253,10 @@ def main() -> None:
             "prepare-jssp",
             "prove-bin-packing",
             "prepare-jssp-relabelings",
+            "maven-settings",
         ],
     )
-    parser.add_argument("--solver", choices=["choco", "ortools_cp_sat"], required=True)
+    parser.add_argument("--solver", choices=["choco", "ortools_cp_sat"])
     parser.add_argument("--repository", type=Path, default=Path.cwd())
     parser.add_argument("--instance", type=Path)
     parser.add_argument("--instances-dir", type=Path)
@@ -1159,6 +1265,15 @@ def main() -> None:
     parser.add_argument("--count", type=int)
     parser.add_argument("--generation-seed", type=int)
     args = parser.parse_args()
+    if args.command == "maven-settings":
+        if args.output is None:
+            parser.error("maven-settings requires --output")
+        write_maven_settings(
+            args.output, os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+        )
+        return
+    if args.solver is None:
+        parser.error("--solver is required")
     repository = args.repository.resolve()
     if args.command == "compile":
         compile_adapter(repository, args.solver)

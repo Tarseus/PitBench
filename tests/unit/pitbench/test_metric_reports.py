@@ -27,6 +27,7 @@ from pitbench.metrics.performance_report import (
     adjudicate_performance_confirmation,
     compute_exact_performance_report,
     compute_exact_run_outcome,
+    compute_panel_performance_reports,
     compute_performance_report,
     format_performance_report,
 )
@@ -34,7 +35,9 @@ from pitbench.metrics.resource_report import (
     compute_resource_reports,
     format_resource_report,
 )
+from pitbench.metrics.seed_robustness_report import compute_task_seed_robustness_report
 from pitbench.repositories.base import NormalizedSolverOutput
+from pitbench.schema.objectives import objective_catalog
 from pitbench.schema.observation import (
     CodeState,
     ExpectedRun,
@@ -43,7 +46,7 @@ from pitbench.schema.observation import (
     RunStatus,
     SolverTermination,
 )
-from pitbench.schema.task import ExactTimeBasis
+from pitbench.schema.task import ExactTimeBasis, PitBenchTask
 from pitbench.solver_drivers.common import process_resources, write_result
 from pitbench.solver_drivers.external_runner import execute as execute_external_runner
 from pitbench.solver_drivers.run import VroomDriver
@@ -1021,11 +1024,106 @@ def test_report_command_dispatches_exact_performance(tmp_path: Path) -> None:
             "--task-config",
             str(task_config_path),
             "--json",
+            "--all-metrics",
         ],
     )
     assert json_result.exit_code == 0
     assert '"verified_solved_coverage": 1.0' in json_result.output
     assert '"penalized_average_runtime_sec": 3.0' in json_result.output
+    data = json.loads(json_result.output)
+    inventory = data["objective_measurements"]
+    assert set(inventory["metrics"]) == set(objective_catalog()["metrics"])
+    assert inventory["qualification"] is None
+    assert inventory["metrics"]["boundary_pass_counts"]["status"] == "unavailable"
+    assert "disables" in inventory["metrics"]["boundary_pass_counts"]["detail"]
+    assert (
+        data["performance_by_instance_set"]["judge_id"]["primary"]
+        == data["performance"]["primary"]
+    )
+
+
+def test_seed_report_keeps_missing_planned_seeds_in_denominator() -> None:
+    payload = yaml.safe_load((ROOT / "configs/tasks/highs_v1_15_1.yaml").read_text())
+    payload["task_id"] = "exact-performance"
+    payload["evaluation"].update(
+        budgets_sec=[10],
+        primary_budget_sec=10,
+        seed_robustness=dict(
+            development_seeds=[10, 11],
+            evaluation_seeds_file="private://test.yaml",
+            evaluation_seeds_file_sha256="0" * 64,
+            seed_selection=dict(seed_min=0, seed_max=20, seed_count=2),
+        ),
+    )
+    task = PitBenchTask.model_validate(payload)
+    grid = exact_expected_grid(solver_seeds=(1, 2))
+    observations = [
+        exact_panel_observation(state, iid, 1, cpu_time_sec=1, solved=True)
+        for state in CodeState
+        for iid in ("i1", "i2")
+    ]
+    report = compute_task_seed_robustness_report(
+        observations, task=task, expected_run_grid=grid, evaluation_seeds=[2, 1]
+    )
+    cell = report.by_instance_set["judge_id"].primary
+    assert cell.base.expected_optimal_count == 4
+    assert cell.base.verified_optimal_count == 2
+    assert cell.base.complete_capped_time_instance_count == 0
+    with pytest.raises(ValueError, match="differs from the expected run grid"):
+        compute_task_seed_robustness_report(
+            observations, task=task, expected_run_grid=grid, evaluation_seeds=[1]
+        )
+
+
+def test_panel_reports_expose_shift_regression_separately_from_id() -> None:
+    payload = yaml.safe_load((ROOT / "configs/tasks/highs_v1_15_1.yaml").read_text())
+    payload["task_id"] = "exact-performance"
+    payload["evaluation"].update(
+        budgets_sec=[10], primary_budget_sec=10, seed_robustness=None, solver_seeds=[0]
+    )
+    shift = dict(next(p for p in payload["instance_sets"] if p["name"] == "judge_id"))
+    shift.update(name="judge_shift", kind="judge_shift")
+    payload["instance_sets"].append(shift)
+    task = PitBenchTask.model_validate(payload)
+    original_grid = exact_expected_grid()
+    grid = original_grid.model_copy(
+        update={
+            "runs": [
+                *original_grid.runs,
+                *(
+                    run.model_copy(
+                        update={
+                            "instance_set": "judge_shift",
+                            "instance_set_kind": "judge_shift",
+                        }
+                    )
+                    for run in original_grid.runs
+                ),
+            ]
+        }
+    )
+    observations = [
+        exact_panel_observation(
+            state, iid, 0, cpu_time_sec=3 if state is CodeState.BASE else 1, solved=True
+        )
+        for state in CodeState
+        for iid in ("i1", "i2")
+    ]
+    observations += [
+        exact_panel_observation(
+            state, iid, 0, cpu_time_sec=3, solved=state is CodeState.BASE
+        ).model_copy(
+            update={"instance_set": "judge_shift", "instance_set_kind": "judge_shift"}
+        )
+        for state in CodeState
+        for iid in ("i1", "i2")
+    ]
+    reports = compute_panel_performance_reports(
+        observations, task=task, expected_run_grid=grid
+    )
+    assert reports["judge_id"].classification is PerformanceClassification.IMPROVED
+    assert reports["judge_shift"].classification is PerformanceClassification.REGRESSED
+    assert reports["judge_shift"].confirmation is None
 
 
 def test_report_command_rejects_performance_task_config_mismatch(
@@ -1725,9 +1823,20 @@ def test_vroom_legacy_driver_uses_output_file_and_job_key(tmp_path, monkeypatch)
 
     VroomDriver.main(
         [
-            "--solver", "vroom", "--instance", str(instance), "--output", str(output),
-            "--trajectory", str(trajectory), "--seed", "0", "--budget", "1",
-            "--threads", "1",
+            "--solver",
+            "vroom",
+            "--instance",
+            str(instance),
+            "--output",
+            str(output),
+            "--trajectory",
+            str(trajectory),
+            "--seed",
+            "0",
+            "--budget",
+            "1",
+            "--threads",
+            "1",
         ]
     )
 

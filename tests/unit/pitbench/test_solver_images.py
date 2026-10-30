@@ -89,3 +89,16 @@ def test_ortools_image_compiles_the_configurable_cp_sat_runner() -> None:
     assert dockerfile.index("COPY adapters/jvm /opt/pitbench-jvm") > dockerfile.index(
         "cmake --build /workspace/repo/build --target java_package -j6"
     )
+
+
+def test_source_image_build_accepts_machine_local_base_images() -> None:
+    import pytest
+
+    command = _command(
+        SolverImageBuildConfig(base_images={"JAVA_BASE_IMAGE": "maven:local-import"})
+    )
+    assert "JAVA_BASE_IMAGE=maven:local-import" in command
+    with pytest.raises(ValueError, match="_BASE_IMAGE"):
+        _command(
+            SolverImageBuildConfig(base_images={"BASE_COMMIT": "different-source"})
+        )

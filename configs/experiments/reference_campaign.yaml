@@ -4,12 +4,12 @@ schedule_seed: 20261025
 watchdog_grace_sec: 300
 seeds: [0, 1, 2, 3]
 manifests:
-  - report/problem-generation-20261025/instances/suite.json
-  - report/instance-generation-20261025/cvrp/manifest.json
-  - report/reference-difficulty-20261025/instances/suite.json
-  - report/reference-difficulty-20261025/public/manifest.json
+  - gushengda/data/generation/problem-generation-20261025/instances/suite.json
+  - gushengda/data/generation/instance-generation-20261025/cvrp/manifest.json
+  - gushengda/data/generation/reference-difficulty-20261025/instances/suite.json
+  - gushengda/data/generation/reference-difficulty-20261025/public/manifest.json
 prior_references:
-  - report/problem-generation-20261025/summary.json
+  - gushengda/data/generation/problem-generation-20261025/summary.json
 backends:
   - name: native
     threads: 1

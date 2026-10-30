@@ -13,6 +13,15 @@ unseen optimization instances without violating the original mathematical
 problem. PitBench measures the full solve: making a search routine faster does
 not help if the resulting search makes worse decisions.
 
+Local experiment material is organized under the ignored `gushengda/` workspace.
+One study keeps its runs, analysis, controls, protocol and workspaces together
+under `gushengda/experiments/<purpose>/<study>/`. Task screening and qualification
+material lives under `gushengda/curation/`, shared inputs under `gushengda/data/`,
+and manuscripts, plans and literature under `gushengda/research/`.
+See `gushengda/README.md` for the local directory index. Unnamed evaluations
+default to `gushengda/experiments/ad-hoc/{runs,workspaces}`. Use the organized
+workspace paths; retired directory names remain documented in the migration log.
+
 <p align="center">
   <img src="https://img.shields.io/badge/PitBench-Benchmark-8A2BE2?style=for-the-badge&logo=github&logoColor=white" alt="PitBench Benchmark">
   <img src="https://img.shields.io/badge/Domain-Combinatorial%20Optimization%20%26%20OR-0A7A5E?style=for-the-badge&logo=target&logoColor=white" alt="Combinatorial Optimization">
@@ -44,7 +53,7 @@ not help if the resulting search makes worse decisions.
 
 ## 🎯 Why Combinatorial Optimization (CO)?
 
-**Combinatorial Optimization (CO)** is the algorithmic backbone of modern logistics, supply chains, manufacturing, and scheduling. Developing and accelerating high-performance solvers requires mathematical insight, intricate search heuristics, and low-level systems programming. PitBench has eight solver repositories and forty-eight configured tasks, including thirty-eight validated historical PR starting snapshots. It asks whether coding agents, given a solver repository and an improvement goal but no prescribed code change, can investigate the solver, develop and test an optimization idea, and deliver correct, repeatable gains on unseen instances under fixed computational budgets.
+**Combinatorial Optimization (CO)** is the algorithmic backbone of modern logistics, supply chains, manufacturing, and scheduling. Developing and accelerating high-performance solvers requires mathematical insight, intricate search heuristics, and low-level systems programming. The 0.0.1 release manifest selects sixteen tasks across eight solver repositories, with two official releases per solver. Historical task configurations, including thirty-eight validated PR starting snapshots, remain available separately. See [the release manifest](configs/benchmarks/0.0.1.json) and [the release execution guide](docs/running-release.md). It asks whether coding agents, given a solver repository and an improvement goal but no prescribed code change, can investigate the solver, develop and test an optimization idea, and deliver correct, repeatable gains on unseen instances under fixed computational budgets.
 
 Unlike general repository-level coding benchmarks, solver optimization must preserve problem semantics while evaluating a randomized quality-time process:
 
@@ -244,13 +253,13 @@ For each indexed PR with a pinned task configuration, use the existing curator:
 # First freeze the profile, primary metric, panels and per-task guardrails in YAML.
 python scripts/curate_solver_prs.py objective-register \
   --catalog configs/pr_curation/repositories.json --registry REGISTRY.jsonl \
-  --repository OWNER/REPO --pr-number N --output report/REGISTRATION.json
+  --repository OWNER/REPO --pr-number N --output gushengda/curation/registration/REGISTRATION.json
 
 # Run the normal full Judge, then recompute from its original artifacts.
 python scripts/curate_solver_prs.py objective-qualify \
   --catalog configs/pr_curation/repositories.json --registry REGISTRY.jsonl \
-  --repository OWNER/REPO --pr-number N --run-directory report/JUDGE_RUN \
-  --output report/QUALIFICATION.json
+  --repository OWNER/REPO --pr-number N --run-directory gushengda/curation/qualification/JUDGE_RUN \
+  --output gushengda/curation/qualification/QUALIFICATION.json
 ```
 
 Registration binds the task, source patch and protocol hashes before measured
@@ -641,33 +650,33 @@ verification:
 ```bash
 uv run python -m scripts.curate_solver_prs queue \
   --catalog configs/pr_curation/repositories.json \
-  --registry report/pr-scale-20261018/pr_registry.jsonl \
-  --limit 100 --output report/pr-scale-20261018/review_queue.json
+  --registry gushengda/curation/registry/20261018/pr_registry.jsonl \
+  --limit 100 --output gushengda/curation/reviews/20261018/queues/general/review_queue.json
 uv run python -m scripts.curate_solver_prs enrich \
   --catalog configs/pr_curation/repositories.json \
-  --registry report/pr-scale-20261018/pr_registry.jsonl \
-  --queue report/pr-scale-20261018/review_queue.json \
-  --limit 100 --output report/pr-scale-20261018/pr_detail_review.jsonl
+  --registry gushengda/curation/registry/20261018/pr_registry.jsonl \
+  --queue gushengda/curation/reviews/20261018/queues/general/review_queue.json \
+  --limit 100 --output gushengda/curation/reviews/20261018/decisions/pr_detail_review.jsonl
 uv run python -m scripts.curate_solver_prs triage \
   --catalog configs/pr_curation/repositories.json \
-  --registry report/pr-scale-20261018/pr_registry.jsonl \
-  --details report/pr-scale-20261018/pr_detail_review.jsonl \
+  --registry gushengda/curation/registry/20261018/pr_registry.jsonl \
+  --details gushengda/curation/reviews/20261018/decisions/pr_detail_review.jsonl \
   --limit 100 --audit-fraction 0.1 \
-  --output report/pr-scale-20261018/mechanism_review_queue.json
+  --output gushengda/curation/reviews/20261018/queues/mechanism/mechanism_review_queue.json
 uv run python -m scripts.curate_solver_prs screening-audit \
   --catalog configs/pr_curation/repositories.json \
-  --registry report/pr-scale-20261018/pr_registry.jsonl \
-  --details report/pr-scale-20261018/pr_detail_review.jsonl \
-  --output report/pr-scale-20261018/screening_audit.json
+  --registry gushengda/curation/registry/20261018/pr_registry.jsonl \
+  --details gushengda/curation/reviews/20261018/decisions/pr_detail_review.jsonl \
+  --output gushengda/curation/registry/20261018/audits/screening_audit.json
 uv run python -m scripts.curate_solver_prs prepare-review-batch \
   --catalog configs/pr_curation/repositories.json \
-  --registry report/pr-scale-20261018/pr_registry.jsonl \
-  --details report/pr-scale-20261018/pr_detail_review.jsonl \
-  --queue report/pr-scale-20261018/mechanism_review_queue.json \
-  --limit 100 --output-dir report/pr-scale-20261018/review_batch_01
+  --registry gushengda/curation/registry/20261018/pr_registry.jsonl \
+  --details gushengda/curation/reviews/20261018/decisions/pr_detail_review.jsonl \
+  --queue gushengda/curation/reviews/20261018/queues/mechanism/mechanism_review_queue.json \
+  --limit 100 --output-dir gushengda/curation/reviews/20261018/batches/review_batch_01
 uv run python -m scripts.curate_solver_prs screen \
   --catalog configs/pr_curation/repositories.json \
-  --registry report/pr-scale-20261018/pr_registry.jsonl \
+  --registry gushengda/curation/registry/20261018/pr_registry.jsonl \
   --review-file REVIEW.json
 ```
 
@@ -697,13 +706,13 @@ stages, run:
 ```bash
 uv run python -m scripts.curate_solver_prs screen \
   --catalog configs/pr_curation/repositories.json \
-  --registry report/pr-scale-20261018/pr_registry.jsonl \
+  --registry gushengda/curation/registry/20261018/pr_registry.jsonl \
   --review-dir configs/pr_curation/reviews/pilot_01
 uv run python -m scripts.curate_solver_prs review-batch-status \
   --catalog configs/pr_curation/repositories.json \
-  --registry report/pr-scale-20261018/pr_registry.jsonl \
-  --manifest report/pr-scale-20261018/review_batch_01/manifest.json \
-  --output report/pr-scale-20261018/review_batch_01/status.json
+  --registry gushengda/curation/registry/20261018/pr_registry.jsonl \
+  --manifest gushengda/curation/reviews/20261018/batches/review_batch_01/manifest.json \
+  --output gushengda/curation/reviews/20261018/batches/review_batch_01/status.json
 ```
 
 The batch status
@@ -1169,7 +1178,7 @@ distributions and problem sizes without running a solver:
 ```bash
 uv run python -m scripts.generate_instances \
   --config configs/experiments/instance_generation.yaml \
-  --output-dir report/instance-generation/cvrp
+  --output-dir gushengda/data/generation/instance-generation/cvrp
 ```
 
 The example produces 135 CVRP instances: three spatial distributions, three
@@ -1255,10 +1264,10 @@ Generate and search the multi-family example with:
 ```bash
 uv run python -m scripts.generate_instances \
   --config configs/experiments/problem_generation.yaml \
-  --output-dir report/problem-generation/instances
+  --output-dir gushengda/data/generation/problem-generation/instances
 uv run python -m scripts.collect_reference_solutions \
-  --manifest report/problem-generation/instances/suite.json \
-  --output-dir report/problem-generation/references \
+  --manifest gushengda/data/generation/problem-generation/instances/suite.json \
+  --output-dir gushengda/data/generation/problem-generation/references \
   --seconds 1 --max-exact-customers 12
 ```
 
@@ -1305,9 +1314,9 @@ Long reference searches use the same collection process runner and CPU scheduler
 ```bash
 uv run python -m scripts.collect_reference_solutions \
   --campaign-config configs/experiments/reference_campaign_long.yaml \
-  --output-dir report/reference-campaign-20261025-long
+  --output-dir gushengda/data/references/reference-campaign-20261025-long
 uv run python -m scripts.collect_reference_solutions \
-  --status --output-dir report/reference-campaign-20261025-long
+  --status --output-dir gushengda/data/references/reference-campaign-20261025-long
 ```
 
 Run these commands with a Python environment containing the backends declared
@@ -1353,10 +1362,10 @@ verification. Each remote host runs an independent shard through the same
 ```bash
 .pitbench/reference-env/bin/python -m scripts.collect_reference_solutions \
   --remote-config configs/experiments/reference_remote.yaml \
-  --output-dir report/reference-distributed-20261025 --deploy
+  --output-dir gushengda/data/references/reference-distributed-20261025 --deploy
 .pitbench/reference-env/bin/python -m scripts.collect_reference_solutions \
   --remote-config configs/experiments/reference_remote.yaml \
-  --output-dir report/reference-distributed-20261025 --sync-loop
+  --output-dir gushengda/data/references/reference-distributed-20261025 --sync-loop
 ```
 
 The coordinator environment requires the optional `paramiko` package. Credentials
@@ -1380,7 +1389,7 @@ a coordinator reboot to resume collection. Stale remote controllers are relaunch
 when reachable; their interrupted attempts and retained incumbents are recorded
 before pending work resumes. A host's `campaign/STOP` file stops its new dispatch;
 the coordinator's `STOP_SYNC` file stops collection without stopping remote solvers.
-Current fleet state and results are in `report/reference-distributed-20261025/`.
+Current fleet state and results are in `gushengda/data/references/reference-distributed-20261025/`.
 
 ### Schedule multiple agents externally
 
@@ -1399,15 +1408,15 @@ single-agent command concurrently or serially using the same evaluation interfac
 
 ### Generate a Performance-First Report
 
-Each trial stores observations under `runs/<run_id>/<task_id>/<trial_name>/evaluation/trials.parquet`. The report command accepts either that file or its containing `evaluation/` directory:
+Each trial stores observations under `gushengda/experiments/ad-hoc/runs/<run_id>/<task_id>/<trial_name>/evaluation/trials.parquet`. The report command accepts either that file or its containing `evaluation/` directory:
 
 ```bash
 uv run pitbench report \
-  runs/<run_id>/<task_id>/<trial_name>/evaluation \
+  gushengda/experiments/ad-hoc/runs/<run_id>/<task_id>/<trial_name>/evaluation \
   --task-config configs/tasks/<task_id>.yaml
 
 uv run pitbench report \
-  runs/<run_id>/<task_id>/<trial_name>/evaluation \
+  gushengda/experiments/ad-hoc/runs/<run_id>/<task_id>/<trial_name>/evaluation \
   --task-config configs/tasks/<task_id>.yaml --json
 ```
 
@@ -1418,7 +1427,7 @@ commands. To run only these cases on an already captured candidate patch:
 ```bash
 uv run pitbench judge pyvrp_v0_14_0 candidate.patch \
   --expected-patch-sha256 <captured-patch-sha256> \
-  --reliability-only --output-dir runs/boundary-check
+  --reliability-only --output-dir gushengda/experiments/benchmark-validation/boundary-check
 ```
 
 This uses the same repository snapshot and isolated solver image configuration as
@@ -1471,11 +1480,11 @@ generated exports nor private Judge assets are part of the Git checkout.
 
 ```bash
 python -m scripts.prepare_research_cases construct \
-  --plan configs/research/pilot.json --root . --output-dir report/research-cases
+  --plan configs/research/pilot.json --root . --output-dir gushengda/experiments/agent-diagnostics/research-cases
 
 python -m scripts.prepare_research_cases generate \
-  --agent-view report/research-cases/cvrp_research_001/agent/open_ended/case.json \
-  --generator-config PUBLIC_GENERATOR.json --output-dir report/development-experiment
+  --agent-view gushengda/experiments/agent-diagnostics/research-cases/cvrp_research_001/agent/open_ended/case.json \
+  --generator-config PUBLIC_GENERATOR.json --output-dir gushengda/experiments/agent-diagnostics/development-experiment
 ```
 
 Generator JSON uses the existing `visibility: agent` and `generator` format.
@@ -1660,9 +1669,9 @@ installed execution reuses the parameter-search worker and scheduler.
 ```bash
 python -m scripts.collect_nuisance_results prepare \
   --config configs/experiments/nuisance_robustness.yaml --panel routing \
-  --repository /path/to/source --output results/nuisance-routing
+  --repository /path/to/source --output gushengda/experiments/robustness/nuisance-routing
 python -m scripts.collect_nuisance_results run \
-  --output results/nuisance-routing --cpus <available-cpu-ids>
+  --output gushengda/experiments/robustness/nuisance-routing --cpus <available-cpu-ids>
 ```
 
 Use `--panel linear` without `--repository` in the numeric solver environment.
@@ -1691,16 +1700,16 @@ task files supply solver releases and per-run budgets.
 ```bash
 uv run --extra configuration python -m scripts.collect_configuration_results prepare \
   --config configs/experiments/configuration_robustness.yaml \
-  --output results/configuration-robustness \
+  --output gushengda/experiments/robustness/configuration-robustness \
   --solver-python pyvrp=/path/to/routing-environment/bin/python \
   --solver-python highs=/path/to/exact-environment/bin/python \
   --cpus <available-cpu-ids> --search-seed <searcher-seed>
 
 uv run --extra configuration python -m scripts.collect_configuration_results run \
-  --output results/configuration-robustness
+  --output gushengda/experiments/robustness/configuration-robustness
 
 uv run python -m scripts.collect_configuration_results report \
-  --output results/configuration-robustness
+  --output gushengda/experiments/robustness/configuration-robustness
 ```
 
 Preparation copies the fixed inputs and records disjoint retest seeds, runtime

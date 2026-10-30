@@ -23,6 +23,7 @@ from pitbench.agent_tools import (
     needs_run_directory,
     normalize_agent_tools,
 )
+from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.instances import materialize_instance_set
 from pitbench.repositories.base import RepositoryPluginRegistry
 from pitbench.research import resolve_research_budget
@@ -32,7 +33,7 @@ from pitbench.tasks import TaskCatalog
 
 # Increment when the generated task image or bundled public tooling becomes
 # incompatible with an image produced by an earlier PitBench checkout.
-IMAGE_REVISION = "16"
+IMAGE_REVISION = "17"
 IMAGE_REVISION_LABEL = "org.pitbench.image-revision"
 IMAGE_SOURCE_LABEL = "org.pitbench.image-source"
 IMAGE_TOOLS_LABEL = "org.pitbench.agent-tools"
@@ -73,7 +74,7 @@ class PitBenchAdapter:
 
     def __init__(self, repository_root: Path, private_root: Path) -> None:
         self.repository_root = repository_root.resolve()
-        self.private_root = private_root.resolve()
+        self.private_root = PrivateAssetResolver(private_root).root
         self.catalog = TaskCatalog(self.repository_root)
 
     def materialize(
@@ -86,6 +87,7 @@ class PitBenchAdapter:
         judge_cpus: float | None = None,
         judge_memory: str | None = None,
         judge_parallel_runs: int | None = None,
+        judge_cpuset_cpus: str | None = None,
         base_observations_path: Path | None = None,
         base_cache_path: Path | None = None,
         metric_scenario_config: Path | None = None,
@@ -95,6 +97,7 @@ class PitBenchAdapter:
         agent_feedback_mode: str = "solver_behavior",
         research_track: str | None = None,
         research_budget: ResearchBudget | None = None,
+        candidate_hypotheses_required: bool = False,
     ) -> Path:
         if agent_feedback_mode not in {"outcome_only", "solver_behavior"}:
             raise ValueError("unknown agent feedback mode")
@@ -145,6 +148,7 @@ class PitBenchAdapter:
             judge_cpus=judge_cpus,
             judge_memory=judge_memory,
             judge_parallel_runs=judge_parallel_runs,
+            judge_cpuset_cpus=judge_cpuset_cpus,
             base_observations_path=base_observations_path,
             base_cache_path=base_cache_path,
             metric_scenario_config=metric_scenario_config,
@@ -161,6 +165,7 @@ class PitBenchAdapter:
                 agent_tools=tools,
                 agent_feedback_mode=agent_feedback_mode,
                 research_budget=budget,
+                candidate_hypotheses_required=candidate_hypotheses_required,
             )
         prepared_image = agent_image or task.repository.agent_image
         submodule_paths = self._submodule_paths(repository) if prepared_image else ()
@@ -437,6 +442,7 @@ class PitBenchAdapter:
         judge_cpus: float | None = None,
         judge_memory: str | None = None,
         judge_parallel_runs: int | None = None,
+        judge_cpuset_cpus: str | None = None,
         base_observations_path: Path | None = None,
         base_cache_path: Path | None = None,
         metric_scenario_config: Path | None = None,
@@ -485,6 +491,8 @@ class PitBenchAdapter:
             payload["evaluator_config"]["judge_memory"] = judge_memory
         if judge_parallel_runs is not None:
             payload["evaluator_config"]["judge_parallel_runs"] = judge_parallel_runs
+        if judge_cpuset_cpus is not None:
+            payload["evaluator_config"]["judge_cpuset_cpus"] = judge_cpuset_cpus
         if base_observations_path is not None:
             payload["evaluator_config"]["base_observations_path"] = str(
                 base_observations_path
@@ -611,6 +619,17 @@ CMD ["sh", "-c", "sleep infinity"]
             "    && git -C /workspace/repo submodule foreach --recursive "
             "'git reset --hard HEAD' \\\n"
             "    && git -C /workspace/repo clean -f -- .dockerignore \\\n"
+        )
+        build_paths = RepositoryPluginRegistry.load(
+            task.repository.plugin
+        ).agent_build_paths
+        if build_paths:
+            patterns = " ".join(shlex.quote(f"/{path}/") for path in build_paths)
+            clean_checkout += (
+                f"    && printf '%s\\n' {patterns} "
+                ">> /workspace/repo/.git/info/exclude \\\n"
+            )
+        clean_checkout += (
             '    && test -z "$(git -C /workspace/repo status --porcelain)"\n'
         )
         return f"""FROM {image}
@@ -666,6 +685,10 @@ RUN chmod 0755 /usr/local/bin/pitbench \
         if include_runs:
             writable_paths.append("/pitbench/runs")
         writable = " ".join(writable_paths)
+        support_permissions = "".join(
+            f"    && chmod -R a+rX {shlex.quote(path)} \\\n"
+            for path in repository.agent_support_paths
+        )
         return f"""ARG PITBENCH_AGENT_UID=1000
 ARG PITBENCH_AGENT_GID=1000
 USER root
@@ -674,8 +697,8 @@ RUN (getent group pitbench-agent >/dev/null \
     && (id --user pitbench-agent >/dev/null 2>&1 \
         || useradd --non-unique --uid ${{PITBENCH_AGENT_UID}} \
            --gid ${{PITBENCH_AGENT_GID}} --create-home --shell /bin/bash pitbench-agent) \
-    && (if [ -d /root/.m2/repository ]; then \
-          chmod o+x /root && chmod -R a+rX /root/.m2/repository \
+{support_permissions}    && (if [ -d /root/.m2/repository ]; then \
+          chmod o+x /root /root/.m2 && chmod -R a+rX /root/.m2/repository \
           && mkdir -p /home/pitbench-agent/.m2 \
           && ln -s /root/.m2/repository /home/pitbench-agent/.m2/repository \
           && chown ${{PITBENCH_AGENT_UID}}:${{PITBENCH_AGENT_GID}} \

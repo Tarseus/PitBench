@@ -8,6 +8,7 @@ from collections import deque
 from pathlib import Path
 from typing import Callable
 
+from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.schema.observation import CodeState, RunObservation
 
@@ -55,7 +56,7 @@ class DockerJudge:
         self.image = image
         self.task_config_path = task_config_path.resolve()
         self.base_repository = base_repository.resolve()
-        self.private_root = private_root.resolve()
+        self.private_root = PrivateAssetResolver(private_root).root
         self.candidate_patch = candidate_patch.resolve()
         self.output_dir = output_dir.resolve()
         self.cpus = cpus
