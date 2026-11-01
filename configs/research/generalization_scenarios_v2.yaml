@@ -1,0 +1,57 @@
+schema_version: '1.0'
+scope: frozen diagnostic panels alongside the complete performance population
+replicate_indices:
+- 0
+- 1
+solver_seeds:
+- 1
+thread_counts:
+- 1
+- 2
+- 4
+- 8
+lifecycle_steps: 136
+warmup_steps: 8
+lifecycle_budget_sec: 0.1
+replay_repeats: 3
+row_scales:
+- 1.0e-06
+- 1000000.0
+routing_integer_scales:
+- 16777216
+- 4294967296
+feasibility_tolerance: 1.0e-06
+target_absolute_slack: 1.0e-06
+routing_relative_target_slack: 0.01
+memory_sample_interval_sec: 0.01
+watchdog_grace_sec: 60
+default_protocol:
+  modes:
+  - cold
+  thread_counts:
+  - 1
+  repeats: 1
+  missing_initial_loss: 1
+  censoring: budget
+  reference_threads: 1
+  series_reduction: maximum
+  curve_reduction: mean_target_time
+  growth_estimator: ols
+  sequence_mode: warm
+  replay_fields:
+  - objective
+  - termination
+  - solution_hash
+  replay_absolute_tolerance: 0
+  replay_relative_tolerance: 0
+  reset_policy: retain_state
+  memory_cleanup: gc_collect
+options_by_repository:
+  pitbench.repositories.plugins:ScipRepositoryPlugin:
+    sequence:
+      reoptimization: true
+claim_scope: Diagnostic per-instance/seed uncertainty. Unsupported APIs and uncertified
+  bounds remain unavailable; full performance panels retain all native seeds.
+selection: All declared distribution conditions; two predetermined independently generated
+  hidden instances per condition. These diagnostic panels do not replace the full
+  30-instance performance panels.

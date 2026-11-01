@@ -32,6 +32,8 @@ class TaskResources(BaseModel):
     judge_cpuset_cpus: str | None = None
     base_observations_path: Path | None = None
     research_budget: ResearchBudget | None = None
+    task_config_path: Path | None = None
+    agent_task_config_path: Path | None = None
 
 
 class SolverImageBuildConfig(BaseModel):

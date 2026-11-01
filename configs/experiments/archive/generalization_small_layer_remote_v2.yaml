@@ -1,0 +1,22 @@
+schema_version: '1.0'
+source_campaign: gushengda/experiments/generalization/difficulty-v2/small-campaign
+inventory_file: .pitbench/remote/small-inventory.json
+credentials_file: .pitbench/remote/credentials.json
+known_hosts_file: .pitbench/remote/known_hosts
+proxy_jump: g52
+expected_hosts: 8
+cpu_fraction: 0.5
+max_physical_cores_per_host: 64
+deployment_workers: 4
+sync_interval_sec: 30
+stale_heartbeat_sec: 180
+python_runtime: .pitbench/remote/python
+wheels: .pitbench/remote/wheels
+requirements: gushengda/experiments/generalization/difficulty-v2/environment.txt
+group_by_instance: true
+resource_guard:
+  max_load1: 96
+  max_temperature_celsius: 85
+  min_memory_available_gib: 16
+  min_disk_free_gib: 4
+native_builds: {}

@@ -10,6 +10,7 @@ import hashlib
 import itertools
 import json
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -18,6 +19,7 @@ import yaml
 from pitbench.instances.generate import (
     materialize_generated_instance_set,
     materialize_instance_set,
+    materialize_instance_suite,
 )
 from pitbench.schema.research import (
     GeneralizationStudyPlan,
@@ -57,7 +59,8 @@ def prepare_generalization_study(
         raise ValueError("study budget differs from the shared named resource profile")
     gaps = []
     for role, split in populations["splits"].items():
-        if split.get("manifest") is None:
+        manifest_uri = split.get("manifest")
+        if manifest_uri is None or not _public_asset(root, manifest_uri).is_file():
             gaps.append(f"population_manifest_missing:{role}")
     for key in ["headroom_evidence", "upstream_review_evidence", "scoring_plan"]:
         if populations.get(key) is None:
@@ -84,6 +87,11 @@ def prepare_generalization_study(
         suite_declared = any(
             token in command_text
             for token in ["pytest", "ctest", "make test", "make check"]
+        ) or any(
+            command.argv
+            and Path(command.argv[0]).name == "make"
+            and any(arg in {"test", "check"} for arg in command.argv[1:])
+            for command in commands
         )
         if not suite_declared:
             gaps.append(f"upstream_validation_suite_not_invoked:{task.task_id}")
@@ -183,8 +191,1895 @@ def prepare_generalization_study(
     return receipt
 
 
+def qualify_scenario_runtime(
+    *,
+    task_path: Path,
+    binding_path: Path,
+    specification_path: Path,
+    destination: Path,
+    python: str | None = None,
+) -> dict:
+    """Exercise the real collector on declared analytic API fixtures, not a study."""
+    import copy
+    import os
+    import sys
+
+    import numpy as np
+
+    from pitbench.evaluator.representations import representation_type
+    from pitbench.evaluator.scenarios import prepare, run
+    from pitbench.repositories.base import RepositoryPluginRegistry
+    from pitbench.schema.scenarios import SCENARIO_METRICS, ScenarioProtocol
+
+    if destination.exists():
+        raise FileExistsError(destination)
+    specification = yaml.safe_load(specification_path.read_text())
+    if specification["claim_scope"] != "implementation_qualification_only":
+        raise ValueError(
+            "API qualification requires an implementation-only specification"
+        )
+    task = PitBenchTask.from_yaml(task_path)
+    plugin = RepositoryPluginRegistry.load(task.repository.plugin)
+    binding = json.loads(binding_path.read_text())
+    environment = {
+        **os.environ,
+        "PITBENCH_SCENARIO_BINDING": str(binding_path.resolve()),
+    }
+    # Probe in the selected interpreter, with exactly the same environment as collection.
+    if python is None:
+        executable = Path(binding["source"]) / plugin.driver_python
+        python = str(executable) if "/" in plugin.driver_python else sys.executable
+    probe = subprocess.run(
+        [
+            python,
+            "-m",
+            "scripts.collect_metric_scenarios",
+            "probe",
+            "--session-plugin",
+            plugin.scenario_session_plugin,
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    identity = json.loads(probe.stdout.strip().splitlines()[-1])
+    representations = [
+        name
+        for name in identity["representations"]
+        if name in specification["representations"]
+    ]
+    if len(representations) != 1:
+        raise ValueError(
+            "qualification specification must select one supported representation"
+        )
+    representation = representations[0]
+    adapter = representation_type(representation)
+    cases = copy.deepcopy(specification["representations"][representation]["cases"])
+    destination.mkdir(parents=True)
+    for case_id, case in cases.items():
+        for index, entry in enumerate(case["models"]):
+            model = entry["model"]
+            if "matrix" in model:
+                import scipy.sparse
+
+                model["matrix"] = scipy.sparse.csr_matrix(model["matrix"], dtype=float)
+                model["sense"] = -1 if model["sense"] in {-1, "maximize"} else 1
+                for key in (
+                    "cost",
+                    "col_lower",
+                    "col_upper",
+                    "row_lower",
+                    "row_upper",
+                    "integrality",
+                ):
+                    model[key] = np.asarray(
+                        model[key], dtype=int if key == "integrality" else float
+                    )
+            path = destination / f"{case_id}-{index}{adapter.suffix}"
+            adapter.write_input(path, model)
+            entry.update(path=str(path.resolve()), sha256=_sha(path))
+    patch = destination / "empty.patch"
+    patch.write_bytes(b"")
+    empty_hash = hashlib.sha256(b"").hexdigest()
+    if binding["source_patch_sha256"] != empty_hash:
+        raise ValueError("baseline API qualification requires an unchanged source tree")
+    cpus = sorted(os.sched_getaffinity(0))[: specification["cpu_count"]]
+    if len(cpus) != specification["cpu_count"]:
+        raise ValueError("the declared qualification CPU pool is unavailable")
+    panel = next(
+        item for item in task.instance_sets if item.kind == InstanceSetKind.JUDGE_ID
+    )
+    fixture = task.model_copy(deep=True)
+    fixture.task_id = task.task_id + "__api_qualification"
+    next(item for item in fixture.instance_sets if item.name == panel.name).size = len(
+        cases
+    )
+    fixture_path = destination / "fixture-task.yaml"
+    fixture_path.write_text(
+        yaml.safe_dump(fixture.model_dump(mode="json"), sort_keys=False)
+    )
+    receipt = {
+        "kind": "scenario_api_qualification",
+        "claim_scope": specification["claim_scope"],
+        "task_id": task.task_id,
+        "specification_sha256": _sha(specification_path),
+        "binding_sha256": identity["binding_sha256"],
+        "new_agent_calls": 0,
+        "scenarios": {},
+    }
+    for kind, declaration in specification["scenarios"].items():
+        settings = {**specification["default_protocol"], **declaration}
+        indices = settings.pop("model_indices")
+        protocol = ScenarioProtocol(
+            id=kind,
+            kind=kind,
+            metrics=sorted(SCENARIO_METRICS[kind]),
+            representation=representation,
+            instance_sets=[panel.name],
+            objective_sense=task.oracle.objective_sense,
+            target_by_instance={
+                key: value["models"][indices[0]]["target"]
+                for key, value in cases.items()
+            },
+            reference_by_instance={
+                key: value["models"][indices[0]]["target"]
+                for key, value in cases.items()
+            },
+            loss_scale_by_instance={
+                key: value["models"][indices[0]]["loss_scale"]
+                for key, value in cases.items()
+            },
+            reference_solution_by_instance={
+                key: value["witness"] for key, value in cases.items()
+            },
+            qualification_target_by_model_sha256={
+                entry["sha256"]: entry["target"]
+                for case in cases.values()
+                for entry in case["models"]
+            },
+            model_sequences_sha256={
+                panel.name: {
+                    key: [value["models"][i]["sha256"] for i in indices]
+                    for key, value in cases.items()
+                }
+            },
+            **settings,
+        )
+        runtime = {
+            "python": python,
+            "session_plugin": plugin.scenario_session_plugin,
+            "source_commit": task.release.base_commit,
+            "patch_sha256": empty_hash,
+            "expected_binding_sha256": identity["binding_sha256"],
+            "options": specification.get("options_by_repository", {})
+            .get(task.repository.plugin, {})
+            .get(kind, {}),
+            "environment": {"PITBENCH_SCENARIO_BINDING": str(binding_path.resolve())},
+        }
+        config = {
+            "task_config": str(fixture_path.resolve()),
+            "candidate_patch": str(patch.resolve()),
+            "cpus": cpus,
+            "watchdog_grace_sec": specification["watchdog_grace_sec"],
+            "order": "base_first",
+            "runtimes": {"base": runtime, "agent": runtime},
+            "protocols": [protocol.model_dump(mode="json")],
+            "instances": {
+                panel.name: [
+                    {"id": key, "models": [value["models"][i]["path"] for i in indices]}
+                    for key, value in cases.items()
+                ]
+            },
+        }
+        config_path = destination / f"{kind}.yaml"
+        config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+        campaign_path = destination / kind
+        try:
+            prepare(config_path, campaign_path)
+            result = run(campaign_path)
+            campaign = json.loads((campaign_path / "campaign.json").read_text())
+            metric_report = json.loads(
+                (campaign_path / "scenario-report.json").read_text()
+            )
+            quality_failures = [
+                value["metric_id"]
+                for value in metric_report["results"]
+                if value["complete"] and not value["quality_qualified"]
+            ]
+            unexpected = [
+                record
+                for record in campaign["runs"]
+                if record["status"] not in {"returned", "unsupported"}
+            ]
+            receipt["scenarios"][kind] = {
+                **result,
+                "status": "failed"
+                if unexpected or result["invalid_runs"] or quality_failures
+                else "complete"
+                if result["complete"]
+                else "partial",
+                "unsupported_runs": [
+                    record["error"]
+                    for record in campaign["runs"]
+                    if record["status"] == "unsupported"
+                ],
+                "errors": [
+                    {
+                        "key": record["key"],
+                        "status": record["status"],
+                        "error": record["error"],
+                    }
+                    for record in unexpected
+                ],
+                "quality_failures": quality_failures,
+            }
+        except Exception as error:
+            receipt["scenarios"][kind] = {"status": "failed", "error": str(error)}
+        _write(destination / "api-qualification.json", receipt)
+    return receipt
+
+
+def construct_generalization_populations(
+    *, specification_path: Path, destination: Path
+) -> dict:
+    destination.mkdir(parents=True, exist_ok=False)
+    try:
+        return _construct_generalization_populations(
+            specification_path=specification_path, destination=destination
+        )
+    except Exception as error:
+        _write(
+            destination / "population-construction.json",
+            {
+                "kind": "generalization_population_construction",
+                "status": "failed",
+                "specification": str(specification_path),
+                "error": f"{type(error).__name__}: {error}",
+                "new_agent_calls": 0,
+                "new_solver_runs": 0,
+            },
+        )
+        raise
+
+
+def audit_population_design(
+    *, specification_path: Path, population_root: Path, root: Path, destination: Path
+) -> dict:
+    """Check actual exposure and claimed scale/structure splits before calibration."""
+    from collections import defaultdict
+
+    from pitbench.instances.generate import linear_model_features
+    from pitbench.problem_families.verification import (
+        _public_multidimensional_knapsack_model,
+    )
+
+    spec = yaml.safe_load(specification_path.read_text())
+    construction = json.loads(
+        (population_root / "population-construction.json").read_text()
+    )
+    if construction["specification_sha256"] != _sha(specification_path):
+        raise ValueError("population specification changed after construction")
+    conditions = {row["id"]: row for row in spec["conditions"]}
+    requirements = spec["audit"]
+    inventory = {
+        role: json.loads(Path(split["manifest"]).read_text())["instances"]
+        for role, split in construction["splits"].items()
+    }
+    exposed = []
+    for entry in inventory[requirements["development_role"]]:
+        family = spec["families"][entry["family"]]["problem_family"]
+        exposed.append(
+            {
+                "source": "diverse_development",
+                "family": entry["family"],
+                "problem_family": family,
+                "features": entry["features"],
+                "sha256": entry["sha256"],
+            }
+        )
+    with tempfile.TemporaryDirectory(prefix="pitbench-exposure-") as tmp:
+        for index, task_relative in enumerate(
+            requirements["include_original_development_tasks"]
+        ):
+            task = PitBenchTask.from_yaml(root / task_relative)
+            panel = next(
+                s for s in task.instance_sets if s.kind == InstanceSetKind.AGENT_DEV
+            )
+            paths = materialize_instance_set(
+                root / panel.instance_set_config, Path(tmp) / str(index)
+            )
+            for path in paths:
+                if path.suffix == ".json":
+                    model = json.loads(path.read_text())
+                    features, family = {"customers": len(model["demands"]) - 1}, "cvrp"
+                elif path.suffix.lower() == ".mps":
+                    features, family = linear_model_features(path), "mip"
+                else:
+                    model = _public_multidimensional_knapsack_model(path)
+                    if model is None:
+                        raise ValueError("cannot audit original development model")
+                    features, family = (
+                        {"variables": len(model[0][0]), "constraints": len(model[0])},
+                        "mip",
+                    )
+                exposed.append(
+                    {
+                        "source": task_relative,
+                        "problem_family": family,
+                        "features": features,
+                        "sha256": _sha(path),
+                    }
+                )
+    maxima = {
+        family: max(
+            row["features"][feature]
+            for row in exposed
+            if row["problem_family"] == family
+        )
+        for family, feature in requirements["scale_feature_by_problem_family"].items()
+    }
+    seen_families = {row["family"] for row in exposed if "family" in row}
+    seen_hashes = {row["sha256"] for row in exposed}
+    cells = defaultdict(list)
+    for role, entries in inventory.items():
+        if role in {requirements["development_role"], "protocol_calibration"}:
+            continue
+        for entry in entries:
+            cells[(role, entry["condition_id"])].append(entry)
+    gaps, measured = [], []
+    for (role, condition_id), entries in cells.items():
+        condition = conditions[condition_id]
+        family = spec["families"][condition["family"]]["problem_family"]
+        feature = requirements["scale_feature_by_problem_family"][family]
+        values = [row["features"][feature] for row in entries]
+        claim = condition["claim"]
+        if (
+            claim in {"scale", "joint"}
+            and min(values)
+            < maxima[family] * requirements["minimum_scale_extrapolation_ratio"]
+        ):
+            gaps.append(f"insufficient_scale_extrapolation:{condition_id}")
+        if claim == "structure" and max(values) > maxima[family]:
+            gaps.append(f"structure_cell_also_changes_scale:{condition_id}")
+        if claim in {"structure", "joint"} and condition["family"] in seen_families:
+            gaps.append(f"claimed_structure_already_exposed:{condition_id}")
+        if any(row["sha256"] in seen_hashes for row in entries):
+            gaps.append(f"hidden_content_already_exposed:{condition_id}")
+        measured.append(
+            {
+                "role": role,
+                "condition_id": condition_id,
+                "claim": claim,
+                "family": condition["family"],
+                "scale_feature": feature,
+                "minimum": min(values),
+                "maximum": max(values),
+                "development_maximum": maxima[family],
+                "instances": len(entries),
+                "minimum_extrapolation_ratio": min(values) / maxima[family],
+            }
+        )
+    result = {
+        "kind": "generalization_population_audit",
+        "status": "failed" if gaps else "passed",
+        "specification_sha256": _sha(specification_path),
+        "development_maxima": maxima,
+        "exposed_development_inputs": exposed,
+        "cells": measured,
+        "gaps": sorted(set(gaps)),
+        "difficulty_qualification": "requires_empirical_calibration",
+        "new_solver_runs": 0,
+    }
+    _write(destination, result)
+    return result
+
+
+def analyze_population_difficulty(
+    *,
+    population_root: Path,
+    result_roots: list[Path],
+    protocol_path: Path,
+    destination: Path,
+) -> dict:
+    """Measure difficulty and select budgets from calibration discovery cases only."""
+    import math
+    from collections import defaultdict
+
+    protocol = yaml.safe_load(protocol_path.read_text())
+    construction = json.loads(
+        (population_root / "population-construction.json").read_text()
+    )
+    inventory = [
+        {**entry, "role": role}
+        for role, split in construction["splits"].items()
+        for entry in json.loads(Path(split["manifest"]).read_text())["instances"]
+    ]
+    instances = {entry["id"]: entry for entry in inventory}
+    references, jobs, attempts, annotations = {}, {}, [], {}
+    for root in result_roots:
+        annotation_file = root / "diagnostic-annotations.json"
+        if annotation_file.is_file():
+            annotations.update(
+                {
+                    (str(root), key): value
+                    for key, value in json.loads(annotation_file.read_text()).items()
+                }
+            )
+        distribution = json.loads((root / "distribution.json").read_text())
+        for job in distribution["original_manifest"]["jobs"]:
+            jobs[(str(root), job["id"])] = job
+        for identity, ref in json.loads((root / "bks.json").read_text())[
+            "references"
+        ].items():
+            if (
+                identity not in instances
+                or ref["instance_sha256"] != instances[identity]["sha256"]
+            ):
+                raise ValueError("difficulty reference belongs to another population")
+            if not ref.get("locally_verified"):
+                raise ValueError(
+                    "difficulty references require local independent verification"
+                )
+            old = references.get(identity)
+            if old is None or (ref["objective"], not ref["proven_optimal"]) < (
+                old["objective"],
+                not old["proven_optimal"],
+            ):
+                references[identity] = ref
+        for path in sorted((root / "hosts").glob("*/attempts.jsonl")):
+            for line in path.read_text().splitlines():
+                if line.strip():
+                    attempts.append((str(root), json.loads(line)))
+    latest = {(root, row["job_id"]): row for root, row in attempts}
+    selected = defaultdict(dict)
+    spec = yaml.safe_load(Path(protocol["specification"]).read_text())
+    for entry in inventory:
+        if entry["role"] != "protocol_calibration":
+            continue
+        family = spec["families"][entry["family"]]["problem_family"]
+        for backend, backend_family in protocol["backend_problem_family"].items():
+            if family != backend_family:
+                continue
+            for budget in protocol["budget_grid_sec"]:
+                selected[(backend, entry["condition_id"])][(entry["id"], budget)] = {
+                    "job_id": None,
+                    "instance_id": entry["id"],
+                    "budget_sec": budget,
+                    "replicate": entry["replicate_index"],
+                    "status": "missing",
+                    "verified_feasible": False,
+                    "target_hit": False,
+                    "objective": None,
+                    "solver_status": None,
+                    "host": None,
+                    "error": None,
+                }
+    for key, job in jobs.items():
+        if job.get("purpose") != "calibration":
+            continue
+        backend = job["backend"]["name"]
+        if job["seed"] != protocol["selection_seed_by_backend"].get(backend):
+            continue
+        if job.get("use_warm_start", True):
+            raise ValueError("difficulty calibration must use cold solver starts")
+        identity = job["instance"]["id"]
+        row = latest.get(key)
+        expected = instances[identity]
+        if job["instance"]["sha256"] != expected["sha256"]:
+            raise ValueError("calibration input differs from the frozen population")
+        cell = {
+            "job_id": job["id"],
+            "instance_id": identity,
+            "budget_sec": job["seconds"],
+            "replicate": expected["replicate_index"],
+            "status": row.get("execution_status") if row else "missing",
+            "verified_feasible": bool(row and row.get("verified_feasible")),
+            "target_hit": False,
+            "objective": row.get("objective") if row else None,
+            "solver_status": row.get("solver_status") if row else None,
+            "host": row.get("host_id") if row else None,
+            "error": row.get("error") if row else None,
+        }
+        ref = references.get(identity)
+        if cell["verified_feasible"] and ref:
+            objective = row["objective"]
+            gap = (objective - ref["objective"]) / max(1, abs(ref["objective"]))
+            cell.update(
+                relative_gap_to_reference=gap,
+                quality_target_hit=gap <= protocol["routing_target_relative_gap"],
+            )
+            if expected["generator"]["kind"] == "euclidean_cvrp":
+                cell.update(
+                    relative_gap_to_reference=gap,
+                    target_hit=gap <= protocol["routing_target_relative_gap"],
+                )
+            else:
+                cell["target_hit"] = bool(
+                    row.get("proven_optimal")
+                    and math.isclose(
+                        objective,
+                        ref["objective"],
+                        rel_tol=0,
+                        abs_tol=protocol.get("calibration_objective_tolerance", 0),
+                    )
+                )
+        native_status = str(
+            (row or {}).get("optimality_basis", {}).get("solver_status", "")
+        )
+        if key in annotations:
+            cell["retained_diagnostic"] = annotations[key]
+            native_status = annotations[key]["native_status"]
+        cell["native_status"] = native_status
+        if (
+            ref
+            and "infeasib" in native_status.lower()
+            and not cell["verified_feasible"]
+        ):
+            cell["status"] = "solver_status_contradiction"
+        selected[(backend, expected["condition_id"])][(identity, job["seconds"])] = cell
+    profiles = []
+    grid = protocol["budget_grid_sec"]
+    for (backend, condition), cells in sorted(selected.items()):
+        by_budget = {}
+        for budget in grid:
+            values = [row for row in cells.values() if row["budget_sec"] == budget]
+            split = {}
+            for name in ("discovery", "qualification"):
+                rows = [
+                    row
+                    for row in values
+                    if row["replicate"] in protocol[name + "_replicates"]
+                ]
+                split[name] = {
+                    "expected": len(rows),
+                    "observed": sum(r["status"] != "missing" for r in rows),
+                    "feasible": sum(r["verified_feasible"] for r in rows),
+                    "target_hits": sum(r["target_hit"] for r in rows),
+                    "quality_target_hits": sum(
+                        r.get("quality_target_hit", False) for r in rows
+                    ),
+                    "failures": sum(
+                        r["status"] not in {"completed", "missing"} for r in rows
+                    ),
+                    "missing": sum(r["status"] == "missing" for r in rows),
+                }
+            by_budget[str(budget)] = split
+        chosen, tier = grid[-1], protocol["no_hit_tier"]
+        for budget in grid:
+            discovery = by_budget[str(budget)]["discovery"]
+            if (
+                discovery["expected"]
+                and discovery["observed"] == discovery["expected"]
+                and discovery["target_hits"]
+                >= math.ceil(
+                    discovery["expected"] * protocol["budget_selection_quantile"]
+                )
+            ):
+                chosen = budget
+                tier = protocol["tier_by_first_hit_budget"][str(budget)]
+                break
+        profiles.append(
+            {
+                "backend": backend,
+                "condition_id": condition,
+                "tier": tier,
+                "selected_budget_sec": chosen,
+                "by_budget": by_budget,
+                "qualification_at_selected_budget": by_budget[str(chosen)][
+                    "qualification"
+                ],
+                "runs": list(cells.values()),
+            }
+        )
+    result = {
+        "kind": "population_difficulty_calibration",
+        "protocol_sha256": _sha(protocol_path),
+        "status": "measured"
+        if profiles
+        and len(references) == len(instances)
+        and all(
+            row["status"] != "missing"
+            for rows in selected.values()
+            for row in rows.values()
+        )
+        else "partial",
+        "profiles": profiles,
+        "backend_by_task": protocol.get("backend_by_task", {}),
+        "population_instances": len(instances),
+        "instances_with_verified_reference": len(references),
+        "solver_established_optima": sum(
+            ref["proven_optimal"] for ref in references.values()
+        ),
+        "missing_references": sorted(set(instances) - set(references)),
+        "retained_attempts": len(attempts),
+        "historical_contract_changed": False,
+        "selection_scope": "Calibration discovery only; qualification is reported without refitting. No hidden test outcome selects a budget.",
+    }
+    _write(destination, result)
+    return result
+
+
+def _construct_generalization_populations(
+    *, specification_path: Path, destination: Path
+) -> dict:
+    """Assemble declared distributions through the existing generator suite."""
+    import copy
+
+    specification = yaml.safe_load(specification_path.read_text())
+    panels, definitions = {}, {}
+    for condition in specification["conditions"]:
+        for role in condition["roles"]:
+            role_spec = specification["roles"][role]
+            generator = copy.deepcopy(
+                specification["families"][condition["family"]]["generator"]
+            )
+            generator.update(condition.get("overrides", {}))
+            generator["count"] = role_spec["count"]
+            generator["randomness"] = {
+                key: int.from_bytes(
+                    hashlib.sha256(
+                        f"{role_spec['seed_namespace']}:{condition['id']}:{key}:{value}".encode()
+                    ).digest()[:8],
+                    "big",
+                )
+                for key, value in generator["randomness"].items()
+            }
+            name = f"{role}__{condition['id']}"
+            if name in panels:
+                raise ValueError(
+                    "population condition IDs must be unique within a role"
+                )
+            panels[name] = {
+                "schema_version": "1.0",
+                "visibility": role_spec["visibility"],
+                "generator": generator,
+            }
+            definitions[name] = {
+                "role": role,
+                "family": condition["family"],
+                "condition": condition,
+            }
+    suite_root = destination / "data"
+    suite = materialize_instance_suite({"panels": panels}, suite_root)
+    inventories = {role: [] for role in specification["roles"]}
+    content_roles = {}
+    namespaces = {}
+    for name, definition in definitions.items():
+        role = definition["role"]
+        manifest_path = suite_root / name / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        generator = panels[name]["generator"]
+        namespace = hashlib.sha256(
+            json.dumps(generator["randomness"], sort_keys=True).encode()
+        ).hexdigest()
+        if namespace in namespaces:
+            raise ValueError("population seed namespace is reused across conditions")
+        namespaces[namespace] = name
+        for cell in manifest["conditions"]:
+            for entry in cell["instances"]:
+                path = suite_root / name / entry["path"]
+                if _sha(path) != entry["sha256"]:
+                    raise ValueError(
+                        "generated population content differs from its manifest"
+                    )
+                content = path.read_bytes()
+                if path.suffix == ".json":
+                    model = json.loads(content)
+                    model.pop("name", None)
+                    model.pop("node_ids", None)
+                    content = json.dumps(
+                        model, sort_keys=True, separators=(",", ":")
+                    ).encode()
+                semantic_hash = hashlib.sha256(content).hexdigest()
+                if semantic_hash in content_roles:
+                    raise ValueError(
+                        f"duplicate population instance: {name} and {content_roles[semantic_hash]}"
+                    )
+                content_roles[semantic_hash] = name
+                for feature, expected in (
+                    definition["condition"].get("expected_features", {}).items()
+                ):
+                    if entry["features"].get(feature) != expected:
+                        raise ValueError(
+                            f"requested distribution feature was not realized: {name}:{feature}"
+                        )
+                inventories[role].append(
+                    {
+                        "id": f"{name}__{entry['id']}",
+                        "path": str(path.resolve()),
+                        "sha256": entry["sha256"],
+                        "semantic_sha256": semantic_hash,
+                        "source_group": f"{namespace}:{entry['replicate_index']}",
+                        "family": definition["family"],
+                        "condition_id": definition["condition"]["id"],
+                        "axes": definition["condition"].get("axes", {}),
+                        "features": entry["features"],
+                        "generator": generator,
+                        "replicate_index": entry["replicate_index"],
+                    }
+                )
+    result = {
+        "kind": "generalization_population_construction",
+        "status": "generated_not_qualified",
+        "specification_sha256": _sha(specification_path),
+        "new_agent_calls": 0,
+        "new_solver_runs": 0,
+        "reference_status": "independent_headroom_qualification_required",
+        "splits": {},
+    }
+    for role, instances in inventories.items():
+        path = destination / role / "manifest.json"
+        payload = {
+            "role": role,
+            "visibility": specification["roles"][role]["visibility"],
+            "status": "generated_not_qualified",
+            "instances": instances,
+        }
+        _write(path, payload)
+        result["splits"][role] = {
+            "manifest": str(path.resolve()),
+            "sha256": _sha(path),
+            "instances": len(instances),
+        }
+    result["instances"] = sum(len(items) for items in inventories.values())
+    result["conditions"] = len(panels)
+    result["suite_status"] = suite["status"]
+    _write(destination / "population-construction.json", result)
+    return result
+
+
+def prepare_population_references(
+    *, population_root: Path, task_path: Path, private_root: Path, destination: Path
+) -> dict:
+    """Freeze independently checked targets; feasible routing anchors stay nonoptimal."""
+    from collections import defaultdict
+
+    from pitbench.evaluator.private_assets import PrivateAssetResolver
+    from pitbench.instances.generate import (
+        capacity_partition_routes,
+        prepare_trusted_optimum_oracle,
+    )
+    from pitbench.problem_families.public_verification import check_cvrp
+
+    resolver = PrivateAssetResolver(private_root)
+    destination = resolver.destination_path(destination)
+    private_root = resolver.root
+    if not destination.is_relative_to(private_root):
+        raise ValueError("evaluator reference answers must remain in private storage")
+    destination.mkdir(parents=True, exist_ok=False)
+    construction = json.loads(
+        (population_root / "population-construction.json").read_text()
+    )
+    result = {
+        "kind": "population_reference_construction",
+        "new_agent_calls": 0,
+        "new_solver_runs": 0,
+        "records": {},
+        "panels": {},
+        "status": "running",
+        "headroom_status": "not_measured",
+    }
+    try:
+        for role, inventory in construction["splits"].items():
+            records = json.loads(Path(inventory["manifest"]).read_text())["instances"]
+            groups = defaultdict(list)
+            for entry in records:
+                groups[entry["condition_id"]].append(entry)
+            for condition, entries in groups.items():
+                entries.sort(key=lambda entry: entry["replicate_index"])
+                name = f"{role}__{condition}"
+                folder = destination / name
+                folder.mkdir()
+                if Path(entries[0]["path"]).suffix in {".lp", ".mps"}:
+                    config = folder / "generator.yaml"
+                    config.write_text(
+                        yaml.safe_dump(
+                            {
+                                "visibility": "judge",
+                                "generator": entries[0]["generator"],
+                            }
+                        )
+                    )
+                    oracle_path = folder / "oracle.yaml"
+                    oracle = prepare_trusted_optimum_oracle(
+                        task_config_path=task_path,
+                        instance_set_name=name,
+                        instance_set_config_path=config,
+                        private_root=private_root,
+                        output_path=oracle_path,
+                        reference_solution_dir=folder / "solutions",
+                        materialized_instances=[
+                            Path(entry["path"]) for entry in entries
+                        ],
+                    )
+                    for entry, target in zip(entries, oracle["records"], strict=True):
+                        if entry["sha256"] != target["instance_sha256"]:
+                            raise ValueError(
+                                "reference target belongs to another population instance"
+                            )
+                        result["records"][entry["id"]] = {
+                            "target_kind": "trusted_optimum",
+                            "objective": target["optimal_objective"],
+                            "record": target,
+                        }
+                    result["panels"][name] = {
+                        "status": "verified_optimum",
+                        "oracle": str(oracle_path),
+                        "sha256": _sha(oracle_path),
+                    }
+                else:
+                    for entry in entries:
+                        model = json.loads(Path(entry["path"]).read_text())
+                        solution = {"routes": capacity_partition_routes(model)}
+                        checked = check_cvrp(model, solution)
+                        if not checked["feasible"]:
+                            raise ValueError(
+                                "routing reference does not verify on the original model"
+                            )
+                        path = folder / f"{entry['replicate_index']:04d}.solution.json"
+                        _write(path, solution)
+                        result["records"][entry["id"]] = {
+                            "target_kind": "feasible_reference",
+                            "objective": checked["objective"],
+                            "solution": str(path),
+                            "solution_sha256": _sha(path),
+                            "instance_sha256": entry["sha256"],
+                            "proven_optimal": False,
+                        }
+                    result["panels"][name] = {
+                        "status": "verified_feasibility_only",
+                        "instances": len(entries),
+                    }
+                _write(destination / "references.json", result)
+        result["status"] = "references_verified_headroom_pending"
+        _write(destination / "references.json", result)
+    except Exception as error:
+        result.update(status="failed", error=f"{type(error).__name__}: {error}")
+        _write(destination / "references.json", result)
+        raise
+    return result
+
+
+def import_population_references(
+    *,
+    population_root: Path,
+    result_roots: list[Path],
+    private_root: Path,
+    destination: Path,
+) -> dict:
+    """Import searched BKS/optima with original-model checks and bound provenance."""
+    from pitbench.evaluator.private_assets import PrivateAssetResolver
+    from pitbench.problem_families.verification import (
+        CVRPFamily,
+        MIPFamily,
+        TrustedOptimumFamily,
+        TrustedOptimumRecord,
+    )
+
+    resolver = PrivateAssetResolver(private_root)
+    destination = resolver.destination_path(destination)
+    destination.mkdir(parents=True, exist_ok=False)
+    construction = json.loads(
+        (population_root / "population-construction.json").read_text()
+    )
+    inventory = [
+        entry
+        for split in construction["splits"].values()
+        for entry in json.loads(Path(split["manifest"]).read_text())["instances"]
+    ]
+    best = {}
+    for root in result_roots:
+        for identity, row in json.loads((root / "bks.json").read_text())[
+            "references"
+        ].items():
+            old = best.get(identity)
+            if old is None or (row["objective"], not row["proven_optimal"]) < (
+                old["objective"],
+                not old["proven_optimal"],
+            ):
+                best[identity] = row
+    result = {
+        "kind": "population_reference_construction",
+        "status": "running",
+        "records": {},
+        "missing": [],
+        "new_solver_runs": 0,
+        "new_agent_calls": 0,
+        "optimality_scope": "External solver optimal returns with independently checked original-model witnesses. Search proofs are retained as provenance, not independently replayed.",
+    }
+    for entry in inventory:
+        identity, path = entry["id"], Path(entry["path"])
+        row = best.get(identity)
+        if row is None:
+            result["missing"].append(identity)
+            result["records"][identity] = {
+                "target_kind": "missing",
+                "instance_sha256": entry["sha256"],
+            }
+            continue
+        if (
+            not row.get("locally_verified")
+            or row["instance_sha256"] != entry["sha256"]
+            or _sha(path) != entry["sha256"]
+        ):
+            raise ValueError(
+                "imported reference lacks verified matching original input"
+            )
+        source_solution = Path(row["solution"])
+        if _sha(source_solution) != row["solution_sha256"]:
+            raise ValueError("reference solution changed after collection")
+        family = MIPFamily() if path.suffix == ".mps" else CVRPFamily()
+        checked = family.verify(path, source_solution)
+        if not checked.feasible or checked.objective != row["objective"]:
+            raise ValueError("searched reference fails original-model revalidation")
+        target = destination / (identity + ".solution.json")
+        shutil.copy2(source_solution, target)
+        if path.suffix != ".mps":
+            result["records"][identity] = {
+                "target_kind": "computed_optimum"
+                if row["proven_optimal"]
+                else "feasible_reference",
+                "objective": checked.objective,
+                "solution": str(target),
+                "solution_sha256": _sha(target),
+                "instance_sha256": entry["sha256"],
+                "proven_optimal": bool(row["proven_optimal"]),
+                "search_provenance": row,
+            }
+            continue
+        basis = row.get("optimality_basis", {})
+        proven = bool(
+            row.get("proven_optimal") and basis.get("dual_bound") == checked.objective
+        )
+        target_kind = "trusted_optimum" if proven else "best_found"
+        identity_record = {
+            key: row.get(key)
+            for key in [
+                "backend",
+                "worker_source_sha256",
+                "code_revision",
+                "remote_host",
+            ]
+        }
+        proof = {
+            "kind": "independent_mip_search" if proven else "feasible_search_reference",
+            "solver_identity": identity_record,
+            "reported_optimal": bool(row.get("proven_optimal")),
+            "reported_primal": checked.objective,
+            "reported_dual": basis.get("dual_bound"),
+            "reference_result_sha256": hashlib.sha256(
+                json.dumps(row, sort_keys=True).encode()
+            ).hexdigest(),
+        }
+        record = TrustedOptimumRecord(
+            instance_set=entry["condition_id"],
+            instance_id=identity,
+            instance_sha256=entry["sha256"],
+            target_kind=target_kind,
+            problem_kind="linear_mip",
+            objective_sense="minimize",
+            optimal_objective=checked.objective,
+            reference_solution_uri="private://"
+            + target.relative_to(resolver.root).as_posix(),
+            reference_solution_sha256=_sha(target),
+            optimality_basis=proof,
+            generation_provenance={
+                "generator": entry["generator"],
+                "replicate_index": entry["replicate_index"],
+                "source_group": entry["source_group"],
+            },
+            verification_provenance="pitbench.problem_families.verification:TrustedOptimumFamily",
+        )
+        if TrustedOptimumFamily(record, target)._check_oracle(path) is not None:
+            raise ValueError(
+                "imported target failed reference/oracle consistency checks"
+            )
+        result["records"][identity] = {
+            "target_kind": target_kind,
+            "objective": checked.objective,
+            "record": record.model_dump(mode="json"),
+            "search_provenance": row,
+        }
+    result["status"] = "partial" if result["missing"] else "references_verified"
+    _write(destination / "references.json", result)
+    return result
+
+
+def measure_population_headroom(
+    *,
+    task_path: Path,
+    base_repository: Path,
+    public_root: Path,
+    private_root: Path,
+    population_root: Path,
+    references_path: Path,
+    candidate_patch: Path,
+    destination: Path,
+    parallel_runs: int = 4,
+    condition_ids: list[str] | None = None,
+) -> dict:
+    """Measure a fixed evaluator reference on disjoint calibration partitions."""
+    from collections import Counter, defaultdict
+
+    from pitbench.evaluator.judge import (
+        InstanceCase,
+        LocalProcessJudge,
+        _exact_target_verifier,
+    )
+    from pitbench.evaluator.private_assets import PrivateAssetResolver
+    from pitbench.metrics.performance_report import compute_panel_performance_reports
+    from pitbench.problem_families.verification import (
+        CVRPFamily,
+        TrustedOptimumOracle,
+        TrustedOptimumRecord,
+    )
+    from pitbench.schema.observation import ExpectedRunGrid
+    from pitbench.schema.task import InstanceSetSpec
+
+    if destination.exists():
+        raise FileExistsError(destination)
+    task = PitBenchTask.from_yaml(task_path).model_copy(deep=True)
+    references = json.loads(references_path.read_text())
+    construction = json.loads(
+        (population_root / "population-construction.json").read_text()
+    )
+    manifest = json.loads(
+        Path(construction["splits"]["protocol_calibration"]["manifest"]).read_text()
+    )
+    exact = task.task_type.value == "exact_solver"
+    selected = [
+        entry
+        for entry in manifest["instances"]
+        if (Path(entry["path"]).suffix in {".mps", ".lp"}) == exact
+    ]
+    groups = defaultdict(list)
+    for entry in selected:
+        groups[entry["condition_id"]].append(entry)
+    if condition_ids is not None:
+        if not condition_ids or set(condition_ids) - set(groups):
+            raise ValueError(
+                "headroom selection contains an unknown or empty condition list"
+            )
+        groups = {name: groups[name] for name in condition_ids}
+    if not groups:
+        raise ValueError("no calibration instances match this task")
+    if any(
+        references["records"].get(entry["id"], {}).get("target_kind", "missing")
+        == "missing"
+        for entries in groups.values()
+        for entry in entries
+    ):
+        raise ValueError(
+            "selected calibration conditions have missing reference targets"
+        )
+    destination.mkdir(parents=True)
+    resolver = PrivateAssetResolver(private_root)
+    private_root = resolver.root
+    import time
+
+    private_inputs = (
+        private_root.resolve()
+        / "research/headroom"
+        / task.task_id
+        / str(time.time_ns())
+    )
+    private_inputs.mkdir(parents=True, exist_ok=False)
+    cases, panels, partitions, exact_records = [], [], {}, []
+    for condition, entries in sorted(groups.items()):
+        entries.sort(key=lambda entry: entry["replicate_index"])
+        name = "judge_id" if entries[0]["axes"].get("axis") == "baseline" else condition
+        panel_config = private_inputs / f"{condition}.yaml"
+        panel = InstanceSetSpec(
+            name=name,
+            kind=InstanceSetKind.JUDGE_ID
+            if name == "judge_id"
+            else InstanceSetKind.JUDGE_SHIFT,
+            instance_set_config="private://"
+            + panel_config.relative_to(private_root.resolve()).as_posix(),
+            size=len(entries),
+            performance_protocol=(
+                "heuristic_fixed_budget"
+                if exact
+                and any(
+                    references["records"][entry["id"]]["target_kind"] == "best_found"
+                    for entry in entries
+                )
+                else None
+            ),
+        )
+        panels.append(panel)
+        panel_rows = []
+        for entry in entries:
+            reference = references["records"][entry["id"]]
+            if _sha(Path(entry["path"])) != entry["sha256"]:
+                raise ValueError("calibration input changed after construction")
+            input_path = private_inputs / condition / Path(entry["path"]).name
+            input_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(entry["path"], input_path)
+            if exact:
+                record = TrustedOptimumRecord.model_validate(
+                    reference["record"]
+                ).model_copy(update={"instance_set": name, "instance_id": entry["id"]})
+                exact_records.append(record)
+                verifier = _exact_target_verifier(
+                    record,
+                    resolver,
+                    performance_protocol=panel.performance_protocol
+                    or task.evaluation.performance_protocol,
+                )
+            else:
+                verifier = CVRPFamily()
+            panel_rows.append(
+                {
+                    "id": entry["id"],
+                    "uri": "private://"
+                    + input_path.relative_to(private_root.resolve()).as_posix(),
+                    "optimal_or_bks": reference["objective"],
+                }
+            )
+            cases.append(
+                InstanceCase(
+                    instance_set=panel,
+                    instance_id=entry["id"],
+                    path=input_path,
+                    anchor=reference["objective"],
+                    condition_id=condition,
+                    verifier=verifier,
+                )
+            )
+            partitions[entry["id"]] = (
+                "discovery"
+                if entry["replicate_index"] < len(entries) // 2
+                else "qualification"
+            )
+        panel_config.write_text(
+            yaml.safe_dump(
+                {
+                    "schema_version": "1.0",
+                    "visibility": "judge",
+                    "instances": panel_rows,
+                },
+                sort_keys=False,
+            )
+        )
+        panel.instance_set_config_sha256 = _sha(panel_config)
+    task.instance_sets = [
+        item for item in task.instance_sets if item.kind == InstanceSetKind.AGENT_DEV
+    ] + panels
+    # This is an evaluator-only per-panel opportunity diagnostic. Formal study
+    # retention and representation protocols are not redefined by this task.
+    task.evaluation.controlled_transfer = None
+    if exact:
+        oracle_path = private_inputs / "oracle.yaml"
+        oracle_path.write_text(
+            yaml.safe_dump(
+                TrustedOptimumOracle(
+                    task_id=task.task_id, records=exact_records
+                ).model_dump(mode="json"),
+                sort_keys=False,
+            )
+        )
+        task.oracle.source = (
+            "private://" + oracle_path.relative_to(private_root.resolve()).as_posix()
+        )
+        task.oracle.source_sha256 = _sha(oracle_path)
+    task_file = destination / f"{task.task_id}.yaml"
+    task_file.write_text(yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False))
+    receipt = {
+        "kind": "headroom_calibration",
+        "task_id": task.task_id,
+        "new_agent_calls": 0,
+        "candidate_patch_sha256": _sha(candidate_patch),
+        "status": "running",
+        "interpretation": "Evaluator reference intervention, not an experimental Agent attempt.",
+        "partitions": {},
+        "source_task_sha256": _sha(task_path),
+        "selected_condition_ids": sorted(groups),
+    }
+    _write(destination / "headroom.json", receipt)
+    try:
+        judge = LocalProcessJudge(
+            task=task,
+            base_repository=base_repository,
+            public_root=public_root,
+            private_root=private_root,
+            candidate_patch=candidate_patch,
+            output_dir=destination,
+            parallel_runs=parallel_runs,
+            run_validation_builds=False,
+            observations_path=destination / "observations.jsonl",
+        )
+        observations = judge.run(cases)
+        grid = ExpectedRunGrid.model_validate_json(
+            (destination / "expected-run-grid.json").read_text()
+        )
+        receipt["collection_by_panel"] = {
+            panel.name: {
+                state.value: {
+                    "expected_runs": sum(
+                        row.instance_set == panel.name and row.code_state == state
+                        for row in grid.runs
+                    ),
+                    "observed_runs": len(rows),
+                    "valid_solutions": sum(row.valid for row in rows),
+                    "status_counts": dict(Counter(row.status.value for row in rows)),
+                    "error_counts": dict(
+                        Counter(row.error for row in rows if row.error)
+                    ),
+                }
+                for state in judge.code_states
+                for rows in [
+                    [
+                        row
+                        for row in observations
+                        if row.instance_set == panel.name and row.code_state == state
+                    ]
+                ]
+            }
+            for panel in panels
+        }
+        for partition in ("discovery", "qualification"):
+            rows = [
+                row for row in observations if partitions[row.instance_id] == partition
+            ]
+            expected = grid.model_copy(
+                update={
+                    "runs": [
+                        row
+                        for row in grid.runs
+                        if partitions[row.instance_id] == partition
+                    ]
+                }
+            )
+            reports = compute_panel_performance_reports(
+                rows, task=task, expected_run_grid=expected
+            )
+            receipt["partitions"][partition] = {
+                name: report.model_dump(mode="json") for name, report in reports.items()
+            }
+        receipt["status"] = "measured"
+        receipt["opportunity_by_panel"] = {
+            panel.name: {
+                "discovery": receipt["partitions"]["discovery"]
+                .get(panel.name, {})
+                .get("classification", "missing"),
+                "qualification": receipt["partitions"]["qualification"]
+                .get(panel.name, {})
+                .get("classification", "missing"),
+            }
+            for panel in panels
+        }
+    except Exception as error:
+        receipt.update(status="failed", error=f"{type(error).__name__}: {error}")
+        _write(destination / "headroom.json", receipt)
+        raise
+    _write(destination / "headroom.json", receipt)
+    return receipt
+
+
+def materialize_generalization_views(
+    *,
+    plan: GeneralizationStudyPlan,
+    root: Path,
+    population_root: Path,
+    references_path: Path,
+    private_root: Path,
+    destination: Path,
+    difficulty_path: Path | None = None,
+) -> dict:
+    """Keep a common evaluator task while varying only public development views."""
+    import copy
+    from collections import defaultdict
+
+    from pitbench.evaluator.private_assets import PrivateAssetResolver
+    from pitbench.problem_families.verification import (
+        TrustedOptimumOracle,
+        TrustedOptimumRecord,
+    )
+    from pitbench.schema.task import InstanceSetSpec
+    from pitbench.tasks import TaskCatalog
+
+    root, private_root, destination = (
+        root.resolve(),
+        private_root.resolve(),
+        destination.resolve(),
+    )
+    private_root = PrivateAssetResolver(private_root).root
+    destination.mkdir(parents=True, exist_ok=False)
+    construction = json.loads(
+        (population_root / "population-construction.json").read_text()
+    )
+    targets = json.loads(references_path.read_text())["records"]
+    inventories = {
+        role: json.loads(Path(value["manifest"]).read_text())["instances"]
+        for role, value in construction["splits"].items()
+    }
+    if any(
+        targets.get(entry["id"], {}).get("target_kind", "missing") == "missing"
+        for entries in inventories.values()
+        for entry in entries
+    ):
+        raise ValueError(
+            "study views require reference coverage for every declared input; missing cases cannot be dropped"
+        )
+    development_roles = [
+        role
+        for role, split in construction["splits"].items()
+        if json.loads(Path(split["manifest"]).read_text())["visibility"] == "agent"
+    ]
+    if len(development_roles) != 1:
+        raise ValueError(
+            "study views require one shared diverse-development population"
+        )
+    difficulty = json.loads(difficulty_path.read_text()) if difficulty_path else None
+    if difficulty is not None and difficulty["status"] != "measured":
+        raise ValueError("study budgets require complete calibration evidence")
+    private_destination = (
+        private_root / "research/generalization-views" / destination.name
+    )
+    private_destination.mkdir(parents=True, exist_ok=False)
+    resolver = PrivateAssetResolver(private_root)
+    result = {
+        "kind": "generalization_task_views",
+        "status": "materialized_pending_headroom_and_scenario_protocols",
+        "new_agent_calls": 0,
+        "tasks": {},
+        "arms": {},
+    }
+    for task_relative in plan.task_configs:
+        original = PitBenchTask.from_yaml(root / task_relative)
+        task = original.model_copy(deep=True)
+        exact = task.task_type.value == "exact_solver"
+
+        def relevant(entry):
+            return (Path(entry["path"]).suffix in {".lp", ".mps"}) == exact
+
+        metadata = {}
+        oracle_records = []
+        if exact:
+            oracle_records = list(
+                TrustedOptimumOracle.from_yaml(
+                    resolver.resolve(task.oracle.source, task.oracle.source_sha256)
+                ).records
+            )
+        for role in inventories:
+            if role in development_roles or role == "protocol_calibration":
+                continue
+            groups = defaultdict(list)
+            for entry in inventories[role]:
+                if relevant(entry):
+                    groups[entry["condition_id"]].append(entry)
+            for condition, entries in sorted(groups.items()):
+                panel_name = role + "__" + condition
+                folder = private_destination / task.task_id / panel_name
+                folder.mkdir(parents=True)
+                rows = []
+                for entry in entries:
+                    target = targets[entry["id"]]
+                    path = folder / Path(entry["path"]).name
+                    shutil.copy2(entry["path"], path)
+                    if _sha(path) != entry["sha256"]:
+                        raise ValueError("hidden population content changed")
+                    rows.append(
+                        {
+                            "id": entry["id"],
+                            "uri": "private://"
+                            + path.relative_to(private_root).as_posix(),
+                            "optimal_or_bks": target["objective"],
+                        }
+                    )
+                    if exact:
+                        oracle_records.append(
+                            TrustedOptimumRecord.model_validate(
+                                target["record"]
+                            ).model_copy(
+                                update={
+                                    "instance_set": panel_name,
+                                    "instance_id": entry["id"],
+                                }
+                            )
+                        )
+                config_path = folder / "instances.yaml"
+                config_path.write_text(
+                    yaml.safe_dump(
+                        {
+                            "schema_version": "1.0",
+                            "visibility": "judge",
+                            "instances": rows,
+                        },
+                        sort_keys=False,
+                    )
+                )
+                task.instance_sets.append(
+                    InstanceSetSpec(
+                        name=panel_name,
+                        kind=InstanceSetKind.JUDGE_SHIFT,
+                        instance_set_config="private://"
+                        + config_path.relative_to(private_root).as_posix(),
+                        instance_set_config_sha256=_sha(config_path),
+                        size=len(rows),
+                        performance_protocol=(
+                            "heuristic_fixed_budget"
+                            if exact
+                            and any(
+                                targets[entry["id"]]["target_kind"] == "best_found"
+                                for entry in entries
+                            )
+                            else None
+                        ),
+                    )
+                )
+                if difficulty is not None:
+                    backend = difficulty["backend_by_task"][task.task_id]
+                    profile = next(
+                        profile
+                        for profile in difficulty["profiles"]
+                        if profile["backend"] == backend
+                        and profile["condition_id"] == condition
+                    )
+                    selected_budget = profile["selected_budget_sec"]
+                    panel = task.instance_sets[-1]
+                    panel.budgets_sec = sorted(
+                        set([original.evaluation.primary_budget_sec, selected_budget])
+                    )
+                    panel.primary_budget_sec = selected_budget
+                metadata[panel_name] = {
+                    "scientific_role": role,
+                    "condition_id": condition,
+                    "family": entries[0]["family"],
+                    "axes": entries[0]["axes"],
+                    "instances": len(rows),
+                }
+        if exact:
+            path = private_destination / task.task_id / "oracle.yaml"
+            path.write_text(
+                yaml.safe_dump(
+                    TrustedOptimumOracle(
+                        task_id=task.task_id, records=oracle_records
+                    ).model_dump(mode="json"),
+                    sort_keys=False,
+                )
+            )
+            task.oracle.source = (
+                "private://" + path.relative_to(private_root).as_posix()
+            )
+            task.oracle.source_sha256 = _sha(path)
+        evaluator_path = destination / "evaluator" / f"{task.task_id}.yaml"
+        evaluator_path.parent.mkdir(parents=True, exist_ok=True)
+        evaluator_path.write_text(
+            yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False)
+        )
+        original_dev = next(
+            item
+            for item in original.instance_sets
+            if item.kind == InstanceSetKind.AGENT_DEV
+        )
+        public_folder = destination / "public-development" / task.task_id
+        public_folder.mkdir(parents=True)
+        materialize_instance_set(
+            root / original_dev.instance_set_config, public_folder / "original"
+        )
+        index = yaml.safe_load(
+            (public_folder / "original/instance_set_config.yaml").read_text()
+        )
+        public_rows = []
+        for item in index["instances"]:
+            data = public_folder / "original" / item["path"]
+            solution = public_folder / "original" / item["bks_solution_file"]
+            public_rows.append(
+                {
+                    "id": item["id"],
+                    "instance_file": data.relative_to(public_folder).as_posix(),
+                    "instance_file_sha256": _sha(data),
+                    "bks": item["bks"],
+                    "bks_solution_file": solution.relative_to(public_folder).as_posix(),
+                    "bks_solution_file_sha256": _sha(solution),
+                    "proven_optimal": item.get("proven_optimal"),
+                }
+            )
+        for entry in inventories[development_roles[0]]:
+            if not relevant(entry):
+                continue
+            target = targets[entry["id"]]
+            folder = public_folder / "diverse"
+            folder.mkdir(exist_ok=True)
+            data = folder / (entry["id"] + Path(entry["path"]).suffix)
+            shutil.copy2(entry["path"], data)
+            solution = folder / (entry["id"] + ".solution.json")
+            source_solution = (
+                resolver.resolve(
+                    target["record"]["reference_solution_uri"],
+                    target["record"]["reference_solution_sha256"],
+                )
+                if exact
+                else Path(target["solution"])
+            )
+            shutil.copy2(source_solution, solution)
+            public_rows.append(
+                {
+                    "id": entry["id"],
+                    "instance_file": data.relative_to(public_folder).as_posix(),
+                    "instance_file_sha256": _sha(data),
+                    "bks": target["objective"],
+                    "bks_solution_file": solution.relative_to(public_folder).as_posix(),
+                    "bks_solution_file_sha256": _sha(solution),
+                    "proven_optimal": (
+                        target["target_kind"] == "trusted_optimum"
+                        if exact
+                        else target.get("proven_optimal", False)
+                    ),
+                }
+            )
+        public_config = public_folder / "instances.yaml"
+        public_config.write_text(
+            yaml.safe_dump(
+                {
+                    "schema_version": "1.0",
+                    "visibility": "agent",
+                    "instances": public_rows,
+                },
+                sort_keys=False,
+            )
+        )
+        diverse = copy.deepcopy(original_dev)
+        diverse.instance_set_config = public_config.relative_to(root).as_posix()
+        diverse.instance_set_config_sha256 = _sha(public_config)
+        diverse.size = len(public_rows)
+        result["tasks"][task.task_id] = {
+            "evaluator_task_config": str(evaluator_path),
+            "evaluator_sha256": _sha(evaluator_path),
+            "scientific_panels": metadata,
+            "original_primary_panels": "retained unchanged; new distributions are reported separately",
+            "development_original_size": original_dev.size,
+            "development_diverse_size": diverse.size,
+        }
+        TaskCatalog(root).validate_file(evaluator_path)
+        for arm in plan.arms:
+            view = task.model_copy(deep=True)
+            view.instruction = original.instruction + "\n\n" + arm.instruction
+            if arm.development_view != plan.arms[0].development_view:
+                view.instance_sets = [
+                    diverse if item.kind == InstanceSetKind.AGENT_DEV else item
+                    for item in view.instance_sets
+                ]
+            path = destination / "agent-views" / arm.id / f"{task.task_id}.yaml"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                yaml.safe_dump(view.model_dump(mode="json"), sort_keys=False)
+            )
+            TaskCatalog(root).validate_file(path)
+            result["arms"].setdefault(arm.id, {})[task.task_id] = {
+                "agent_task_config_path": str(path),
+                "task_config_path": str(evaluator_path),
+                "candidate_hypotheses_required": arm.require_candidate_hypotheses,
+            }
+    _write(destination / "task-views.json", result)
+    return result
+
+
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def freeze_generalization_measurements(
+    *,
+    views_path: Path,
+    population_root: Path,
+    references_path: Path,
+    specification_path: Path,
+    root: Path,
+    private_root: Path,
+    destination: Path,
+) -> dict:
+    """Attach fully declared diagnostic models without changing primary panels."""
+    import copy
+
+    import numpy as np
+
+    from pitbench.evaluator.private_assets import PrivateAssetResolver
+    from pitbench.evaluator.representations import (
+        CustomerRepresentation,
+        LinearModelRepresentation,
+    )
+    from pitbench.problem_families.public_verification import check_cvrp
+    from pitbench.problem_families.verification import NumericModelFamily
+    from pitbench.repositories.base import RepositoryPluginRegistry
+    from pitbench.schema.scenarios import SCENARIO_METRICS, ScenarioProtocol
+    from pitbench.schema.task import InstanceSetSpec
+
+    source = json.loads(views_path.read_text())
+    refs = json.loads(references_path.read_text())["records"]
+    spec = yaml.safe_load(specification_path.read_text())
+    construction = json.loads(
+        (population_root / "population-construction.json").read_text()
+    )
+    inventories = {
+        role: json.loads(Path(row["manifest"]).read_text())["instances"]
+        for role, row in construction["splits"].items()
+    }
+    resolver = PrivateAssetResolver(private_root)
+    data_root = resolver.root / "research" / destination.name / "scenario-models"
+    data_root.mkdir(parents=True, exist_ok=False)
+    destination.mkdir(parents=True, exist_ok=False)
+    result = copy.deepcopy(source)
+    result.update(
+        kind="generalization_execution_views",
+        status="development_frozen_evaluation_gated",
+        scientific_evaluation_ready=False,
+        specification_sha256=_sha(specification_path),
+    )
+    for task_id, metadata in result["tasks"].items():
+        task = PitBenchTask.from_yaml(
+            Path(source["tasks"][task_id]["evaluator_task_config"])
+        )
+        plugin = RepositoryPluginRegistry.load(task.repository.plugin)
+        numeric = task.problem_family.value == "mip"
+        representation = (
+            LinearModelRepresentation if numeric else CustomerRepresentation
+        )
+        protocols, case_inventory = [], {}
+        for name, panel_metadata in metadata["scientific_panels"].items():
+            entries = [
+                row
+                for row in inventories[panel_metadata["scientific_role"]]
+                if row["condition_id"] == panel_metadata["condition_id"]
+                and row["replicate_index"] in spec["replicate_indices"]
+            ]
+            if len(entries) != len(spec["replicate_indices"]):
+                raise ValueError("diagnostic selection is incomplete")
+            panel_name = "scenario__" + name
+            parent_panel = next(p for p in task.instance_sets if p.name == name)
+            panel_payload = yaml.safe_load(
+                resolver.resolve(
+                    parent_panel.instance_set_config,
+                    parent_panel.instance_set_config_sha256,
+                ).read_text()
+            )
+            wanted_ids = {entry["id"] for entry in entries}
+            panel_payload["instances"] = [
+                row for row in panel_payload["instances"] if row["id"] in wanted_ids
+            ]
+            if len(panel_payload["instances"]) != len(entries):
+                raise ValueError("diagnostic panel does not match its source inventory")
+            panel_config = data_root / "panels" / task_id / (panel_name + ".yaml")
+            panel_config.parent.mkdir(parents=True, exist_ok=True)
+            panel_config.write_text(yaml.safe_dump(panel_payload, sort_keys=False))
+            task.instance_sets.append(
+                InstanceSetSpec(
+                    name=panel_name,
+                    kind="judge_shift",
+                    instance_set_config="private://"
+                    + panel_config.relative_to(resolver.root).as_posix(),
+                    instance_set_config_sha256=_sha(panel_config),
+                    size=len(entries),
+                    scenario_only=True,
+                )
+            )
+            cases, targets, references, scales, witnesses, model_targets = (
+                [],
+                {},
+                {},
+                {},
+                {},
+                {},
+            )
+            for entry in entries:
+                identity = entry["id"]
+                target = refs[identity]
+                folder = data_root / entry["sha256"]
+                folder.mkdir(exist_ok=True)
+                base_path = folder / ("base" + representation.suffix)
+                if numeric:
+                    original = LinearModelRepresentation.read(Path(entry["path"]))
+                    witness_file = resolver.resolve(
+                        target["record"]["reference_solution_uri"],
+                        target["record"]["reference_solution_sha256"],
+                    )
+                    values = json.loads(witness_file.read_text())["values"]
+                    witness = np.asarray(
+                        [values[name] for name in original["col_names"]], dtype=float
+                    )
+                    rounded = np.where(
+                        np.abs(witness - np.rint(witness))
+                        <= spec["feasibility_tolerance"],
+                        np.rint(witness),
+                        witness,
+                    )
+                    if NumericModelFamily.check_model(
+                        original, rounded, spec["feasibility_tolerance"]
+                    )["feasible"]:
+                        witness = rounded
+                    options = []
+                    binary = (
+                        (original["integrality"] == 1)
+                        & (original["col_lower"] == 0)
+                        & (original["col_upper"] == 1)
+                    )
+                    for value in [0, 1]:
+                        candidate = witness.copy()
+                        candidate[binary] = value
+                        if NumericModelFamily.check_model(
+                            original, candidate, spec["feasibility_tolerance"]
+                        )["feasible"]:
+                            options.append(candidate)
+                    if not options:
+                        options = [witness]
+                    extreme_witness = max(
+                        options, key=lambda v: float(np.abs(v - witness).sum())
+                    )
+                    changed = copy.deepcopy(original)
+                    changed["cost"] = np.zeros_like(original["cost"])
+                    changed["cost"][binary] = np.where(
+                        extreme_witness[binary] < 0.5, 1.0, -1.0
+                    )
+                    extreme_target = NumericModelFamily.check_model(
+                        changed, extreme_witness, spec["feasibility_tolerance"]
+                    )["objective"]
+                    stress = []
+                    for factor in spec["row_scales"]:
+                        model = copy.deepcopy(original)
+                        model["matrix"] = model["matrix"] * factor
+                        model["row_lower"] = model["row_lower"] * factor
+                        model["row_upper"] = model["row_upper"] * factor
+                        if not NumericModelFamily.check_model(
+                            model, witness, spec["feasibility_tolerance"]
+                        )["feasible"]:
+                            raise ValueError(
+                                "stress witness is not valid in original stress units"
+                            )
+                        stress.append(model)
+                    witness = witness.tolist()
+                else:
+                    original = json.loads(Path(entry["path"]).read_text())
+                    witness = json.loads(Path(target["solution"]).read_text())
+                    stress = []
+                    for factor in spec["routing_integer_scales"]:
+                        model = copy.deepcopy(original)
+                        model["demands"] = [int(v) * factor for v in model["demands"]]
+                        model["capacity"] = int(model["capacity"]) * factor
+                        if not check_cvrp(model, witness)["feasible"]:
+                            raise ValueError("routing integer-range witness is invalid")
+                        stress.append(model)
+                    changed = stress[0]
+                    extreme_target = target["objective"]
+                models = [original, changed, *stress]
+                files = []
+                for index, model in enumerate(models):
+                    path = (
+                        base_path
+                        if index == 0
+                        else folder / (f"model-{index}" + representation.suffix)
+                    )
+                    if not path.exists():
+                        representation.write_input(path, model)
+                    files.append(str(path.resolve()))
+                epsilon = spec["target_absolute_slack"]
+                reference = float(target["objective"])
+                quality = (
+                    reference
+                    + epsilon
+                    + (
+                        spec["routing_relative_target_slack"] * max(1, abs(reference))
+                        if not numeric
+                        else 0
+                    )
+                )
+                targets[identity] = quality
+                references[identity] = reference
+                scales[identity] = max(1, abs(reference))
+                witnesses[identity] = witness
+                model_targets.update({_sha(Path(path)): quality for path in files})
+                model_targets[_sha(Path(files[1]))] = float(extreme_target) + epsilon
+                by_kind = {kind: [files[0]] for kind in SCENARIO_METRICS}
+                by_kind["lifecycle"] = [files[0]] * spec["lifecycle_steps"]
+                by_kind["sequence"] = [files[0], files[1], files[0]]
+                by_kind["numerical"] = files[2:]
+                cases.append(
+                    {
+                        "id": identity,
+                        "models_by_scenario": {
+                            kind + "__" + panel_name: paths
+                            for kind, paths in by_kind.items()
+                        },
+                    }
+                )
+            case_inventory[panel_name] = cases
+            parent = next(p for p in task.instance_sets if p.name == name)
+            budget = parent.primary_budget_sec or task.evaluation.primary_budget_sec
+            for kind, metrics in SCENARIO_METRICS.items():
+                settings = copy.deepcopy(spec["default_protocol"])
+                if kind == "lifecycle":
+                    settings.update(modes=["warm"], warmup_steps=spec["warmup_steps"])
+                if kind == "scaling":
+                    settings["thread_counts"] = spec["thread_counts"]
+                if kind == "sequence":
+                    settings["modes"] = ["cold", "warm"]
+                if kind == "replay":
+                    settings["repeats"] = spec["replay_repeats"]
+                pid = kind + "__" + panel_name
+                protocol = ScenarioProtocol(
+                    id=pid,
+                    kind=kind,
+                    metrics=sorted(metrics),
+                    representation=representation.name,
+                    instance_sets=[panel_name],
+                    objective_sense=task.oracle.objective_sense,
+                    budget_sec=spec["lifecycle_budget_sec"]
+                    if kind == "lifecycle"
+                    else budget,
+                    solver_seeds=spec["solver_seeds"],
+                    target_by_instance=targets,
+                    reference_by_instance=references,
+                    loss_scale_by_instance=scales,
+                    reference_solution_by_instance=witnesses,
+                    qualification_target_by_model_sha256=model_targets,
+                    model_sequences_sha256={
+                        panel_name: {
+                            case["id"]: [
+                                _sha(Path(path))
+                                for path in case["models_by_scenario"][pid]
+                            ]
+                            for case in cases
+                        }
+                    },
+                    memory_sample_interval_sec=spec["memory_sample_interval_sec"],
+                    feasibility_tolerance=spec["feasibility_tolerance"],
+                    **settings,
+                )
+                protocols.append(protocol)
+        task.metric_scenarios = protocols
+        evaluator_path = destination / "evaluator" / (task_id + ".yaml")
+        evaluator_path.parent.mkdir(exist_ok=True)
+        evaluator_path.write_text(
+            yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False)
+        )
+        metadata.update(
+            evaluator_task_config=str(evaluator_path.resolve()),
+            evaluator_sha256=_sha(evaluator_path),
+            diagnostic_protocols=len(protocols),
+            diagnostic_instances=sum(len(v) for v in case_inventory.values()),
+        )
+        config = {
+            "order": "base_first",
+            "watchdog_grace_sec": spec["watchdog_grace_sec"],
+            "instances": case_inventory,
+            "source_build": {
+                "source_commit": task.release.base_commit,
+                "repository_plugin": task.repository.plugin,
+                "session_plugin": plugin.scenario_session_plugin,
+                "from_evaluation_repository": True,
+            },
+            "options_by_scenario": {
+                p.id: spec.get("options_by_repository", {})
+                .get(task.repository.plugin, {})
+                .get(p.kind, {})
+                for p in protocols
+            },
+        }
+        config_path = destination / "scenario-configs" / (task_id + ".yaml")
+        config_path.parent.mkdir(exist_ok=True)
+        config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+        metadata["metric_scenario_config"] = str(config_path.resolve())
+        for arm in result["arms"]:
+            public = PitBenchTask.from_yaml(
+                Path(source["arms"][arm][task_id]["agent_task_config_path"])
+            )
+            public.metric_scenarios = protocols
+            public.instance_sets.extend(
+                [p for p in task.instance_sets if p.scenario_only]
+            )
+            path = destination / "agent-views" / arm / (task_id + ".yaml")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                yaml.safe_dump(public.model_dump(mode="json"), sort_keys=False)
+            )
+            result["arms"][arm][task_id].update(
+                agent_task_config_path=str(path.resolve()),
+                task_config_path=str(evaluator_path.resolve()),
+            )
+    _write(destination / "task-views.json", result)
+    return result
 
 
 def _write(path: Path, value: dict) -> None:

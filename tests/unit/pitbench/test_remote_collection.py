@@ -64,6 +64,40 @@ def test_partition_respects_host_capacity_and_rejects_impossible_request():
         remote.partition_reference_jobs([{**jobs[0], "threads": 64}], hosts, set(), {})
 
 
+def test_calibration_keeps_proven_cases_cold_and_groups_all_budgets_on_one_host():
+    jobs = [
+        {
+            "id": f"{instance}/{backend}/{seconds}",
+            "instance": {"id": instance},
+            "seconds": seconds,
+            "threads": 1,
+            "purpose": "calibration",
+            "skip_if_proven": False,
+            "use_warm_start": False,
+        }
+        for instance in ["a", "b", "c"]
+        for backend in ["cbc", "scip"]
+        for seconds in [0.1, 1, 20]
+    ]
+    assigned, omitted = remote.partition_reference_jobs(
+        jobs,
+        [{"host": "x", "cpus": [0, 1]}, {"host": "y", "cpus": [0, 1]}],
+        set(),
+        {"a": {"proven_optimal": True}},
+        group_by_instance=True,
+    )
+    assert omitted == []
+    assert sum(map(len, assigned.values())) == len(jobs)
+    for instance in ["a", "b", "c"]:
+        assert (
+            sum(
+                any(job["instance"]["id"] == instance for job in rows)
+                for rows in assigned.values()
+            )
+            == 1
+        )
+
+
 def test_host_template_relocates_inputs_and_warm_starts_without_mutating_source():
     instance = {
         "id": "routing/scale-tiny/one",

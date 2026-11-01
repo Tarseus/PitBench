@@ -988,6 +988,246 @@ def _scale_figures(conditions, output: Path) -> list[dict]:
     return figures
 
 
+def write_distribution_report(
+    source: Path, output: Path, *, generation_specification: Path
+) -> dict:
+    """Plot saved per-distribution native intervals, without new solver runs."""
+    require_plotting()
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import yaml
+
+    definition = yaml.safe_load(generation_specification.read_text())
+    conditions = {item["id"]: item for item in definition["conditions"]}
+    output.mkdir(parents=True, exist_ok=True)
+    report = {
+        "kind": "distribution_effect_report",
+        "scope": "evaluator_reference_headroom",
+        "interpretation": "Reference-intervention calibration, not the 90 experimental Agent outcomes.",
+        "estimates": [],
+        "curves": [],
+        "pending_or_failed": [],
+        "collection": [],
+        "figures": [],
+    }
+    records = sorted(source.rglob("headroom.json"))
+    series = defaultdict(list)
+    for path in records:
+        saved = _read(path)
+        measurement_id = path.parent.relative_to(source).as_posix()
+        if saved["status"] != "measured":
+            report["pending_or_failed"].append(
+                {
+                    "path": str(path),
+                    "status": saved["status"],
+                    "error": saved.get("error"),
+                }
+            )
+            continue
+        collection = saved.get("collection_by_panel")
+        audit_path = path.with_name("collection-summary.json")
+        if collection is None and audit_path.is_file():
+            collection = _read(audit_path)["collection_by_panel"]
+        failed_panels = set()
+        for panel, states in (collection or {}).items():
+            failed = set(states) == {"base", "agent"} and all(
+                counts["observed_runs"] > 0
+                and sum(
+                    counts["status_counts"].get(status, 0)
+                    for status in (
+                        "crashed",
+                        "build_failed",
+                        "output_error",
+                        "solver_error",
+                        "infrastructure_error",
+                    )
+                )
+                == counts["observed_runs"]
+                for counts in states.values()
+            )
+            report["collection"].append(
+                {
+                    "path": str(path),
+                    "task_id": saved["task_id"],
+                    "measurement_id": measurement_id,
+                    "panel": panel,
+                    "status": "collection_failed" if failed else "recorded",
+                    "by_state": states,
+                }
+            )
+            if failed:
+                failed_panels.add(panel)
+                report["pending_or_failed"].append(
+                    {"path": str(path), "panel": panel, "status": "collection_failed"}
+                )
+        for partition, panels in saved["partitions"].items():
+            for panel, performance in panels.items():
+                condition_id = panel
+                if panel == "judge_id":
+                    candidates = [
+                        item
+                        for item in conditions.values()
+                        if item["axes"]["axis"] == "baseline"
+                    ]
+                    exact = "time_basis" in performance
+                    condition_id = next(
+                        item["id"]
+                        for item in candidates
+                        if (
+                            definition["families"][item["family"]]["problem_family"]
+                            == "mip"
+                        )
+                        == exact
+                    )
+                condition = conditions.get(condition_id)
+                if condition is None:
+                    report["pending_or_failed"].append(
+                        {
+                            "path": str(path),
+                            "status": "unknown_distribution",
+                            "panel": panel,
+                        }
+                    )
+                    continue
+                for budget, cell in performance["by_budget"].items():
+                    metrics = [
+                        (
+                            "fixed_budget_normalized_gap",
+                            "mean_gap_reduction",
+                            "mean_gap_reduction_ci95",
+                            "percentage points",
+                            100,
+                        )
+                    ]
+                    if "time_basis" in performance:
+                        metrics = [
+                            (
+                                "exact_solved_coverage",
+                                "mean_verified_solved_coverage_reduction",
+                                "mean_verified_solved_coverage_reduction_ci95",
+                                "percentage points",
+                                100,
+                            ),
+                            (
+                                "exact_penalized_runtime_sec",
+                                "mean_penalized_runtime_reduction_sec",
+                                "mean_penalized_runtime_reduction_ci95",
+                                "seconds",
+                                1,
+                            ),
+                        ]
+                    for metric, key, ci_key, unit, scale in metrics:
+                        row = {
+                            "condition_id": f"{measurement_id}/{partition}/{condition_id}",
+                            "task_id": saved["task_id"],
+                            "model": "evaluator_reference",
+                            "setting": f"{partition} / {measurement_id}",
+                            "issues": [],
+                            "classification": performance["classification"],
+                        }
+                        point = _point(
+                            row,
+                            metric=metric,
+                            title=metric,
+                            unit=unit,
+                            estimate=cell["paired"].get(key),
+                            interval=cell["paired"].get(ci_key),
+                            reference=f"{path}:{partition}:{panel}:{budget}",
+                            panel=condition_id,
+                            scale=scale,
+                            budget_sec=float(budget),
+                        )
+                        point.update(
+                            family=condition["family"],
+                            axes=condition["axes"],
+                            issues=row["issues"],
+                            paired_instances=cell["paired"]["paired_instances"],
+                            collection_by_state=(collection or {}).get(panel),
+                            measurement_id=measurement_id,
+                        )
+                        if panel in failed_panels:
+                            point["plot_ready"] = False
+                            point["issues"].append(
+                                "All runs in both source states failed collection; the saved native estimate is not performance evidence."
+                            )
+                        report["estimates"].append(point)
+                        coordinate = condition["axes"]["coordinate"]
+                        if (
+                            point["plot_ready"]
+                            and isinstance(coordinate, (int, float))
+                            and not isinstance(coordinate, bool)
+                        ):
+                            series[
+                                (
+                                    saved["task_id"],
+                                    partition,
+                                    condition["family"],
+                                    condition["axes"]["axis"],
+                                    metric,
+                                    float(budget),
+                                    unit,
+                                    measurement_id,
+                                )
+                            ].append((coordinate, point))
+    report["figures"] = _figures(report["estimates"], output)
+    for key, points in series.items():
+        if len(points) < 2:
+            continue
+        task, partition, family, axis, metric, budget, unit, measurement_id = key
+        points.sort(key=lambda item: item[0])
+        fig, ax = plt.subplots(figsize=(7, 4))
+        x = [item[0] for item in points]
+        mean = [item[1]["estimate"] for item in points]
+        lower = [item[1]["lower"] for item in points]
+        upper = [item[1]["upper"] for item in points]
+        ax.plot(x, mean, "o-", label="paired reference effect")
+        ax.fill_between(x, lower, upper, alpha=0.18, label="saved native interval")
+        ax.axhline(0, color="#777777", linewidth=0.8)
+        ax.set(
+            xlabel=axis,
+            ylabel=unit,
+            title=f"{task} / {partition} / {budget:g}s\n{measurement_id}",
+        )
+        ax.legend()
+        stem = re.sub(
+            r"[^a-zA-Z0-9_.-]+",
+            "-",
+            f"distribution-{measurement_id}-{partition}-{family}-{axis}-{metric}-{budget:g}",
+        )
+        assets = _save_figure(fig, output, stem)
+        plt.close(fig)
+        curve = {
+            "task_id": task,
+            "measurement_id": measurement_id,
+            "partition": partition,
+            "family": family,
+            "axis": axis,
+            "metric_id": metric,
+            "budget_sec": budget,
+            "coordinates": x,
+            "estimates": mean,
+            "lower": lower,
+            "upper": upper,
+            "files": assets,
+        }
+        report["curves"].append(curve)
+    _write_json(output / "distribution-report.json", report)
+    environment = Environment(autoescape=select_autoescape(["html"]))
+    template = environment.from_string("""<!doctype html><meta charset="utf-8"><title>Distribution effects</title>
+<h1>Distribution effects</h1><p>{{ report.interpretation }}</p>
+<p>{{ report.estimates|length }} saved estimates; {{ report.pending_or_failed|length }} pending or failed records.</p>
+<h2>Collection audit</h2>
+<p>Native estimates are retained. Panels where both source states failed every run are excluded from plots. Time limits without a solution remain solver outcomes. Missing collection summaries are not proof of successful collection.</p>
+<table border="1"><tr><th>Task / panel</th><th>State</th><th>Verified solutions / observed / expected</th><th>Statuses and errors</th></tr>
+{% for item in report.collection %}{% for state, counts in item.by_state.items() %}<tr><td>{{ item.task_id }} / {{ item.panel }} ({{ item.status }})<br>{{ item.measurement_id }}</td><td>{{ state }}</td><td>{{ counts.valid_solutions }} / {{ counts.observed_runs }} / {{ counts.expected_runs }}</td><td>{{ counts.status_counts|tojson }} {{ counts.error_counts|tojson }}</td></tr>{% endfor %}{% endfor %}</table>
+{% for curve in report.curves %}<h2>{{ curve.task_id }}: {{ curve.axis }} / {{ curve.partition }}</h2><p>{{ curve.measurement_id }}</p><img style="max-width:100%" src="{{ curve.files.svg }}">{% endfor %}
+{% for figure in report.figures %}<h2>{{ figure.title }}</h2><img style="max-width:100%" src="{{ figure.files.svg }}">{% endfor %}""")
+    (output / "report.html").write_text(template.render(report=report))
+    return report
+
+
 def write_campaign_report(
     source: Path,
     output: Path,

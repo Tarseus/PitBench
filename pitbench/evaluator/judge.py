@@ -34,6 +34,7 @@ from pitbench.repositories.base import (
     CommandSpec,
     RepositoryPluginRegistry,
     SolverRunSpec,
+    ignore_generated_outputs,
 )
 from pitbench.schema.observation import (
     CodeState,
@@ -159,7 +160,16 @@ def _development_seeds(task: PitBenchTask) -> tuple[int, ...]:
 def _exact_target_verifier(
     record,
     resolver: PrivateAssetResolver,
+    *,
+    performance_protocol=None,
 ) -> TrustedOptimumFamily:
+    if (
+        record.target_kind == "best_found"
+        and performance_protocol != PerformanceProtocol.HEURISTIC_FIXED_BUDGET
+    ):
+        raise ValueError(
+            "best-found MIP targets require a fixed-budget quality panel, not exact solved coverage"
+        )
     reference_solution_path = None
     if record.reference_solution_uri is not None:
         reference_solution_path = resolver.resolve(
@@ -283,6 +293,8 @@ class JudgePlan:
     ) -> "JudgePlan":
         cases = []
         for instance_set in task.instance_sets:
+            if instance_set.scenario_only:
+                continue
             condition_id = _controlled_transfer_condition_id(task, instance_set)
             if (
                 instance_set.kind == InstanceSetKind.AGENT_DEV
@@ -345,8 +357,19 @@ class JudgePlan:
                 if task.oracle.kind == "known_optimum"
                 else "published_bks"
             )
+            bks_quality_panels = {
+                panel.name
+                for panel in task.instance_sets
+                if panel.kind == InstanceSetKind.JUDGE_SHIFT
+                and panel.performance_protocol
+                == PerformanceProtocol.HEURISTIC_FIXED_BUDGET
+            }
             if any(
                 record.target_kind != expected_target_kind
+                and not (
+                    record.target_kind == "best_found"
+                    and record.instance_set in bks_quality_panels
+                )
                 for record in trusted_oracle.records
             ):
                 raise ValueError("exact target kind differs from task oracle kind")
@@ -355,6 +378,8 @@ class JudgePlan:
                 for record in trusted_oracle.records
             }
         for instance_set in task.instance_sets:
+            if instance_set.scenario_only:
+                continue
             condition_id = _controlled_transfer_condition_id(task, instance_set)
             public_instance_set = instance_set.kind == InstanceSetKind.AGENT_DEV
             solver_seeds = (
@@ -451,7 +476,10 @@ class JudgePlan:
                     trusted_verifier = None
                     if trusted_record is not None:
                         trusted_verifier = _exact_target_verifier(
-                            trusted_record, resolver
+                            trusted_record,
+                            resolver,
+                            performance_protocol=instance_set.performance_protocol
+                            or task.evaluation.performance_protocol,
                         )
                     cases.append(
                         InstanceCase(
@@ -468,6 +496,9 @@ class JudgePlan:
                             problem_scale=_customer_count(path),
                             condition_id=condition_id,
                             solver_seeds=solver_seeds,
+                            budgets_sec=tuple(instance_set.budgets_sec)
+                            if instance_set.budgets_sec
+                            else None,
                             verifier=trusted_verifier,
                         )
                     )
@@ -544,8 +575,16 @@ class JudgePlan:
                         condition_id=condition_id,
                         template_id=item.get("template_id"),
                         solver_seeds=solver_seeds,
+                        budgets_sec=tuple(instance_set.budgets_sec)
+                        if instance_set.budgets_sec
+                        else None,
                         verifier=(
-                            _exact_target_verifier(exact_record, resolver)
+                            _exact_target_verifier(
+                                exact_record,
+                                resolver,
+                                performance_protocol=instance_set.performance_protocol
+                                or task.evaluation.performance_protocol,
+                            )
                             if exact_record is not None
                             else None
                         ),
@@ -746,10 +785,178 @@ class LocalProcessJudge:
             raise ValueError("agent judge state requires a candidate patch")
         return self.candidate_patch
 
-    def _workspace(self, state: CodeState, root: Path, build_kind: BuildKind) -> Path:
+    def validate_sources(self, *, include_excluded_tests: bool = False) -> dict:
+        """Run the same source preparation and validation commands without solves."""
+        import xml.etree.ElementTree as ET
+
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        result = {
+            "task_id": self.task.task_id,
+            "kind": "upstream_validation",
+            "source_commit": self.task.release.base_commit,
+            "include_excluded_tests": include_excluded_tests,
+            "states": {},
+            "new_solver_benchmark_runs": 0,
+        }
+        for state in self.code_states:
+            workspace = self.output_dir / "validation-workspaces" / state.value
+            entry = {
+                "status": "running",
+                "workspace": str(workspace),
+                "test_reports": [],
+            }
+            result["states"][state.value] = entry
+            try:
+                workspace = self._workspace(
+                    state,
+                    self.output_dir / "validation-workspaces",
+                    BuildKind.VALIDATION,
+                    include_excluded_tests=include_excluded_tests,
+                )
+                entry["status"] = "passed"
+            except Exception as error:
+                entry.update(status="failed", error=str(error))
+            for path in [
+                workspace / ".pitbench-upstream-tests.xml",
+                workspace / "build/upstream-tests.xml",
+            ]:
+                try:
+                    if path.is_file():
+                        tree = ET.parse(path).getroot()
+                        suites = (
+                            [tree]
+                            if tree.tag == "testsuite"
+                            else list(tree.findall("testsuite"))
+                        )
+                        counts = {
+                            name: sum(int(s.get(name, "0")) for s in suites)
+                            for name in ["tests", "failures", "errors", "skipped"]
+                        }
+                        entry["test_reports"].append({"path": str(path), **counts})
+                        if not counts["tests"]:
+                            raise RuntimeError(
+                                "upstream JUnit report contains zero tests"
+                            )
+                        if counts["failures"] or counts["errors"]:
+                            raise RuntimeError(
+                                "upstream JUnit report contains failures"
+                            )
+                except Exception as error:
+                    entry["status"] = "failed"
+                    entry.setdefault("error", str(error))
+            result["status"] = (
+                "passed"
+                if all(item["status"] == "passed" for item in result["states"].values())
+                else "failed"
+            )
+            (self.output_dir / "upstream-validation.json").write_text(
+                json.dumps(result, indent=2) + "\n"
+            )
+        return result
+
+    def build_scenario_sources(self) -> dict:
+        """Build API instrumentation from each actual source state and record it."""
+        result = {
+            "task_id": self.task.task_id,
+            "kind": "scenario_source_build",
+            "states": {},
+        }
+        commands = self.repository.scenario_build_commands(
+            adapter_source=self.public_root / "adapters/cpp/ScenarioSession.cpp",
+            source_commit=self.task.release.base_commit,
+        )
+        for state in self.code_states:
+            entry = {"status": "running"}
+            result["states"][state.value] = entry
+            try:
+                workspace = self._workspace(
+                    state,
+                    self.output_dir / "binding-workspaces",
+                    BuildKind.PERFORMANCE,
+                    commands=commands,
+                )
+                manifest = workspace / ".pitbench/scenario-binding.json"
+                argv = [
+                    self.repository.driver_python,
+                    "-m",
+                    "scripts.prepare_research_cases",
+                    "binding",
+                    "--source",
+                    str(workspace),
+                    "--repository-plugin",
+                    self.task.repository.plugin,
+                    "--version",
+                    self.task.release.version,
+                    "--output",
+                    str(manifest),
+                ]
+                if self.repository.scenario_binding_package:
+                    argv.extend(["--package", self.repository.scenario_binding_package])
+                else:
+                    argv.extend(
+                        [
+                            "--native-library",
+                            str(workspace / "build/scenario/pitbench_binding.so"),
+                        ]
+                    )
+                command = CommandSpec(
+                    argv=argv, env={"PYTHONPATH": str(self.public_root)}
+                )
+                outcome = self._run(command, workspace)
+                log = self.output_dir / "binding-receipts" / state.value
+                log.mkdir(parents=True)
+                (log / "command.json").write_text(command.model_dump_json(indent=2))
+                (log / "stdout.txt").write_text(outcome.stdout or "")
+                (log / "stderr.txt").write_text(outcome.stderr or "")
+                if outcome.returncode:
+                    raise RuntimeError(f"binding provenance failed: {outcome.stderr}")
+                entry.update(
+                    status="passed",
+                    workspace=str(workspace),
+                    manifest=str(manifest),
+                    session_plugin=self.repository.scenario_session_plugin,
+                    binding=json.loads(manifest.read_text()),
+                )
+            except Exception as error:
+                entry.update(status="failed", error=str(error))
+            result["status"] = (
+                "passed"
+                if all(
+                    value["status"] == "passed" for value in result["states"].values()
+                )
+                else "failed"
+            )
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            (self.output_dir / "scenario-build.json").write_text(
+                json.dumps(result, indent=2) + "\n"
+            )
+        return result
+
+    def _workspace(
+        self,
+        state: CodeState,
+        root: Path,
+        build_kind: BuildKind,
+        *,
+        include_excluded_tests: bool = False,
+        commands: list[CommandSpec] | None = None,
+    ) -> Path:
         root.mkdir(parents=True, exist_ok=True)
         workspace = root / state.value
-        shutil.copytree(self.base_repository, workspace, symlinks=True)
+        generated = {PurePosixPath(path) for path in self.repository.agent_build_paths}
+
+        def omit_generated(directory, names):
+            relative = Path(directory).relative_to(self.base_repository)
+            return [
+                name
+                for name in names
+                if PurePosixPath(relative.as_posix()) / name in generated
+            ]
+
+        shutil.copytree(
+            self.base_repository, workspace, symlinks=True, ignore=omit_generated
+        )
+        ignore_generated_outputs(workspace, self.repository.agent_build_paths)
         patch = self._state_patch(state)
         if patch is not None and patch.stat().st_size:
             applied = subprocess.run(
@@ -778,7 +985,21 @@ class LocalProcessJudge:
                 raise RuntimeError(
                     f"{state.value} validation test patch failed: {applied.stderr}"
                 )
-        for index, command in enumerate(self.repository.build_commands(build_kind)):
+        for index, command in enumerate(
+            commands
+            if commands is not None
+            else self.repository.build_commands(build_kind)
+        ):
+            if include_excluded_tests:
+                command = command.model_copy(
+                    update={
+                        "argv": [
+                            arg
+                            for arg in command.argv
+                            if not arg.startswith(("--deselect=", "--ignore="))
+                        ]
+                    }
+                )
             log_dir = (
                 self.output_dir
                 / "build-logs"

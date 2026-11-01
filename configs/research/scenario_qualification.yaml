@@ -1,0 +1,93 @@
+schema_version: "1.0"
+claim_scope: implementation_qualification_only
+description: >
+  Tiny analytic fixtures for checking API semantics and independent collection.
+  These fixtures, budgets and intervals are not generalization experiment results.
+cpu_count: 2
+watchdog_grace_sec: 30
+default_protocol:
+  budget_sec: 0.1
+  solver_seeds: [1]
+  thread_counts: [1]
+  repeats: 1
+  modes: [cold]
+  missing_initial_loss: 1
+  censoring: budget
+  reference_threads: 1
+  warmup_steps: 1
+  series_reduction: maximum
+  curve_reduction: mean_target_time
+  growth_estimator: ols
+  sequence_mode: warm
+  replay_fields: [objective, termination, solution_hash]
+  replay_absolute_tolerance: 0
+  replay_relative_tolerance: 0
+  memory_sample_interval_sec: 0.005
+  feasibility_tolerance: 0.000001
+  reset_policy: retain_state
+  memory_cleanup: gc_collect
+scenarios:
+  trajectory: {model_indices: [0]}
+  lifecycle: {model_indices: [0, 0, 0, 0], modes: [warm]}
+  scaling: {model_indices: [0], thread_counts: [1, 2]}
+  sequence: {model_indices: [0, 1, 0], modes: [cold, warm]}
+  numerical: {model_indices: [2]}
+  replay: {model_indices: [0], repeats: 2}
+  setup: {model_indices: [0]}
+options_by_repository:
+  "pitbench.repositories.plugins:ScipRepositoryPlugin":
+    sequence: {reoptimization: true}
+representations:
+  row_column_permutation:
+    cases:
+      alpha:
+        witness: [1, 0]
+        models:
+          - target: -3
+            loss_scale: 3
+            model: &mip
+              matrix: [[2, 2]]
+              cost: [-3, -2]
+              col_lower: [0, 0]
+              col_upper: [1, 1]
+              integrality: [1, 1]
+              row_lower: [-.inf]
+              row_upper: [3]
+              sense: minimize
+              offset: 0
+          - target: -4
+            loss_scale: 4
+            model: {<<: *mip, cost: [-1, -4]}
+          - target: -3000000
+            loss_scale: 3000000
+            model: {<<: *mip, matrix: [[2000000, 2000000]], row_upper: [3000000], cost: [-3000000, -2000000]}
+      beta:
+        witness: [0, 1]
+        models:
+          - {target: -3, loss_scale: 3, model: {<<: *mip, cost: [-2, -3]}}
+          - {target: -4, loss_scale: 4, model: {<<: *mip, cost: [-4, -1]}}
+          - {target: -3000000, loss_scale: 3000000, model: {<<: *mip, matrix: [[2000000, 2000000]], row_upper: [3000000], cost: [-2000000, -3000000]}}
+  customer_relabeling:
+    cases:
+      alpha:
+        witness: {routes: [[1, 2]]}
+        models:
+          - target: 4
+            loss_scale: 2
+            model: &routing
+              coordinates: [[0, 0], [1, 0], [2, 0]]
+              demands: [0, 1, 1]
+              capacity: 2
+              distance_metric: EUC_2D
+          - target: 48
+            loss_scale: 48
+            model: {<<: *routing, coordinates: [[0, 0], [10, 0], [0, 10], [10, 10]], demands: [0, 1, 1, 1], capacity: 3, num_vehicles: 1, time_windows: [[0, 100], [10, 10], [24, 24], [34, 34]], service_times: [0, 0, 0, 0]}
+          - target: 4194304
+            loss_scale: 2097152
+            model: {<<: *routing, coordinates: [[0, 0], [1048576, 0], [2097152, 0]]}
+      beta:
+        witness: {routes: [[1, 2]]}
+        models:
+          - {target: 8, loss_scale: 4, model: {<<: *routing, coordinates: [[0, 0], [0, 2], [0, 4]]}}
+          - {target: 96, loss_scale: 96, model: {<<: *routing, coordinates: [[0, 0], [20, 0], [0, 20], [20, 20]], demands: [0, 1, 1, 1], capacity: 3, num_vehicles: 1, time_windows: [[0, 200], [20, 20], [48, 48], [68, 68]], service_times: [0, 0, 0, 0]}}
+          - {target: 8388608, loss_scale: 4194304, model: {<<: *routing, coordinates: [[0, 0], [0, 2097152], [0, 4194304]]}}

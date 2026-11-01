@@ -51,10 +51,22 @@ class PrivateAssetError(RuntimeError):
 
 class PrivateAssetResolver:
     def __init__(self, root: Path) -> None:
+        self.logical_root = root.resolve()
         # A local namespace may retain old paths while its assets are relocated.
         # Resolve this explicit storage-root link before applying URI containment.
         storage_root = root / ".asset-root"
         self.root = (storage_root if storage_root.is_symlink() else root).resolve()
+
+    def destination_path(self, path: Path) -> Path:
+        """Map a new evaluator asset into the same storage namespace as reads."""
+        path = path.resolve()
+        if path.is_relative_to(self.logical_root):
+            return self.root / path.relative_to(self.logical_root)
+        if path.is_relative_to(self.root):
+            return path
+        raise PrivateAssetError(
+            "private asset destination escapes its configured storage"
+        )
 
     def resolve(self, uri: str, sha256: str | None = None) -> Path:
         if not uri.startswith("private://"):

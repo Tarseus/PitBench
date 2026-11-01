@@ -128,6 +128,42 @@ class InstanceSetSpec(BaseModel):
     )
     size: int = Field(gt=0)
     randomness: RandomnessSpec | None = None
+    performance_protocol: PerformanceProtocol | None = None
+    budgets_sec: list[float] | None = None
+    primary_budget_sec: float | None = None
+    scenario_only: bool = False
+
+    @model_validator(mode="after")
+    def validate_panel_overrides(self):
+        if (
+            any(
+                value is not None
+                for value in (
+                    self.performance_protocol,
+                    self.budgets_sec,
+                    self.primary_budget_sec,
+                )
+            )
+            and self.kind != InstanceSetKind.JUDGE_SHIFT
+        ):
+            raise ValueError(
+                "panel-specific metrics and budgets apply only to supplemental hidden panels"
+            )
+        if (self.budgets_sec is None) != (self.primary_budget_sec is None):
+            raise ValueError("panel budgets require an explicit primary budget")
+        if self.budgets_sec is not None:
+            import math
+
+            if (
+                not self.budgets_sec
+                or any(not math.isfinite(t) or t <= 0 for t in self.budgets_sec)
+                or len(set(self.budgets_sec)) != len(self.budgets_sec)
+                or self.primary_budget_sec not in self.budgets_sec
+            ):
+                raise ValueError(
+                    "panel budgets must be positive, distinct and contain the primary budget"
+                )
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -491,4 +527,8 @@ class PitBenchTask(BaseModel):
 
     @classmethod
     def from_yaml(cls, path: Path) -> "PitBenchTask":
-        return cls.model_validate(yaml.safe_load(path.read_text()))
+        return cls.model_validate(
+            yaml.load(
+                path.read_text(), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+            )
+        )

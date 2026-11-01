@@ -616,6 +616,47 @@ def test_relay_records_one_complete_response_without_auth_headers(tmp_path):
     )
 
 
+@pytest.mark.parametrize("schema_type", [{"const": "string"}, ["string", "null"]])
+def test_relay_passes_schema_objects_in_streamed_response(schema_type):
+    handler = object.__new__(_RelayHandler)
+    handler.server = SimpleNamespace(trace=None)
+    handler.send_response = Mock()
+    handler.send_header = Mock()
+    handler.end_headers = Mock()
+    handler.wfile = io.BytesIO()
+    event = {
+        "type": "response.created",
+        "response": {
+            "tools": [
+                {
+                    "parameters": {
+                        "properties": {
+                            "sandbox_permissions": {
+                                "type": schema_type,
+                                "description": "require_escalated is unavailable",
+                            }
+                        }
+                    }
+                }
+            ]
+        },
+    }
+    payload = ("data: " + json.dumps(event) + "\n\n").encode()
+    copied, _ = handler._copy_response(io.BytesIO(payload), {}, 200)
+    assert copied and handler.wfile.getvalue() == payload
+
+
+@pytest.mark.parametrize("call_type", ["function_call", "custom_tool_call"])
+def test_relay_still_blocks_shell_escalation_in_actual_tool_calls(call_type):
+    event = {
+        "type": "response.output_item.added",
+        "item": {"type": call_type, "arguments": '{"sandbox_permissions":"require_escalated"}'},
+    }
+    assert _RelayHandler._event_requests_shell_escalation(
+        ("data: " + json.dumps(event)).encode()
+    )
+
+
 def test_relay_finishes_late_response_after_agent_trace_closes(tmp_path):
     trace = AgentTrace(tmp_path / "trace", context={})
     handler = object.__new__(_RelayHandler)

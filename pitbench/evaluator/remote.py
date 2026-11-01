@@ -73,7 +73,12 @@ def verify_collected_solution(
 
 
 def partition_reference_jobs(
-    jobs: list[dict], hosts: list[dict], completed: set[str], references: dict
+    jobs: list[dict],
+    hosts: list[dict],
+    completed: set[str],
+    references: dict,
+    *,
+    group_by_instance: bool = False,
 ) -> tuple[dict, list[dict]]:
     """Deterministic assignment by configured core-hours, retaining original IDs."""
     assigned = {host["host"]: [] for host in hosts}
@@ -83,19 +88,33 @@ def partition_reference_jobs(
     for job in jobs:
         if job["id"] in completed:
             omitted.append({"job_id": job["id"], "reason": "completed"})
-        elif references.get(job["instance"]["id"], {}).get("proven_optimal"):
+        elif job.get(
+            "skip_if_proven", job.get("purpose", "reference") != "calibration"
+        ) and references.get(job["instance"]["id"], {}).get("proven_optimal"):
             omitted.append({"job_id": job["id"], "reason": "proven_optimal"})
         else:
             pending.append(job)
-    for job in sorted(pending, key=lambda j: (-j["seconds"] * j["threads"], j["id"])):
-        eligible = [h for h in hosts if len(h["cpus"]) >= job["threads"]]
+    grouped = {}
+    for job in pending:
+        key = job["instance"]["id"] if group_by_instance else job["id"]
+        grouped.setdefault(key, []).append(job)
+    for block in sorted(
+        grouped.values(),
+        key=lambda rows: (
+            -sum(j["seconds"] * j["threads"] for j in rows),
+            min(j["id"] for j in rows),
+        ),
+    ):
+        eligible = [
+            h for h in hosts if len(h["cpus"]) >= max(j["threads"] for j in block)
+        ]
         if not eligible:
-            raise ValueError(f"no host fits CPU request for {job['id']}")
+            raise ValueError(f"no host fits CPU request for {block[0]['id']}")
         host = min(
             eligible, key=lambda h: (loads[h["host"]] / len(h["cpus"]), h["host"])
         )
-        assigned[host["host"]].append(job)
-        loads[host["host"]] += job["seconds"] * job["threads"]
+        assigned[host["host"]].extend(block)
+        loads[host["host"]] += sum(j["seconds"] * j["threads"] for j in block)
     return assigned, omitted
 
 
@@ -124,6 +143,29 @@ class SSHHost:
         with _HOST_KEYS_LOCK:
             self.client.load_host_keys(str(known_hosts))
         self.client.set_missing_host_key_policy(RememberKey())
+        self.proxy = (
+            paramiko.ProxyCommand(
+                shlex.join(
+                    [
+                        "ssh",
+                        "-T",
+                        "-o",
+                        "BatchMode=yes",
+                        "-o",
+                        "ConnectTimeout=30",
+                        "-o",
+                        "ControlMaster=no",
+                        "-o",
+                        "ControlPath=none",
+                        "-W",
+                        host["host"] + ":22",
+                        host["proxy_jump"],
+                    ]
+                )
+            )
+            if host.get("proxy_jump")
+            else None
+        )
         self.client.connect(
             host["host"],
             username=credentials["username"],
@@ -133,6 +175,7 @@ class SSHHost:
             auth_timeout=20,
             allow_agent=False,
             look_for_keys=False,
+            sock=self.proxy,
         )
         self.sftp = self.client.open_sftp()
 
@@ -161,6 +204,8 @@ class SSHHost:
     def close(self) -> None:
         self.sftp.close()
         self.client.close()
+        if self.proxy is not None:
+            self.proxy.close()
 
 
 class RemoteReferenceCollection:
@@ -203,12 +248,21 @@ class RemoteReferenceCollection:
                     "root": entry["work_root"],
                     "cpus": entry["physical_cpu_ids"][::stride][:count],
                     "inventory": entry,
+                    **(
+                        {"proxy_jump": config["proxy_jump"]}
+                        if config.get("proxy_jump")
+                        else {}
+                    ),
                 }
             )
         if len(hosts) != config["expected_hosts"]:
             raise ValueError("inventory does not contain every requested host")
         assigned, omitted = partition_reference_jobs(
-            manifest["jobs"], hosts, completed, references
+            manifest["jobs"],
+            hosts,
+            completed,
+            references,
+            group_by_instance=config.get("group_by_instance", False),
         )
         output.mkdir(parents=True, exist_ok=False)
         files = {}
@@ -234,7 +288,11 @@ class RemoteReferenceCollection:
                     archive.add(source, arcname=destination, recursive=False)
 
             for path in sorted((ROOT / "pitbench").rglob("*")):
-                if "__pycache__" not in path.parts and path.suffix != ".pyc":
+                if (
+                    "__pycache__" not in path.parts
+                    and path.suffix not in {".pyc", ".log"}
+                    and not path.is_symlink()
+                ):
                     include(
                         path,
                         str(
@@ -254,8 +312,8 @@ class RemoteReferenceCollection:
             for source_path, destination in files.items():
                 include(Path(source_path), "project/" + destination)
             for name, build in config["native_builds"].items():
-                source_dir = ROOT / build["source"]
-                for pattern in build["files"]:
+                source_dir = ROOT / build.get("prebuilt", build.get("source", ""))
+                for pattern in ["**/*"] if build.get("prebuilt") else build["files"]:
                     for path in sorted(source_dir.glob(pattern)):
                         include(
                             path,
@@ -374,7 +432,9 @@ class RemoteReferenceCollection:
         return {h["host"]: h for h in json.loads(path.read_text())["hosts"]}
 
     @staticmethod
-    def deploy(config_path: Path, output: Path) -> dict:
+    def deploy(
+        config_path: Path, output: Path, *, host_ids: set[str] | None = None
+    ) -> dict:
         from pitbench.evaluator.artifacts import write_json
 
         distribution = RemoteReferenceCollection.prepare(config_path, output)
@@ -467,10 +527,22 @@ class RemoteReferenceCollection:
             write_json(output / ("deploy-" + host["host"] + ".json"), result)
             return result
 
+        selected_hosts = [
+            host
+            for host in distribution["hosts"]
+            if host_ids is None or host["host"] in host_ids
+        ]
+        if host_ids is not None and host_ids != {
+            host["host"] for host in selected_hosts
+        }:
+            raise ValueError("deployment retry names an undeclared host")
+        connection_limit = config.get(
+            "ssh_parallel_connections", 2 if config.get("proxy_jump") else 8
+        )
         with ThreadPoolExecutor(
-            max_workers=config.get("deployment_workers", 4)
+            max_workers=min(config.get("deployment_workers", 4), connection_limit)
         ) as pool:
-            results = list(pool.map(install, distribution["hosts"]))
+            results = list(pool.map(install, selected_hosts))
         write_json(output / "deployment.json", {"time": time.time(), "hosts": results})
         return {"hosts": results}
 
@@ -739,7 +811,11 @@ class RemoteReferenceCollection:
                 if connection is not None:
                     connection.close()
 
-        with ThreadPoolExecutor(max_workers=8) as pool:
+        with ThreadPoolExecutor(
+            max_workers=config.get(
+                "ssh_parallel_connections", 2 if config.get("proxy_jump") else 8
+            )
+        ) as pool:
             results = list(pool.map(collect, distribution["hosts"]))
         best = copy.deepcopy(distribution["references"])
         for path in (output / "hosts").glob("*/bks.json"):
@@ -831,6 +907,19 @@ def bootstrap_reference_host(root: Path) -> None:
         source = root / "native_sources" / name
         destination = root / "native" / name
         destination.parent.mkdir(exist_ok=True)
+        if build.get("prebuilt"):
+            if not destination.exists():
+                shutil.copytree(source, destination)
+            for relative, expected in build["artifact_files"].items():
+                if (
+                    hashlib.sha256((destination / relative).read_bytes()).hexdigest()
+                    != expected
+                ):
+                    raise ValueError(
+                        "deployed solver artifact differs from its source receipt"
+                    )
+            binaries[name] = destination / build["executable"]
+            continue
         sources = [
             p
             for pattern in build["sources"]
@@ -859,7 +948,45 @@ def bootstrap_reference_host(root: Path) -> None:
                 binaries[name].read_bytes()
             ).hexdigest()
         if backend.get("package"):
-            actual = importlib.metadata.version(backend["package"])
+            if backend.get("isolated_package"):
+                package_root = root / "backend_packages" / name
+                if not package_root.exists():
+                    subprocess.run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "pip",
+                            "install",
+                            "--no-index",
+                            "--no-deps",
+                            "--find-links",
+                            str(root / "wheels"),
+                            "--target",
+                            str(package_root),
+                            backend["package"] + "==" + backend["package_version"],
+                        ],
+                        check=True,
+                    )
+                backend["python_path"] = str(package_root)
+                package_environment = {
+                    **os.environ,
+                    "PYTHONPATH": str(package_root)
+                    + os.pathsep
+                    + str(root / "project"),
+                }
+                actual = subprocess.check_output(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import importlib.metadata; print(importlib.metadata.version("
+                        + repr(backend["package"])
+                        + "))",
+                    ],
+                    env=package_environment,
+                    text=True,
+                ).strip()
+            else:
+                actual = importlib.metadata.version(backend["package"])
             if actual != backend["package_version"]:
                 raise ValueError(f"backend version mismatch: {name}")
         identities[name] = backend
@@ -871,7 +998,12 @@ def bootstrap_reference_host(root: Path) -> None:
         yaml.safe_dump(manifest["config"], sort_keys=False)
     )
     if not (campaign / "campaign.json").exists():
-        shutil.copytree(root / "project/pitbench", campaign / "code_snapshot/pitbench")
+        shutil.copytree(
+            root / "project/pitbench",
+            campaign / "code_snapshot/pitbench",
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("*.log", "__pycache__"),
+        )
         snapshot = campaign / "code_snapshot"
         manifest["source_hashes"] = {
             str(p.relative_to(snapshot)): hashlib.sha256(p.read_bytes()).hexdigest()
@@ -907,6 +1039,15 @@ def bootstrap_reference_host(root: Path) -> None:
             directory,
             {"job_id": smoke["id"]},
             timeout=90,
+            environment={
+                **os.environ,
+                "PYTHONPATH": (
+                    smoke["backend"]["python_path"] + os.pathsep
+                    if smoke["backend"].get("python_path")
+                    else ""
+                )
+                + str(root / "project"),
+            },
         )
         if result.get("execution_status") != "completed" or not result.get(
             "verified_feasible"

@@ -24,6 +24,7 @@ from pitbench.metrics.performance_report import (
     ExactRunOutcome,
     ExactRunOutcomeKind,
     PerformanceClassification,
+    PerformanceReport,
     adjudicate_performance_confirmation,
     compute_exact_performance_report,
     compute_exact_run_outcome,
@@ -74,6 +75,155 @@ def exact_observation(**changes) -> RunObservation:
     }
     values.update(changes)
     return RunObservation(**values)
+
+
+def test_supplemental_bks_panel_uses_its_own_budget_and_keeps_primary_exact_contract():
+    from pitbench.schema.task import InstanceSetSpec
+
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/release_cbc_v2_10_12.yaml")
+    original = task.evaluation.model_dump()
+    task.instance_sets.append(
+        InstanceSetSpec(
+            name="scientific",
+            kind="judge_shift",
+            instance_set_config="private://scientific.yaml",
+            size=1,
+            performance_protocol="heuristic_fixed_budget",
+            budgets_sec=[5, 60],
+            primary_budget_sec=60,
+        )
+    )
+    rows = [
+        exact_observation(
+            task_id=task.task_id,
+            code_state=state,
+            budget_sec=budget,
+            cpu_time_sec=0.05,
+            wall_time_sec=0.1,
+        )
+        for state in CodeState
+        for budget in task.evaluation.budgets_sec
+    ]
+    rows += [
+        exact_observation(
+            task_id=task.task_id,
+            code_state=state,
+            instance_set="scientific",
+            instance_set_kind="judge_shift",
+            budget_sec=budget,
+            solver_termination="time_limit",
+            objective=12 if state == CodeState.BASE else 11,
+            normalized_gap=0.2 if state == CodeState.BASE else 0.1,
+        )
+        for state in CodeState
+        for budget in [5, 60]
+    ]
+    grid = ExpectedRunGrid(
+        task_id=task.task_id,
+        runs=[
+            ExpectedRun(
+                task_id=row.task_id,
+                code_state=row.code_state,
+                instance_set=row.instance_set,
+                instance_set_kind=row.instance_set_kind,
+                instance_id=row.instance_id,
+                solver_seed=row.solver_seed,
+                budget_sec=row.budget_sec,
+            )
+            for row in rows
+        ],
+    )
+    reports = compute_panel_performance_reports(rows, task=task, expected_run_grid=grid)
+    assert isinstance(reports["judge_id"], ExactPerformanceReport)
+    assert isinstance(reports["scientific"], PerformanceReport)
+    assert reports["scientific"].primary_budget_sec == 60
+    assert reports["judge_id"].primary_budget_sec == task.evaluation.primary_budget_sec
+    assert task.evaluation.model_dump() == original
+    resources, _ = compute_resource_reports(
+        rows,
+        primary_budget_sec=task.evaluation.primary_budget_sec,
+        budgets_sec=task.evaluation.budgets_sec,
+        expected_seed_count=1,
+        budgets_by_instance_set={
+            "judge_id": task.evaluation.budgets_sec,
+            "scientific": [5, 60],
+        },
+    )
+    assert set(resources.by_instance_set["scientific"]) == {"5", "60"}
+    with pytest.raises(ValueError, match="supplemental hidden panels"):
+        InstanceSetSpec(
+            name="primary",
+            kind="judge_id",
+            instance_set_config="private://id.yaml",
+            size=1,
+            budgets_sec=[60],
+            primary_budget_sec=60,
+        )
+
+
+def test_supplemental_seed_report_uses_panel_budget_and_planned_seed_denominator():
+    from pitbench.schema.task import InstanceSetSpec
+
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/highs_v1_15_1.yaml")
+    task.evaluation.budgets_sec = [10]
+    task.evaluation.primary_budget_sec = 10
+    payload = task.model_dump(mode="json")
+    payload["evaluation"]["seed_robustness"] = {
+        "development_seeds": [10, 11],
+        "evaluation_seeds_file": "private://seeds.yaml",
+        "evaluation_seeds_file_sha256": "0" * 64,
+        "seed_selection": {"seed_min": 0, "seed_max": 20, "seed_count": 2},
+    }
+    task = PitBenchTask.model_validate(payload)
+    task.instance_sets.append(
+        InstanceSetSpec(
+            name="scientific",
+            kind="judge_shift",
+            instance_set_config="private://data.yaml",
+            size=1,
+            budgets_sec=[60],
+            primary_budget_sec=60,
+            performance_protocol="heuristic_fixed_budget",
+        )
+    )
+    rows = [
+        exact_observation(
+            task_id=task.task_id,
+            code_state=state,
+            instance_set="scientific",
+            instance_set_kind="judge_shift",
+            budget_sec=60,
+            solver_seed=1,
+            normalized_gap=0.1,
+            solver_termination="time_limit",
+        )
+        for state in CodeState
+    ]
+    grid = ExpectedRunGrid(
+        task_id=task.task_id,
+        runs=[
+            ExpectedRun(
+                task_id=task.task_id,
+                code_state=state,
+                instance_set="scientific",
+                instance_set_kind="judge_shift",
+                instance_id="instance",
+                solver_seed=seed,
+                budget_sec=60,
+            )
+            for state in CodeState
+            for seed in [1, 2]
+        ],
+    )
+    report = compute_task_seed_robustness_report(
+        rows, task=task, expected_run_grid=grid
+    )
+    nested = report.supplemental_by_instance_set["scientific"]
+    assert nested["metric"] == "seed_robustness"
+    assert nested["primary_budget_sec"] == 60
+    assert nested["seed_selection"]["seed_count"] == 2
+    assert set(nested["by_instance_set"]["scientific"]["by_budget"]) == {"60"}
+    assert "scientific" not in report.by_instance_set
 
 
 def exact_expected_grid(

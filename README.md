@@ -1494,7 +1494,7 @@ and size choices. The existing scheduling generator supports job counts and
 seeds, not deadline/window-tightness interventions. Generated instances do not
 automatically acquire a trusted optimum or BKS.
 
-The [construction record](configs/research/pilot_status.json) records two real
+The [construction record](docs/research/records/pilot-construction.json) records two real
 source-bound cases, four public projections, and five public generator exercises
 producing 15 instances. Artifact hashes, visibility checks, invalid-input
 rejections, Ruff and compilation were checked. No new test suite, solver run or

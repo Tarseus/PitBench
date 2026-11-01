@@ -264,7 +264,7 @@ class _RelayHandler(BaseHTTPRequestHandler):
                 return any(custom_call_contains(item) for item in value)
             if not isinstance(value, dict):
                 return False
-            if value.get("type") in {"function_call", "custom_tool_call"}:
+            if value.get("type") in ("function_call", "custom_tool_call"):
                 return b"require_escalated" in json.dumps(value).encode()
             return any(custom_call_contains(item) for item in value.values())
 

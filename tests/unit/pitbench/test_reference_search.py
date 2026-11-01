@@ -153,6 +153,84 @@ def test_cvrp_dp_matches_independent_permutation_and_cut_enumeration():
     assert check_cvrp(instance, result.solution)["objective"] == best
 
 
+def test_tiny_time_window_reference_enumerates_orders_and_retains_censoring():
+    instance = {
+        "depot": 0,
+        "coordinates": [[0, 0], [1, 0], [0, 2]],
+        "demands": [0, 1, 1],
+        "capacity": 2,
+        "num_vehicles": 1,
+        "distance_metric": "EUC_2D",
+        "time_windows": [[0, 100], [0, 1], [0, 100]],
+        "service_times": [0, 0, 0],
+    }
+    result = _cvrp(instance, SearchBudget(2), 12, max_exact_time_window_customers=6)
+    assert result.proven
+    assert result.solution == {"routes": [[1, 2]]}
+    assert check_cvrp(instance, result.solution)["objective"] == 5
+    assert result.basis["enumerated_candidates"] == 4
+    censored = _cvrp(instance, SearchBudget(0), 12, max_exact_time_window_customers=6)
+    assert not censored.proven
+    assert check_cvrp(instance, censored.solution)["feasible"]
+
+
+@pytest.mark.parametrize(
+    "generator",
+    [
+        {
+            "kind": "random_set_covering_mip",
+            "variables": [12],
+            "rows": [8],
+            "row_density": 0.25,
+        },
+        {"kind": "independent_set_mip", "vertices": [12], "edge_probability": 0.3},
+        {"kind": "facility_location_mip", "facilities": [3], "customers": [6]},
+        {"kind": "fixed_charge_flow_mip", "nodes": [8], "arc_density": 0.3},
+        {
+            "kind": "multidimensional_knapsack_mps",
+            "items": [15],
+            "dimensions": [3],
+            "weight_max": 100,
+            "capacity_mode": "ratio",
+            "capacity_ratio": 0.5,
+            "profit_mode": "independent",
+        },
+    ],
+)
+def test_nonplanted_models_have_independently_verified_search_references(
+    tmp_path, monkeypatch, generator
+):
+    import sys
+
+    pytest.importorskip("highspy")
+    from pitbench.instances.generate import (
+        linear_model_features,
+        materialize_generated_instance_set,
+    )
+    from pitbench.problem_families.verification import MIPFamily
+    from pitbench.solver_drivers.reference import _solve_mip_backend
+
+    monkeypatch.setitem(sys.modules, "pyscipopt", None)
+    generator = {**generator, "count": 1, "randomness": {"instance_seed": 101}}
+    path = materialize_generated_instance_set(
+        {"visibility": "judge", "generator": generator},
+        tmp_path / "inputs",
+        expected_visibility="judge",
+    )[0]
+    result = _solve_mip_backend(
+        path, generator["kind"], "highs", 2, 0, 1, tmp_path, lambda _: None
+    )
+    checked = MIPFamily._verify_numeric_model_solution(path, result.solution)
+    assert checked.feasible
+    assert result.proven
+    assert checked.objective == result.basis["dual_bound"]
+    features = linear_model_features(path)
+    if generator["kind"] in {"facility_location_mip", "fixed_charge_flow_mip"}:
+        assert 0 < features["continuous_variables"] < features["variables"]
+        assert features["equality_rows"] > 0
+        assert features["mixed_sign_rows"] > 0
+
+
 def test_job_shop_search_matches_machine_order_enumeration():
     # Enumerate both possible orders independently on each machine.
     jobs = [[[0, 3], [1, 2]], [[1, 4], [0, 1]]]

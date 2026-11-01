@@ -11,7 +11,7 @@ RUN apt-get update \
        zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN python3 -m pip install --break-system-packages --no-cache-dir \
-    pydantic==2.13.5 pyyaml==6.0.3
+    pydantic==2.13.5 pyyaml==6.0.3 numpy==2.2.6 scipy==1.18.1 highspy==1.15.1
 RUN test -n "$BASE_COMMIT" \
     && git init --quiet /workspace/repo \
     && git -C /workspace/repo remote add origin "$SOURCE_REPOSITORY" \

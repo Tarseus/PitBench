@@ -25,6 +25,105 @@ from pitbench.instances.generate import (
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_sparse_knapsack_profit_shift_has_real_features_and_independent_checks(
+    tmp_path,
+):
+    from pitbench.problem_families.verification import (
+        MIPFamily,
+        _public_multidimensional_knapsack_data,
+        _public_multidimensional_knapsack_model,
+    )
+
+    config = {
+        "kind": "multidimensional_knapsack_mip",
+        "count": 2,
+        "items": [20],
+        "dimensions": [4],
+        "weight_max": 30,
+        "capacity_mode": "ratio",
+        "capacity_ratio": 0.35,
+        "nonzero_density": 0.25,
+        "profit_mode": "independent",
+        "profit_max": 97,
+        "randomness": {"instance_seed": 714},
+    }
+    manifest = materialize_instance_grid(
+        {"visibility": "judge", "generator": config}, tmp_path / "grid"
+    )
+    entry = manifest["conditions"][0]["instances"][0]
+    assert entry["features"]["nonzero_density"] == 0.25
+    path = tmp_path / "grid" / entry["path"]
+    weights, capacities, profits = _public_multidimensional_knapsack_model(path)
+    assert _public_multidimensional_knapsack_data(path) is None
+    assert profits != [sum(column) for column in zip(*weights, strict=True)]
+    assert sum(value > 0 for row in weights for value in row) == 20
+    # Find a feasible item, then check its original profit rather than the old sum-of-weights proxy.
+    item = next(
+        i
+        for i in range(20)
+        if all(row[i] <= cap for row, cap in zip(weights, capacities, strict=True))
+    )
+    solution = tmp_path / "solution.json"
+    values = {f"x{i}": int(i == item) for i in range(20)}
+    solution.write_text(json.dumps({"values": values, "objective": -profits[item]}))
+    assert MIPFamily().verify(path, solution).feasible
+    solution.write_text(json.dumps({"values": values, "objective": -profits[item] - 1}))
+    assert not MIPFamily().verify(path, solution).feasible
+    with pytest.raises(ValueError, match="sum-weight"):
+        _require_planted_optimum({**config, "capacity_mode": "planted"})
+
+
+def test_reference_knapsack_does_not_use_capacity_dual_for_independent_profits(
+    tmp_path,
+):
+    from pitbench.problem_families.public_verification import (
+        format_multidimensional_knapsack_lp,
+    )
+    from pitbench.solver_drivers.reference import SearchBudget, _knapsack
+
+    path = tmp_path / "profit.lp"
+    path.write_text(
+        format_multidimensional_knapsack_lp(
+            [[1, 2, 1], [1, 1, 1]], [2, 2], profits=[10, 2, 9]
+        )
+    )
+    result = _knapsack(path, {"capacity_mode": "ratio"}, 0, SearchBudget(10))
+    assert result.solution["objective"] == -19
+    assert result.proven
+
+
+def test_time_window_generation_has_a_checked_witness_without_an_optimality_claim(
+    tmp_path,
+):
+    from pitbench.instances.generate import capacity_partition_routes
+    from pitbench.problem_families.public_verification import check_cvrp
+    from pitbench.solver_drivers.reference import SearchBudget, _cvrp
+
+    plan = {
+        "visibility": "judge",
+        "generator": {
+            "kind": "euclidean_cvrp",
+            "count": 2,
+            "customers": [30],
+            "capacity_ratio": 0.2,
+            "distance_metric": "EUC_2D",
+            "time_window_slack": 20,
+            "service_time": 5,
+            "randomness": {"coordinate_seed": 91, "demand_seed": 92},
+        },
+    }
+    manifest = materialize_instance_grid(plan, tmp_path / "grid")
+    entry = manifest["conditions"][0]["instances"][0]
+    instance = json.loads((tmp_path / "grid" / entry["path"]).read_text())
+    assert entry["features"]["problem_variant"] == "vrptw"
+    assert check_cvrp(instance, {"routes": capacity_partition_routes(instance)})[
+        "feasible"
+    ]
+    reference = _cvrp(instance, SearchBudget(1), 12)
+    assert not reference.proven
+    assert check_cvrp(instance, reference.solution)["feasible"]
+
+
 def test_all_current_problem_families_generate_reproducible_suites(tmp_path):
     plan = yaml.safe_load(
         (ROOT / "configs/experiments/problem_generation.yaml").read_text()

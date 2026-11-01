@@ -38,6 +38,7 @@ from pitbench.metrics.seed_robustness_report import (
     compute_exact_seed_robustness_report,
     compute_seed_robustness_details,
     compute_seed_robustness_report,
+    compute_task_seed_robustness_report,
 )
 from pitbench.schema.evaluation import (
     ArtifactManifest,
@@ -397,25 +398,51 @@ class PitBenchEvaluator(Evaluator):
                 "development_seeds": seed_robustness.development_seeds,
                 "evaluation_seeds": private_seed_config.evaluation_seeds,
             }
+            supplemental_seed_panels = {
+                panel.name
+                for panel in task.instance_sets
+                if panel.performance_protocol is not None
+                or panel.budgets_sec is not None
+            }
+            native_seed_observations = [
+                row
+                for row in original_observations
+                if row.instance_set not in supplemental_seed_panels
+            ]
             if (
                 task.evaluation.performance_protocol
                 is PerformanceProtocol.EXACT_VERIFIED_SOLVE
             ):
                 nuisance_robustness = compute_exact_seed_robustness_report(
-                    original_observations,
+                    native_seed_observations,
                     time_basis=task.evaluation.exact_time_basis,
                     **seed_report_inputs,
                 )
                 seed_robustness_details = nuisance_robustness
             else:
                 nuisance_robustness = compute_seed_robustness_report(
-                    original_observations,
+                    native_seed_observations,
                     **seed_report_inputs,
                 )
                 seed_robustness_details = compute_seed_robustness_details(
-                    original_observations,
+                    native_seed_observations,
                     **seed_report_inputs,
                 )
+            if expected_run_grid is not None and any(
+                panel.performance_protocol is not None or panel.budgets_sec is not None
+                for panel in task.instance_sets
+            ):
+                nuisance_robustness = compute_task_seed_robustness_report(
+                    original_observations,
+                    task=task,
+                    expected_run_grid=expected_run_grid,
+                    evaluation_seeds=private_seed_config.evaluation_seeds,
+                )
+                if (
+                    task.evaluation.performance_protocol
+                    is PerformanceProtocol.EXACT_VERIFIED_SOLVE
+                ):
+                    seed_robustness_details = nuisance_robustness
             seed_robustness_details_path = (
                 request.output_dir / "seed_robustness_details.json"
             )
@@ -448,6 +475,10 @@ class PitBenchEvaluator(Evaluator):
                 original_observations,
                 primary_budget_sec=task.evaluation.primary_budget_sec,
                 budgets_sec=task.evaluation.budgets_sec,
+                budgets_by_instance_set={
+                    item.name: item.budgets_sec or task.evaluation.budgets_sec
+                    for item in task.instance_sets
+                },
                 expected_instance_counts={
                     item.name: item.size for item in task.instance_sets
                 },
@@ -563,6 +594,14 @@ class PitBenchEvaluator(Evaluator):
         repeat_scenario_report = None
         scenario_error = None
         scenario_config = config.get("metric_scenario_config")
+        scenario_build_context = {
+            "image": config.get("judge_image"),
+            "base_repository": config.get("base_repository"),
+            "private_root": config.get("private_root"),
+            "cpuset_cpus": config.get("judge_cpuset_cpus"),
+            "cpus": config.get("judge_cpus") or 8,
+            "memory": str(config.get("judge_memory") or "32g"),
+        }
         if task.metric_scenarios and scenario_config and patch_exists:
             from pitbench.evaluator.scenarios import collect_for_evaluation
 
@@ -572,6 +611,7 @@ class PitBenchEvaluator(Evaluator):
                     request.candidate_patch_path,
                     request.output_dir,
                     Path(scenario_config),
+                    build_context=scenario_build_context,
                 )
                 artifacts.metric_scenario_campaign = artifact_ref(
                     scenario_path,
@@ -734,6 +774,7 @@ class PitBenchEvaluator(Evaluator):
                     request.output_dir / "performance-confirmation",
                     Path(scenario_config),
                     reverse=True,
+                    build_context=scenario_build_context,
                 )
                 artifacts.metric_scenario_confirmation = artifact_ref(
                     repeat_scenario_path,

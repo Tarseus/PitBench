@@ -19,11 +19,30 @@ SOURCE_SUFFIXES = frozenset(
         ".cxx",
         ".h",
         ".hpp",
-        ".hh", ".hxx", ".h++", ".c++", ".tpp", ".ipp", ".inl", ".inc", ".tcc", ".txx",
+        ".hh",
+        ".hxx",
+        ".h++",
+        ".c++",
+        ".tpp",
+        ".ipp",
+        ".inl",
+        ".inc",
+        ".tcc",
+        ".txx",
         ".cu",
         ".cuh",
         ".py",
-        ".pyx", ".pxd", ".pxi", ".proto", ".f", ".for", ".f77", ".f90", ".f95", ".f03", ".f08",
+        ".pyx",
+        ".pxd",
+        ".pxi",
+        ".proto",
+        ".f",
+        ".for",
+        ".f77",
+        ".f90",
+        ".f95",
+        ".f03",
+        ".f08",
         ".rs",
         ".java",
         ".i",
@@ -86,6 +105,21 @@ class AgentEnvironment(BaseModel):
     prebuild: str = ""
 
 
+def ignore_generated_outputs(repository: Path, build_paths: tuple[str, ...]) -> None:
+    """Keep declared generated roots out of source patches in owned workspaces."""
+    metadata = repository / ".git"
+    if not metadata.is_dir():
+        return
+    path = metadata / "info/exclude"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = path.read_text() if path.exists() else ""
+    patterns = [f"/{name.rstrip('/')}/" for name in build_paths]
+    missing = [pattern for pattern in patterns if pattern not in existing.splitlines()]
+    if missing:
+        with path.open("a") as output:
+            output.write("\n" + "\n".join(missing) + "\n")
+
+
 class RepositoryPlugin(ABC):
     name: str
     driver_name: str
@@ -105,6 +139,15 @@ class RepositoryPlugin(ABC):
     collector_environment: dict[str, str] = {}
     judge_environment_requirements: dict[str, str] = {}
     supports_fixed_solver_parameters = False
+    scenario_binding_package: str | None = None
+    scenario_session_plugin: str | None = None
+
+    def scenario_build_commands(
+        self, *, adapter_source: Path, source_commit: str
+    ) -> list[CommandSpec]:
+        raise NotImplementedError(
+            "source-bound scenario builds are unavailable for this repository"
+        )
 
     @abstractmethod
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
@@ -143,7 +186,9 @@ class RepositoryPlugin(ABC):
         )
         if run.parameters_path is not None:
             if not self.supports_fixed_solver_parameters:
-                raise ValueError("repository driver cannot apply fixed solver parameters")
+                raise ValueError(
+                    "repository driver cannot apply fixed solver parameters"
+                )
             argv.extend(["--parameters", str(run.parameters_path)])
         return CommandSpec(argv=argv, timeout_sec=run.budget_sec + 60)
 

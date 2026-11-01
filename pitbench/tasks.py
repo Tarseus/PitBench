@@ -132,6 +132,12 @@ class TaskCatalog:
         self.validate(record)
         return record
 
+    def validate_file(self, task_config_path: Path) -> TaskRecord:
+        """Validate a materialized research task through the ordinary contract."""
+        record = self._load_record(task_config_path.resolve())
+        self.validate(record)
+        return record
+
     def validate_all(self) -> list[TaskRecord]:
         records = self.records()
         if not records:

@@ -10,6 +10,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -52,8 +53,13 @@ def _rss():
 
 
 def _hardware_identity(cpus):
+    machine_id = Path("/etc/machine-id")
+    if not machine_id.is_file() or not machine_id.read_text().strip():
+        raise ValueError(
+            "scenario collection requires a real host machine-id; mount /etc/machine-id read-only when running in Docker"
+        )
     return {
-        "host_sha256": hashlib.sha256(Path("/etc/machine-id").read_bytes()).hexdigest(),
+        "host_sha256": hashlib.sha256(machine_id.read_bytes()).hexdigest(),
         "architecture": platform.machine(),
         "cpu_model": next(
             (
@@ -169,6 +175,7 @@ def prepare(config_path: Path, output: Path) -> dict:
             text=True,
             timeout=30,
             check=True,
+            env={**os.environ, **runtime.get("environment", {})},
         )
         identity = json.loads(probe.stdout.strip().splitlines()[-1])
         if identity.get("repository_plugin") != task.repository.plugin:
@@ -198,12 +205,18 @@ def prepare(config_path: Path, output: Path) -> dict:
                 "source_commit": runtime["source_commit"],
                 "patch_sha256": runtime["patch_sha256"],
                 "options": runtime.get("options", {}),
+                **(
+                    {"options_by_scenario": runtime["options_by_scenario"]}
+                    if runtime.get("options_by_scenario")
+                    else {}
+                ),
+                "environment": runtime.get("environment", {}),
             }
         )
         runtimes[state] = {**runtime, "probe": identity}
-    if (
-        candidate_hash != hashlib.sha256(b"").hexdigest()
-        and runtimes["base"]["probe"] == runtimes["agent"]["probe"]
+    if candidate_hash != hashlib.sha256(b"").hexdigest() and all(
+        runtimes["base"]["probe"].get(field) == runtimes["agent"]["probe"].get(field)
+        for field in ("binding_sha256", "package_code_sha256")
     ):
         raise ValueError(
             "nonempty candidate patch has no distinct built API artifact; refuse to measure the installed Base binding as Agent"
@@ -326,7 +339,7 @@ def worker(job_path: Path) -> dict:
     steps, error, status = [], None, "returned"
     completed_steps = 0
     try:
-        if implementation.identity() != runtime["probe"]:
+        if implementation.probe() != runtime["probe"]:
             raise ValueError("worker runtime artifact changed after preparation")
         session, previous = None, None
         for index, item in enumerate(job["models"]):
@@ -343,7 +356,10 @@ def worker(job_path: Path) -> dict:
                         threads=key.threads,
                         budget=p.budget_sec,
                         tolerance=p.feasibility_tolerance,
-                        options=runtime.get("options", {}),
+                        options={
+                            **runtime.get("options", {}),
+                            **runtime.get("options_by_scenario", {}).get(p.id, {}),
+                        },
                     )
                     session.load_model(model)
                     setup_time = time.perf_counter() - started
@@ -351,6 +367,8 @@ def worker(job_path: Path) -> dict:
                     session.update_model(previous, model)
                     update_time = time.perf_counter() - started
             events = []
+            session.trace_directory = directory
+            session.trace_step = index
 
             def emit(timestamp, values, multipliers):
                 event = ScenarioEvent(
@@ -499,6 +517,13 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
             attempt,
             {"scenario_run": key.model_dump(mode="json")},
             timeout=len(models) * p.budget_sec + runtime["watchdog_grace_sec"],
+            environment={
+                **os.environ,
+                "OMP_NUM_THREADS": "1",
+                "OPENBLAS_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1",
+                **selected.get("environment", {}),
+            },
         )
         if result.get("run"):
             return ScenarioRun.model_validate(result["run"])
@@ -559,9 +584,14 @@ def collect_for_evaluation(
     config_path: Path,
     *,
     reverse: bool = False,
+    build_context: dict | None = None,
 ):
     """Collect the explicit API scenarios alongside a normal independent Judge."""
     config = _read(config_path)
+    if config.get("source_build"):
+        return _collect_source_build(
+            task, candidate_patch, output, config_path, build_context, reverse
+        )
     if config.get("protocols") and [
         ScenarioProtocol.model_validate(p).model_dump(mode="json")
         for p in config["protocols"]
@@ -603,6 +633,158 @@ def collect_for_evaluation(
     ), destination / "campaign.json"
 
 
+def _collect_source_build(task, candidate_patch, output, config_path, context, reverse):
+    """Build and collect in the same pinned solver image as the independent Judge."""
+    if not context or not context.get("image"):
+        raise ValueError("source-bound collection requires an evaluation build context")
+    output = output.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    code_root = Path(__file__).resolve().parents[2]
+    task_path = output / "scenario-source-task.yaml"
+    task_path.write_text(yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False))
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--cpus",
+        str(context["cpus"]),
+        "--memory",
+        context["memory"],
+        "--env",
+        "PYTHONPATH=" + str(code_root),
+        "--workdir",
+        str(code_root),
+    ]
+    if context.get("cpuset_cpus"):
+        command += ["--cpuset-cpus", context["cpuset_cpus"]]
+    mounts = {
+        str(code_root): "ro",
+        str(Path(context["base_repository"]).resolve()): "ro",
+        str(Path(context["private_root"]).resolve()): "ro",
+        str(config_path.resolve()): "ro",
+        str(candidate_patch.resolve()): "ro",
+        str(output): "rw",
+        "/etc/machine-id": "ro",
+    }
+    for path, mode in mounts.items():
+        command += ["--volume", path + ":" + path + ":" + mode]
+    command += [
+        context["image"],
+        "python3",
+        "-m",
+        "scripts.collect_metric_scenarios",
+        "evaluate-source",
+        "--task",
+        str(task_path),
+        "--candidate",
+        str(candidate_patch.resolve()),
+        "--base",
+        str(Path(context["base_repository"]).resolve()),
+        "--private-root",
+        str(Path(context["private_root"]).resolve()),
+        "--config",
+        str(config_path.resolve()),
+        "--output",
+        str(output),
+    ]
+    if reverse:
+        command.append("--reverse")
+    write_json(output / "scenario-source-command.json", {"argv": command})
+    with (output / "scenario-source.log").open("a") as log:
+        result = subprocess.run(
+            command, stdout=log, stderr=subprocess.STDOUT, check=False
+        )
+    if result.returncode:
+        raise RuntimeError(
+            f"source-bound build/collection failed; see {output / 'scenario-source.log'}"
+        )
+    campaign = output / "metric-scenarios/campaign.json"
+    return load_report(campaign, task), campaign
+
+
+def evaluate_source_build(
+    *,
+    task_path,
+    candidate_patch,
+    base_repository,
+    private_root,
+    config_path,
+    output,
+    reverse=False,
+):
+    from pitbench.evaluator.judge import LocalProcessJudge
+    from pitbench.repositories.base import RepositoryPluginRegistry
+
+    task = PitBenchTask.from_yaml(task_path)
+    config = _read(config_path)
+    recipe = config.pop("source_build")
+    if (
+        recipe["source_commit"] != task.release.base_commit
+        or recipe["repository_plugin"] != task.repository.plugin
+    ):
+        raise ValueError("source build recipe differs from the frozen task")
+    plugin = RepositoryPluginRegistry.load(task.repository.plugin)
+    judge = LocalProcessJudge(
+        task=task,
+        base_repository=base_repository,
+        public_root=Path(__file__).resolve().parents[2],
+        private_root=private_root,
+        candidate_patch=candidate_patch,
+        output_dir=output / "api-build",
+    )
+    manifest_path = output / "api-build/scenario-build.json"
+    built = (
+        json.loads(manifest_path.read_text())
+        if manifest_path.exists()
+        else judge.build_scenario_sources()
+    )
+    if built["status"] != "passed":
+        raise RuntimeError("actual Base/candidate API build failed")
+    runtimes = {}
+    for state, row in built["states"].items():
+        source = Path(row["workspace"])
+        receipt = source / ".pitbench/scenario-binding.json"
+        python = (
+            str(source / plugin.driver_python)
+            if "/" in plugin.driver_python
+            else sys.executable
+        )
+        environment = {"PITBENCH_SCENARIO_BINDING": str(receipt)}
+        probe = subprocess.run(
+            [
+                python,
+                "-m",
+                "scripts.collect_metric_scenarios",
+                "probe",
+                "--session-plugin",
+                plugin.scenario_session_plugin,
+            ],
+            env={**os.environ, **environment},
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        identity = json.loads(probe.stdout.strip().splitlines()[-1])
+        runtimes[state] = {
+            "python": python,
+            "session_plugin": plugin.scenario_session_plugin,
+            "source_commit": task.release.base_commit,
+            "patch_sha256": row["binding"]["source_patch_sha256"],
+            "expected_binding_sha256": identity["binding_sha256"],
+            "environment": environment,
+            "options_by_scenario": config.get("options_by_scenario", {}),
+        }
+    config["runtimes"] = runtimes
+    config["cpus"] = sorted(os.sched_getaffinity(0))
+    concrete = output / "built-scenario-config.yaml"
+    concrete.write_text(yaml.safe_dump(config, sort_keys=False))
+    return collect_for_evaluation(
+        task, candidate_patch, output, concrete, reverse=reverse
+    )
+
+
 def main():
     import argparse
 
@@ -620,8 +802,23 @@ def main():
     sub.add_argument("--job", type=Path, required=True)
     sub = subs.add_parser("probe")
     sub.add_argument("--session-plugin", required=True)
+    source = subs.add_parser("evaluate-source")
+    for name in ("task", "candidate", "base", "private-root", "config", "output"):
+        source.add_argument("--" + name, type=Path, required=True)
+    source.add_argument("--reverse", action="store_true")
     args = parser.parse_args()
-    if args.action == "prepare":
+    if args.action == "evaluate-source":
+        measured, path = evaluate_source_build(
+            task_path=args.task,
+            candidate_patch=args.candidate,
+            base_repository=args.base,
+            private_root=args.private_root,
+            config_path=args.config,
+            output=args.output,
+            reverse=args.reverse,
+        )
+        result = {"campaign": str(path), "metrics": len(measured.results)}
+    elif args.action == "prepare":
         result = prepare(args.config, args.output)
     elif args.action == "run":
         result = run(args.output, retry_errors=args.retry_errors)
@@ -630,5 +827,5 @@ def main():
     elif args.action == "worker":
         result = worker(args.job)
     else:
-        result = ScenarioSession.load(args.session_plugin).identity()
+        result = ScenarioSession.load(args.session_plugin).probe()
     print(json.dumps(result, allow_nan=False))

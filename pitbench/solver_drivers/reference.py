@@ -7,6 +7,7 @@ only a best-found reference, never a published BKS or an optimality claim.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -23,8 +24,10 @@ from pitbench.instances.generate import (
     balanced_subset_sum_data,
     binary_clique_cover_data,
     binary_clique_cover_fme_extensions,
+    capacity_partition_routes,
     first_fit_decreasing_packing,
     multidimensional_knapsack_data,
+    multidimensional_knapsack_dual_weights,
 )
 from pitbench.problem_families.public_verification import (
     check_bin_packing,
@@ -40,7 +43,7 @@ from pitbench.problem_families.verification import (
     _check_job_shop_start_times,
     _check_multidimensional_knapsack_solution,
     _check_scheduling_solution,
-    _public_multidimensional_knapsack_data,
+    _public_multidimensional_knapsack_model,
     _public_scheduling_processing_times,
 )
 
@@ -49,6 +52,21 @@ def generated_reference_instances(manifest_path: Path) -> list[dict]:
     """Read grid/suite manifests into the common offline-reference input contract."""
     manifest_path = manifest_path.resolve()
     manifest = json.loads(manifest_path.read_text())
+    if manifest.get("kind") == "generalization_population_construction":
+        return [
+            entry
+            for split in manifest["splits"].values()
+            for entry in generated_reference_instances(Path(split["manifest"]))
+        ]
+    if isinstance(manifest.get("instances"), list):
+        return [
+            {
+                **entry,
+                "path": str(Path(entry["path"]).resolve()),
+                "role": manifest.get("role"),
+            }
+            for entry in manifest["instances"]
+        ]
     if "panels" in manifest:
         return [
             entry
@@ -87,7 +105,7 @@ def verify_reference_file(instance: Path, solution: Path, kind: str) -> dict:
 
 @dataclass
 class ReferenceResult:
-    solution: dict
+    solution: dict | None
     proven: bool
     basis: dict
     search_status: str = "completed"
@@ -224,12 +242,18 @@ def _graph_coloring(instance: dict, budget: SearchBudget) -> ReferenceResult:
 def _knapsack(
     path: Path, config: dict, index: int, budget: SearchBudget
 ) -> ReferenceResult:
-    parsed = _public_multidimensional_knapsack_data(path)
+    parsed = _public_multidimensional_knapsack_model(path)
     if parsed is None:
         raise ValueError("unsupported knapsack LP")
-    weights, capacities = parsed
+    weights, capacities, profits = parsed
     n, dimensions = len(weights[0]), len(weights)
-    profits = [sum(row[i] for row in weights) for i in range(n)]
+    try:
+        dual = multidimensional_knapsack_dual_weights(config, dimensions)
+    except ValueError:
+        dual = [1] * dimensions
+    capacity_dual = profits == [
+        sum(dual[d] * weights[d][i] for d in range(dimensions)) for i in range(n)
+    ]
     order = sorted(range(n), key=lambda i: -profits[i])
     remaining = [0] * (n + 1)
     for pos in range(n - 1, -1, -1):
@@ -246,13 +270,18 @@ def _knapsack(
         generated_weights, generated_caps, planted = multidimensional_knapsack_data(
             config, index
         )
-        if (generated_weights, generated_caps) != parsed:
+        if (generated_weights, generated_caps) != (weights, capacities):
             raise ValueError("knapsack provenance does not match input")
-        best = planted
-        best_value = sum(profits[i] for i in best)
+        planted_value = sum(profits[i] for i in planted)
+        if planted_value > best_value:
+            best, best_value = planted, planted_value
     chosen: list[int] = []
     used = [0] * dimensions
-    bound = sum(capacities)
+    bound = (
+        sum(dual[d] * capacities[d] for d in range(dimensions))
+        if capacity_dual
+        else sum(profits)
+    )
 
     def search(pos: int, value: int) -> None:
         nonlocal best, best_value
@@ -263,8 +292,13 @@ def _knapsack(
             pos == n
             or best_value == bound
             or value
-            + min(
-                remaining[pos], sum(capacities[d] - used[d] for d in range(dimensions))
+            + (
+                min(
+                    remaining[pos],
+                    sum(dual[d] * (capacities[d] - used[d]) for d in range(dimensions)),
+                )
+                if capacity_dual
+                else remaining[pos]
             )
             <= best_value
         ):
@@ -368,10 +402,55 @@ def _job_shop(jobs: list[list[list[int]]], budget: SearchBudget) -> ReferenceRes
     )
 
 
-def _cvrp(instance: dict, budget: SearchBudget, max_customers: int) -> ReferenceResult:
+def _cvrp(
+    instance: dict,
+    budget: SearchBudget,
+    max_customers: int,
+    max_exact_time_window_customers: int = 0,
+) -> ReferenceResult:
     n = len(instance["demands"]) - 1
     if instance.get("depot", 0) != 0:
         raise ValueError("reference CVRP expects depot zero")
+    if "time_windows" in instance:
+        solution = {"routes": capacity_partition_routes(instance)}
+        if not check_cvrp(instance, solution)["feasible"]:
+            raise ValueError(
+                "native reference cannot construct a feasible time-window witness"
+            )
+        if n <= max_exact_time_window_customers:
+            best = solution
+            best_cost = check_cvrp(instance, best)["objective"]
+            completed = True
+            try:
+                for order in itertools.permutations(range(1, n + 1)):
+                    for mask in range(1 << max(0, n - 1)):
+                        budget.tick()
+                        routes, current = [], []
+                        for i, node in enumerate(order):
+                            current.append(node)
+                            if i == n - 1 or mask & (1 << i):
+                                routes.append(current)
+                                current = []
+                        checked = check_cvrp(instance, {"routes": routes})
+                        if checked["feasible"] and checked["objective"] < best_cost:
+                            best, best_cost = {"routes": routes}, checked["objective"]
+            except TimeoutError:
+                completed = False
+            return ReferenceResult(
+                best,
+                completed,
+                {
+                    "kind": "exhaustive_time_window_route_partitions",
+                    "enumerated_candidates": budget.nodes,
+                },
+                "completed" if completed else "time_limit",
+            )
+        return ReferenceResult(
+            solution,
+            False,
+            {"kind": "time_window_feasibility_witness"},
+            "variant_witness_only",
+        )
     solution = {"routes": [[i] for i in range(1, n + 1)]}
     if n > max_customers:
         return ReferenceResult(
@@ -554,6 +633,7 @@ def solve_reference(
     *,
     seconds: float,
     max_exact_customers: int = 12,
+    max_exact_time_window_customers: int = 0,
 ) -> tuple[ReferenceResult, dict]:
     """Return a reference and an independent original-instance feasibility check."""
     if not math.isfinite(seconds) or seconds <= 0:
@@ -561,7 +641,9 @@ def solve_reference(
     kind, budget = config["kind"], SearchBudget(seconds)
     if kind == "euclidean_cvrp":
         instance = json.loads(path.read_text())
-        result = _cvrp(instance, budget, max_exact_customers)
+        result = _cvrp(
+            instance, budget, max_exact_customers, max_exact_time_window_customers
+        )
         checked = check_cvrp(instance, result.solution)
     elif kind == "bin_packing":
         instance = json.loads(path.read_text())
@@ -576,7 +658,7 @@ def solve_reference(
     elif kind == "multidimensional_knapsack_mip":
         result = _knapsack(path, config, index, budget)
         checked = _check_multidimensional_knapsack_solution(
-            result.solution, *_public_multidimensional_knapsack_data(path)
+            result.solution, *_public_multidimensional_knapsack_model(path)
         ).model_dump()
     elif kind == "job_shop_scheduling":
         jobs = _job_shop_operations(path)
@@ -871,6 +953,118 @@ def _packing_flow_model(path: Path):
     return model, decode
 
 
+def solve_highs_original_model(path, seconds, seed, threads, directory, emit):
+    """Search the original linear input without a second solver's model conversion."""
+    import highspy
+
+    solver = highspy.Highs()
+    settings = {
+        "time_limit": seconds,
+        "threads": threads,
+        "random_seed": seed,
+        "mip_rel_gap": 0.0,
+        "mip_abs_gap": 0.0,
+        "log_file": str(directory / "solver.log"),
+    }
+    for name, value in settings.items():
+        if solver.setOptionValue(name, value) != highspy.HighsStatus.kOk:
+            raise ValueError(f"reference solver rejected {name}")
+    if solver.readModel(str(path)) != highspy.HighsStatus.kOk:
+        raise ValueError("reference solver rejected original input")
+    lp = solver.getLp()
+    names = [solver.getColName(i)[1] for i in range(solver.getNumCol())]
+
+    def decode(values):
+        return {
+            "values": dict(zip(names, values, strict=True)),
+            "objective": float(
+                sum(
+                    cost * value
+                    for cost, value in zip(lp.col_cost_, values, strict=True)
+                )
+                + lp.offset_
+            ),
+        }
+
+    def improved(event):
+        values = list(event.data_out.mip_solution)
+        if len(values) == len(names):
+            emit(decode(values))
+
+    solver.cbMipImprovingSolution += improved
+    solver.run()
+    info = solver.getInfo()
+    proven = solver.getModelStatus() == highspy.HighsModelStatus.kOptimal
+    basis = {
+        "kind": "highs_mip_search",
+        "solver_version": solver.version(),
+        "solver_status": solver.modelStatusToString(solver.getModelStatus()),
+        "dual_bound": info.mip_dual_bound
+        if math.isfinite(info.mip_dual_bound) and abs(info.mip_dual_bound) < 1e19
+        else None,
+        "settings": settings,
+        "formulation": "original_model",
+        "nodes": info.mip_node_count,
+        "solver_time_sec": solver.getRunTime(),
+    }
+    if not solver.getSolution().value_valid:
+        if solver.getModelStatus() == highspy.HighsModelStatus.kTimeLimit:
+            return ReferenceResult(None, False, basis, "time_limit")
+        raise RuntimeError(
+            f"HiGHS found no feasible solution: {solver.getModelStatus()}"
+        )
+    return ReferenceResult(
+        decode(solver.getSolution().col_value), proven, basis, basis["solver_status"]
+    )
+
+
+def _solve_native_mip_reference(path, backend, seconds, seed, threads, directory):
+    from pitbench.solver_drivers.run import DRIVERS
+
+    output = directory / "native-result.json"
+    DRIVERS[backend["solver_driver"]].main(
+        [
+            "--solver",
+            backend["binary"],
+            "--instance",
+            str(path),
+            "--output",
+            str(output),
+            "--trajectory",
+            str(directory / "native-trajectory.jsonl"),
+            "--seed",
+            str(seed),
+            "--budget",
+            str(seconds),
+            "--threads",
+            str(threads),
+        ]
+    )
+    result = json.loads(output.read_text())
+    solution = (
+        json.loads(output.with_suffix(".solution.json").read_text())
+        if result.get("has_solution")
+        else None
+    )
+    basis = {
+        "kind": "native_mip_search",
+        "source_commit": backend["source_commit"],
+        "binary_sha256": backend["binary_sha256"],
+        "dual_bound": result.get("dual_bound"),
+        "solver_status": result.get("solver_status"),
+        "cpu_time_sec": result.get("cpu_time_sec"),
+        "solver_time_sec": result.get("wall_time_sec"),
+        "nodes": result.get("nodes"),
+    }
+    return ReferenceResult(
+        solution,
+        result.get("solver_termination") == "optimal"
+        and "gap tolerance" not in str(result.get("solver_status", "")).lower(),
+        basis,
+        result.get("solver_termination", "other"),
+    )
+
+
 def _solve_mip_backend(
     path: Path,
     kind: str,
@@ -881,6 +1075,8 @@ def _solve_mip_backend(
     directory: Path,
     emit,
 ) -> ReferenceResult:
+    if backend == "highs" and kind not in {"bin_packing", "balanced_subset_sum"}:
+        return solve_highs_original_model(path, seconds, seed, threads, directory, emit)
     from pyscipopt import SCIP_EVENTTYPE, Eventhdlr, Model
 
     if kind == "bin_packing":
@@ -1089,14 +1285,13 @@ def _solve_cp_backend(
             for i, variable in enumerate(selected):
                 model.add_hint(variable, int(i in warm["selected_items"]))
     elif kind == "multidimensional_knapsack_mip":
-        weights, capacities = _public_multidimensional_knapsack_data(path)
+        weights, capacities, profits = _public_multidimensional_knapsack_model(path)
         n = len(weights[0])
         variables = [model.new_bool_var(f"x{i}") for i in range(n)]
         for row, capacity in zip(weights, capacities, strict=True):
             model.add(
                 sum(w * v for w, v in zip(row, variables, strict=True)) <= capacity
             )
-        profits = [sum(row[i] for row in weights) for i in range(n)]
         objective = -sum(p * v for p, v in zip(profits, variables, strict=True))
 
         def decode(value):
@@ -1172,7 +1367,7 @@ def _solve_pyvrp_backend(
 
     vrp = directory / "input.vrp"
     PyVRPDriver._vrplib(instance, vrp)
-    data = pyvrp.read(vrp, round_func="round")
+    data = pyvrp.read(vrp, round_func=PyVRPDriver.round_euc_2d)
     initial = (
         pyvrp.Solution(data, [[node - 1 for node in route] for route in warm["routes"]])
         if warm
@@ -1199,8 +1394,6 @@ def _solve_pyvrp_backend(
             initial = result.best
             best = solution
         rounds += 1
-    if best is None:
-        raise RuntimeError("PyVRP produced no feasible solution")
     return ReferenceResult(
         best,
         False,
@@ -1221,6 +1414,7 @@ def run_reference_worker(job_path: Path) -> dict:
     path = Path(job["instance"]["path"])
     kind = job["instance"]["generator"]["kind"]
     backend = job["backend"]["name"]
+    implementation = job["backend"].get("driver", backend)
     seconds, seed = job["seconds"], job["seed"]
     started = time.monotonic()
     best = None
@@ -1296,14 +1490,18 @@ def run_reference_worker(job_path: Path) -> dict:
             if verify_reference_file(path, warm_path, kind)["feasible"]:
                 warm = json.loads(warm_path.read_text())
                 emit(warm)
-        if backend == "native":
+        if implementation == "native":
             result, _ = solve_reference(
                 path,
                 job["instance"]["generator"],
                 job["instance"]["replicate_index"],
                 seconds=seconds,
+                max_exact_customers=job["backend"].get("max_exact_customers", 12),
+                max_exact_time_window_customers=job["backend"].get(
+                    "max_exact_time_window_customers", 0
+                ),
             )
-        elif backend == "hgs":
+        elif implementation == "hgs":
             result = _hgs(
                 json.loads(path.read_text()),
                 Path(job["backend"]["binary"]),
@@ -1311,7 +1509,7 @@ def run_reference_worker(job_path: Path) -> dict:
                 seed,
                 directory,
             )
-        elif backend == "filo2":
+        elif implementation == "filo2":
             result = _filo(
                 json.loads(path.read_text()),
                 Path(job["backend"]["binary"]),
@@ -1319,7 +1517,7 @@ def run_reference_worker(job_path: Path) -> dict:
                 seed,
                 directory,
             )
-        elif backend == "pyvrp":
+        elif implementation == "pyvrp":
             result = _solve_pyvrp_backend(
                 json.loads(path.read_text()),
                 seconds,
@@ -1329,18 +1527,29 @@ def run_reference_worker(job_path: Path) -> dict:
                 warm,
                 job["backend"].get("checkpoint_sec", 300),
             )
-        elif backend in {"scip", "highs"}:
-            result = _solve_mip_backend(
-                path, kind, backend, seconds, seed, len(cpus), directory, emit
+        elif implementation == "native_mip_cli":
+            result = _solve_native_mip_reference(
+                path, job["backend"], seconds, seed, len(cpus), directory
             )
-        elif backend == "cp_sat":
+        elif implementation in {"scip", "highs"}:
+            result = _solve_mip_backend(
+                path, kind, implementation, seconds, seed, len(cpus), directory, emit
+            )
+        elif implementation == "cp_sat":
             result = _solve_cp_backend(
                 path, kind, seconds, seed, len(cpus), directory, emit, warm
             )
         else:
             raise ValueError(f"unknown reference backend: {backend}")
-        emit(result.solution, result.proven, result.basis, result.search_status)
-        record.update(execution_status="completed", solver_status=result.search_status)
+        if result.solution is not None:
+            emit(result.solution, result.proven, result.basis, result.search_status)
+        record.update(
+            execution_status="completed",
+            solver_status=result.search_status,
+            has_solution=result.solution is not None,
+            optimality_basis=result.basis,
+            proven_optimal=result.proven,
+        )
     except Exception as error:
         import traceback
 

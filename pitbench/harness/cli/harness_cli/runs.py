@@ -385,6 +385,13 @@ def create(
             rich_help_panel=HelpPanel.TIMEOUT,
         ),
     ] = None,
+    defer_evaluation: Annotated[
+        bool,
+        Option(
+            "--defer-evaluation",
+            help="Capture final candidates for a separate hidden-evaluation queue.",
+        ),
+    ] = False,
     remote_build: Annotated[
         bool,
         Option(
@@ -524,6 +531,7 @@ def create(
             ec2_root_volume_size=ec2_root_volume_size,
             history_limit=history_limit,
             agent_cpuset_cpus=agent_cpuset_cpus,
+            defer_evaluation=defer_evaluation,
         )
 
         harness.run()
@@ -563,6 +571,7 @@ def create(
             ec2_root_volume_size=ec2_root_volume_size,
             history_limit=history_limit,
             agent_cpuset_cpus=agent_cpuset_cpus,
+            defer_evaluation=defer_evaluation,
         )
 
         harness.run()

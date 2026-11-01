@@ -36,6 +36,106 @@ from pitbench.tasks import TaskCatalog
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_distribution_report_plots_saved_intervals_and_retains_pending_jobs(tmp_path):
+    pytest.importorskip("matplotlib")
+    from pitbench.metrics.campaign_report import write_distribution_report
+
+    source = tmp_path / "source"
+    source.mkdir()
+    panels = {}
+    for name, estimate in [("cvrp_size_500", 0.02), ("cvrp_size_250", 0.01)]:
+        panels[name] = {
+            "classification": "inconclusive",
+            "primary_budget_sec": 10,
+            "by_budget": {
+                "10.0": {
+                    "paired": {
+                        "paired_instances": 30,
+                        "mean_gap_reduction": estimate,
+                        "mean_gap_reduction_ci95": {
+                            "lower": estimate - 0.005,
+                            "upper": estimate + 0.005,
+                            "level": 0.95,
+                        },
+                    }
+                }
+            },
+        }
+    job = source / "completed"
+    job.mkdir()
+    failed_panel = json.loads(json.dumps(panels["cvrp_size_500"]))
+    panels["cvrp_size_1000"] = failed_panel
+    failed_counts = {
+        "expected_runs": 2,
+        "observed_runs": 2,
+        "valid_solutions": 0,
+        "status_counts": {"crashed": 2},
+        "error_counts": {"unsupported input in adapter": 2},
+    }
+    (job / "headroom.json").write_text(
+        json.dumps(
+            {
+                "status": "measured",
+                "task_id": "release_pyvrp_v0_13_4",
+                "partitions": {"qualification": panels},
+                "collection_by_panel": {
+                    "cvrp_size_1000": {"base": failed_counts, "agent": failed_counts}
+                },
+            }
+        )
+    )
+    replication = source / "replication"
+    replication.mkdir()
+    repeated_panels = json.loads(json.dumps(panels))
+    repeated_panels.pop("cvrp_size_1000")
+    for cell in repeated_panels.values():
+        paired = cell["by_budget"]["10.0"]["paired"]
+        paired["mean_gap_reduction"] += 0.02
+        paired["mean_gap_reduction_ci95"]["lower"] += 0.02
+        paired["mean_gap_reduction_ci95"]["upper"] += 0.02
+    (replication / "headroom.json").write_text(
+        json.dumps(
+            {
+                "status": "measured",
+                "task_id": "release_pyvrp_v0_13_4",
+                "partitions": {"qualification": repeated_panels},
+            }
+        )
+    )
+    pending = source / "pending"
+    pending.mkdir()
+    (pending / "headroom.json").write_text(
+        json.dumps({"status": "running", "task_id": "other"})
+    )
+    result = write_distribution_report(
+        source,
+        tmp_path / "report",
+        generation_specification=ROOT
+        / "configs/research/archive/generalization_generation.json",
+    )
+    assert result["scope"] == "evaluator_reference_headroom"
+    assert len(result["pending_or_failed"]) == 2
+    failed_points = [
+        point for point in result["estimates"] if point["panel"] == "cvrp_size_1000"
+    ]
+    assert len(failed_points) == 1
+    assert failed_points[0]["plot_ready"] is False
+    assert failed_points[0]["collection_by_state"]["base"]["valid_solutions"] == 0
+    assert (
+        "unsupported input in adapter" in (tmp_path / "report/report.html").read_text()
+    )
+    curve = result["curves"][0]
+    assert len(result["curves"]) == 2
+    assert {curve["measurement_id"] for curve in result["curves"]} == {
+        "completed",
+        "replication",
+    }
+    assert curve["coordinates"] == [250, 500]
+    assert curve["estimates"] == [1, 2]
+    assert curve["lower"] == [0.5, 1.5]
+    assert (tmp_path / "report" / curve["files"]["svg"]).is_file()
+
+
 def test_resource_cost_and_partial_pair_denominator_remain_visible():
     row = {
         "primary_budget_sec": 10,

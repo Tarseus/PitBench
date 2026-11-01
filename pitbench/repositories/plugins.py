@@ -1,5 +1,6 @@
 """Build and execution plugins for supported solver repositories."""
 
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -13,6 +14,12 @@ from pitbench.repositories.base import (
 
 
 class PyVRPRepositoryPlugin(RepositoryPlugin):
+    scenario_binding_package = "pyvrp"
+    scenario_session_plugin = "pitbench.solver_drivers.run:PyVRPScenarioSession"
+
+    def scenario_build_commands(self, *, adapter_source, source_commit):
+        return self.build_commands(BuildKind.PERFORMANCE)
+
     agent_environment = AgentEnvironment(
         image="python:3.13-trixie",
         system_packages="build-essential cmake ninja-build python3-dev",
@@ -91,6 +98,7 @@ class PyVRPRepositoryPlugin(RepositoryPlugin):
                         "addopts=",
                         "tests",
                         "--ignore=tests/plotting",
+                        "--junitxml=.pitbench-upstream-tests.xml",
                         *[
                             f"--deselect={test}"
                             for test in self._TRAJECTORY_REGRESSION_TESTS
@@ -306,6 +314,60 @@ class HighsRepositoryPlugin(RepositoryPlugin):
 
 
 class ScipRepositoryPlugin(RepositoryPlugin):
+    scenario_session_plugin = "pitbench.solver_drivers.run:ScipScenarioSession"
+
+    def scenario_build_commands(self, *, adapter_source, source_commit):
+        adapter_hash = hashlib.sha256(adapter_source.read_bytes()).hexdigest()
+        return [
+            CommandSpec(
+                argv=[
+                    "cmake",
+                    "-S",
+                    ".",
+                    "-B",
+                    "build/scenario",
+                    "-G",
+                    "Ninja",
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    "-DSHARED=ON",
+                    "-DAUTOBUILD=ON",
+                    "-DBUILD_TESTING=OFF",
+                    "-DTPI=tny",
+                ]
+            ),
+            CommandSpec(
+                argv=[
+                    "cmake",
+                    "--build",
+                    "build/scenario",
+                    "--target",
+                    "libscip",
+                    "-j2",
+                ]
+            ),
+            CommandSpec(
+                argv=[
+                    "g++",
+                    "-std=c++17",
+                    "-O2",
+                    "-fPIC",
+                    "-shared",
+                    f'-DPITBENCH_SOURCE_COMMIT="{source_commit}"',
+                    f'-DPITBENCH_ADAPTER_SHA256="{adapter_hash}"',
+                    str(adapter_source),
+                    "-Isrc",
+                    "-Ibuild/scenario",
+                    "-Lbuild/scenario/lib",
+                    "-lscip",
+                    "-ldl",
+                    "-pthread",
+                    "-Wl,-rpath,$ORIGIN/lib",
+                    "-o",
+                    "build/scenario/pitbench_binding.so",
+                ]
+            ),
+        ]
+
     name = "scip"
     driver_name = "scip"
     driver_python = "python3"
@@ -317,7 +379,7 @@ class ScipRepositoryPlugin(RepositoryPlugin):
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         build_type = "Debug" if kind == BuildKind.VALIDATION else "Release"
-        return [
+        commands = [
             CommandSpec(
                 argv=[
                     "cmake",
@@ -330,13 +392,93 @@ class ScipRepositoryPlugin(RepositoryPlugin):
                     f"-DCMAKE_BUILD_TYPE={build_type}",
                     "-DSHARED=OFF",
                     "-DAUTOBUILD=ON",
+                    "-DBUILD_TESTING=ON"
+                    if kind == BuildKind.VALIDATION
+                    else "-DBUILD_TESTING=OFF",
                 ]
             ),
             CommandSpec(argv=["cmake", "--build", "build", "-j2"]),
         ]
+        if kind == BuildKind.VALIDATION:
+            commands.extend(
+                [
+                    CommandSpec(
+                        argv=[
+                            "python3",
+                            "-c",
+                            (
+                                "import json, subprocess; "
+                                "tests=json.loads(subprocess.check_output(['ctest', '--test-dir', 'build', '--show-only=json-v1', '-R', '^unittest-']))['tests']; "
+                                "assert any(t['name'].startswith('unittest-') and not t['name'].endswith('-build') for t in tests), "
+                                "'SCIP Criterion unit tests are absent: install Criterion and reconfigure'; "
+                                "print('Registered selected upstream unit tests:', len(tests))"
+                            ),
+                        ]
+                    ),
+                    CommandSpec(
+                        argv=[
+                            "ctest",
+                            "--test-dir",
+                            "build",
+                            "--no-tests=error",
+                            "-R",
+                            "^unittest-",
+                            "--output-on-failure",
+                            "--output-junit",
+                            "upstream-tests.xml",
+                        ],
+                    ),
+                ]
+            )
+        return commands
 
 
 class CbcRepositoryPlugin(RepositoryPlugin):
+    scenario_session_plugin = "pitbench.solver_drivers.run:CbcScenarioSession"
+
+    def scenario_build_commands(self, *, adapter_source, source_commit):
+        adapter_hash = hashlib.sha256(adapter_source.read_bytes()).hexdigest()
+        return [
+            CommandSpec(
+                argv=[
+                    "sh",
+                    "-lc",
+                    "mkdir -p build/scenario && cd build/scenario && "
+                    "../../configure --enable-shared --enable-static --enable-cbc-parallel "
+                    "CXXFLAGS='-O2 -fPIC' CFLAGS='-O2 -fPIC' && make -j2",
+                ]
+            ),
+            CommandSpec(
+                argv=[
+                    "g++",
+                    "-std=c++17",
+                    "-O2",
+                    "-fPIC",
+                    "-shared",
+                    "-DPITBENCH_CBC",
+                    f'-DPITBENCH_SOURCE_COMMIT="{source_commit}"',
+                    f'-DPITBENCH_ADAPTER_SHA256="{adapter_hash}"',
+                    str(adapter_source),
+                    "-ICbc/src",
+                    "-Ibuild/scenario/Cbc/src",
+                    "-I/usr/include/coin",
+                    "-Lbuild/scenario/Cbc/src/.libs",
+                    "-lCbcSolver",
+                    "-lCbc",
+                    "-lOsiClp",
+                    "-lClp",
+                    "-lOsi",
+                    "-lCoinUtils",
+                    "-lCgl",
+                    "-ldl",
+                    "-pthread",
+                    "-Wl,-rpath,$ORIGIN/Cbc/src/.libs",
+                    "-o",
+                    "build/scenario/pitbench_binding.so",
+                ]
+            ),
+        ]
+
     name = "cbc"
     driver_name = "cbc"
     driver_python = "python3"
@@ -347,8 +489,7 @@ class CbcRepositoryPlugin(RepositoryPlugin):
     agent_build_paths = ("build",)
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
-        del kind
-        return [
+        commands = [
             CommandSpec(
                 argv=[
                     "sh",
@@ -358,6 +499,11 @@ class CbcRepositoryPlugin(RepositoryPlugin):
                 ]
             )
         ]
+        if kind == BuildKind.VALIDATION:
+            commands.append(
+                CommandSpec(argv=["make", "-C", "build", "test"], timeout_sec=3600)
+            )
+        return commands
 
 
 class ChocoRepositoryPlugin(RepositoryPlugin):

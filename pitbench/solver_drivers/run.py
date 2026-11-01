@@ -131,7 +131,7 @@ class PyVRPDriver(SolverDriver):
             )
         lines = [
             f"NAME : {instance.get('name', path.stem)}",
-            "TYPE : CVRP",
+            "TYPE : CVRPTW" if "time_windows" in instance else "TYPE : CVRP",
             f"DIMENSION : {len(coordinates)}",
             f"EDGE_WEIGHT_TYPE : {distance_metric}",
             f"CAPACITY : {instance['capacity']}",
@@ -143,8 +143,37 @@ class PyVRPDriver(SolverDriver):
         )
         lines.append("DEMAND_SECTION")
         lines.extend(f"{index + 1} {demand}" for index, demand in enumerate(demands))
+        if "num_vehicles" in instance:
+            lines.insert(2, f"VEHICLES : {instance['num_vehicles']}")
+        if "time_windows" in instance:
+            windows = instance["time_windows"]
+            services = instance.get("service_times", [0] * len(coordinates))
+            if len(windows) != len(coordinates) or len(services) != len(coordinates):
+                raise ValueError("time windows and service times must cover every node")
+            if any(
+                not float(value).is_integer() for pair in windows for value in pair
+            ) or any(not float(value).is_integer() for value in services):
+                raise ValueError(
+                    "the PyVRP adapter requires integral time windows and service times"
+                )
+            lines.append("TIME_WINDOW_SECTION")
+            lines.extend(
+                f"{index + 1} {start} {end}"
+                for index, (start, end) in enumerate(windows)
+            )
+            lines.append("SERVICE_TIME_SECTION")
+            lines.extend(
+                f"{index + 1} {duration}" for index, duration in enumerate(services)
+            )
         lines.extend(["DEPOT_SECTION", "1", "-1", "EOF"])
         path.write_text("\n".join(lines) + "\n")
+
+    @staticmethod
+    def round_euc_2d(values):
+        """TSPLIB nearest-integer semantics, including exact half distances."""
+        import numpy as np
+
+        return np.floor(values + 0.5).astype(np.int64)
 
     @staticmethod
     def main(argv: list[str] | None = None) -> None:
@@ -196,7 +225,7 @@ class PyVRPDriver(SolverDriver):
                         sol_dir=None,
                     )
                 else:
-                    data = pyvrp.read(vrp, round_func="round")
+                    data = pyvrp.read(vrp, round_func=PyVRPDriver.round_euc_2d)
                     solve_options = {
                         "stop": MaxRuntime(args.budget),
                         "seed": args.seed,
@@ -867,6 +896,11 @@ class NativeMipCliDriver(SolverDriver):
         )
         found = re.search(pattern, log)
         if found is None:
+            if (
+                cls.dialect == "cbc"
+                and "Pre-processing says infeasible or unbounded" in log
+            ):
+                return "Pre-processing says infeasible or unbounded"
             raise ValueError("native MIP solver did not report a result status")
         return found.group(1).strip()
 
@@ -877,7 +911,10 @@ class NativeMipCliDriver(SolverDriver):
         if not path.is_file():
             return None
         lines = path.read_text(errors="replace").splitlines()
-        if not lines or "no integer solution" in lines[0].lower():
+        if not lines or any(
+            marker in lines[0].lower()
+            for marker in ("no integer solution", "infeasible", "unbounded")
+        ):
             return None
         objective_match = re.search(
             rf"objective value\s*:?[ \t]*({_FLOAT})",
@@ -964,6 +1001,11 @@ class NativeMipCliDriver(SolverDriver):
                     timeout=args.budget + 60,
                 )
                 resources = process_resources(child_process=True)
+                if solution_path.is_file():
+                    args.output.parent.mkdir(parents=True, exist_ok=True)
+                    args.output.with_suffix(".native.sol").write_text(
+                        solution_path.read_text(errors="replace")
+                    )
                 solution = cls._solution(solution_path, names)
             print(completed.stdout, end="")
             print(completed.stderr, end="", file=sys.stderr)
@@ -984,7 +1026,7 @@ class NativeMipCliDriver(SolverDriver):
             if termination == SolverTermination.OPTIMAL and solution is None:
                 raise ValueError("solver claimed optimality without a primal solution")
             objective = solution[0] if solution is not None else None
-            if termination == SolverTermination.OPTIMAL and solution is not None:
+            if solution is not None:
                 write_solution(
                     args.output,
                     {
@@ -1016,8 +1058,8 @@ class NativeMipCliDriver(SolverDriver):
             write_result(
                 args.output,
                 started=started,
-                valid=termination == SolverTermination.OPTIMAL,
-                has_solution=termination == SolverTermination.OPTIMAL,
+                valid=solution is not None,
+                has_solution=solution is not None,
                 objective=objective,
                 primal_bound=objective,
                 dual_bound=dual,
@@ -1255,6 +1297,373 @@ class HighsScenarioSession(ScenarioSession):
 
     def reset_search(self):
         self.solver.clearSolver()
+
+
+class NativeMipScenarioSession(ScenarioSession):
+    """In-process native source bindings with original-variable assignments."""
+
+    repository_plugin: str
+
+    @classmethod
+    def identity(cls):
+        from pitbench.solver_drivers.common import source_binding_identity
+
+        return source_binding_identity(
+            cls,
+            package=None,
+            repository_plugin=cls.repository_plugin,
+            representations=["row_column_permutation"],
+        )
+
+    def __init__(self, *, seed, threads, budget, tolerance, options):
+        import ctypes as C
+
+        if set(options) - {"reoptimization"}:
+            raise ParameterRejected("unknown native scenario options")
+        self.C = C
+        record = json.loads(Path(os.environ["PITBENCH_SCENARIO_BINDING"]).read_text())
+        self.library = lib = C.CDLL(record["native_library"])
+        self.double_pointer, self.int_pointer = (
+            C.POINTER(C.c_double),
+            C.POINTER(C.c_int),
+        )
+        self.observer_type = C.CFUNCTYPE(
+            None, C.c_double, C.c_int, self.double_pointer, C.c_double, C.c_double
+        )
+        lib.pbs_error.restype = C.c_char_p
+        lib.pbs_create.argtypes = [C.c_int, C.c_int, C.c_double, C.c_double, C.c_int]
+        lib.pbs_create.restype = C.c_void_p
+        lib.pbs_destroy.argtypes = [C.c_void_p]
+        lib.pbs_load.argtypes = [
+            C.c_void_p,
+            C.c_int,
+            C.c_int,
+            self.int_pointer,
+            self.int_pointer,
+            self.double_pointer,
+            self.double_pointer,
+            self.double_pointer,
+            self.double_pointer,
+            self.int_pointer,
+            self.double_pointer,
+            self.double_pointer,
+            C.c_int,
+            C.c_double,
+        ]
+        lib.pbs_solve.argtypes = [C.c_void_p, self.observer_type]
+        lib.pbs_solution.argtypes = [C.c_void_p, self.double_pointer]
+        lib.pbs_reset.argtypes = [C.c_void_p]
+        lib.pbs_update_objective.argtypes = [C.c_void_p, self.double_pointer, C.c_int]
+        self.pointer = lib.pbs_create(
+            seed, threads, budget, tolerance, int(options.get("reoptimization", False))
+        )
+        if not self.pointer:
+            raise ValueError(lib.pbs_error().decode())
+
+    def __del__(self):
+        if getattr(self, "pointer", None):
+            self.library.pbs_destroy(self.pointer)
+            self.pointer = None
+
+    def _check(self, code):
+        from pitbench.solver_drivers.common import ScenarioUnsupported
+
+        if code == -2:
+            raise ScenarioUnsupported(self.library.pbs_error().decode())
+        if code < 0:
+            raise ValueError(self.library.pbs_error().decode())
+        return code
+
+    def load_model(self, model):
+        import numpy as np
+
+        matrix = model["matrix"].tocsr()
+        self.columns = len(model["cost"])
+        arrays = [
+            np.ascontiguousarray(matrix.indptr, dtype=np.int32),
+            np.ascontiguousarray(matrix.indices, dtype=np.int32),
+            np.ascontiguousarray(matrix.data, dtype=np.float64),
+        ]
+        for name in (
+            "cost",
+            "col_lower",
+            "col_upper",
+            "integrality",
+            "row_lower",
+            "row_upper",
+        ):
+            values = np.ascontiguousarray(
+                model[name], dtype=np.int32 if name == "integrality" else np.float64
+            )
+            if name != "integrality":
+                values = np.where(
+                    np.isposinf(values),
+                    1e20,
+                    np.where(np.isneginf(values), -1e20, values),
+                )
+            arrays.append(values)
+        pointers = [
+            value.ctypes.data_as(
+                self.int_pointer if value.dtype == np.int32 else self.double_pointer
+            )
+            for value in arrays
+        ]
+        self._check(
+            self.library.pbs_load(
+                self.pointer,
+                matrix.shape[0],
+                matrix.shape[1],
+                *pointers,
+                int(model["sense"] in {-1, "maximize"}),
+                model["offset"],
+            )
+        )
+
+    def update_model(self, previous, model):
+        import numpy as np
+
+        from pitbench.solver_drivers.common import ScenarioUnsupported
+
+        if (
+            previous["matrix"].shape != model["matrix"].shape
+            or (previous["matrix"] != model["matrix"]).nnz
+            or any(
+                not np.array_equal(previous[key], model[key])
+                for key in (
+                    "integrality",
+                    "col_lower",
+                    "col_upper",
+                    "row_lower",
+                    "row_upper",
+                )
+            )
+            or previous["offset"] != model["offset"]
+        ):
+            raise ScenarioUnsupported(
+                "this native reoptimization contract supports fixed structure/bounds and objective updates"
+            )
+        if (
+            np.array_equal(previous["cost"], model["cost"])
+            and previous["sense"] == model["sense"]
+        ):
+            return
+        cost = np.ascontiguousarray(model["cost"], dtype=np.float64)
+        self._check(
+            self.library.pbs_update_objective(
+                self.pointer,
+                cost.ctypes.data_as(self.double_pointer),
+                int(model["sense"] in {-1, "maximize"}),
+            )
+        )
+
+    def solve(self, emit):
+        import numpy as np
+
+        errors = []
+        previous_bounds = None
+        started = time.perf_counter()
+
+        def observe(timestamp, columns, values, primal, dual):
+            nonlocal previous_bounds
+            try:
+                if columns != self.columns:
+                    raise ValueError(
+                        "native assignment dimension differs from original model"
+                    )
+                if values:
+                    emit(timestamp, [values[index] for index in range(columns)], None)
+                bounds = (finite(primal), finite(dual))
+                if bounds != previous_bounds and getattr(self, "trace_directory", None):
+                    append_trajectory(
+                        self.trace_directory / "native-progress.jsonl",
+                        {
+                            "step": self.trace_step,
+                            "time_sec": timestamp,
+                            "primal_bound": bounds[0],
+                            "dual_bound": bounds[1],
+                            "bound_certification": "unavailable",
+                            "sampling": "native_solver_events",
+                        },
+                    )
+                previous_bounds = bounds
+            except Exception as error:
+                errors.append(error)
+
+        observer = self.observer_type(observe)
+        status = self._check(self.library.pbs_solve(self.pointer, observer))
+        if errors:
+            raise errors[0]
+        values = np.zeros(self.columns, dtype=np.float64)
+        count = self.library.pbs_solution(
+            self.pointer, values.ctypes.data_as(self.double_pointer)
+        )
+        solution = values.tolist() if count == self.columns else None
+        elapsed = time.perf_counter() - started
+        if solution is not None:
+            emit(elapsed, solution, None)
+        return {
+            "termination": {0: "optimal", 1: "time_limit", 2: "infeasible", 3: "other"}[
+                status
+            ],
+            "values": solution,
+            "solve_time_sec": elapsed,
+        }
+
+    def reset_search(self):
+        self._check(self.library.pbs_reset(self.pointer))
+
+
+class CbcScenarioSession(NativeMipScenarioSession):
+    repository_plugin = "pitbench.repositories.plugins:CbcRepositoryPlugin"
+
+
+class ScipScenarioSession(NativeMipScenarioSession):
+    repository_plugin = "pitbench.repositories.plugins:ScipRepositoryPlugin"
+
+
+class PyVRPScenarioSession(ScenarioSession):
+    """Retain the upstream ILS, local search, penalties and RNG in one worker."""
+
+    @classmethod
+    def identity(cls):
+        from pitbench.solver_drivers.common import source_binding_identity
+
+        # The actual repository plugin is supplied by the trusted build receipt;
+        # build variants can share this session without a release whitelist.
+        receipt = json.loads(Path(os.environ["PITBENCH_SCENARIO_BINDING"]).read_text())
+        import importlib.metadata
+
+        if importlib.metadata.version("pyvrp") != receipt["version"]:
+            raise ValueError("installed PyVRP metadata differs from the source release")
+        return source_binding_identity(
+            cls,
+            package="pyvrp",
+            repository_plugin=receipt["repository_plugin"],
+            representations=["customer_relabeling"],
+        )
+
+    def __init__(self, *, seed, threads, budget, tolerance, options):
+        from pitbench.solver_drivers.common import ScenarioUnsupported
+
+        if threads != 1:
+            raise ScenarioUnsupported(
+                "the upstream PyVRP ILS API has no native thread-count argument"
+            )
+        import pyvrp
+
+        self.seed, self.budget = seed, budget
+        self.params = (
+            PyVRPDriver.parameters(options) if options else pyvrp.SolveParams()
+        )
+        self.algorithm = None
+
+    def load_model(self, model):
+        import pyvrp
+
+        self.model = json.loads(json.dumps(model))
+        with tempfile.TemporaryDirectory(prefix="pitbench-routing-model-") as directory:
+            path = Path(directory) / "model.vrp"
+            PyVRPDriver._vrplib(model, path)
+            self.data = pyvrp.read(path, round_func=PyVRPDriver.round_euc_2d)
+
+    def update_model(self, previous, model):
+        from pitbench.solver_drivers.common import ScenarioUnsupported
+
+        if self.model != model:
+            raise ScenarioUnsupported(
+                "PyVRP ProblemData is immutable; changed-model in-place reoptimization is not exposed by this upstream API"
+            )
+
+    def _initialize_search(self):
+        from pyvrp import RandomNumberGenerator, Solution
+        from pyvrp.IteratedLocalSearch import IteratedLocalSearch
+        from pyvrp.PenaltyManager import PenaltyManager
+        from pyvrp.search import LocalSearch, PerturbationManager, compute_neighbours
+
+        data, params = self.data, self.params
+        rng = RandomNumberGenerator(seed=self.seed)
+        search = LocalSearch(
+            data,
+            rng,
+            compute_neighbours(data, params.neighbourhood),
+            PerturbationManager(params.perturbation),
+        )
+        if hasattr(params, "operators"):
+            for operator in params.operators:
+                if operator.supports(data):
+                    search.add_operator(operator(data))
+        else:
+            for operator in params.node_ops:
+                if operator.supports(data):
+                    search.add_node_operator(operator(data))
+            for operator in params.route_ops:
+                if operator.supports(data):
+                    search.add_route_operator(operator(data))
+        if hasattr(params.penalty, "midpoint_penalties"):
+            penalties = PenaltyManager(
+                params.penalty.midpoint_penalties(data), params.penalty
+            )
+        else:
+            penalties = PenaltyManager.init_from(data, params.penalty)
+        self.initial = search(
+            Solution.make_random(data, rng),
+            penalties.max_cost_evaluator(),
+            exhaustive=True,
+        )
+        kwargs = {
+            "data": data,
+            "penalty_manager": penalties,
+            "search_method": search,
+            "initial_solution": self.initial,
+            "params": params.ils,
+        }
+        if "rng" in inspect.signature(IteratedLocalSearch).parameters:
+            kwargs["rng"] = rng
+        self.algorithm = IteratedLocalSearch(**kwargs)
+
+    @staticmethod
+    def _solution(solution):
+        routes = getattr(solution, "routes", None)
+        routes = routes() if callable(routes) else solution.get_routes()
+        return {"routes": [PyVRPDriver._route_visits(route) for route in routes]}
+
+    def solve(self, emit):
+        import importlib
+
+        started = time.perf_counter()
+        if self.algorithm is None:
+            self._initialize_search()
+        if self.initial.is_feasible():
+            emit(time.perf_counter() - started, self._solution(self.initial), None)
+        module = importlib.import_module("pyvrp.IteratedLocalSearch")
+        original = module.Statistics
+        last = float("inf")
+        session = self
+
+        class ObservedStatistics(original):
+            def collect(self, current, candidate, best, cost_evaluator):
+                nonlocal last
+                cost = cost_evaluator.cost(best)
+                if best.is_feasible() and cost < last:
+                    emit(time.perf_counter() - started, session._solution(best), None)
+                    last = cost
+                return super().collect(current, candidate, best, cost_evaluator)
+
+        module.Statistics = ObservedStatistics
+        try:
+            result = self.algorithm.run(
+                lambda _: time.perf_counter() - started >= self.budget,
+                collect_stats=False,
+                display=False,
+            )
+        finally:
+            module.Statistics = original
+        solution = self._solution(result.best) if result.best.is_feasible() else None
+        return {
+            "termination": "time_limit",
+            "solution": solution,
+            "solve_time_sec": time.perf_counter() - started,
+        }
 
 
 def driver_records_trajectory(driver_name: str) -> bool:

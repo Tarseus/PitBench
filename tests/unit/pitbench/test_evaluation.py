@@ -476,13 +476,17 @@ def test_workspace_permissions_reuses_existing_agent_account() -> None:
         ("gecode_binpacking_dff_20260711", "/opt/pitbench-adapters"),
     ],
 )
-def test_agent_can_read_declared_public_support_without_write_access(task_id, public_support):
+def test_agent_can_read_declared_public_support_without_write_access(
+    task_id, public_support
+):
     task = PitBenchTask.from_yaml(ROOT / f"configs/tasks/{task_id}.yaml")
     dockerfile = PitBenchAdapter._workspace_permissions(task, include_runs=True)
 
     assert f"chmod -R a+rX {public_support}" in dockerfile
     assert "chmod o+x /root /root/.m2" in dockerfile
-    writable = next(line for line in dockerfile.splitlines() if "mkdir -p /workspace/repo" in line)
+    writable = next(
+        line for line in dockerfile.splitlines() if "mkdir -p /workspace/repo" in line
+    )
     assert public_support not in writable
 
 
@@ -795,15 +799,15 @@ def test_normalized_gap_rejects_invalid_anchor(anchor: float) -> None:
 
 
 def test_normalized_gap_uses_unit_scale_for_zero_optimum() -> None:
-    assert ProblemFamilyPlugin.normalized_gap(
-        2.0, 0.0, objective_sense="minimize"
-    ) == 2.0
-    assert ProblemFamilyPlugin.normalized_gap(
-        -2.0, 0.0, objective_sense="maximize"
-    ) == 2.0
-    assert ProblemFamilyPlugin.normalized_gap(
-        0.0, 0.0, objective_sense="minimize"
-    ) == 0.0
+    assert (
+        ProblemFamilyPlugin.normalized_gap(2.0, 0.0, objective_sense="minimize") == 2.0
+    )
+    assert (
+        ProblemFamilyPlugin.normalized_gap(-2.0, 0.0, objective_sense="maximize") == 2.0
+    )
+    assert (
+        ProblemFamilyPlugin.normalized_gap(0.0, 0.0, objective_sense="minimize") == 0.0
+    )
 
 
 @pytest.mark.parametrize("objective", [None, math.inf, -math.inf, math.nan])
@@ -1101,16 +1105,21 @@ def test_balanced_subset_sum_oracle_matches_exhaustive_optimum(tmp_path: Path) -
         ),
     )
 
-    assert TrustedOptimumFamily(record, solution_path).verify(
-        instance_path, solution_path
-    ).objective == optimum
+    assert (
+        TrustedOptimumFamily(record, solution_path)
+        .verify(instance_path, solution_path)
+        .objective
+        == optimum
+    )
     assert CPFamily().verify(instance_path, solution_path).objective == optimum
     invalid = record.model_copy(
         update={"optimality_basis": {**basis, "reachable_bitset_sha256": "0" * 64}}
     )
-    assert TrustedOptimumFamily(invalid, solution_path).verify(
-        instance_path, solution_path
-    ).infrastructure_error
+    assert (
+        TrustedOptimumFamily(invalid, solution_path)
+        .verify(instance_path, solution_path)
+        .infrastructure_error
+    )
 
 
 def test_cp_family_verifies_public_normalized_bin_packing_without_private_verifier(
@@ -2288,7 +2297,11 @@ def test_evaluator_uses_base_cache_when_available(tmp_path: Path):
     mock_task.evaluation.budgets_sec = [5.0]
     mock_task.evaluation.solver_seeds = [1]
     mock_task.evaluation.threads = 1
-    mock_task.instance_sets = [SimpleNamespace(name="judge_id", size=1)]
+    mock_task.instance_sets = [
+        SimpleNamespace(
+            name="judge_id", size=1, budgets_sec=None, performance_protocol=None
+        )
+    ]
 
     request = EvaluationRequest(
         task_id=task_id,
@@ -2382,7 +2395,11 @@ def test_evaluator_saves_base_cache_on_first_run(tmp_path: Path):
     mock_task.evaluation.budgets_sec = [5.0]
     mock_task.evaluation.solver_seeds = [1]
     mock_task.evaluation.threads = 1
-    mock_task.instance_sets = [SimpleNamespace(name="judge_id", size=1)]
+    mock_task.instance_sets = [
+        SimpleNamespace(
+            name="judge_id", size=1, budgets_sec=None, performance_protocol=None
+        )
+    ]
 
     request = EvaluationRequest(
         task_id=task_id,
@@ -2448,7 +2465,11 @@ def test_directional_performance_requires_fresh_opposite_order_confirmation(
     task.evaluation.budgets_sec = [5.0]
     task.evaluation.solver_seeds = [1]
     task.evaluation.threads = 1
-    task.instance_sets = [SimpleNamespace(name="judge_id", size=1)]
+    task.instance_sets = [
+        SimpleNamespace(
+            name="judge_id", size=1, budgets_sec=None, performance_protocol=None
+        )
+    ]
 
     def observation(state: CodeState, gap: float) -> RunObservation:
         return RunObservation(

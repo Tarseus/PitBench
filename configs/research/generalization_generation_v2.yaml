@@ -1,0 +1,1298 @@
+schema_version: '1.0'
+design_id: generalization_difficulty_v2
+status: predeclared_before_new_measurement
+scope: Controlled generated structure and scale populations. Public competition inventories
+  supply external reference layers. Existing data and historical scores are preserved.
+roles:
+  protocol_calibration:
+    visibility: judge
+    count: 10
+    seed_namespace: 2026110101
+  diverse_development_v2:
+    visibility: agent
+    count: 5
+    seed_namespace: 2026110102
+  unseen_id:
+    visibility: judge
+    count: 30
+    seed_namespace: 2026110103
+  unseen_scale:
+    visibility: judge
+    count: 30
+    seed_namespace: 2026110104
+  unseen_structure:
+    visibility: judge
+    count: 30
+    seed_namespace: 2026110105
+  unseen_joint:
+    visibility: judge
+    count: 30
+    seed_namespace: 2026110106
+families:
+  knapsack_independent:
+    problem_family: mip
+    generator:
+      kind: multidimensional_knapsack_mps
+      items:
+      - 60
+      dimensions:
+      - 3
+      weight_max: 100
+      capacity_mode: ratio
+      capacity_ratio: 0.5
+      profit_mode: independent
+      profit_max: 100
+      randomness:
+        instance_seed: 0
+  covering_random:
+    problem_family: mip
+    generator:
+      kind: random_set_covering_mip
+      variables:
+      - 60
+      rows:
+      - 40
+      row_density: 0.1
+      cost_max: 100
+      randomness:
+        instance_seed: 0
+  independent_set:
+    problem_family: mip
+    generator:
+      kind: independent_set_mip
+      vertices:
+      - 60
+      edge_probability: 0.1
+      weight_max: 20
+      randomness:
+        instance_seed: 0
+  facility_location:
+    problem_family: mip
+    generator:
+      kind: facility_location_mip
+      facilities:
+      - 6
+      customers:
+      - 12
+      capacity_ratio: 1.5
+      randomness:
+        instance_seed: 0
+  fixed_charge_flow:
+    problem_family: mip
+    generator:
+      kind: fixed_charge_flow_mip
+      nodes:
+      - 16
+      arc_density: 0.2
+      flow_demand: 40
+      randomness:
+        instance_seed: 0
+  cvrp_uniform:
+    problem_family: cvrp
+    generator:
+      kind: euclidean_cvrp
+      customers:
+      - 250
+      capacity: 50
+      distance_metric: EUC_2D
+      coordinate_distribution: uniform
+      depot_mode: center
+      demand_distribution: uniform_integer
+      randomness:
+        coordinate_seed: 0
+        demand_seed: 1
+  cvrp_clustered:
+    problem_family: cvrp
+    generator:
+      kind: euclidean_cvrp
+      customers:
+      - 250
+      capacity: 50
+      distance_metric: EUC_2D
+      coordinate_distribution: clustered
+      cluster_count: 8
+      cluster_spread: 4
+      depot_mode: center
+      demand_distribution: uniform_integer
+      randomness:
+        coordinate_seed: 0
+        demand_seed: 1
+  vrptw:
+    problem_family: cvrp
+    generator:
+      kind: euclidean_cvrp
+      customers: &id001
+      - 250
+      capacity: 50
+      distance_metric: EUC_2D
+      coordinate_distribution: mixed
+      cluster_count: 8
+      cluster_spread: 4
+      uniform_fraction: 0.5
+      depot_mode: center
+      demand_distribution: uniform_integer
+      time_window_slack: 100
+      service_time: 5
+      randomness: &id002
+        coordinate_seed: 0
+        demand_seed: 1
+  cvrp_mixed:
+    problem_family: cvrp
+    generator:
+      kind: euclidean_cvrp
+      customers: *id001
+      capacity: 50
+      distance_metric: EUC_2D
+      coordinate_distribution: mixed
+      cluster_count: 8
+      cluster_spread: 4
+      uniform_fraction: 0.5
+      depot_mode: center
+      demand_distribution: uniform_integer
+      randomness: *id002
+conditions:
+- id: knapsack_independent_60
+  family: knapsack_independent
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    items:
+    - 60
+  claim: id
+  axes:
+    axis: items
+    coordinate: 60
+  expected_features: {}
+- id: knapsack_independent_120
+  family: knapsack_independent
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    items:
+    - 120
+  claim: id
+  axes:
+    axis: items
+    coordinate: 120
+  expected_features: {}
+- id: knapsack_independent_240
+  family: knapsack_independent
+  roles:
+  - protocol_calibration
+  - unseen_scale
+  overrides:
+    items:
+    - 240
+  claim: scale
+  axes:
+    axis: items
+    coordinate: 240
+  expected_features: {}
+- id: knapsack_independent_480
+  family: knapsack_independent
+  roles:
+  - protocol_calibration
+  - unseen_scale
+  overrides:
+    items:
+    - 480
+  claim: scale
+  axes:
+    axis: items
+    coordinate: 480
+  expected_features: {}
+- id: knapsack_independent_960
+  family: knapsack_independent
+  roles:
+  - protocol_calibration
+  - unseen_scale
+  overrides:
+    items:
+    - 960
+  claim: scale
+  axes:
+    axis: items
+    coordinate: 960
+  expected_features: {}
+- id: covering_random_60
+  family: covering_random
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    variables:
+    - 60
+    rows:
+    - 40
+  claim: id
+  axes:
+    axis: variables
+    coordinate: 60
+  expected_features: {}
+- id: covering_random_120
+  family: covering_random
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    variables:
+    - 120
+    rows:
+    - 80
+  claim: id
+  axes:
+    axis: variables
+    coordinate: 120
+  expected_features: {}
+- id: covering_random_240
+  family: covering_random
+  roles:
+  - protocol_calibration
+  - unseen_scale
+  overrides:
+    variables:
+    - 240
+    rows:
+    - 160
+  claim: scale
+  axes:
+    axis: variables
+    coordinate: 240
+  expected_features: {}
+- id: covering_random_480
+  family: covering_random
+  roles:
+  - protocol_calibration
+  - unseen_scale
+  overrides:
+    variables:
+    - 480
+    rows:
+    - 320
+  claim: scale
+  axes:
+    axis: variables
+    coordinate: 480
+  expected_features: {}
+- id: covering_random_960
+  family: covering_random
+  roles:
+  - protocol_calibration
+  - unseen_scale
+  overrides:
+    variables:
+    - 960
+    rows:
+    - 640
+  claim: scale
+  axes:
+    axis: variables
+    coordinate: 960
+  expected_features: {}
+- id: independent_set_p003_60
+  family: independent_set
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    vertices:
+    - 60
+    edge_probability: 0.03
+  claim: structure
+  axes:
+    axis: vertices
+    coordinate: 60
+  expected_features: {}
+- id: independent_set_p003_120
+  family: independent_set
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    vertices:
+    - 120
+    edge_probability: 0.03
+  claim: structure
+  axes:
+    axis: vertices
+    coordinate: 120
+  expected_features: {}
+- id: independent_set_p003_240
+  family: independent_set
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    vertices:
+    - 240
+    edge_probability: 0.03
+  claim: joint
+  axes:
+    axis: vertices
+    coordinate: 240
+  expected_features: {}
+- id: independent_set_p003_480
+  family: independent_set
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    vertices:
+    - 480
+    edge_probability: 0.03
+  claim: joint
+  axes:
+    axis: vertices
+    coordinate: 480
+  expected_features: {}
+- id: independent_set_p01_60
+  family: independent_set
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    vertices:
+    - 60
+    edge_probability: 0.1
+  claim: structure
+  axes:
+    axis: vertices
+    coordinate: 60
+  expected_features: {}
+- id: independent_set_p01_120
+  family: independent_set
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    vertices:
+    - 120
+    edge_probability: 0.1
+  claim: structure
+  axes:
+    axis: vertices
+    coordinate: 120
+  expected_features: {}
+- id: independent_set_p01_240
+  family: independent_set
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    vertices:
+    - 240
+    edge_probability: 0.1
+  claim: joint
+  axes:
+    axis: vertices
+    coordinate: 240
+  expected_features: {}
+- id: independent_set_p01_480
+  family: independent_set
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    vertices:
+    - 480
+    edge_probability: 0.1
+  claim: joint
+  axes:
+    axis: vertices
+    coordinate: 480
+  expected_features: {}
+- id: independent_set_p03_60
+  family: independent_set
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    vertices:
+    - 60
+    edge_probability: 0.3
+  claim: structure
+  axes:
+    axis: vertices
+    coordinate: 60
+  expected_features: {}
+- id: independent_set_p03_120
+  family: independent_set
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    vertices:
+    - 120
+    edge_probability: 0.3
+  claim: structure
+  axes:
+    axis: vertices
+    coordinate: 120
+  expected_features: {}
+- id: independent_set_p03_240
+  family: independent_set
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    vertices:
+    - 240
+    edge_probability: 0.3
+  claim: joint
+  axes:
+    axis: vertices
+    coordinate: 240
+  expected_features: {}
+- id: independent_set_p03_480
+  family: independent_set
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    vertices:
+    - 480
+    edge_probability: 0.3
+  claim: joint
+  axes:
+    axis: vertices
+    coordinate: 480
+  expected_features: {}
+- id: facility_f6_c12
+  family: facility_location
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    facilities:
+    - 6
+    customers:
+    - 12
+  claim: structure
+  axes:
+    axis: variables
+    coordinate: 78
+  expected_features: {}
+- id: facility_f12_c24
+  family: facility_location
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    facilities:
+    - 12
+    customers:
+    - 24
+  claim: joint
+  axes:
+    axis: variables
+    coordinate: 300
+  expected_features: {}
+- id: facility_f24_c48
+  family: facility_location
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    facilities:
+    - 24
+    customers:
+    - 48
+  claim: joint
+  axes:
+    axis: variables
+    coordinate: 1176
+  expected_features: {}
+- id: facility_f48_c96
+  family: facility_location
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    facilities:
+    - 48
+    customers:
+    - 96
+  claim: joint
+  axes:
+    axis: variables
+    coordinate: 4656
+  expected_features: {}
+- id: network_16
+  family: fixed_charge_flow
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    nodes:
+    - 16
+  claim: structure
+  axes:
+    axis: nodes
+    coordinate: 16
+  expected_features: {}
+- id: network_40
+  family: fixed_charge_flow
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    nodes:
+    - 40
+  claim: joint
+  axes:
+    axis: nodes
+    coordinate: 40
+  expected_features: {}
+- id: network_80
+  family: fixed_charge_flow
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    nodes:
+    - 80
+  claim: joint
+  axes:
+    axis: nodes
+    coordinate: 80
+  expected_features: {}
+- id: network_160
+  family: fixed_charge_flow
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    nodes:
+    - 160
+  claim: joint
+  axes:
+    axis: nodes
+    coordinate: 160
+  expected_features: {}
+- id: cvrp_uniform_250
+  family: cvrp_uniform
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 250
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 250
+  expected_features: {}
+- id: cvrp_uniform_750
+  family: cvrp_uniform
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 750
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 750
+  expected_features: {}
+- id: cvrp_uniform_2000
+  family: cvrp_uniform
+  roles:
+  - protocol_calibration
+  - unseen_scale
+  overrides:
+    customers:
+    - 2000
+  claim: scale
+  axes:
+    axis: customers
+    coordinate: 2000
+  expected_features: {}
+- id: cvrp_uniform_4000
+  family: cvrp_uniform
+  roles:
+  - protocol_calibration
+  - unseen_scale
+  overrides:
+    customers:
+    - 4000
+  claim: scale
+  axes:
+    axis: customers
+    coordinate: 4000
+  expected_features: {}
+- id: cvrp_clustered_250
+  family: cvrp_clustered
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 250
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 250
+  expected_features: {}
+- id: cvrp_clustered_750
+  family: cvrp_clustered
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 750
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 750
+  expected_features: {}
+- id: cvrp_clustered_2000
+  family: cvrp_clustered
+  roles:
+  - protocol_calibration
+  - unseen_scale
+  overrides:
+    customers:
+    - 2000
+  claim: scale
+  axes:
+    axis: customers
+    coordinate: 2000
+  expected_features: {}
+- id: cvrp_clustered_4000
+  family: cvrp_clustered
+  roles:
+  - protocol_calibration
+  - unseen_scale
+  overrides:
+    customers:
+    - 4000
+  claim: scale
+  axes:
+    axis: customers
+    coordinate: 4000
+  expected_features: {}
+- id: vrptw_slack20_250
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 250
+    time_window_slack: 20
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 250
+  expected_features: {}
+- id: vrptw_slack20_750
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 750
+    time_window_slack: 20
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 750
+  expected_features: {}
+- id: vrptw_slack20_2000
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    customers:
+    - 2000
+    time_window_slack: 20
+  claim: joint
+  axes:
+    axis: customers
+    coordinate: 2000
+  expected_features: {}
+- id: vrptw_slack20_4000
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    customers:
+    - 4000
+    time_window_slack: 20
+  claim: joint
+  axes:
+    axis: customers
+    coordinate: 4000
+  expected_features: {}
+- id: vrptw_slack100_250
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 250
+    time_window_slack: 100
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 250
+  expected_features: {}
+- id: vrptw_slack100_750
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 750
+    time_window_slack: 100
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 750
+  expected_features: {}
+- id: vrptw_slack100_2000
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    customers:
+    - 2000
+    time_window_slack: 100
+  claim: joint
+  axes:
+    axis: customers
+    coordinate: 2000
+  expected_features: {}
+- id: vrptw_slack100_4000
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    customers:
+    - 4000
+    time_window_slack: 100
+  claim: joint
+  axes:
+    axis: customers
+    coordinate: 4000
+  expected_features: {}
+- id: vrptw_slack500_250
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 250
+    time_window_slack: 500
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 250
+  expected_features: {}
+- id: vrptw_slack500_750
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 750
+    time_window_slack: 500
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 750
+  expected_features: {}
+- id: vrptw_slack500_2000
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    customers:
+    - 2000
+    time_window_slack: 500
+  claim: joint
+  axes:
+    axis: customers
+    coordinate: 2000
+  expected_features: {}
+- id: vrptw_slack500_4000
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_joint
+  overrides:
+    customers:
+    - 4000
+    time_window_slack: 500
+  claim: joint
+  axes:
+    axis: customers
+    coordinate: 4000
+  expected_features: {}
+- id: cvrp_mixed_250
+  family: cvrp_mixed
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 250
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 250
+  expected_features: {}
+- id: cvrp_mixed_750
+  family: cvrp_mixed
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 750
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 750
+  expected_features: {}
+- id: cvrp_mixed_2000
+  family: cvrp_mixed
+  roles:
+  - protocol_calibration
+  - unseen_scale
+  overrides:
+    customers:
+    - 2000
+  claim: scale
+  axes:
+    axis: customers
+    coordinate: 2000
+  expected_features: {}
+- id: cvrp_mixed_4000
+  family: cvrp_mixed
+  roles:
+  - protocol_calibration
+  - unseen_scale
+  overrides:
+    customers:
+    - 4000
+  claim: scale
+  axes:
+    axis: customers
+    coordinate: 4000
+  expected_features: {}
+- id: cvrp_uniform_6
+  family: cvrp_uniform
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 6
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 6
+  expected_features: {}
+- id: cvrp_uniform_12
+  family: cvrp_uniform
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 12
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 12
+  expected_features: {}
+- id: cvrp_uniform_50
+  family: cvrp_uniform
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 50
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 50
+  expected_features: {}
+- id: cvrp_uniform_100
+  family: cvrp_uniform
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 100
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 100
+  expected_features: {}
+- id: cvrp_clustered_6
+  family: cvrp_clustered
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 6
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 6
+  expected_features: {}
+- id: cvrp_clustered_12
+  family: cvrp_clustered
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 12
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 12
+  expected_features: {}
+- id: cvrp_clustered_50
+  family: cvrp_clustered
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 50
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 50
+  expected_features: {}
+- id: cvrp_clustered_100
+  family: cvrp_clustered
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 100
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 100
+  expected_features: {}
+- id: cvrp_mixed_6
+  family: cvrp_mixed
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 6
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 6
+  expected_features: {}
+- id: cvrp_mixed_12
+  family: cvrp_mixed
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 12
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 12
+  expected_features: {}
+- id: cvrp_mixed_50
+  family: cvrp_mixed
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 50
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 50
+  expected_features: {}
+- id: cvrp_mixed_100
+  family: cvrp_mixed
+  roles:
+  - protocol_calibration
+  - diverse_development_v2
+  - unseen_id
+  overrides:
+    customers:
+    - 100
+  claim: id
+  axes:
+    axis: customers
+    coordinate: 100
+  expected_features: {}
+- id: vrptw_slack20_6
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 6
+    time_window_slack: 20
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 6
+  expected_features: {}
+- id: vrptw_slack20_12
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 12
+    time_window_slack: 20
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 12
+  expected_features: {}
+- id: vrptw_slack20_50
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 50
+    time_window_slack: 20
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 50
+  expected_features: {}
+- id: vrptw_slack20_100
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 100
+    time_window_slack: 20
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 100
+  expected_features: {}
+- id: vrptw_slack100_6
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 6
+    time_window_slack: 100
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 6
+  expected_features: {}
+- id: vrptw_slack100_12
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 12
+    time_window_slack: 100
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 12
+  expected_features: {}
+- id: vrptw_slack100_50
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 50
+    time_window_slack: 100
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 50
+  expected_features: {}
+- id: vrptw_slack100_100
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 100
+    time_window_slack: 100
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 100
+  expected_features: {}
+- id: vrptw_slack500_6
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 6
+    time_window_slack: 500
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 6
+  expected_features: {}
+- id: vrptw_slack500_12
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 12
+    time_window_slack: 500
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 12
+  expected_features: {}
+- id: vrptw_slack500_50
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 50
+    time_window_slack: 500
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 50
+  expected_features: {}
+- id: vrptw_slack500_100
+  family: vrptw
+  roles:
+  - protocol_calibration
+  - unseen_structure
+  overrides:
+    customers:
+    - 100
+    time_window_slack: 500
+  claim: structure
+  axes:
+    axis: customers
+    coordinate: 100
+  expected_features: {}
+calibration_partition:
+  discovery_replicates:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  qualification_replicates:
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+audit:
+  development_role: diverse_development_v2
+  include_original_development_tasks:
+  - configs/tasks/release_cbc_v2_10_12.yaml
+  - configs/tasks/release_scip_v10_0_3.yaml
+  - configs/tasks/release_pyvrp_v0_13_4.yaml
+  minimum_scale_extrapolation_ratio: 2
+  scale_feature_by_problem_family:
+    mip: variables
+    cvrp: customers
+  calibration_only_for_budget_selection: true
+  hidden_results_must_not_select_budget: true
+difficulty_design:
+  description: Continuous empirical solve-time, verified target-hit and gap trajectories,
+    stratified by problem structure and scale. Hardness is measured, not inferred
+    from instance names.
+  budget_probe_seconds:
+  - 0.1
+  - 1
+  - 5
+  - 20
+  - 60
+  reference_extension_seconds:
+  - 300
+  solver_seeds:
+  - 0
+  - 1
+  tiers:
+  - regression
+  - short
+  - medium
+  - long
+  - censored
+  native_metrics: Keep exact solved coverage/PAR2 separate from feasible-reference
+    routing gap. Unknown optima remain BKS and cannot establish exact solved coverage.
+controlled_structure_note: Mixed CVRP shares all spatial/demand/capacity generator
+  settings with VRPTW except the temporal constraints. It is included in diverse development
+  before unseen VRPTW tests.
+difficulty_adaptation_note: Small routing levels added after calibration showed that
+  250-4000 customer panels concentrated in long/censored quality-target regimes. Existing
+  2210 input hashes and all held-out scale levels are retained. No Agent outcomes
+  were observed.

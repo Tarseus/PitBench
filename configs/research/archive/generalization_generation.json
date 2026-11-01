@@ -1,0 +1,1188 @@
+{
+  "schema_version": "1.0",
+  "status": "declared_before_agent_runs_pending_calibration",
+  "design": "one_factor_changes_and_declared_joint_holdouts",
+  "scope": "Generated diagnostic distributions plus the complete upstream correctness suites; no claim that these are the full public benchmark universe.",
+  "randomization": "Independent named seed streams per role and condition. All source states and arms share the resulting fixed evaluator panels.",
+  "calibration_partition": {
+    "discovery_replicates": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "qualification_replicates": [
+      5,
+      6,
+      7,
+      8,
+      9
+    ]
+  },
+  "inference": "Report each condition with its native instance uncertainty. Related releases and cells are not independent Agent attempts.",
+  "roles": {
+    "protocol_calibration": {
+      "visibility": "judge",
+      "count": 10,
+      "seed_namespace": 2026103001
+    },
+    "diverse_development_v1": {
+      "visibility": "agent",
+      "count": 5,
+      "seed_namespace": 2026103002
+    },
+    "unseen_id": {
+      "visibility": "judge",
+      "count": 30,
+      "seed_namespace": 2026103003
+    },
+    "unseen_within_family": {
+      "visibility": "judge",
+      "count": 30,
+      "seed_namespace": 2026103004
+    },
+    "unseen_cross_family_or_variant": {
+      "visibility": "judge",
+      "count": 30,
+      "seed_namespace": 2026103005
+    }
+  },
+  "families": {
+    "mip_knapsack": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "multidimensional_knapsack_mip",
+        "items": [
+          60
+        ],
+        "dimensions": [
+          3
+        ],
+        "weight_max": 20,
+        "capacity_mode": "planted",
+        "selected_fraction": 0.5,
+        "nonzero_density": 1.0,
+        "profit_mode": "sum_weights",
+        "randomness": {
+          "instance_seed": 0
+        }
+      }
+    },
+    "cvrp": {
+      "problem_family": "cvrp",
+      "generator": {
+        "kind": "euclidean_cvrp",
+        "customers": [
+          100
+        ],
+        "capacity_ratio": 0.2,
+        "distance_metric": "EUC_2D",
+        "coordinate_distribution": "uniform",
+        "depot_mode": "center",
+        "demand_distribution": "uniform_integer",
+        "randomness": {
+          "coordinate_seed": 0,
+          "demand_seed": 1
+        }
+      }
+    },
+    "scheduling": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "single_machine_scheduling_mip",
+        "jobs": [
+          20
+        ],
+        "randomness": {
+          "instance_seed": 0
+        }
+      }
+    },
+    "set_packing": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "binary_clique_cover_mip",
+        "groups": [
+          10
+        ],
+        "group_sizes": [
+          8
+        ],
+        "coefficient_min": 120,
+        "coefficient_max": 190,
+        "cross_edge_density": [
+          0.1
+        ],
+        "randomness": {
+          "instance_seed": 0
+        }
+      }
+    },
+    "vrptw": {
+      "problem_family": "cvrp",
+      "generator": {
+        "kind": "euclidean_cvrp",
+        "customers": [
+          100
+        ],
+        "capacity_ratio": 0.2,
+        "distance_metric": "EUC_2D",
+        "coordinate_distribution": "uniform",
+        "depot_mode": "center",
+        "demand_distribution": "uniform_integer",
+        "randomness": {
+          "coordinate_seed": 0,
+          "demand_seed": 1
+        },
+        "time_window_slack": 100,
+        "service_time": 5
+      }
+    },
+    "set_covering": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "set_covering_mip",
+        "groups": [
+          10
+        ],
+        "group_sizes": [
+          8
+        ],
+        "extra_rows": [
+          40
+        ],
+        "extra_row_density": 0.2,
+        "randomness": {
+          "instance_seed": 0
+        }
+      }
+    }
+  },
+  "conditions": [
+    {
+      "id": "mip_baseline",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "axes": {
+        "axis": "baseline",
+        "coordinate": null
+      },
+      "expected_features": {
+        "items": 60,
+        "constraints": 3,
+        "nonzero_density": 1.0
+      }
+    },
+    {
+      "id": "mip_size_120",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {
+        "items": [
+          120
+        ]
+      },
+      "axes": {
+        "axis": "items",
+        "coordinate": 120
+      },
+      "expected_features": {
+        "items": 120
+      }
+    },
+    {
+      "id": "mip_density_05",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {
+        "nonzero_density": 0.5
+      },
+      "axes": {
+        "axis": "nonzero_density",
+        "coordinate": 0.5
+      },
+      "expected_features": {
+        "nonzero_density": 0.5
+      }
+    },
+    {
+      "id": "mip_dimensions_6",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {
+        "dimensions": [
+          6
+        ]
+      },
+      "axes": {
+        "axis": "constraints",
+        "coordinate": 6
+      },
+      "expected_features": {
+        "constraints": 6
+      }
+    },
+    {
+      "id": "mip_profit_base_2",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {
+        "profit_mode": "weighted_sum",
+        "profit_row_weight_base": 2
+      },
+      "axes": {
+        "axis": "profit_row_weight_base",
+        "coordinate": 2
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_capacity_03",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {
+        "selected_fraction": 0.3
+      },
+      "axes": {
+        "axis": "selected_fraction",
+        "coordinate": 0.3
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_weight_bimodal",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {
+        "weight_distribution": "bimodal",
+        "weight_parameters": {
+          "low": [
+            1,
+            3
+          ],
+          "high": [
+            15,
+            20
+          ],
+          "high_probability": 0.5
+        }
+      },
+      "axes": {
+        "axis": "weight_distribution",
+        "coordinate": "bimodal"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_size_240",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "items": [
+          240
+        ]
+      },
+      "axes": {
+        "axis": "items",
+        "coordinate": 240
+      },
+      "expected_features": {
+        "items": 240
+      }
+    },
+    {
+      "id": "mip_size_480",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "items": [
+          480
+        ]
+      },
+      "axes": {
+        "axis": "items",
+        "coordinate": 480
+      },
+      "expected_features": {
+        "items": 480
+      }
+    },
+    {
+      "id": "mip_density_025",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "nonzero_density": 0.25
+      },
+      "axes": {
+        "axis": "nonzero_density",
+        "coordinate": 0.25
+      },
+      "expected_features": {
+        "nonzero_density": 0.25
+      }
+    },
+    {
+      "id": "mip_density_01",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "nonzero_density": 0.1
+      },
+      "axes": {
+        "axis": "nonzero_density",
+        "coordinate": 0.1
+      },
+      "expected_features": {
+        "nonzero_density": 0.1
+      }
+    },
+    {
+      "id": "mip_dimensions_9",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "dimensions": [
+          9
+        ]
+      },
+      "axes": {
+        "axis": "constraints",
+        "coordinate": 9
+      },
+      "expected_features": {
+        "constraints": 9
+      }
+    },
+    {
+      "id": "mip_dimensions_12",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "dimensions": [
+          12
+        ]
+      },
+      "axes": {
+        "axis": "constraints",
+        "coordinate": 12
+      },
+      "expected_features": {
+        "constraints": 12
+      }
+    },
+    {
+      "id": "mip_profit_base_4",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "profit_mode": "weighted_sum",
+        "profit_row_weight_base": 4
+      },
+      "axes": {
+        "axis": "profit_row_weight_base",
+        "coordinate": 4
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_profit_base_8",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "profit_mode": "weighted_sum",
+        "profit_row_weight_base": 8
+      },
+      "axes": {
+        "axis": "profit_row_weight_base",
+        "coordinate": 8
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_capacity_02",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "selected_fraction": 0.2
+      },
+      "axes": {
+        "axis": "selected_fraction",
+        "coordinate": 0.2
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_capacity_08",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "selected_fraction": 0.8
+      },
+      "axes": {
+        "axis": "selected_fraction",
+        "coordinate": 0.8
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_coefficient_100",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "weight_max": 100
+      },
+      "axes": {
+        "axis": "weight_max",
+        "coordinate": 100
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_coefficient_1000",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "weight_max": 1000
+      },
+      "axes": {
+        "axis": "weight_max",
+        "coordinate": 1000
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_weight_tail",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "weight_distribution": "discrete",
+        "weight_parameters": {
+          "values": [
+            1,
+            3,
+            10,
+            100,
+            1000
+          ],
+          "weights": [
+            0.5,
+            0.2,
+            0.15,
+            0.1,
+            0.05
+          ]
+        }
+      },
+      "axes": {
+        "axis": "weight_distribution",
+        "coordinate": "discrete_tail"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_joint_1",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "items": [
+          240
+        ],
+        "dimensions": [
+          6
+        ],
+        "nonzero_density": 0.25,
+        "profit_mode": "weighted_sum",
+        "profit_row_weight_base": 2,
+        "selected_fraction": 0.3
+      },
+      "axes": {
+        "axis": "joint",
+        "coordinate": "large_sparse_weighted"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_joint_2",
+      "family": "mip_knapsack",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "items": [
+          480
+        ],
+        "dimensions": [
+          9
+        ],
+        "nonzero_density": 0.1,
+        "weight_max": 100,
+        "profit_mode": "weighted_sum",
+        "profit_row_weight_base": 4,
+        "selected_fraction": 0.8
+      },
+      "axes": {
+        "axis": "joint",
+        "coordinate": "large_sparse_loose"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_baseline",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "axes": {
+        "axis": "baseline",
+        "coordinate": null
+      },
+      "expected_features": {
+        "customers": 100
+      }
+    },
+    {
+      "id": "cvrp_size_250",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {
+        "customers": [
+          250
+        ]
+      },
+      "axes": {
+        "axis": "customers",
+        "coordinate": 250
+      },
+      "expected_features": {
+        "customers": 250
+      }
+    },
+    {
+      "id": "cvrp_cluster_6",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {
+        "coordinate_distribution": "clustered",
+        "cluster_count": 4,
+        "cluster_spread": 6
+      },
+      "axes": {
+        "axis": "cluster_spread",
+        "coordinate": 6
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_corner",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {
+        "depot_mode": "corner"
+      },
+      "axes": {
+        "axis": "depot_mode",
+        "coordinate": "corner"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_bimodal",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {
+        "demand_distribution": "bimodal",
+        "demand_parameters": {
+          "low": [
+            1,
+            3
+          ],
+          "high": [
+            8,
+            10
+          ],
+          "high_probability": 0.5
+        }
+      },
+      "axes": {
+        "axis": "demand_distribution",
+        "coordinate": "bimodal"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_capacity_01",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {
+        "capacity_ratio": 0.1
+      },
+      "axes": {
+        "axis": "capacity_ratio",
+        "coordinate": 0.1
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_capacity_03",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v1",
+        "unseen_id"
+      ],
+      "overrides": {
+        "capacity_ratio": 0.3
+      },
+      "axes": {
+        "axis": "capacity_ratio",
+        "coordinate": 0.3
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_size_500",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "customers": [
+          500
+        ]
+      },
+      "axes": {
+        "axis": "customers",
+        "coordinate": 500
+      },
+      "expected_features": {
+        "customers": 500
+      }
+    },
+    {
+      "id": "cvrp_size_1000",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "customers": [
+          1000
+        ]
+      },
+      "axes": {
+        "axis": "customers",
+        "coordinate": 1000
+      },
+      "expected_features": {
+        "customers": 1000
+      }
+    },
+    {
+      "id": "cvrp_mixed_02",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "coordinate_distribution": "mixed",
+        "cluster_count": 4,
+        "cluster_spread": 6,
+        "uniform_fraction": 0.2
+      },
+      "axes": {
+        "axis": "uniform_fraction",
+        "coordinate": 0.2
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_mixed_08",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "coordinate_distribution": "mixed",
+        "cluster_count": 4,
+        "cluster_spread": 6,
+        "uniform_fraction": 0.8
+      },
+      "axes": {
+        "axis": "uniform_fraction",
+        "coordinate": 0.8
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_cluster_3",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "coordinate_distribution": "clustered",
+        "cluster_count": 4,
+        "cluster_spread": 3
+      },
+      "axes": {
+        "axis": "cluster_spread",
+        "coordinate": 3
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_cluster_12",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "coordinate_distribution": "clustered",
+        "cluster_count": 4,
+        "cluster_spread": 12
+      },
+      "axes": {
+        "axis": "cluster_spread",
+        "coordinate": 12
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_random_depot",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "depot_mode": "random"
+      },
+      "axes": {
+        "axis": "depot_mode",
+        "coordinate": "random"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_depot_correlated",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "demand_distribution": "depot_correlated"
+      },
+      "axes": {
+        "axis": "demand_distribution",
+        "coordinate": "depot_correlated"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_depot_anticorrelated",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "demand_distribution": "depot_anticorrelated"
+      },
+      "axes": {
+        "axis": "demand_distribution",
+        "coordinate": "depot_anticorrelated"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_capacity_005",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "capacity_ratio": 0.05
+      },
+      "axes": {
+        "axis": "capacity_ratio",
+        "coordinate": 0.05
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_capacity_04",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "capacity_ratio": 0.4
+      },
+      "axes": {
+        "axis": "capacity_ratio",
+        "coordinate": 0.4
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_joint_1",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "customers": [
+          500
+        ],
+        "coordinate_distribution": "mixed",
+        "uniform_fraction": 0.2,
+        "depot_mode": "random",
+        "demand_distribution": "depot_correlated",
+        "capacity_ratio": 0.1
+      },
+      "axes": {
+        "axis": "joint",
+        "coordinate": "large_mixed_correlated"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_joint_2",
+      "family": "cvrp",
+      "roles": [
+        "protocol_calibration",
+        "unseen_within_family"
+      ],
+      "overrides": {
+        "customers": [
+          1000
+        ],
+        "coordinate_distribution": "clustered",
+        "cluster_count": 8,
+        "cluster_spread": 3,
+        "depot_mode": "corner",
+        "demand_distribution": "bimodal",
+        "demand_parameters": {
+          "low": [
+            1,
+            3
+          ],
+          "high": [
+            8,
+            10
+          ],
+          "high_probability": 0.7
+        },
+        "capacity_ratio": 0.05
+      },
+      "axes": {
+        "axis": "joint",
+        "coordinate": "large_clustered_tight"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "scheduling_20",
+      "family": "scheduling",
+      "roles": [
+        "protocol_calibration",
+        "unseen_cross_family_or_variant"
+      ],
+      "overrides": {
+        "jobs": [
+          20
+        ]
+      },
+      "axes": {
+        "axis": "jobs",
+        "coordinate": 20
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "scheduling_50",
+      "family": "scheduling",
+      "roles": [
+        "protocol_calibration",
+        "unseen_cross_family_or_variant"
+      ],
+      "overrides": {
+        "jobs": [
+          50
+        ]
+      },
+      "axes": {
+        "axis": "jobs",
+        "coordinate": 50
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "scheduling_100",
+      "family": "scheduling",
+      "roles": [
+        "protocol_calibration",
+        "unseen_cross_family_or_variant"
+      ],
+      "overrides": {
+        "jobs": [
+          100
+        ]
+      },
+      "axes": {
+        "axis": "jobs",
+        "coordinate": 100
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "set_packing_10",
+      "family": "set_packing",
+      "roles": [
+        "protocol_calibration",
+        "unseen_cross_family_or_variant"
+      ],
+      "overrides": {
+        "groups": [
+          10
+        ]
+      },
+      "axes": {
+        "axis": "groups",
+        "coordinate": 10
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "set_packing_20",
+      "family": "set_packing",
+      "roles": [
+        "protocol_calibration",
+        "unseen_cross_family_or_variant"
+      ],
+      "overrides": {
+        "groups": [
+          20
+        ]
+      },
+      "axes": {
+        "axis": "groups",
+        "coordinate": 20
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "vrptw_slack_20",
+      "family": "vrptw",
+      "roles": [
+        "protocol_calibration",
+        "unseen_cross_family_or_variant"
+      ],
+      "overrides": {
+        "time_window_slack": 20
+      },
+      "axes": {
+        "axis": "time_window_slack",
+        "coordinate": 20
+      },
+      "expected_features": {
+        "problem_variant": "vrptw"
+      }
+    },
+    {
+      "id": "vrptw_slack_100",
+      "family": "vrptw",
+      "roles": [
+        "protocol_calibration",
+        "unseen_cross_family_or_variant"
+      ],
+      "overrides": {
+        "time_window_slack": 100
+      },
+      "axes": {
+        "axis": "time_window_slack",
+        "coordinate": 100
+      },
+      "expected_features": {
+        "problem_variant": "vrptw"
+      }
+    },
+    {
+      "id": "vrptw_slack_500",
+      "family": "vrptw",
+      "roles": [
+        "protocol_calibration",
+        "unseen_cross_family_or_variant"
+      ],
+      "overrides": {
+        "time_window_slack": 500
+      },
+      "axes": {
+        "axis": "time_window_slack",
+        "coordinate": 500
+      },
+      "expected_features": {
+        "problem_variant": "vrptw"
+      }
+    },
+    {
+      "id": "set_covering_10",
+      "family": "set_covering",
+      "roles": [
+        "protocol_calibration",
+        "unseen_cross_family_or_variant"
+      ],
+      "overrides": {
+        "groups": [
+          10
+        ],
+        "extra_rows": [
+          40
+        ]
+      },
+      "axes": {
+        "axis": "groups",
+        "coordinate": 10
+      },
+      "expected_features": {
+        "variables": 80,
+        "constraints": 50,
+        "extra_rows_density": 0.2,
+        "problem_variant": "set_covering"
+      }
+    },
+    {
+      "id": "set_covering_20",
+      "family": "set_covering",
+      "roles": [
+        "protocol_calibration",
+        "unseen_cross_family_or_variant"
+      ],
+      "overrides": {
+        "groups": [
+          20
+        ],
+        "extra_rows": [
+          80
+        ]
+      },
+      "axes": {
+        "axis": "groups",
+        "coordinate": 20
+      },
+      "expected_features": {
+        "variables": 160,
+        "constraints": 100,
+        "extra_rows_density": 0.2,
+        "problem_variant": "set_covering"
+      }
+    }
+  ]
+}

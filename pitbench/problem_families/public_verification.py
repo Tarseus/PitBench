@@ -6,20 +6,24 @@ import math
 
 
 def format_multidimensional_knapsack_lp(
-    weights: list[list[int]], capacities: list[int]
+    weights: list[list[int]], capacities: list[int], *, profits: list[int] | None = None
 ) -> str:
     """Canonical LP representation shared by generation and public checking."""
 
     if (
         not weights
+        or not weights[0]
         or len(weights) != len(capacities)
         or any(len(row) != len(weights[0]) for row in weights)
-        or any(value <= 0 for row in weights for value in row)
-        or any(capacity <= 0 for capacity in capacities)
+        or any(value < 0 for row in weights for value in row)
+        or any(capacity < 0 for capacity in capacities)
     ):
         raise ValueError("invalid multidimensional knapsack model")
     item_count = len(weights[0])
-    profits = [sum(row[item] for row in weights) for item in range(item_count)]
+    if profits is None:
+        profits = [sum(row[item] for row in weights) for item in range(item_count)]
+    if len(profits) != item_count or any(value < 0 for value in profits):
+        raise ValueError("invalid knapsack profits")
     lines = [
         "Minimize",
         " obj: "
@@ -61,6 +65,26 @@ def check_cvrp(instance: dict, solution: dict) -> dict:
     expected = set(range(len(coordinates))) - {depot}
     visited: list[int] = []
     objective = 0.0
+    windows = instance.get("time_windows")
+    services = instance.get("service_times", [0] * len(coordinates))
+    if windows is not None and (
+        len(windows) != len(coordinates)
+        or len(services) != len(coordinates)
+        or any(
+            len(pair) != 2
+            or not all(math.isfinite(value) for value in pair)
+            or pair[0] < 0
+            or pair[0] > pair[1]
+            for pair in windows
+        )
+        or any(not math.isfinite(value) or value < 0 for value in services)
+    ):
+        return {"feasible": False, "detail": "invalid time-window model"}
+    if (
+        "num_vehicles" in instance
+        and len(solution["routes"]) > instance["num_vehicles"]
+    ):
+        return {"feasible": False, "detail": "vehicle limit exceeded"}
 
     for route in solution["routes"]:
         if any(type(node) is not int or node not in expected for node in route):
@@ -72,8 +96,17 @@ def check_cvrp(instance: dict, solution: dict) -> dict:
                 "detail": f"route capacity {load} exceeds {capacity}",
             }
         path = [depot, *route, depot]
+        clock = windows[depot][0] if windows is not None else 0
         for first, second in zip(path, path[1:]):
-            objective += edge_cost(coordinates, first, second, distance_metric)
+            distance = edge_cost(coordinates, first, second, distance_metric)
+            objective += distance
+            if windows is not None:
+                clock = max(clock + services[first] + distance, windows[second][0])
+                if clock > windows[second][1]:
+                    return {
+                        "feasible": False,
+                        "detail": f"time window exceeded at node {second}",
+                    }
         visited.extend(route)
 
     if len(visited) != len(set(visited)):
@@ -83,7 +116,9 @@ def check_cvrp(instance: dict, solution: dict) -> dict:
     return {
         "feasible": True,
         "objective": objective,
-        "detail": "independent CVRP verification passed",
+        "detail": "independent VRPTW verification passed"
+        if windows is not None
+        else "independent CVRP verification passed",
     }
 
 

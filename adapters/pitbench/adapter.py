@@ -98,11 +98,42 @@ class PitBenchAdapter:
         research_track: str | None = None,
         research_budget: ResearchBudget | None = None,
         candidate_hypotheses_required: bool = False,
+        task_config_path: Path | None = None,
+        evaluator_task_config_path: Path | None = None,
     ) -> Path:
         if agent_feedback_mode not in {"outcome_only", "solver_behavior"}:
             raise ValueError("unknown agent feedback mode")
-        record = self.catalog.validate_one(task_id)
+        record = (
+            self.catalog.validate_file(task_config_path)
+            if task_config_path is not None
+            else self.catalog.validate_one(task_id)
+        )
         task = record.task
+        if task.task_id != task_id:
+            raise ValueError("materialized task ID differs from the requested task")
+        evaluator_record = (
+            self.catalog.validate_file(evaluator_task_config_path)
+            if evaluator_task_config_path is not None
+            else record
+        )
+        if task.model_dump(
+            exclude={"instruction", "instance_sets"}
+        ) != evaluator_record.task.model_dump(exclude={"instruction", "instance_sets"}):
+            raise ValueError(
+                "Agent and evaluator task views differ in their shared solver or evaluation contract"
+            )
+        if [
+            item
+            for item in task.instance_sets
+            if item.kind != InstanceSetKind.AGENT_DEV
+        ] != [
+            item
+            for item in evaluator_record.task.instance_sets
+            if item.kind != InstanceSetKind.AGENT_DEV
+        ]:
+            raise ValueError(
+                "Agent and evaluator task views differ in their hidden evaluation panels"
+            )
         budget = resolve_research_budget(
             self.repository_root,
             track=research_track,
@@ -141,7 +172,7 @@ class PitBenchAdapter:
         )
         self._write_task_yaml(
             task,
-            record.task_config_path,
+            evaluator_record.task_config_path,
             repository,
             task_dir,
             judge_image=judge_image,

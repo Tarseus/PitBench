@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import types
 from pathlib import Path
 
 import pytest
@@ -13,7 +15,109 @@ from pitbench.schema.research import GeneralizationStudyPlan
 from pitbench.schema.task import PitBenchTask
 
 ROOT = Path(__file__).resolve().parents[3]
-PLAN = ROOT / "configs/research/generalization.json"
+PLAN = ROOT / "configs/research/archive/generalization.json"
+
+
+def test_difficulty_selection_uses_discovery_and_retains_missing_profiles(tmp_path):
+    from pitbench.research import analyze_population_difficulty
+
+    population = tmp_path / "population"
+    population.mkdir()
+    entries = [
+        {
+            "id": f"case-{i}",
+            "sha256": "a" * 64,
+            "replicate_index": i,
+            "family": "routing",
+            "condition_id": "cell",
+            "generator": {"kind": "euclidean_cvrp"},
+        }
+        for i in [0, 5]
+    ]
+    split = population / "calibration.json"
+    split.write_text(json.dumps({"instances": entries}))
+    (population / "population-construction.json").write_text(
+        json.dumps({"splits": {"protocol_calibration": {"manifest": str(split)}}})
+    )
+    spec = tmp_path / "spec.yaml"
+    spec.write_text(
+        yaml.safe_dump({"families": {"routing": {"problem_family": "cvrp"}}})
+    )
+    protocol = {
+        "specification": str(spec),
+        "selection_seed_by_backend": {"pyvrp": 0, "absent": 0},
+        "backend_problem_family": {"pyvrp": "cvrp", "absent": "cvrp"},
+        "budget_grid_sec": [1, 10],
+        "discovery_replicates": [0],
+        "qualification_replicates": [5],
+        "budget_selection_quantile": 0.9,
+        "routing_target_relative_gap": 0.01,
+        "no_hit_tier": "censored",
+        "tier_by_first_hit_budget": {"1": "short", "10": "long"},
+    }
+    proto = tmp_path / "protocol.yaml"
+    proto.write_text(yaml.safe_dump(protocol))
+    results = tmp_path / "results"
+    folder = results / "hosts/host"
+    folder.mkdir(parents=True)
+    jobs, rows = [], []
+    for entry in entries:
+        for budget in [1, 10]:
+            identity = f"{entry['id']}/{budget}"
+            jobs.append(
+                {
+                    "id": identity,
+                    "instance": entry,
+                    "seconds": budget,
+                    "seed": 0,
+                    "purpose": "calibration",
+                    "use_warm_start": False,
+                    "backend": {"name": "pyvrp"},
+                }
+            )
+            rows.append(
+                {
+                    "job_id": identity,
+                    "execution_status": "completed",
+                    "verified_feasible": True,
+                    "objective": 12
+                    if entry["replicate_index"] == 5 and budget == 1
+                    else 10,
+                    "proven_optimal": False,
+                    "solver_status": "time_limit",
+                }
+            )
+    (results / "distribution.json").write_text(
+        json.dumps({"original_manifest": {"jobs": jobs}})
+    )
+    (results / "bks.json").write_text(
+        json.dumps(
+            {
+                "references": {
+                    entry["id"]: {
+                        "objective": 10,
+                        "proven_optimal": False,
+                        "locally_verified": True,
+                        "instance_sha256": entry["sha256"],
+                    }
+                    for entry in entries
+                }
+            }
+        )
+    )
+    (folder / "attempts.jsonl").write_text("\n".join(json.dumps(row) for row in rows))
+    report = analyze_population_difficulty(
+        population_root=population,
+        result_roots=[results],
+        protocol_path=proto,
+        destination=tmp_path / "report.json",
+    )
+    assert report["status"] == "partial"
+    actual = next(p for p in report["profiles"] if p["backend"] == "pyvrp")
+    assert actual["selected_budget_sec"] == 1
+    assert actual["qualification_at_selected_budget"]["target_hits"] == 0
+    missing = next(p for p in report["profiles"] if p["backend"] == "absent")
+    assert missing["by_budget"]["1"]["discovery"]["missing"] == 1
 
 
 @pytest.fixture
@@ -82,6 +186,7 @@ def test_study_materializes_requested_matrix_without_running_experiments(
             not {"solver_seeds", "headroom_evidence", "scenario_bindings"} & view.keys()
         )
     for task in result["tasks"]:
+        assert task["upstream_suite_command_declared"] is True
         frozen = PitBenchTask.from_yaml(study_root / task["task_config"])
         assert task["source_commit"] == frozen.release.base_commit
         assert task["source_tree"] == frozen.release.tree_sha
@@ -146,3 +251,322 @@ def test_study_rejects_drift_from_shared_budget_or_source_pin(
             destination=study_root / "design",
         )
     assert not (study_root / "design").exists()
+
+
+def test_source_binding_rejects_changed_native_artifacts_and_changed_source(
+    tmp_path, monkeypatch
+):
+    import sys
+
+    from pitbench.solver_drivers.common import (
+        record_source_binding,
+        source_binding_identity,
+    )
+
+    source = tmp_path / "source"
+    package = source / "fixture_binding"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("value = 1\n")
+    (source / ".gitignore").write_text("*.so\n")
+    for argv in [
+        ["git", "init", "-q"],
+        ["git", "add", "."],
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "Base",
+        ],
+    ]:
+        subprocess.run(argv, cwd=source, check=True, capture_output=True)
+    binary = package / "native.so"
+    binary.write_bytes(b"original native artifact")
+    module = types.ModuleType("fixture_binding")
+    module.__file__ = str(package / "__init__.py")
+    monkeypatch.setitem(sys.modules, "fixture_binding", module)
+    manifest = source / ".pitbench/binding.json"
+    record_source_binding(
+        source=source,
+        package="fixture_binding",
+        repository_plugin="pitbench.repositories.plugins:PyVRPRepositoryPlugin",
+        version="1",
+        destination=manifest,
+    )
+    monkeypatch.setenv("PITBENCH_SCENARIO_BINDING", str(manifest))
+
+    def probe():
+        return source_binding_identity(
+            type("Fixture", (), {}),
+            package="fixture_binding",
+            repository_plugin="pitbench.repositories.plugins:PyVRPRepositoryPlugin",
+            representations=[],
+        )
+
+    assert probe()["version"] == "1"
+    binary.write_bytes(b"replaced artifact")
+    with pytest.raises(ValueError, match="package changed"):
+        probe()
+    binary.write_bytes(b"original native artifact")
+    (package / "__init__.py").write_text("value = 2\n")
+    with pytest.raises(ValueError, match="source changed"):
+        probe()
+
+
+@pytest.mark.parametrize(
+    "tests,failures,command_failed", [(0, 0, False), (4, 1, True), (4, 0, False)]
+)
+def test_upstream_validation_retains_failure_counts_and_rejects_zero_tests(
+    tmp_path, monkeypatch, tests, failures, command_failed
+):
+    from types import SimpleNamespace
+
+    from pitbench.evaluator.judge import LocalProcessJudge
+    from pitbench.schema.observation import CodeState
+
+    judge = object.__new__(LocalProcessJudge)
+    judge.output_dir = tmp_path / "validation"
+    judge.task = SimpleNamespace(
+        task_id="fixture", release=SimpleNamespace(base_commit="a" * 40)
+    )
+    judge.code_states = (CodeState.BASE,)
+
+    def workspace(state, root, kind, **kwargs):
+        path = root / state.value
+        path.mkdir(parents=True)
+        (path / ".pitbench-upstream-tests.xml").write_text(
+            f'<testsuite tests="{tests}" failures="{failures}" errors="0" skipped="0"/>'
+        )
+        if command_failed:
+            raise RuntimeError("upstream test command returned failure")
+        return path
+
+    monkeypatch.setattr(judge, "_workspace", workspace)
+    result = judge.validate_sources(include_excluded_tests=True)
+    assert result["new_solver_benchmark_runs"] == 0
+    assert result["states"]["base"]["test_reports"][0]["tests"] == tests
+    assert result["states"]["base"]["test_reports"][0]["failures"] == failures
+    assert result["status"] == ("passed" if tests and not failures else "failed")
+
+
+def test_judge_source_copy_does_not_reuse_relocated_build_caches(tmp_path):
+    from types import SimpleNamespace
+
+    from pitbench.evaluator.judge import LocalProcessJudge
+    from pitbench.repositories.base import BuildKind
+    from pitbench.schema.observation import CodeState
+
+    source = tmp_path / "source"
+    (source / "build").mkdir(parents=True)
+    (source / "build/CMakeCache.txt").write_text("CMAKE_HOME_DIRECTORY=/old/source\n")
+    (source / "src/generated").mkdir(parents=True)
+    (source / "src/generated/old.o").write_bytes(b"stale compiled object")
+    (source / "src/main.cpp").write_text("int main() { return 0; }\n")
+    judge = object.__new__(LocalProcessJudge)
+    judge.base_repository, judge.output_dir = source, tmp_path / "logs"
+    judge.repository = SimpleNamespace(agent_build_paths=("build", "src/generated"))
+    judge.validation_test_patch = None
+    workspace = judge._workspace(
+        CodeState.BASE, tmp_path / "work", BuildKind.VALIDATION, commands=[]
+    )
+    assert not (workspace / "build").exists()
+    assert not (workspace / "src/generated").exists()
+    assert (workspace / "src/main.cpp").read_text() == (
+        source / "src/main.cpp"
+    ).read_text()
+    assert (source / "build/CMakeCache.txt").exists()
+
+
+def test_incremental_qualification_changes_the_optimal_assignment():
+    import itertools
+
+    specification = yaml.safe_load(
+        (ROOT / "configs/research/scenario_qualification.yaml").read_text()
+    )
+    for case in specification["representations"]["row_column_permutation"][
+        "cases"
+    ].values():
+        optima = []
+        for record in case["models"][:2]:
+            model = record["model"]
+            feasible = [
+                assignment
+                for assignment in itertools.product((0, 1), repeat=2)
+                if all(
+                    lower
+                    <= sum(a * x for a, x in zip(row, assignment, strict=True))
+                    <= upper
+                    for row, lower, upper in zip(
+                        model["matrix"],
+                        model["row_lower"],
+                        model["row_upper"],
+                        strict=True,
+                    )
+                )
+            ]
+
+            def objective(x):
+                return sum(a * b for a, b in zip(model["cost"], x, strict=True))
+
+            best = min(objective(assignment) for assignment in feasible)
+            assert best == record["target"]
+            optima.append(
+                {assignment for assignment in feasible if objective(assignment) == best}
+            )
+        assert not optima[0] & optima[1]
+
+
+@pytest.mark.parametrize("ignored_parameter", [False, True])
+def test_population_construction_checks_real_shifts_and_retains_failures(
+    tmp_path, ignored_parameter
+):
+    from pitbench.research import construct_generalization_populations
+
+    specification = {
+        "roles": {
+            "development": {"visibility": "agent", "count": 2, "seed_namespace": 11},
+            "hidden": {"visibility": "judge", "count": 2, "seed_namespace": 22},
+        },
+        "families": {
+            "packing": {
+                "generator": {
+                    "kind": "multidimensional_knapsack_mip",
+                    "items": [8],
+                    "dimensions": [2],
+                    "weight_max": 20,
+                    "randomness": {"instance_seed": 0},
+                }
+            }
+        },
+        "conditions": [
+            {"id": "baseline", "family": "packing", "roles": ["development", "hidden"]},
+            {
+                "id": "sparse",
+                "family": "packing",
+                "roles": ["development", "hidden"],
+                "overrides": {
+                    "density" if ignored_parameter else "nonzero_density": 0.5
+                },
+                "expected_features": {"nonzero_density": 0.5},
+            },
+        ],
+    }
+    path = tmp_path / "specification.yaml"
+    path.write_text(yaml.safe_dump(specification))
+    output = tmp_path / "populations"
+    if ignored_parameter:
+        with pytest.raises(ValueError, match="not realized"):
+            construct_generalization_populations(
+                specification_path=path, destination=output
+            )
+        assert (
+            json.loads((output / "population-construction.json").read_text())["status"]
+            == "failed"
+        )
+        return
+    result = construct_generalization_populations(
+        specification_path=path, destination=output
+    )
+    assert result["instances"] == 8
+    assert result["new_agent_calls"] == result["new_solver_runs"] == 0
+    development = json.loads((output / "development/manifest.json").read_text())[
+        "instances"
+    ]
+    hidden = json.loads((output / "hidden/manifest.json").read_text())["instances"]
+    assert not {r["semantic_sha256"] for r in development} & {
+        r["semantic_sha256"] for r in hidden
+    }
+    assert all(
+        r["features"]["nonzero_density"] == 0.5
+        for r in hidden
+        if r["condition_id"] == "sparse"
+    )
+
+
+def test_headroom_preparation_keeps_budgets_seeds_and_replayable_private_inputs(
+    tmp_path, monkeypatch
+):
+    from pitbench.evaluator.judge import LocalProcessJudge
+    from pitbench.research import (
+        construct_generalization_populations,
+        measure_population_headroom,
+        prepare_population_references,
+    )
+
+    spec = {
+        "roles": {
+            "protocol_calibration": {
+                "visibility": "judge",
+                "count": 2,
+                "seed_namespace": 99,
+            }
+        },
+        "families": {
+            "packing": {
+                "generator": {
+                    "kind": "multidimensional_knapsack_mip",
+                    "items": [8],
+                    "dimensions": [2],
+                    "weight_max": 20,
+                    "randomness": {"instance_seed": 0},
+                }
+            }
+        },
+        "conditions": [
+            {
+                "id": "baseline",
+                "family": "packing",
+                "roles": ["protocol_calibration"],
+                "axes": {"axis": "baseline", "coordinate": None},
+            }
+        ],
+    }
+    specification = tmp_path / "generation.yaml"
+    specification.write_text(yaml.safe_dump(spec))
+    populations = tmp_path / "populations"
+    construct_generalization_populations(
+        specification_path=specification, destination=populations
+    )
+    task_path = ROOT / "configs/tasks/release_cbc_v2_10_12.yaml"
+    original = PitBenchTask.from_yaml(task_path)
+    private = tmp_path / "private"
+    refs = private / "references"
+    prepare_population_references(
+        population_root=populations,
+        task_path=task_path,
+        private_root=private,
+        destination=refs,
+    )
+    patch = tmp_path / "reference.patch"
+    patch.write_text("reference source patch")
+
+    def inspect_before_solve(judge, cases):
+        assert judge.task.evaluation.budgets_sec == original.evaluation.budgets_sec
+        assert list(judge.evaluation_seeds) == original.evaluation.solver_seeds
+        for case in cases:
+            assert case.verifier._check_oracle(case.path) is None
+            assert case.path.is_relative_to(private)
+        for panel in judge.task.instance_sets:
+            if panel.kind.value != "agent_dev":
+                assert (
+                    private / panel.instance_set_config.removeprefix("private://")
+                ).exists()
+        raise RuntimeError("stop after checking the real preparation boundary")
+
+    monkeypatch.setattr(LocalProcessJudge, "run", inspect_before_solve)
+    output = tmp_path / "headroom"
+    with pytest.raises(RuntimeError, match="real preparation boundary"):
+        measure_population_headroom(
+            task_path=task_path,
+            base_repository=tmp_path / "unused-source",
+            public_root=ROOT,
+            private_root=private,
+            population_root=populations,
+            references_path=refs / "references.json",
+            candidate_patch=patch,
+            destination=output,
+        )
+    assert json.loads((output / "headroom.json").read_text())["status"] == "failed"

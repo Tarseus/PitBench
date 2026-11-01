@@ -213,7 +213,9 @@ def test_failed_build_retains_full_stdout_even_when_stderr_is_present(tmp_path):
             'import sys; print("complete compiler diagnostic"); print("brief wrapper error", file=sys.stderr); sys.exit(1)',
         ]
     )
-    judge.repository = SimpleNamespace(build_commands=lambda _: [command])
+    judge.repository = SimpleNamespace(
+        build_commands=lambda _: [command], agent_build_paths=()
+    )
     with pytest.raises(RuntimeError, match="base validation build failed"):
         judge._workspace(CodeState.BASE, tmp_path / "work", BuildKind.VALIDATION)
     logs = list(judge.output_dir.glob("build-logs/validation/base/*"))
@@ -381,6 +383,130 @@ def test_model_audit_rejects_rate_limited_zero_token_cli_success(tmp_path):
     audit = campaign.audit_model_run(run, task_id)
     assert not audit["complete"] and audit["retryable"]
     assert "rate limited" in audit["reason"]
+
+
+@pytest.mark.parametrize("has_patch", [False, True])
+def test_deferred_model_audit_requires_captured_patch_and_model_execution(
+    tmp_path, has_patch
+):
+    from scripts import run_benchmark_release as campaign
+
+    task_id = "example"
+    campaign.write_json(
+        tmp_path / "results.json",
+        {
+            "results": [
+                {
+                    "task_id": task_id,
+                    "trial_name": "trial",
+                    "failure_mode": "agent_timeout",
+                    "total_input_tokens": 17,
+                }
+            ]
+        },
+    )
+    candidate = tmp_path / task_id / "trial/evaluation/candidate.patch"
+    if has_patch:
+        candidate.parent.mkdir(parents=True)
+        candidate.write_bytes(b"")
+    audit = campaign.audit_model_run(
+        tmp_path, task_id, evaluation_required=False
+    )
+    assert audit["complete"] is has_patch
+    assert not audit["retryable"]
+    if has_patch:
+        # An empty final patch is retained; it is not a reason for a new Agent.
+        assert audit["evaluation_pending"]
+        assert audit["candidate_patch"] == str(candidate)
+    assert not campaign.audit_model_run(tmp_path, task_id)["complete"]
+
+
+def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from pitbench.cli.evaluate_config import EvaluationConfig
+    from scripts import run_benchmark_release as campaign
+
+    plan_path = ROOT / "configs/research/generalization_latest_high_v2.json"
+    plan = json.loads(plan_path.read_text())
+    selected = [Path(path).stem for path in plan["task_configs"]]
+    latest = {
+        row["task_id"] for row in MANIFEST["task_matrix"] if row["role"] == "latest"
+    }
+    assert set(selected) <= latest and len(selected) == 3
+    records = {task: TaskCatalog(ROOT).validate_one(task) for task in selected}
+    validated = []
+
+    class Catalog:
+        def __init__(self, root):
+            pass
+
+        def validate_file(self, path):
+            validated.append(path.stem)
+            return records[path.stem]
+
+        def validate_one(self, task_id):
+            return records[task_id]
+
+    def no_model_process(*args, **kwargs):
+        raise AssertionError("prepare-only must not start an Agent")
+
+    monkeypatch.setattr(campaign, "TaskCatalog", Catalog)
+    monkeypatch.setattr(campaign.subprocess, "Popen", no_model_process)
+    views = {
+        "status": "development_frozen_evaluation_gated",
+        "tasks": {"unselected": {"evaluator_task_config": "missing.yaml"}},
+        "arms": {arm["id"]: {} for arm in plan["arms"]},
+    }
+    for task_id, record in records.items():
+        scenario = tmp_path / (task_id + ".scenario.json")
+        scenario.write_text(
+            json.dumps(
+                {
+                    "source_build": {"source_commit": record.task.release.base_commit},
+                    "instances": {},
+                }
+            )
+        )
+        views["tasks"][task_id] = {
+            "evaluator_task_config": str(record.task_config_path),
+            "metric_scenario_config": str(scenario),
+        }
+        for arm in plan["arms"]:
+            views["arms"][arm["id"]][task_id] = {
+                "agent_task_config_path": str(record.task_config_path)
+            }
+    views_path = tmp_path / "views.json"
+    views_path.write_text(json.dumps(views))
+    config = tmp_path / "config.yaml"
+    config.write_text(EvaluationConfig().model_dump_json())
+    args = SimpleNamespace(
+        study_plan=plan_path,
+        study_views=views_path,
+        config=config,
+        output=tmp_path / "cohort",
+        schedule_seed=20261101,
+        prepare_only=True,
+    )
+    campaign.study_models(args)
+    frozen = json.loads((args.output / "cohort.json").read_text())
+    assert len(frozen["jobs"]) == 18
+    assert set(validated) == set(selected)
+    assert {row["model"]["label"] for row in frozen["jobs"]} == {
+        "sol-high", "terra-high"
+    }
+    assert all(row["attempt"] == 1 for row in frozen["jobs"])
+    assert all(
+        row["hypotheses_required"] == (row["arm"] == "mechanism_aware")
+        for row in frozen["jobs"]
+    )
+    assert not frozen["scientific_evaluation_ready"]
+    del views["tasks"][selected[0]]
+    views_path.write_text(json.dumps(views))
+    with pytest.raises(ValueError, match="absent from the frozen views"):
+        campaign.study_models(args)
 
 
 def test_model_resume_preserves_completed_work_and_archives_infra_attempt(

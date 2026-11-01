@@ -174,6 +174,11 @@ class CustomerRepresentation(RepresentationPlugin):
             original["coordinates"][i] for i in new_to_original
         ]
         transformed["demands"] = [original["demands"][i] for i in new_to_original]
+        for field in ("time_windows", "service_times"):
+            if field in original:
+                if len(original[field]) != node_count:
+                    raise ValueError(f"{field} must cover every node")
+                transformed[field] = [original[field][i] for i in new_to_original]
         if "node_ids" in original:
             transformed["node_ids"] = list(range(1, node_count + 1))
         return transformed

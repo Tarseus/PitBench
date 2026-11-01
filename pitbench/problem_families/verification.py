@@ -118,19 +118,23 @@ class TrustedOptimumRecord(BaseModel):
     instance_set: str
     instance_id: str
     instance_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    target_kind: Literal["trusted_optimum", "published_bks"] = "trusted_optimum"
+    target_kind: Literal["trusted_optimum", "published_bks", "best_found"] = (
+        "trusted_optimum"
+    )
     problem_kind: Literal[
         "single_machine_scheduling",
         "job_shop_scheduling",
         "bin_packing",
         "multidimensional_knapsack",
+        "set_covering",
         "binary_clique_cover",
         "binary_clique_cover_fme",
         "graph_coloring",
         "balanced_subset_sum",
+        "linear_mip",
     ]
     objective_sense: Literal["minimize", "maximize"]
-    optimal_objective: int
+    optimal_objective: int | float = Field(allow_inf_nan=False)
     reference_solution_uri: str | None = None
     reference_solution_sha256: str | None = Field(
         default=None, pattern=r"^[0-9a-f]{64}$"
@@ -147,7 +151,7 @@ class TrustedOptimumRecord(BaseModel):
             raise ValueError(
                 "reference solution URI and hash must be supplied together"
             )
-        if self.target_kind == "trusted_optimum":
+        if self.target_kind in {"trusted_optimum", "best_found"}:
             if not has_reference:
                 raise ValueError("trusted optimum records require a reference solution")
             return self
@@ -671,7 +675,20 @@ def _check_bin_packing_solution(
 def _public_multidimensional_knapsack_data(
     instance_path: Path,
 ) -> tuple[list[list[int]], list[int]] | None:
-    """Accept the canonical knapsack LP, including whitespace-only line wraps."""
+    """Legacy capacity-dual models only; unrelated profits need another proof."""
+    model = _public_multidimensional_knapsack_model(instance_path)
+    if model is None:
+        return None
+    weights, capacities, profits = model
+    return (
+        (weights, capacities)
+        if profits == [sum(column) for column in zip(*weights, strict=True)]
+        else None
+    )
+
+
+def _public_multidimensional_knapsack_model(instance_path: Path):
+    """Parse all coefficients from the original binary-knapsack LP or MPS."""
 
     if instance_path.suffix.lower() == ".mps":
         model = _read_mps_numeric_model(instance_path)
@@ -680,8 +697,8 @@ def _public_multidimensional_knapsack_data(
         row_count, item_count = len(model["rows"]), len(model["columns"])
         expected_columns = [f"x{item}" for item in range(item_count)]
         if (
-            row_count != 3
-            or item_count not in {60, 65, 70}
+            row_count < 1
+            or item_count < 1
             or model["columns"] != expected_columns
             or model["rows"] != [f"c{row}" for row in range(row_count)]
             or model["objective_sense"] != "minimize"
@@ -694,7 +711,7 @@ def _public_multidimensional_knapsack_data(
                 for name in model["rows"]
             )
             or any(
-                value <= 0 or not float(value).is_integer()
+                value < 0 or not float(value).is_integer()
                 for value in model["row_upper"].values()
             )
         ):
@@ -702,18 +719,16 @@ def _public_multidimensional_knapsack_data(
         weights = []
         for row in model["rows"]:
             values = model["coefficients"].get(row, {})
-            if set(values) != set(expected_columns) or any(
-                value <= 0 or not float(value).is_integer() for value in values.values()
+            if set(values) - set(expected_columns) or any(
+                value < 0 or not float(value).is_integer() for value in values.values()
             ):
                 return None
-            weights.append([int(values[column]) for column in expected_columns])
+            weights.append([int(values.get(column, 0)) for column in expected_columns])
         capacities = [int(model["row_upper"][row]) for row in model["rows"]]
-        expected_cost = [
-            -sum(row[item] for row in weights) for item in range(item_count)
-        ]
-        if [model["cost"][name] for name in expected_columns] != expected_cost:
+        costs = [model["cost"].get(name, 0) for name in expected_columns]
+        if any(value > 0 or not float(value).is_integer() for value in costs):
             return None
-        return weights, capacities
+        return weights, capacities, [-int(value) for value in costs]
 
     try:
         source = instance_path.read_text()
@@ -726,6 +741,13 @@ def _public_multidimensional_knapsack_data(
     if subject < 2 or "Binary" not in lines:
         return None
     binary = lines.index("Binary")
+    objective = " ".join(lines[1:subject])
+    terms = list(re.finditer(r"-\s*(\d+)\s+x(\d+)", objective))
+    if not terms or any(
+        int(term.group(2)) != index for index, term in enumerate(terms)
+    ):
+        return None
+    profits = [int(term.group(1)) for term in terms]
     weights: list[list[int]] = []
     capacities: list[int] = []
     constraint_text = " ".join(lines[subject + 1 : binary])
@@ -752,7 +774,9 @@ def _public_multidimensional_knapsack_data(
         weights.append(row)
         capacities.append(int(match.group(2)))
     try:
-        canonical = format_multidimensional_knapsack_lp(weights, capacities)
+        canonical = format_multidimensional_knapsack_lp(
+            weights, capacities, profits=profits
+        )
     except ValueError:
         return None
 
@@ -760,7 +784,7 @@ def _public_multidimensional_knapsack_data(
         return re.sub(r"\s+", " ", value).strip()
 
     return (
-        (weights, capacities)
+        (weights, capacities, profits)
         if normalize_whitespace(source) == normalize_whitespace(canonical)
         else None
     )
@@ -770,6 +794,7 @@ def _check_multidimensional_knapsack_solution(
     solution: dict,
     weights: list[list[int]],
     capacities: list[int],
+    profits: list[int] | None = None,
 ) -> VerificationResult:
     try:
         values, reported_objective = _parse_mip_primal_solution(
@@ -799,10 +824,9 @@ def _check_multidimensional_knapsack_solution(
         for row, capacity in zip(weights, capacities, strict=True)
     ):
         return VerificationResult(feasible=False, detail="knapsack capacity exceeded")
-    objective = -sum(
-        sum(row[item] for row in weights) * assignment[item]
-        for item in range(item_count)
-    )
+    if profits is None:
+        profits = [sum(column) for column in zip(*weights, strict=True)]
+    objective = -sum(profit * assignment[item] for item, profit in enumerate(profits))
     if abs(reported_objective - objective) > _SCHEDULING_INTEGRALITY_TOLERANCE:
         return VerificationResult(feasible=False, detail="knapsack objective mismatch")
     return VerificationResult(
@@ -813,7 +837,11 @@ def _check_multidimensional_knapsack_solution(
 
 
 def expected_mip_variable_names(instance_path: Path) -> set[str]:
-    """Return the complete assignment keys for PitBench's canonical MIP models."""
+    """Return assignment keys from supported original MPS or canonical LP models."""
+    if instance_path.suffix.lower() == ".mps":
+        model = _read_mps_numeric_model(instance_path)
+        if model is not None:
+            return set(model["columns"])
     processing = _public_scheduling_processing_times(instance_path)
     if processing is not None:
         count = len(processing)
@@ -822,7 +850,7 @@ def expected_mip_variable_names(instance_path: Path) -> set[str]:
             for first in range(count)
             for second in range(first + 1, count)
         }
-    knapsack = _public_multidimensional_knapsack_data(instance_path)
+    knapsack = _public_multidimensional_knapsack_model(instance_path)
     if knapsack is not None:
         return {f"x{index}" for index in range(len(knapsack[0][0]))}
     raise ValueError("unsupported or noncanonical MIP instance")
@@ -989,6 +1017,37 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
             return self._oracle_error(f"invalid reference solution: {error}")
         if not isinstance(reference_solution, dict):
             return self._oracle_error("trusted optimum reference is not an object")
+        if self.record.problem_kind == "linear_mip":
+            checked = MIPFamily._verify_numeric_model_solution(
+                instance_path, reference_solution
+            )
+            if (
+                not checked.feasible
+                or checked.objective != self.record.optimal_objective
+            ):
+                return self._oracle_error(
+                    "linear reference fails original-model feasibility/objective checks"
+                )
+            if self.record.target_kind == "best_found":
+                if basis.get("kind") != "feasible_search_reference":
+                    return self._oracle_error(
+                        "best-found reference cannot claim a proven bound"
+                    )
+                return None
+            if (
+                basis.get("kind") != "independent_mip_search"
+                or basis.get("reported_optimal") is not True
+                or basis.get("reported_primal") != self.record.optimal_objective
+                or basis.get("reported_dual") != self.record.optimal_objective
+                or not isinstance(basis.get("solver_identity"), dict)
+                or not re.fullmatch(
+                    r"[0-9a-f]{64}", str(basis.get("reference_result_sha256", ""))
+                )
+            ):
+                return self._oracle_error("inconsistent external MIP optimum record")
+            # Trust the independently run solver's optimal return, as with other
+            # external-search targets. This does not replay its branch-and-bound proof.
+            return None
         if self.record.problem_kind == "single_machine_scheduling":
             processing_times = basis.get("processing_times")
             if (
@@ -1037,10 +1096,30 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
             return None
 
         if self.record.problem_kind == "multidimensional_knapsack":
-            model = _public_multidimensional_knapsack_data(instance_path)
+            model = _public_multidimensional_knapsack_model(instance_path)
             if model is None:
                 return self._oracle_error("invalid knapsack instance")
-            weights, capacities = model
+            weights, capacities, profits = model
+            multipliers = (
+                basis.get("row_multipliers")
+                if basis.get("kind") == "weighted_capacity_dual_bound"
+                else [1] * len(weights)
+            )
+            if (
+                not isinstance(multipliers, list)
+                or len(multipliers) != len(weights)
+                or any(type(value) is not int or value < 0 for value in multipliers)
+            ):
+                return self._oracle_error("invalid knapsack dual multipliers")
+            expected_basis = {
+                "kind": "capacity_dual_bound",
+                "dimensions": len(weights),
+                "items": len(weights[0]),
+            }
+            if basis.get("kind") == "weighted_capacity_dual_bound":
+                expected_basis.update(
+                    kind="weighted_capacity_dual_bound", row_multipliers=multipliers
+                )
             selected = reference_solution.get("selected_items")
             if (
                 not isinstance(selected, list)
@@ -1051,15 +1130,91 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
                     sum(row[item] for item in selected) != capacity
                     for row, capacity in zip(weights, capacities, strict=True)
                 )
-                or basis
-                != {
-                    "kind": "capacity_dual_bound",
-                    "dimensions": len(weights),
-                    "items": len(weights[0]),
-                }
-                or self.record.optimal_objective != -sum(capacities)
+                or basis != expected_basis
+                or profits
+                != [
+                    sum(
+                        multiplier * value
+                        for multiplier, value in zip(multipliers, column, strict=True)
+                    )
+                    for column in zip(*weights, strict=True)
+                ]
+                or self.record.optimal_objective
+                != -sum(
+                    multiplier * capacity
+                    for multiplier, capacity in zip(
+                        multipliers, capacities, strict=True
+                    )
+                )
             ):
                 return self._oracle_error("invalid knapsack reference optimum")
+            return None
+
+        if self.record.problem_kind == "set_covering":
+            model = _read_mps_numeric_model(instance_path)
+            groups, partition_rows = basis.get("groups"), basis.get("partition_rows")
+            if (
+                model is None
+                or basis.get("kind") != "disjoint_covering_rows"
+                or not isinstance(groups, list)
+                or not groups
+                or any(
+                    not isinstance(group, list)
+                    or not group
+                    or any(not isinstance(name, str) for name in group)
+                    for group in groups
+                )
+                or not isinstance(partition_rows, list)
+                or len(partition_rows) != len(groups)
+                or any(not isinstance(row, str) for row in partition_rows)
+                or len(set(partition_rows)) != len(partition_rows)
+            ):
+                return self._oracle_error("invalid set-covering partition certificate")
+            flattened = [name for group in groups for name in group]
+            if (
+                len(flattened) != len(set(flattened))
+                or set(flattened) != set(model["columns"])
+                or model["integer_columns"] != set(flattened)
+                or model["objective_sense"] != "minimize"
+                or model["offset"] != 0
+                or any(
+                    model["column_lower"][name] != 0
+                    or model["column_upper"][name] != 1
+                    or model["cost"].get(name) != 1
+                    for name in flattened
+                )
+                or self.record.optimal_objective != len(groups)
+            ):
+                return self._oracle_error(
+                    "set-covering lower bound does not match the original objective or variables"
+                )
+            for row in model["rows"]:
+                values = model["coefficients"].get(row, {})
+                if (
+                    not values
+                    or set(values) - set(flattened)
+                    or any(value != 1 for value in values.values())
+                    or model["row_lower"][row] != 1
+                    or model["row_upper"][row] != math.inf
+                ):
+                    return self._oracle_error(
+                        "original model is not a unit-cost binary covering instance"
+                    )
+            for row, group in zip(partition_rows, groups, strict=True):
+                if model["coefficients"].get(row) != {name: 1 for name in group}:
+                    return self._oracle_error(
+                        "set-covering partition row is absent from the original model"
+                    )
+            checked = MIPFamily._verify_numeric_model_solution(
+                instance_path, reference_solution
+            )
+            if (
+                not checked.feasible
+                or checked.objective != self.record.optimal_objective
+            ):
+                return self._oracle_error(
+                    "set-covering witness does not attain the independent lower bound"
+                )
             return None
 
         if self.record.problem_kind in {
@@ -1068,9 +1223,7 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
         }:
             model = _read_mps_numeric_model(instance_path)
             groups = basis.get("groups")
-            has_fme_paper_block = (
-                self.record.problem_kind == "binary_clique_cover_fme"
-            )
+            has_fme_paper_block = self.record.problem_kind == "binary_clique_cover_fme"
             fme_paper_block = basis.get("fme_paper_block")
             if (
                 model is None
@@ -1102,18 +1255,15 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
                 for extension in fme_extensions
                 if isinstance(extension, dict)
             }
-            if (
-                len(auxiliary_columns) != len(fme_extensions)
-                or any(
-                    not isinstance(extension, dict)
-                    or not isinstance(extension.get("column"), str)
-                    or not extension.get("column")
-                    or not isinstance(extension.get("positive_rows"), list)
-                    or not isinstance(extension.get("negative_rows"), list)
-                    or len(extension["positive_rows"]) < 2
-                    or len(extension["negative_rows"]) < 2
-                    for extension in fme_extensions
-                )
+            if len(auxiliary_columns) != len(fme_extensions) or any(
+                not isinstance(extension, dict)
+                or not isinstance(extension.get("column"), str)
+                or not extension.get("column")
+                or not isinstance(extension.get("positive_rows"), list)
+                or not isinstance(extension.get("negative_rows"), list)
+                or len(extension["positive_rows"]) < 2
+                or len(extension["negative_rows"]) < 2
+                for extension in fme_extensions
             ):
                 return self._oracle_error("invalid FME extension proof entries")
             if (
@@ -1122,8 +1272,7 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
                 or binary_columns.union(auxiliary_columns) != set(columns)
                 or binary_columns != set(model["integer_columns"])
                 or any(
-                    model["column_lower"][name] != 0
-                    or model["column_upper"][name] != 1
+                    model["column_lower"][name] != 0 or model["column_upper"][name] != 1
                     for name in binary_columns
                 )
                 or any(model["cost"].get(name, 0.0) > 1e-9 for name in columns)
@@ -1461,11 +1610,15 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
         if self.record.problem_kind == "job_shop_scheduling":
             return _check_job_shop_solution(solution, self.record.optimality_basis)
         if self.record.problem_kind == "multidimensional_knapsack":
-            model = _public_multidimensional_knapsack_data(instance_path)
+            model = _public_multidimensional_knapsack_model(instance_path)
             if model is None:
                 return self._oracle_error("invalid knapsack instance")
             return _check_multidimensional_knapsack_solution(solution, *model)
-        if self.record.problem_kind == "binary_clique_cover":
+        if self.record.problem_kind in {
+            "binary_clique_cover",
+            "set_covering",
+            "linear_mip",
+        }:
             return MIPFamily._verify_numeric_model_solution(instance_path, solution)
         instance = json.loads(instance_path.read_text())
         if self.record.problem_kind == "graph_coloring":
@@ -1584,7 +1737,7 @@ class MIPFamily(ExternalVerifierFamily):
             except (OSError, json.JSONDecodeError) as error:
                 return VerificationResult(feasible=False, detail=str(error))
             return _check_scheduling_solution(solution, processing_times)
-        knapsack = _public_multidimensional_knapsack_data(instance_path)
+        knapsack = _public_multidimensional_knapsack_model(instance_path)
         if knapsack is not None:
             try:
                 solution = json.loads(solution_path.read_text())

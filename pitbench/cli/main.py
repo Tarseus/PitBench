@@ -691,6 +691,13 @@ def evaluate_task(
             "--check-only", help="Check all prerequisites without running agents"
         ),
     ] = False,
+    defer_evaluation: Annotated[
+        bool,
+        typer.Option(
+            "--defer-evaluation",
+            help="Run Agent development and capture its candidate; defer hidden evaluation.",
+        ),
+    ] = False,
     configuration_robustness: Annotated[
         bool,
         typer.Option(
@@ -848,6 +855,18 @@ def evaluate_task(
         }
         if effective_config.candidate_hypotheses_required:
             materialize_kwargs["candidate_hypotheses_required"] = True
+        if (
+            resources.agent_task_config_path is not None
+            or resources.task_config_path is not None
+        ):
+            materialize_kwargs["task_config_path"] = resolve_repository_path(
+                repository_root,
+                resources.agent_task_config_path or resources.task_config_path,
+            )
+        if resources.task_config_path is not None:
+            materialize_kwargs["evaluator_task_config_path"] = resolve_repository_path(
+                repository_root, resources.task_config_path
+            )
         if task_id in effective_config.metric_scenario_configs:
             materialize_kwargs["metric_scenario_config"] = resolve_repository_path(
                 repository_root, effective_config.metric_scenario_configs[task_id]
@@ -898,6 +917,7 @@ def evaluate_task(
         typer.echo(f"Materialized {task_id} at {task_path}")
         _prepare_task_image(task_path, rebuild=rebuild)
     typer.echo(f"Starting evaluation run {resolved_run_id}")
+    deferred_kwargs = {"defer_evaluation": True} if defer_evaluation else {}
     run_harness(
         dataset_path=dataset_path,
         dataset_config=None,
@@ -922,7 +942,13 @@ def evaluate_task(
         remote_build=False,
         history_limit=None,
         agent_cpuset_cpus=effective_config.agent_cpuset_cpus,
+        **deferred_kwargs,
     )
+    if defer_evaluation:
+        typer.echo(
+            "Agent development finished; candidate captured for the separate hidden-evaluation queue."
+        )
+        return
     configuration_output = None
     configuration_error = None
     if configuration_robustness and effective_config.configuration_robustness.enabled:
@@ -1048,7 +1074,17 @@ def judge_candidate(
         _warning("evaluation config is absent; using built-in configuration defaults")
 
     try:
-        record = TaskCatalog(repository_root).validate_one(task_id)
+        catalog = TaskCatalog(repository_root)
+        configured_task_path = evaluation_config.resources_for(task_id).task_config_path
+        record = (
+            catalog.validate_file(
+                resolve_repository_path(repository_root, configured_task_path)
+            )
+            if configured_task_path is not None
+            else catalog.validate_one(task_id)
+        )
+        if record.task.task_id != task_id:
+            raise TaskNotFoundError("configured task ID differs from requested task")
     except TaskNotFoundError as exc:
         raise typer.BadParameter(
             f"Unknown task '{task_id}'", param_hint="TASK_ID"
@@ -1691,6 +1727,10 @@ def report_command(
             standard,
             primary_budget_sec=task.evaluation.primary_budget_sec,
             budgets_sec=task.evaluation.budgets_sec,
+            budgets_by_instance_set={
+                item.name: item.budgets_sec or task.evaluation.budgets_sec
+                for item in task.instance_sets
+            },
             expected_instance_counts={
                 item.name: item.size for item in task.instance_sets
             },
@@ -1866,6 +1906,26 @@ def report_command(
             typer.echo(
                 f"{measured.scenario_id}/{measured.metric_id}/{measured.instance_set}: {measured.classification}; Base={measured.base}, Agent={measured.agent}"
             )
+
+
+@app.command("report-distributions")
+def report_distributions_command(
+    source: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
+    generation_specification: Annotated[
+        Path, typer.Option("--generation-specification", exists=True, dir_okay=False)
+    ],
+    output: Annotated[Path, typer.Option("--output")],
+) -> None:
+    """Plot saved native effects against declared distribution coordinates."""
+    from pitbench.metrics.campaign_report import write_distribution_report
+
+    report = write_distribution_report(
+        source, output, generation_specification=generation_specification
+    )
+    typer.echo(f"Report: {output.resolve() / 'report.html'}")
+    typer.echo(
+        f"{len(report['estimates'])} estimates; {len(report['curves'])} distribution curves; {len(report['pending_or_failed'])} pending or failed records."
+    )
 
 
 @app.command("report-campaign")

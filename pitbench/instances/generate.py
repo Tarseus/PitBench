@@ -19,6 +19,7 @@ import yaml
 
 from pitbench.problem_families.public_verification import (
     check_cvrp,
+    edge_cost,
     format_multidimensional_knapsack_lp,
 )
 
@@ -306,7 +307,76 @@ def _cvrp(config: dict[str, Any], index: int, destination: Path) -> None:
         demand_parameters=config.get("demand_parameters"),
         distance_metric=config.get("distance_metric"),
     )
+    if "time_window_slack" in config:
+        slack = float(config["time_window_slack"])
+        service = float(config.get("service_time", 0))
+        if (
+            not math.isfinite(slack)
+            or slack < 0
+            or not math.isfinite(service)
+            or service < 0
+            or not slack.is_integer()
+            or not service.is_integer()
+        ):
+            raise ValueError(
+                "normalized routing time-window slack and service time must be nonnegative integers"
+            )
+        if instance.get("distance_metric") != "EUC_2D":
+            raise ValueError(
+                "normalized time-window generation requires integer EUC_2D distances"
+            )
+        routes = capacity_partition_routes(instance)
+        windows = [[0, 0] for _ in instance["coordinates"]]
+        horizon = 0
+        for route in routes:
+            clock, previous = 0, 0
+            for customer in route:
+                clock += edge_cost(
+                    instance["coordinates"],
+                    previous,
+                    customer,
+                    instance.get("distance_metric"),
+                )
+                windows[customer] = [max(0, clock - slack), clock + slack]
+                clock += service
+                previous = customer
+            horizon = max(
+                horizon,
+                clock
+                + edge_cost(
+                    instance["coordinates"],
+                    previous,
+                    0,
+                    instance.get("distance_metric"),
+                ),
+            )
+        windows[0] = [0, horizon + slack]
+        instance.update(
+            time_windows=windows,
+            service_times=[0] + [service] * (len(windows) - 1),
+            num_vehicles=len(routes),
+        )
     destination.write_text(json.dumps(instance, indent=2))
+
+
+def capacity_partition_routes(instance):
+    """A deterministic feasibility witness; it does not establish an optimum."""
+    routes, current, load = [], [], 0
+    depot = instance.get("depot", 0)
+    for customer in range(len(instance["demands"])):
+        if customer == depot:
+            continue
+        demand = instance["demands"][customer]
+        if demand > instance["capacity"]:
+            raise ValueError("customer demand exceeds vehicle capacity")
+        if current and load + demand > instance["capacity"]:
+            routes.append(current)
+            current, load = [], 0
+        current.append(customer)
+        load += demand
+    if current:
+        routes.append(current)
+    return routes
 
 
 def make_bin_packing_instance(
@@ -446,7 +516,26 @@ def multidimensional_knapsack_data(
         weights = [weights[0].copy() for _ in range(dimensions)]
     elif correlation != "independent":
         raise ValueError("unsupported dimension_correlation")
-    selected = sorted(rng.sample(range(item_count), item_count // 2))
+    density = float(config.get("nonzero_density", 1))
+    if not math.isfinite(density) or not 0 < density <= 1:
+        raise ValueError("knapsack nonzero_density must be in (0, 1]")
+    if density < 1:
+        width = max(1, round(item_count * density))
+        masks = [set(rng.sample(range(item_count), width)) for _ in weights]
+        if correlation == "shared":
+            masks = [masks[0]] * dimensions
+        weights = [
+            [value if item in mask else 0 for item, value in enumerate(row)]
+            for row, mask in zip(weights, masks, strict=True)
+        ]
+    fraction = float(config.get("selected_fraction", 0.5))
+    if not math.isfinite(fraction) or not 0 < fraction < 1:
+        raise ValueError("knapsack selected_fraction must be in (0, 1)")
+    selected = sorted(
+        rng.sample(
+            range(item_count), max(1, min(item_count - 1, int(item_count * fraction)))
+        )
+    )
     mode = config.get("capacity_mode", "planted")
     if mode == "planted":
         capacities = [sum(row[item] for item in selected) for row in weights]
@@ -461,11 +550,76 @@ def multidimensional_knapsack_data(
     return weights, capacities, selected
 
 
+def multidimensional_knapsack_profits(config, index, weights):
+    """An independent seed stream keeps coefficient/profit factors separable."""
+    totals = [sum(column) for column in zip(*weights, strict=True)]
+    mode = config.get("profit_mode", "sum_weights")
+    if mode == "sum_weights":
+        return totals
+    if mode == "weighted_sum":
+        dual = multidimensional_knapsack_dual_weights(config, len(weights))
+        return [
+            sum(
+                multiplier * value
+                for multiplier, value in zip(dual, column, strict=True)
+            )
+            for column in zip(*weights, strict=True)
+        ]
+    rng = random.Random(f"knapsack-profit:{_instance_seed(config, index)}")
+    if mode == "independent":
+        return _integer_samples(
+            rng,
+            len(totals),
+            config.get("profit_distribution", "uniform_integer"),
+            config.get("profit_parameters", {}),
+            int(config.get("profit_max", config["weight_max"])),
+        )
+    if mode == "weakly_correlated":
+        noise = int(config.get("profit_noise", config["weight_max"]))
+        if noise < 0:
+            raise ValueError("profit_noise must be nonnegative")
+        return [max(1, value + rng.randint(-noise, noise)) for value in totals]
+    if mode == "inverse_correlated":
+        return [max(totals) + 1 - value for value in totals]
+    raise ValueError("unsupported knapsack profit_mode")
+
+
+def multidimensional_knapsack_dual_weights(config, dimensions):
+    if config.get("profit_mode", "sum_weights") == "sum_weights":
+        return [1] * dimensions
+    if config.get("profit_mode") != "weighted_sum":
+        raise ValueError(
+            "profit distribution does not carry a capacity-dual certificate"
+        )
+    base = config.get("profit_row_weight_base", 2)
+    if type(base) is not int or base < 1:
+        raise ValueError("profit_row_weight_base must be a positive integer")
+    return [base**dimension for dimension in range(dimensions)]
+
+
+def _knapsack_optimum_basis(config, weights, capacities):
+    dual = multidimensional_knapsack_dual_weights(config, len(weights))
+    basis = {
+        "kind": "capacity_dual_bound",
+        "dimensions": len(weights),
+        "items": len(weights[0]),
+    }
+    if config.get("profit_mode") == "weighted_sum":
+        basis.update(kind="weighted_capacity_dual_bound", row_multipliers=dual)
+    return -sum(
+        multiplier * capacity
+        for multiplier, capacity in zip(dual, capacities, strict=True)
+    ), basis
+
+
 def _multidimensional_knapsack_lp(
     config: dict[str, Any], index: int, destination: Path
 ) -> None:
     weights, capacities, _ = multidimensional_knapsack_data(config, index)
-    destination.write_text(format_multidimensional_knapsack_lp(weights, capacities))
+    profits = multidimensional_knapsack_profits(config, index, weights)
+    destination.write_text(
+        format_multidimensional_knapsack_lp(weights, capacities, profits=profits)
+    )
 
 
 def binary_clique_cover_data(
@@ -718,6 +872,263 @@ def _binary_clique_cover_mps(
     if fme_paper_block:
         lines.extend([" LI BND1 fme_i 0", " UI BND1 fme_i 40"])
     lines.append("ENDATA")
+    destination.write_text("\n".join(lines) + "\n")
+
+
+def set_covering_data(config: dict[str, Any], index: int):
+    """Unit-cost set cover with a disjoint-row lower bound and a feasible witness."""
+    rng = random.Random(_instance_seed(config, index))
+    group_count = _choice(config["groups"], index)
+    group_size = _choice(config["group_sizes"], index)
+    extra_count = _choice(config["extra_rows"], index)
+    density = float(config["extra_row_density"])
+    if group_count < 1 or group_size < 2 or extra_count < 0 or not 0 < density <= 1:
+        raise ValueError("invalid set-covering generator settings")
+    groups = [
+        [f"x{group * group_size + offset}" for offset in range(group_size)]
+        for group in range(group_count)
+    ]
+    planted = [rng.choice(group) for group in groups]
+    columns = [name for group in groups for name in group]
+    width = max(1, round(len(columns) * density))
+    rows = [(f"P{group:06d}", names) for group, names in enumerate(groups)]
+    for row in range(extra_count):
+        names = rng.sample(columns, width)
+        if not set(names).intersection(planted):
+            names[0] = rng.choice(planted)
+        rows.append((f"C{row:06d}", names))
+    return groups, planted, rows
+
+
+def _write_sparse_mps(destination, columns, rows, coefficients, costs, integer, upper):
+    """Write linear models with standard MPS fields and explicit variable domains."""
+    by_column = {name: [] for name in columns}
+    for row, terms in coefficients.items():
+        for name, value in terms.items():
+            if value:
+                by_column[name].append((row, value))
+    lines = [f"NAME          {destination.stem}", "ROWS", " N  OBJ"]
+    lines.extend(f" {sense}  {name}" for name, sense, _ in rows)
+    lines.append("COLUMNS")
+    for name in columns:
+        entries = [("OBJ", costs.get(name, 0)), *by_column[name]]
+        for row, value in entries:
+            lines.append(f"    {name:<8}  {row:<8}  {value:>12g}")
+    lines.append("RHS")
+    lines.extend(f"    {'RHS1':<8}  {name:<8}  {rhs:>12g}" for name, _, rhs in rows)
+    lines.append("BOUNDS")
+    for name in columns:
+        if name in integer and upper.get(name) == 1:
+            lines.append(f" BV {'BND1':<8}  {name:<8}")
+        elif name in integer:
+            lines.append(f" LI {'BND1':<8}  {name:<8}  {0:>12g}")
+            if name in upper:
+                lines.append(f" UI {'BND1':<8}  {name:<8}  {upper[name]:>12g}")
+        elif name in upper:
+            lines.append(f" UP {'BND1':<8}  {name:<8}  {upper[name]:>12g}")
+    lines.append("ENDATA")
+    destination.write_text("\n".join(lines) + "\n")
+
+
+def _knapsack_mps(config, index, destination):
+    weights, capacities, _ = multidimensional_knapsack_data(config, index)
+    profits = multidimensional_knapsack_profits(config, index, weights)
+    columns = [f"x{i}" for i in range(len(profits))]
+    rows = [(f"r{i}", "L", cap) for i, cap in enumerate(capacities)]
+    _write_sparse_mps(
+        destination,
+        columns,
+        rows,
+        {
+            f"r{i}": dict(zip(columns, row, strict=True))
+            for i, row in enumerate(weights)
+        },
+        dict(zip(columns, [-value for value in profits], strict=True)),
+        set(columns),
+        dict.fromkeys(columns, 1),
+    )
+
+
+def _random_set_covering_mps(config, index, destination):
+    rng = random.Random(_instance_seed(config, index))
+    size = int(_choice(config["variables"], index))
+    count = int(_choice(config["rows"], index))
+    density = float(config["row_density"])
+    if size < 2 or count < 1 or not 0 < density <= 1:
+        raise ValueError("invalid random covering dimensions or density")
+    columns = [f"x{i}" for i in range(size)]
+    width = max(2, min(size, round(size * density)))
+    coefficients = {
+        f"r{i}": dict.fromkeys(rng.sample(columns, width), 1) for i in range(count)
+    }
+    costs = {name: rng.randint(1, int(config.get("cost_max", 100))) for name in columns}
+    _write_sparse_mps(
+        destination,
+        columns,
+        [(row, "G", 1) for row in coefficients],
+        coefficients,
+        costs,
+        set(columns),
+        dict.fromkeys(columns, 1),
+    )
+
+
+def _independent_set_mps(config, index, destination):
+    rng = random.Random(_instance_seed(config, index))
+    size = int(_choice(config["vertices"], index))
+    probability = float(config["edge_probability"])
+    if size < 2 or not 0 < probability < 1:
+        raise ValueError("invalid independent-set graph settings")
+    columns = [f"x{i}" for i in range(size)]
+    edges = [
+        (a, b)
+        for a in range(size)
+        for b in range(a + 1, size)
+        if rng.random() < probability
+    ]
+    coefficients = {f"r{i}": {f"x{a}": 1, f"x{b}": 1} for i, (a, b) in enumerate(edges)}
+    costs = {
+        name: -rng.randint(1, int(config.get("weight_max", 20))) for name in columns
+    }
+    _write_sparse_mps(
+        destination,
+        columns,
+        [(row, "L", 1) for row in coefficients],
+        coefficients,
+        costs,
+        set(columns),
+        dict.fromkeys(columns, 1),
+    )
+
+
+def _facility_location_mps(config, index, destination):
+    """Capacitated location with binary openings and continuous shipments; no planted optimum."""
+    rng = random.Random(_instance_seed(config, index))
+    facilities = int(_choice(config["facilities"], index))
+    customers = int(_choice(config["customers"], index))
+    ratio = float(config.get("capacity_ratio", 1.5))
+    if facilities < 2 or customers < 2 or ratio < 1:
+        raise ValueError("invalid facility-location settings")
+    demand = [rng.randint(1, 10) for _ in range(customers)]
+    capacity = [math.ceil(sum(demand) * ratio / facilities) for _ in range(facilities)]
+    points = [
+        (rng.randrange(1000), rng.randrange(1000))
+        for _ in range(facilities + customers)
+    ]
+    openings = [f"y{i}" for i in range(facilities)]
+    shipments = [f"x{i}_{j}" for i in range(facilities) for j in range(customers)]
+    costs = {name: rng.randint(100, 800) for name in openings}
+    costs.update(
+        {
+            f"x{i}_{j}": max(
+                1, round(math.dist(points[i], points[facilities + j]) / 10)
+            )
+            for i in range(facilities)
+            for j in range(customers)
+        }
+    )
+    coefficients = {
+        f"d{j}": {f"x{i}_{j}": 1 for i in range(facilities)} for j in range(customers)
+    }
+    coefficients.update(
+        {
+            f"c{i}": {
+                **{f"x{i}_{j}": 1 for j in range(customers)},
+                f"y{i}": -capacity[i],
+            }
+            for i in range(facilities)
+        }
+    )
+    rows = [(f"d{j}", "E", amount) for j, amount in enumerate(demand)]
+    rows += [(f"c{i}", "L", 0) for i in range(facilities)]
+    _write_sparse_mps(
+        destination,
+        openings + shipments,
+        rows,
+        coefficients,
+        costs,
+        set(openings),
+        {
+            **dict.fromkeys(openings, 1),
+            **{
+                f"x{i}_{j}": demand[j]
+                for i in range(facilities)
+                for j in range(customers)
+            },
+        },
+    )
+
+
+def _fixed_charge_flow_mps(config, index, destination):
+    """A capacitated directed network with fixed arc costs and splittable flow."""
+    rng = random.Random(_instance_seed(config, index))
+    nodes = int(_choice(config["nodes"], index))
+    density = float(config["arc_density"])
+    demand = int(config.get("flow_demand", 40))
+    if nodes < 3 or not 0 < density < 1 or demand < 2:
+        raise ValueError("invalid fixed-charge flow settings")
+    edges = [
+        (a, b)
+        for a in range(nodes)
+        for b in range(a + 1, nodes)
+        if b == a + 1 or rng.random() < density
+    ]
+    capacity = [
+        demand if b == a + 1 else rng.randint(max(1, demand // 4), demand)
+        for a, b in edges
+    ]
+    costs, coefficients = {}, {f"n{i}": {} for i in range(nodes)}
+    for k, (a, b) in enumerate(edges):
+        costs[f"x{k}"] = rng.randint(1, 20)
+        costs[f"y{k}"] = rng.randint(20, 200)
+        coefficients[f"n{a}"][f"x{k}"] = 1
+        coefficients[f"n{b}"][f"x{k}"] = -1
+        coefficients[f"c{k}"] = {f"x{k}": 1, f"y{k}": -capacity[k]}
+    rows = [
+        (f"n{i}", "E", demand if i == 0 else -demand if i == nodes - 1 else 0)
+        for i in range(nodes)
+    ]
+    rows += [(f"c{k}", "L", 0) for k in range(len(edges))]
+    openings, flows = (
+        [f"y{k}" for k in range(len(edges))],
+        [f"x{k}" for k in range(len(edges))],
+    )
+    _write_sparse_mps(
+        destination,
+        openings + flows,
+        rows,
+        coefficients,
+        costs,
+        set(openings),
+        {**dict.fromkeys(openings, 1), **dict(zip(flows, capacity, strict=True))},
+    )
+
+
+def _set_covering_mps(config: dict[str, Any], index: int, destination: Path):
+    groups, _, rows = set_covering_data(config, index)
+    columns = {name: [] for group in groups for name in group}
+    for row, names in rows:
+        for name in names:
+            columns[name].append(row)
+    lines = [
+        f"NAME          {destination.stem}",
+        "ROWS",
+        " N  OBJ",
+        *(f" G  {row}" for row, _ in rows),
+        "COLUMNS",
+    ]
+    for name, covering in columns.items():
+        lines.append(f"    {name:<8}  {'OBJ':<8}  {1:>12}")
+        lines.extend(f"    {name:<8}  {row:<8}  {1:>12}" for row in covering)
+    lines.extend(
+        [
+            "RHS",
+            *(f"    {'RHS1':<8}  {row:<8}  {1:>12}" for row, _ in rows),
+            "BOUNDS",
+            *(f" BV {'BND1':<8}  {name:<8}" for name in columns),
+            "ENDATA",
+        ]
+    )
     destination.write_text("\n".join(lines) + "\n")
 
 
@@ -993,6 +1404,12 @@ _GENERATORS = {
     "single_machine_scheduling_mip": ("lp", _scheduling_lp),
     "multidimensional_knapsack_mip": ("lp", _multidimensional_knapsack_lp),
     "binary_clique_cover_mip": ("mps", _binary_clique_cover_mps),
+    "set_covering_mip": ("mps", _set_covering_mps),
+    "multidimensional_knapsack_mps": ("mps", _knapsack_mps),
+    "random_set_covering_mip": ("mps", _random_set_covering_mps),
+    "independent_set_mip": ("mps", _independent_set_mps),
+    "facility_location_mip": ("mps", _facility_location_mps),
+    "fixed_charge_flow_mip": ("mps", _fixed_charge_flow_mps),
     "graph_coloring": ("json", _graph_coloring),
     "balanced_subset_sum": ("json", _balanced_subset_sum),
     "job_shop_scheduling": ("txt", _job_shop),
@@ -1008,7 +1425,12 @@ def _cvrp_instance_features(path: Path) -> dict[str, Any]:
     distances = [
         math.dist(point, instance["coordinates"][depot]) for point in coordinates
     ]
-    checked = check_cvrp(instance, {"routes": [[i] for i in customers]})
+    witness = (
+        capacity_partition_routes(instance)
+        if "time_windows" in instance
+        else [[i] for i in customers]
+    )
+    checked = check_cvrp(instance, {"routes": witness})
     if not checked["feasible"]:
         raise ValueError(f"generated CVRP instance is infeasible: {checked['detail']}")
     correlation = (
@@ -1016,7 +1438,7 @@ def _cvrp_instance_features(path: Path) -> dict[str, Any]:
         if len(demands) > 1 and len(set(demands)) > 1 and len(set(distances)) > 1
         else None
     )
-    return {
+    features = {
         "customers": len(customers),
         "capacity": instance["capacity"],
         "total_demand": sum(demands),
@@ -1035,12 +1457,123 @@ def _cvrp_instance_features(path: Path) -> dict[str, Any]:
         "distance_to_depot_mean": statistics.fmean(distances),
         "demand_depot_distance_correlation": correlation,
         "distance_metric": instance.get("distance_metric", "EXACT_2D"),
-        "feasibility_witness": "one_customer_per_route",
+        "feasibility_witness": "capacity_partition_in_customer_order"
+        if "time_windows" in instance
+        else "one_customer_per_route",
         "feasibility_witness_objective": checked["objective"],
+    }
+    if "time_windows" in instance:
+        features.update(
+            problem_variant="vrptw",
+            vehicle_limit=instance["num_vehicles"],
+            time_window_width_mean=statistics.fmean(
+                instance["time_windows"][i][1] - instance["time_windows"][i][0]
+                for i in customers
+            ),
+        )
+    return features
+
+
+def _knapsack_instance_features(path):
+    from pitbench.problem_families.verification import (
+        _public_multidimensional_knapsack_model,
+    )
+
+    model = _public_multidimensional_knapsack_model(path)
+    if model is None:
+        raise ValueError("generated knapsack failed independent model parsing")
+    weights, capacities, profits = model
+    totals = [sum(column) for column in zip(*weights, strict=True)]
+    nonzeros = sum(value != 0 for row in weights for value in row)
+    return {
+        "items": len(profits),
+        "constraints": len(weights),
+        "nonzero_count": nonzeros,
+        "nonzero_density": nonzeros / (len(weights) * len(profits)),
+        "profit_min": min(profits),
+        "profit_max": max(profits),
+        "profit_weight_correlation": statistics.correlation(profits, totals)
+        if len(set(profits)) > 1 and len(set(totals)) > 1
+        else None,
+        "capacity_to_row_sum": [
+            cap / sum(row) if sum(row) else None
+            for row, cap in zip(weights, capacities, strict=True)
+        ],
     }
 
 
-_INSTANCE_FEATURES = {"euclidean_cvrp": _cvrp_instance_features}
+def _set_covering_instance_features(path):
+    from pitbench.problem_families.verification import _read_mps_numeric_model
+
+    model = _read_mps_numeric_model(path)
+    if model is None:
+        raise ValueError("generated set cover failed independent MPS parsing")
+    nonzeros = sum(len(model["coefficients"].get(row, {})) for row in model["rows"])
+    extra_rows = [row for row in model["rows"] if row.startswith("C")]
+    extra_nonzeros = sum(len(model["coefficients"].get(row, {})) for row in extra_rows)
+    return {
+        "variables": len(model["columns"]),
+        "constraints": len(model["rows"]),
+        "nonzero_count": nonzeros,
+        "nonzero_density": nonzeros / (len(model["columns"]) * len(model["rows"])),
+        "problem_variant": "set_covering",
+        "extra_rows_density": extra_nonzeros / (len(model["columns"]) * len(extra_rows))
+        if extra_rows
+        else None,
+    }
+
+
+def linear_model_features(path: Path) -> dict:
+    """Observed original-model structure, independent of a generator's labels."""
+    from pitbench.problem_families.verification import _read_mps_numeric_model
+
+    model = _read_mps_numeric_model(path)
+    if model is None:
+        raise ValueError("unsupported linear MPS input")
+    columns, rows = model["columns"], model["rows"]
+    terms = [list(model["coefficients"].get(row, {}).values()) for row in rows]
+    integer = model["integer_columns"]
+    return {
+        "variables": len(columns),
+        "constraints": len(rows),
+        "integer_variables": len(integer),
+        "continuous_variables": len(columns) - len(integer),
+        "binary_variables": sum(
+            name in integer
+            and model["column_lower"][name] == 0
+            and model["column_upper"][name] == 1
+            for name in columns
+        ),
+        "nonzero_count": sum(value != 0 for row in terms for value in row),
+        "nonzero_density": sum(value != 0 for row in terms for value in row)
+        / max(1, len(rows) * len(columns)),
+        "equality_rows": sum(
+            model["row_lower"][row] == model["row_upper"][row] for row in rows
+        ),
+        "mixed_sign_rows": sum(
+            any(v < 0 for v in row) and any(v > 0 for v in row) for row in terms
+        ),
+        "objective_sense": model["objective_sense"],
+        "objective_min": min(model["cost"].values()),
+        "objective_max": max(model["cost"].values()),
+    }
+
+
+_INSTANCE_FEATURES = {
+    "euclidean_cvrp": _cvrp_instance_features,
+    "multidimensional_knapsack_mip": _knapsack_instance_features,
+    "set_covering_mip": _set_covering_instance_features,
+    **dict.fromkeys(
+        (
+            "multidimensional_knapsack_mps",
+            "random_set_covering_mip",
+            "independent_set_mip",
+            "facility_location_mip",
+            "fixed_charge_flow_mip",
+        ),
+        linear_model_features,
+    ),
+}
 
 
 def materialize_instance_suite(
@@ -1072,11 +1605,14 @@ def materialize_instance_suite(
 
 
 def _require_planted_optimum(config: dict[str, Any]) -> None:
-    if (
-        config["kind"] == "multidimensional_knapsack_mip"
-        and config.get("capacity_mode", "planted") != "planted"
+    if config["kind"] == "multidimensional_knapsack_mip" and (
+        config.get("capacity_mode", "planted") != "planted"
+        or config.get("profit_mode", "sum_weights")
+        not in {"sum_weights", "weighted_sum"}
     ):
-        raise ValueError("capacity-dual optimum requires planted capacities")
+        raise ValueError(
+            "capacity-dual optimum requires planted capacities and sum-weight or weighted-sum profits"
+        )
     if (
         config["kind"] == "graph_coloring"
         and config.get("graph_model", "mycielski") != "mycielski"
@@ -1690,8 +2226,10 @@ def prepare_trusted_optimum_oracle(
     reference_solution_dir: Path,
     bin_packing_proof_dir: Path | None = None,
     proof_solver_commit: str | None = None,
+    materialized_instances: list[Path] | None = None,
 ) -> dict[str, Any]:
     from pitbench.problem_families.verification import (
+        TrustedOptimumFamily,
         TrustedOptimumOracle,
         TrustedOptimumRecord,
         validate_bin_packing_optimum_record,
@@ -1709,6 +2247,7 @@ def prepare_trusted_optimum_oracle(
         "bin_packing",
         "multidimensional_knapsack_mip",
         "binary_clique_cover_mip",
+        "set_covering_mip",
         "graph_coloring",
         "balanced_subset_sum",
     }:
@@ -1725,12 +2264,20 @@ def prepare_trusted_optimum_oracle(
 
     records = []
     with tempfile.TemporaryDirectory(prefix="pitbench-trusted-optimum-") as temporary:
-        instance_paths = materialize_generated_instance_set(
-            instance_set_config,
-            Path(temporary),
-            expected_visibility="judge",
-            stem_prefix=instance_set_name,
+        instance_paths = (
+            materialized_instances
+            if materialized_instances is not None
+            else materialize_generated_instance_set(
+                instance_set_config,
+                Path(temporary),
+                expected_visibility="judge",
+                stem_prefix=instance_set_name,
+            )
         )
+        if len(instance_paths) != int(generator["count"]):
+            raise ValueError(
+                "trusted optimum inventory differs from the declared count"
+            )
         for index, instance_path in enumerate(instance_paths):
             instance_id = instance_path.stem
             proof_file_sha256 = None
@@ -1759,13 +2306,25 @@ def prepare_trusted_optimum_oracle(
                 weights, capacities, selected = multidimensional_knapsack_data(
                     generator, index
                 )
-                optimal_objective = -sum(capacities)
+                optimal_objective, optimality_basis = _knapsack_optimum_basis(
+                    generator, weights, capacities
+                )
                 problem_kind = "multidimensional_knapsack"
                 reference_solution = {"selected_items": selected}
+            elif generator["kind"] == "set_covering_mip":
+                groups, planted, rows = set_covering_data(generator, index)
+                optimal_objective = len(groups)
+                problem_kind = "set_covering"
+                reference_solution = {
+                    "values": {
+                        name: int(name in planted) for group in groups for name in group
+                    },
+                    "objective": optimal_objective,
+                }
                 optimality_basis = {
-                    "kind": "capacity_dual_bound",
-                    "dimensions": len(weights),
-                    "items": len(weights[0]),
+                    "kind": "disjoint_covering_rows",
+                    "groups": groups,
+                    "partition_rows": [row for row, _ in rows[: len(groups)]],
                 }
             elif generator["kind"] == "binary_clique_cover_mip":
                 groups, planted, _ = binary_clique_cover_data(generator, index)
@@ -1929,6 +2488,13 @@ def prepare_trusted_optimum_oracle(
                     ),
                 )
             )
+            checked = TrustedOptimumFamily(
+                records[-1], reference_solution_path
+            )._check_oracle(instance_path)
+            if checked is not None:
+                raise ValueError(
+                    f"independent optimum qualification failed: {checked.detail}"
+                )
 
     oracle = TrustedOptimumOracle(
         task_id=task.task_id,
@@ -1956,6 +2522,7 @@ def prepare_generated_development_panel(
     if kind not in {
         "multidimensional_knapsack_mip",
         "binary_clique_cover_mip",
+        "set_covering_mip",
         "graph_coloring",
     }:
         raise ValueError("unsupported generated development panel")
@@ -1971,9 +2538,20 @@ def prepare_generated_development_panel(
         instance_path = instances_dir / f"{instance_id}.{suffix}"
         generator(config, index, instance_path)
         if kind == "multidimensional_knapsack_mip":
-            _, capacities, selected = multidimensional_knapsack_data(config, index)
-            optimum = -sum(capacities)
+            weights, capacities, selected = multidimensional_knapsack_data(
+                config, index
+            )
+            optimum, _ = _knapsack_optimum_basis(config, weights, capacities)
             solution = {"selected_items": selected}
+        elif kind == "set_covering_mip":
+            groups, planted, _ = set_covering_data(config, index)
+            optimum = len(groups)
+            solution = {
+                "values": {
+                    name: int(name in planted) for group in groups for name in group
+                },
+                "objective": optimum,
+            }
         elif kind == "binary_clique_cover_mip":
             groups, planted, _ = binary_clique_cover_data(config, index)
             fme_extensions = binary_clique_cover_fme_extensions(

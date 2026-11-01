@@ -290,7 +290,7 @@ class ReferenceCollection:
         shutil.copytree(
             ROOT / "pitbench",
             snapshot / "pitbench",
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.log"),
         )
         source_hashes = {
             str(path.relative_to(snapshot)): hashlib.sha256(
@@ -309,20 +309,30 @@ class ReferenceCollection:
                     binary.read_bytes()
                 ).hexdigest()
                 source = ROOT / backend.get("repository", str(binary.parent))
-                identity["source_commit"] = subprocess.run(
-                    ["git", "-C", str(source), "rev-parse", "HEAD"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                ).stdout.strip()
-            elif backend.get("package"):
-                identity["package_version"] = importlib.metadata.version(
-                    backend["package"]
+                identity["source_commit"] = (
+                    backend.get("source_commit")
+                    or subprocess.run(
+                        ["git", "-C", str(source), "rev-parse", "HEAD"],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    ).stdout.strip()
                 )
+            elif backend.get("package"):
+                identity["package_version"] = backend.get(
+                    "package_version"
+                ) or importlib.metadata.version(backend["package"])
             backends.append(identity)
         jobs = []
         for phase in config["phases"]:
             for instance in instances:
+                if phase.get("roles") and instance.get("role") not in phase["roles"]:
+                    continue
+                if (
+                    phase.get("condition_ids")
+                    and instance.get("condition_id") not in phase["condition_ids"]
+                ):
+                    continue
                 for backend in backends:
                     if instance["generator"]["kind"] not in backend["kinds"]:
                         continue
@@ -342,6 +352,15 @@ class ReferenceCollection:
                                 "seed": seed,
                                 "seconds": phase["seconds"],
                                 "threads": backend.get("threads", 1),
+                                "purpose": phase.get("purpose", "reference"),
+                                "skip_if_proven": phase.get(
+                                    "skip_if_proven",
+                                    phase.get("purpose") != "calibration",
+                                ),
+                                "use_warm_start": phase.get(
+                                    "use_warm_start",
+                                    phase.get("purpose") != "calibration",
+                                ),
                             }
                         )
         manifest = {
@@ -483,7 +502,8 @@ class ReferenceCollection:
             for path in sorted((ROOT / "pitbench").rglob("*"))
             if path.is_file()
             and "__pycache__" not in path.parts
-            and path.suffix != ".pyc"
+            and path.suffix not in {".pyc", ".log"}
+            and not path.is_symlink()
         }
         revision = hashlib.sha256(
             json.dumps(current_hashes, sort_keys=True).encode()
@@ -496,7 +516,7 @@ class ReferenceCollection:
                 shutil.copytree(
                     ROOT / "pitbench",
                     snapshot / "pitbench",
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.log"),
                 )
                 write_json(
                     snapshot / "provenance.json",
@@ -547,12 +567,19 @@ class ReferenceCollection:
                     if best_file.exists()
                     else None
                 )
-            if (best and best["proven_optimal"]) or (output / "STOP").exists():
+            skip_proven = (
+                best
+                and best["proven_optimal"]
+                and job.get(
+                    "skip_if_proven", job.get("purpose", "reference") != "calibration"
+                )
+            )
+            if skip_proven or (output / "STOP").exists():
                 result = {
                     "job_id": job["id"],
                     "instance": job["instance"]["id"],
                     "execution_status": "skipped_proven_optimal"
-                    if best and best["proven_optimal"]
+                    if skip_proven
                     else "stopped_before_start",
                     "proof_reference": best,
                     "cpus": cpus,
@@ -563,7 +590,13 @@ class ReferenceCollection:
                     **job,
                     "cpus": cpus,
                     "directory": str(directory),
-                    "warm_start": best["solution"] if best else None,
+                    "warm_start": best["solution"]
+                    if best
+                    and job.get(
+                        "use_warm_start",
+                        job.get("purpose", "reference") != "calibration",
+                    )
+                    else None,
                     "code_revision": revision,
                     "host_id": manifest.get("host_id"),
                 }
@@ -582,6 +615,10 @@ class ReferenceCollection:
                     "MKL_NUM_THREADS": "1",
                     "MPLCONFIGDIR": str(output / "matplotlib"),
                 }
+                if job["backend"].get("python_path"):
+                    environment["PYTHONPATH"] = (
+                        job["backend"]["python_path"] + os.pathsep + str(snapshot)
+                    )
                 result = run_collection_process(
                     command,
                     directory,

@@ -1,0 +1,276 @@
+schema_version: '1.0'
+physical_cores: 32
+schedule_seed: 20261101
+watchdog_grace_sec: 120
+seeds:
+- 0
+manifests:
+- gushengda/experiments/generalization/difficulty-v2/populations-v4/population-construction.json
+prior_references: []
+backends:
+- name: native
+  threads: 1
+  kinds:
+  - euclidean_cvrp
+  max_exact_customers: 12
+  max_exact_time_window_customers: 6
+- name: cbc_v2_10_12
+  driver: native_mip_cli
+  solver_driver: cbc
+  binary: .pitbench/remote/performance-binaries/release_cbc_v2_10_12/run
+  source_commit: 782d275a8efa569eb818551561b424948e19653c
+  original_binary_sha256: d85a7b81da6e0f96fb1cf06635872e29595a8c6d8178069671757973496121f6
+  threads: 1
+  kinds: &id001
+  - multidimensional_knapsack_mps
+  - random_set_covering_mip
+  - independent_set_mip
+  - facility_location_mip
+  - fixed_charge_flow_mip
+- name: cbc_v2_10_13
+  driver: native_mip_cli
+  solver_driver: cbc
+  binary: .pitbench/remote/performance-binaries/release_cbc_v2_10_13/run
+  source_commit: 8e898d0a4ab7bb5b202c2ebbf3f2d2c0823c1e9d
+  original_binary_sha256: 48d869bca08459647bef7772bffdc2223ba32dddd9436eae472fb64d62d0182b
+  threads: 1
+  kinds: *id001
+- name: scip_v10_0_3
+  driver: native_mip_cli
+  solver_driver: scip
+  binary: .pitbench/remote/performance-binaries/release_scip_v10_0_3/run
+  source_commit: d409edf9f6f25aeab3b849c125826848299953c3
+  original_binary_sha256: d8e63299ed1d145bde38badf2c3e707f9ea27dc74d71d3b36e88ecbae64d7c61
+  threads: 1
+  kinds: *id001
+- name: scip_v10_1_0
+  driver: native_mip_cli
+  solver_driver: scip
+  binary: .pitbench/remote/performance-binaries/release_scip_v10_1_0/run
+  source_commit: c8e5737a847219d2811f7dfbd7cc6aa5b96df684
+  original_binary_sha256: e6196d2fb3a13f7ebd7997aa896e2d68cf5a4e238d1c1082ffa451c6e113803a
+  threads: 1
+  kinds: *id001
+- name: highs
+  package: highspy
+  package_version: 1.15.1
+  threads: 1
+  kinds: *id001
+- name: pyvrp
+  package: pyvrp
+  package_version: 0.14.1
+  threads: 1
+  checkpoint_sec: 300
+  kinds:
+  - euclidean_cvrp
+- name: pyvrp_v0_13_4
+  driver: pyvrp
+  package: pyvrp
+  package_version: 0.13.4
+  isolated_package: true
+  threads: 1
+  checkpoint_sec: 300
+  kinds:
+  - euclidean_cvrp
+phases:
+- name: tiny-exact-targets
+  purpose: reference
+  seconds: 10
+  seeds:
+  - 0
+  backends:
+  - native
+  condition_ids:
+  - cvrp_uniform_6
+  - cvrp_uniform_12
+  - cvrp_clustered_6
+  - cvrp_clustered_12
+  - cvrp_mixed_6
+  - cvrp_mixed_12
+  - vrptw_slack20_6
+  - vrptw_slack100_6
+  - vrptw_slack500_6
+  skip_if_proven: true
+  use_warm_start: false
+- name: cbc-probe-0p1
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 0.1
+  seeds:
+  - 1
+  backends: &id002
+  - cbc_v2_10_12
+  - cbc_v2_10_13
+  skip_if_proven: false
+  use_warm_start: false
+- name: scip-probe-0p1
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 0.1
+  seeds:
+  - 0
+  backends: &id003
+  - scip_v10_0_3
+  - scip_v10_1_0
+  skip_if_proven: false
+  use_warm_start: false
+- name: routing-probe-0p1
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 0.1
+  seeds:
+  - 0
+  backends:
+  - pyvrp
+  - pyvrp_v0_13_4
+  skip_if_proven: false
+  use_warm_start: false
+- name: cbc-probe-1
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 1
+  seeds:
+  - 1
+  backends: *id002
+  skip_if_proven: false
+  use_warm_start: false
+- name: scip-probe-1
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 1
+  seeds:
+  - 0
+  backends: *id003
+  skip_if_proven: false
+  use_warm_start: false
+- name: routing-probe-1
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 1
+  seeds:
+  - 0
+  backends:
+  - pyvrp
+  - pyvrp_v0_13_4
+  skip_if_proven: false
+  use_warm_start: false
+- name: cbc-probe-5
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 5
+  seeds:
+  - 1
+  backends: *id002
+  skip_if_proven: false
+  use_warm_start: false
+- name: scip-probe-5
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 5
+  seeds:
+  - 0
+  backends: *id003
+  skip_if_proven: false
+  use_warm_start: false
+- name: routing-probe-5
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 5
+  seeds:
+  - 0
+  backends:
+  - pyvrp
+  - pyvrp_v0_13_4
+  skip_if_proven: false
+  use_warm_start: false
+- name: cbc-probe-20
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 20
+  seeds:
+  - 1
+  backends: *id002
+  skip_if_proven: false
+  use_warm_start: false
+- name: scip-probe-20
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 20
+  seeds:
+  - 0
+  backends: *id003
+  skip_if_proven: false
+  use_warm_start: false
+- name: routing-probe-20
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 20
+  seeds:
+  - 0
+  backends:
+  - pyvrp
+  - pyvrp_v0_13_4
+  skip_if_proven: false
+  use_warm_start: false
+- name: cbc-probe-60
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 60
+  seeds:
+  - 1
+  backends: *id002
+  skip_if_proven: false
+  use_warm_start: false
+- name: scip-probe-60
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 60
+  seeds:
+  - 0
+  backends: *id003
+  skip_if_proven: false
+  use_warm_start: false
+- name: routing-probe-60
+  purpose: calibration
+  roles:
+  - protocol_calibration
+  seconds: 60
+  seeds:
+  - 0
+  backends:
+  - pyvrp
+  - pyvrp_v0_13_4
+  skip_if_proven: false
+  use_warm_start: false
+- name: independent-mip-reference
+  purpose: reference
+  seconds: 300
+  seeds:
+  - 0
+  backends:
+  - highs
+  skip_if_proven: false
+  use_warm_start: true
+- name: independent-routing-reference
+  purpose: reference
+  seconds: 300
+  seeds:
+  - 0
+  backends:
+  - pyvrp
+  skip_if_proven: true
+  use_warm_start: true

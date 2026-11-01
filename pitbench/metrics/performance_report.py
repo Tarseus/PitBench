@@ -818,8 +818,16 @@ def compute_panel_performance_reports(
                     and run.equivalence_parent_id is None
                 ],
             )
+        panel_task = task
+        if panel.performance_protocol is not None or panel.budgets_sec is not None:
+            panel_task = task.model_copy(deep=True)
+            if panel.performance_protocol is not None:
+                panel_task.evaluation.performance_protocol = panel.performance_protocol
+            if panel.budgets_sec is not None:
+                panel_task.evaluation.budgets_sec = panel.budgets_sec
+                panel_task.evaluation.primary_budget_sec = panel.primary_budget_sec
         reports[panel.name] = compute_task_performance_report(
-            rows, task=task, expected_run_grid=grid
+            rows, task=panel_task, expected_run_grid=grid
         )
     return reports
 

@@ -26,6 +26,224 @@ from pitbench.tasks import TaskCatalog
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_best_found_linear_reference_cannot_be_used_as_an_exact_solve_target(tmp_path):
+    import pytest
+
+    from pitbench.evaluator.judge import JudgePlan, _exact_target_verifier
+    from pitbench.evaluator.private_assets import PrivateAssetResolver
+    from pitbench.schema.task import InstanceSetSpec, PerformanceProtocol, PitBenchTask
+
+    instance = tmp_path / "cover.mps"
+    instance.write_text(
+        "NAME Cover\nROWS\n N OBJ\n G a\n G b\n G c\nCOLUMNS\n"
+        " x0 OBJ 1 a 1\n x0 b 1\n x1 OBJ 1 a 1\n x1 c 1\n x2 OBJ 1 b 1\n x2 c 1\n"
+        "RHS\n rhs a 1 b 1\n rhs c 1\nBOUNDS\n BV bd x0\n BV bd x1\n BV bd x2\nENDATA\n"
+    )
+    solution = tmp_path / "reference.json"
+    solution.write_text(
+        json.dumps({"values": {"x0": 1, "x1": 1, "x2": 1}, "objective": 3})
+    )
+    record = TrustedOptimumRecord(
+        instance_set="scientific",
+        instance_id="cover",
+        instance_sha256=hashlib.sha256(instance.read_bytes()).hexdigest(),
+        target_kind="best_found",
+        problem_kind="linear_mip",
+        objective_sense="minimize",
+        optimal_objective=3,
+        reference_solution_uri="private://reference.json",
+        reference_solution_sha256=hashlib.sha256(solution.read_bytes()).hexdigest(),
+        optimality_basis={"kind": "feasible_search_reference"},
+        generation_provenance={},
+        verification_provenance="pitbench.problem_families.verification:TrustedOptimumFamily",
+    )
+    resolver = PrivateAssetResolver(tmp_path)
+    with pytest.raises(ValueError, match="not exact solved coverage"):
+        _exact_target_verifier(record, resolver)
+    verifier = _exact_target_verifier(
+        record,
+        resolver,
+        performance_protocol=PerformanceProtocol.HEURISTIC_FIXED_BUDGET,
+    )
+    assert verifier.verify(instance, solution).feasible
+    assert (
+        _public_verification(
+            {"problem_family": "mip"}, instance, tmp_path / "reference.output.json"
+        )["verification"]
+        == "no_solution"
+    )
+    public_output = tmp_path / "public.json"
+    public_output.with_suffix(".solution.json").write_text(solution.read_text())
+    checked = _public_verification({"problem_family": "mip"}, instance, public_output)
+    assert checked["verified_valid"] is True
+    assert checked["verified_objective"] == 3
+    forged = record.model_copy(update={"target_kind": "trusted_optimum"})
+    assert TrustedOptimumFamily(forged, solution)._check_oracle(instance) is not None
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/release_cbc_v2_10_12.yaml")
+    oracle_path = tmp_path / "oracle.yaml"
+    oracle_path.write_text(
+        yaml.safe_dump(
+            TrustedOptimumOracle(task_id=task.task_id, records=[record]).model_dump(
+                mode="json"
+            )
+        )
+    )
+    panel_path = tmp_path / "panel.yaml"
+    panel_path.write_text(
+        yaml.safe_dump(
+            {
+                "instances": [
+                    {"id": "cover", "uri": "private://cover.mps", "optimal_or_bks": 3}
+                ]
+            }
+        )
+    )
+    panel = InstanceSetSpec(
+        name="scientific",
+        kind="judge_shift",
+        instance_set_config="private://panel.yaml",
+        size=1,
+        performance_protocol="heuristic_fixed_budget",
+        budgets_sec=[60],
+        primary_budget_sec=60,
+    )
+    task.instance_sets = [task.instance_sets[0], panel]
+    task.oracle.source = "private://oracle.yaml"
+    task.oracle.source_sha256 = hashlib.sha256(oracle_path.read_bytes()).hexdigest()
+    plan = JudgePlan.from_instance_set_configs(
+        task, resolver, public_root=ROOT, evaluation_seeds=(1,)
+    )
+    assert len(plan.cases) == 1
+    assert plan.cases[0].budgets_sec == (60,)
+    task.instance_sets[-1] = panel.model_copy(update={"performance_protocol": None})
+    with pytest.raises(ValueError, match="exact target kind"):
+        JudgePlan.from_instance_set_configs(
+            task, resolver, public_root=ROOT, evaluation_seeds=(1,)
+        )
+
+
+def test_set_covering_has_an_independent_lower_bound_and_original_model_checks(
+    tmp_path,
+):
+    import itertools
+
+    from pitbench.instances.generate import prepare_trusted_optimum_oracle
+
+    generator = {
+        "kind": "set_covering_mip",
+        "count": 1,
+        "groups": [3],
+        "group_sizes": [2],
+        "extra_rows": [4],
+        "extra_row_density": 0.5,
+        "randomness": {"instance_seed": 7103},
+    }
+    payload = {"schema_version": "1.0", "visibility": "judge", "generator": generator}
+    instance = materialize_generated_instance_set(
+        payload, tmp_path / "instances", expected_visibility="judge"
+    )[0]
+    config = tmp_path / "generator.yaml"
+    config.write_text(yaml.safe_dump(payload))
+    private = tmp_path / "private"
+    oracle = prepare_trusted_optimum_oracle(
+        task_config_path=ROOT / "configs/tasks/release_cbc_v2_10_12.yaml",
+        instance_set_name="set_covering",
+        instance_set_config_path=config,
+        private_root=private,
+        output_path=private / "oracle.yaml",
+        reference_solution_dir=private / "solutions",
+        materialized_instances=[instance],
+    )
+    record = TrustedOptimumRecord.model_validate(oracle["records"][0])
+    reference = private / record.reference_solution_uri.removeprefix("private://")
+    verifier = TrustedOptimumFamily(record, reference)
+    assert record.problem_kind == "set_covering"
+    assert record.optimal_objective == 3
+    assert verifier._check_oracle(instance) is None
+    assert verifier.verify(instance, reference).feasible
+    objectives = []
+    for assignment in itertools.product((0, 1), repeat=6):
+        solution = {
+            "values": {f"x{i}": value for i, value in enumerate(assignment)},
+            "objective": sum(assignment),
+        }
+        checked = MIPFamily._verify_numeric_model_solution(instance, solution)
+        if checked.feasible:
+            objectives.append(checked.objective)
+    assert min(objectives) == record.optimal_objective
+    invalid = tmp_path / "fractional.json"
+    invalid.write_text(
+        json.dumps({"values": {f"x{i}": 0.5 for i in range(6)}, "objective": 3})
+    )
+    assert not verifier.verify(instance, invalid).feasible
+    fake = record.model_copy(deep=True)
+    fake.optimality_basis["groups"][1][0] = fake.optimality_basis["groups"][0][0]
+    assert TrustedOptimumFamily(fake, reference)._check_oracle(instance) is not None
+    fake = record.model_copy(update={"optimal_objective": 2})
+    assert TrustedOptimumFamily(fake, reference)._check_oracle(instance) is not None
+
+
+def test_sparse_weighted_knapsack_proof_is_checked_against_original_coefficients(
+    tmp_path,
+):
+    from pitbench.instances.generate import (
+        _knapsack_optimum_basis,
+        multidimensional_knapsack_data,
+    )
+
+    generator = {
+        "kind": "multidimensional_knapsack_mip",
+        "count": 1,
+        "items": [14],
+        "dimensions": [3],
+        "weight_max": 20,
+        "nonzero_density": 0.4,
+        "selected_fraction": 0.3,
+        "profit_mode": "weighted_sum",
+        "profit_row_weight_base": 3,
+        "randomness": {"instance_seed": 9831},
+    }
+    instance = materialize_generated_instance_set(
+        {"visibility": "judge", "generator": generator},
+        tmp_path / "instances",
+        expected_visibility="judge",
+        stem_prefix="judge_id",
+    )[0]
+    weights, capacities, selected = multidimensional_knapsack_data(generator, 0)
+    target, basis = _knapsack_optimum_basis(generator, weights, capacities)
+    reference = tmp_path / "reference.json"
+    reference.write_text(json.dumps({"selected_items": selected}))
+    record = TrustedOptimumRecord(
+        instance_set="judge_id",
+        instance_id=instance.stem,
+        instance_sha256=hashlib.sha256(instance.read_bytes()).hexdigest(),
+        problem_kind="multidimensional_knapsack",
+        objective_sense="minimize",
+        optimal_objective=target,
+        reference_solution_uri="private://reference.json",
+        reference_solution_sha256=hashlib.sha256(reference.read_bytes()).hexdigest(),
+        optimality_basis=basis,
+        generation_provenance={},
+        verification_provenance="pitbench.problem_families.verification:TrustedOptimumFamily",
+    )
+    verifier = TrustedOptimumFamily(record, reference)
+    assert verifier._check_oracle(instance) is None
+    assert len(selected) == 4
+    solution = tmp_path / "candidate.json"
+    solution.write_text(
+        json.dumps(
+            {
+                "values": {f"x{i}": int(i in selected) for i in range(14)},
+                "objective": target,
+            }
+        )
+    )
+    assert verifier.verify(instance, solution).feasible
+    bad = record.model_copy(deep=True)
+    bad.optimality_basis["row_multipliers"][0] += 1
+    assert TrustedOptimumFamily(bad, reference)._check_oracle(instance) is not None
+
+
 def test_binary_clique_cover_mip_has_a_hash_bound_optimality_proof(
     tmp_path: Path,
 ) -> None:
@@ -209,12 +427,16 @@ def test_binary_clique_cover_fme_extension_keeps_a_checkable_optimum(
             }
         }
     )
-    assert TrustedOptimumFamily(bad_record, reference_path)._check_oracle(
-        instance
-    ).infrastructure_error
+    assert (
+        TrustedOptimumFamily(bad_record, reference_path)
+        ._check_oracle(instance)
+        .infrastructure_error
+    )
 
 
-def test_binary_clique_cover_geometric_edge_sampler_is_seeded_and_respects_witness() -> None:
+def test_binary_clique_cover_geometric_edge_sampler_is_seeded_and_respects_witness() -> (
+    None
+):
     generator = {
         "kind": "binary_clique_cover_mip",
         "count": 1,
@@ -233,13 +455,13 @@ def test_binary_clique_cover_geometric_edge_sampler_is_seeded_and_respects_witne
         for group_index, group in enumerate(groups)
         for column in group
     }
-    witness = {
-        group[selected] for group, selected in zip(groups, planted, strict=True)
-    }
+    witness = {group[selected] for group, selected in zip(groups, planted, strict=True)}
 
     assert repeated == (groups, planted, edges)
     assert edges
-    assert all(group_by_column[first] != group_by_column[second] for first, second in edges)
+    assert all(
+        group_by_column[first] != group_by_column[second] for first, second in edges
+    )
     assert all(not (first in witness and second in witness) for first, second in edges)
 
 

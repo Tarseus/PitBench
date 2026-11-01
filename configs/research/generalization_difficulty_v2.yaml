@@ -1,0 +1,76 @@
+schema_version: '1.0'
+scope: Difficulty calibration and solve-budget selection; does not certify Agent improvement.
+specification: configs/research/generalization_generation_v2.yaml
+development_exposure_audit: gushengda/experiments/generalization/difficulty-v2/design-audit-v2.json
+budget_grid_sec:
+- 0.1
+- 1
+- 5
+- 20
+- 60
+discovery_replicates:
+- 0
+- 1
+- 2
+- 3
+- 4
+qualification_replicates:
+- 5
+- 6
+- 7
+- 8
+- 9
+budget_selection_quantile: 0.9
+routing_target_relative_gap: 0.01
+selection_seed_by_backend:
+  cbc_v2_10_12: 1
+  cbc_v2_10_13: 1
+  scip_v10_0_3: 0
+  scip_v10_1_0: 0
+  pyvrp: 0
+  pyvrp_v0_13_4: 0
+seed_policy_note: CBC randomSeed=0 selects time-of-day randomness. Retain seed-zero
+  pilot as non-reproducible diagnostics; use explicit positive-seed confirmation for
+  budget selection.
+tier_by_first_hit_budget:
+  '0.1': regression
+  '1': short
+  '5': medium
+  '20': long
+  '60': long
+no_hit_tier: censored_challenge
+selection_rule: Select the first declared grid budget hitting the required target
+  on at least the declared quantile of discovery instances. Never fit budgets from
+  hidden test outcomes. At the largest grid point, retain censored strata explicitly
+  rather than dropping them.
+qualification_rule: Apply the selected discovery budget once to the disjoint qualification
+  instances; report hit and failure counts without refitting.
+target_rule: 'MIP: independently checked optimum with an optimal solver return. Routing:
+  independently checked feasible reference with the declared relative gap, without
+  claiming optimality.'
+failure_rule: Retain process errors, watchdog timeouts, false infeasibility, invalid
+  witnesses and missing runs separately. A solver-origin time limit is not a collector
+  error.
+historical_contract: Historical budgets, seeds, thresholds and primary metrics remain
+  unchanged; new per-stratum budgets apply only to the new diagnostic population.
+backend_problem_family:
+  cbc_v2_10_12: mip
+  cbc_v2_10_13: mip
+  scip_v10_0_3: mip
+  scip_v10_1_0: mip
+  pyvrp: cvrp
+  pyvrp_v0_13_4: cvrp
+backend_by_task:
+  release_cbc_v2_10_12: cbc_v2_10_12
+  release_cbc_v2_10_13: cbc_v2_10_13
+  release_scip_v10_0_3: scip_v10_0_3
+  release_scip_v10_1_0: scip_v10_1_0
+  release_pyvrp_v0_13_4: pyvrp_v0_13_4
+  release_pyvrp_v0_14_1: pyvrp
+budget_reporting_regimes:
+- shared original primary budget for controlled comparisons across scale
+- calibration-selected per-stratum budget, reported separately
+calibration_objective_tolerance: 1.0e-06
+tolerance_scope: Original-model verifier precision for calibration target matching
+  only. Frozen exact verified-solve equality, native CI and historical scores are
+  unchanged.

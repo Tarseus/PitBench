@@ -166,6 +166,7 @@ def compute_resource_reports(
     expected_seed_count: int = 30,
     budgets_sec: Sequence[float] | None = None,
     expected_instance_counts: Mapping[str, int] | None = None,
+    budgets_by_instance_set: Mapping[str, Sequence[float]] | None = None,
 ) -> tuple[ResourceReport, ResourceDetails]:
     """Return a public aggregate and private per-instance resource details.
 
@@ -195,7 +196,11 @@ def compute_resource_reports(
         not math.isfinite(value) or value <= 0 for value in budgets
     ):
         raise ValueError("primary budget must belong to positive finite report budgets")
-    if any(item.budget_sec not in budgets for item in selected):
+    if any(
+        item.budget_sec
+        not in (budgets_by_instance_set or {}).get(item.instance_set, budgets)
+        for item in selected
+    ):
         raise ValueError("observations contain an undeclared budget")
     keyed = {}
     instance_sets: dict[str, set[str]] = defaultdict(set)
@@ -228,7 +233,12 @@ def compute_resource_reports(
     for instance_set, instance_ids in sorted(instance_sets.items()):
         aggregate_budgets = {}
         detailed_budgets = {}
-        for budget in budgets:
+        panel_budgets = list((budgets_by_instance_set or {}).get(instance_set, budgets))
+        if not panel_budgets or any(
+            not math.isfinite(t) or t <= 0 for t in panel_budgets
+        ):
+            raise ValueError("panel resource budgets must be positive and finite")
+        for budget in panel_budgets:
             instances = []
             for instance_id in sorted(instance_ids):
                 seeds = sorted(seeds_by_instance[(instance_set, instance_id)])

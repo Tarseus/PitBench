@@ -57,10 +57,17 @@ def compute_task_seed_robustness_report(
         evaluation_seeds = planned_seeds
     elif set(evaluation_seeds) != set(planned_seeds):
         raise ValueError("saved seed list differs from the expected run grid")
+    supplemental = {
+        panel.name: panel
+        for panel in task.instance_sets
+        if panel.performance_protocol is not None or panel.budgets_sec is not None
+    }
     original = [
         row
         for row in observations
-        if row.test_suite is None and row.equivalence_parent_id is None
+        if row.test_suite is None
+        and row.equivalence_parent_id is None
+        and row.instance_set not in supplemental
     ]
     kwargs = dict(
         task_id=task.task_id,
@@ -73,10 +80,36 @@ def compute_task_seed_robustness_report(
         evaluation_seeds=evaluation_seeds,
     )
     if task.evaluation.performance_protocol is PerformanceProtocol.EXACT_VERIFIED_SOLVE:
-        return compute_exact_seed_robustness_report(
+        report = compute_exact_seed_robustness_report(
             original, time_basis=task.evaluation.exact_time_basis, **kwargs
         )
-    return compute_seed_robustness_report(original, **kwargs)
+    else:
+        report = compute_seed_robustness_report(original, **kwargs)
+    for name, panel in supplemental.items():
+        panel_task = task.model_copy(deep=True)
+        panel_task.instance_sets = []
+        if panel.performance_protocol is not None:
+            panel_task.evaluation.performance_protocol = panel.performance_protocol
+        if panel.budgets_sec is not None:
+            panel_task.evaluation.budgets_sec = panel.budgets_sec
+            panel_task.evaluation.primary_budget_sec = panel.primary_budget_sec
+        panel_grid = expected_run_grid.model_copy(
+            update={
+                "runs": [
+                    row for row in expected_run_grid.runs if row.instance_set == name
+                ]
+            }
+        )
+        if not panel_grid.runs:
+            continue
+        measured = compute_task_seed_robustness_report(
+            [row for row in observations if row.instance_set == name],
+            task=panel_task,
+            expected_run_grid=panel_grid,
+            evaluation_seeds=evaluation_seeds,
+        )
+        report.supplemental_by_instance_set[name] = measured.model_dump(mode="json")
+    return report
 
 
 class SeedSelectionMetadata(BaseModel):
@@ -128,6 +161,7 @@ class SeedRobustnessReport(BaseModel):
     budgets_sec: list[float]
     seed_selection: SeedSelectionMetadata
     by_instance_set: dict[str, InstanceSetSeedRobustness]
+    supplemental_by_instance_set: dict[str, dict] = Field(default_factory=dict)
 
 
 class ExactSeedInstanceResult(BaseModel):
@@ -182,6 +216,7 @@ class ExactSeedRobustnessReport(BaseModel):
     budgets_sec: list[float]
     seed_selection: SeedSelectionMetadata
     by_instance_set: dict[str, ExactInstanceSetSeedRobustness]
+    supplemental_by_instance_set: dict[str, dict] = Field(default_factory=dict)
 
 
 def _exact_verified_optimal(observation: RunObservation | None) -> bool:

@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "status": "population_references_and_difficulty_calibrated",
+  "generation_specification": "configs/research/generalization_generation_v2.yaml",
+  "construction_receipt": "gushengda/experiments/generalization/difficulty-v2/populations-v4/population-construction.json",
+  "difficulty_protocol": "configs/research/generalization_difficulty_v2.yaml",
+  "splits": {
+    "diverse_development_v2": {
+      "visibility": "agent",
+      "manifest": "gushengda/experiments/generalization/difficulty-v2/populations-v4/diverse_development_v2/manifest.json"
+    },
+    "protocol_calibration": {
+      "visibility": "evaluator",
+      "manifest": "gushengda/experiments/generalization/difficulty-v2/populations-v4/protocol_calibration/manifest.json"
+    },
+    "unseen_id": {
+      "visibility": "evaluator",
+      "manifest": "gushengda/experiments/generalization/difficulty-v2/populations-v4/unseen_id/manifest.json"
+    },
+    "unseen_joint": {
+      "visibility": "evaluator",
+      "manifest": "gushengda/experiments/generalization/difficulty-v2/populations-v4/unseen_joint/manifest.json"
+    },
+    "unseen_scale": {
+      "visibility": "evaluator",
+      "manifest": "gushengda/experiments/generalization/difficulty-v2/populations-v4/unseen_scale/manifest.json"
+    },
+    "unseen_structure": {
+      "visibility": "evaluator",
+      "manifest": "gushengda/experiments/generalization/difficulty-v2/populations-v4/unseen_structure/manifest.json"
+    }
+  },
+  "headroom_evidence": null,
+  "upstream_review_evidence": null,
+  "scoring_plan": null,
+  "scenario_bindings": {},
+  "historical_population": "configs/research/archive/generalization_populations.json",
+  "metrics_scope": "Original primary panels and native estimators retained; supplemental panels declare calibrated budgets and distinguish proven optimum from verified BKS. Full scenario/headroom qualification remains separate from data readiness.",
+  "data_ready": true,
+  "ready_for_agent_execution": false,
+  "reference_receipt": "private://research/generalization-difficulty-v2/final-references/references.json",
+  "reference_summary": "gushengda/experiments/generalization/difficulty-v2/reference-summary.json",
+  "difficulty_receipt": "gushengda/experiments/generalization/difficulty-v2/difficulty-final.json",
+  "difficulty_summary": "gushengda/experiments/generalization/difficulty-v2/difficulty-summary.json",
+  "execution_audit": "gushengda/experiments/generalization/difficulty-v2/execution-audit.json",
+  "data_audit": "gushengda/experiments/generalization/difficulty-v2/design-audit-v4.json",
+  "task_views": "gushengda/experiments/generalization/difficulty-v2/difficulty-v2-task-views/task-views.json",
+  "readiness_scope": "Data generation, independent solution checks, empirical difficulty and solve-budget calibration are complete. Scientific scenario/source-intervention qualification, final scoring protocol and90 Agent runs remain separate unfinished research work."
+}

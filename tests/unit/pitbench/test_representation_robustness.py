@@ -426,6 +426,28 @@ def test_mapping_preserves_all_edge_costs_demands_and_verified_route(
     assert instance["coordinates"][1] == [1, 1]
 
 
+def test_time_windows_reject_capacity_feasible_late_routes_and_survive_relabeling():
+    from pitbench.problem_families.public_verification import check_cvrp
+
+    model = {
+        "coordinates": [[0, 0], [1, 0], [2, 0]],
+        "demands": [0, 1, 1],
+        "capacity": 3,
+        "distance_metric": "EUC_2D",
+        "time_windows": [[0, 20], [0, 1], [2, 12]],
+        "service_times": [0, 2, 1],
+    }
+    assert check_cvrp(model, {"routes": [[1, 2]]})["feasible"]
+    assert not check_cvrp(model, {"routes": [[2, 1]]})["feasible"]
+    mapping = [0, 2, 1]
+    permuted = CustomerRepresentation.permute(model, mapping)
+    assert permuted["time_windows"] == [[0, 20], [2, 12], [0, 1]]
+    assert permuted["service_times"] == [0, 1, 2]
+    assert check_cvrp(permuted, {"routes": [[2, 1]]})["feasible"]
+    tight = {**model, "time_windows": [[0, 5], [0, 1], [2, 12]]}
+    assert not check_cvrp(tight, {"routes": [[1, 2]]})["feasible"]
+
+
 @pytest.mark.parametrize("mapping", [[1, 0, 2, 3], [0, 1, 1, 3]])
 def test_invalid_mapping_is_rejected(instance, mapping):
     with pytest.raises(ValueError, match="bijection"):

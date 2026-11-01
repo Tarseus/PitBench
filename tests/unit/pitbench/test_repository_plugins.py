@@ -31,6 +31,7 @@ from pitbench.repositories.plugins import (
     HighsRepositoryPlugin,
     PyVRPClassicRepositoryPlugin,
     PyVRPRepositoryPlugin,
+    ScipRepositoryPlugin,
 )
 from pitbench.solver_drivers.run import (
     CbcDriver,
@@ -43,6 +44,18 @@ from pitbench.solver_drivers.run import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_scip_basic_validation_selects_unit_tests_without_the_solve_regression_matrix():
+    commands = ScipRepositoryPlugin().build_commands(BuildKind.VALIDATION)
+    ctest = next(command for command in commands if command.argv[0] == "ctest")
+    assert ctest.argv[ctest.argv.index("-R") + 1] == "^unittest-"
+    assert "--no-tests=error" in ctest.argv
+    assert any(
+        "--show-only=json-v1" in " ".join(command.argv)
+        and "^unittest-" in " ".join(command.argv)
+        for command in commands
+    )
 
 
 def test_generated_java_tests_use_the_built_package_instead_of_a_newer_release(
@@ -438,6 +451,103 @@ def test_native_mip_solution_parser_restores_implicit_zeros(
     assert parsed == (-12, {"x0": 1, "x1": 0})
 
 
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Integer infeasible - objective value -2.5",
+        "Stopped on time (no integer solution - continuous used) - objective value -2.5",
+        "Unbounded - objective value -2.5",
+    ],
+)
+def test_cbc_relaxation_output_is_not_a_mip_incumbent(tmp_path, header):
+    solution = tmp_path / "solution.sol"
+    solution.write_text(header + "\n0 x0 0.5 -5\n")
+    assert CbcDriver._solution(solution, {"x0"}) is None
+    assert "infeasible" in CbcDriver._status(
+        "Pre-processing says infeasible or unbounded"
+    )
+
+
+@pytest.mark.parametrize("driver", [CbcDriver, ScipDriver])
+def test_native_mip_retains_a_verified_time_limit_incumbent_without_scoring_a_solve(
+    tmp_path, monkeypatch, driver
+):
+    from pitbench.metrics.performance_report import compute_exact_run_outcome
+    from pitbench.problem_families.verification import MIPFamily
+    from pitbench.schema.observation import RunObservation
+
+    instance = tmp_path / "cover.mps"
+    instance.write_text(
+        "NAME Cover\nROWS\n N OBJ\n G demand\nCOLUMNS\n"
+        " chooseA OBJ 1 demand 1\n chooseB OBJ 1 demand 1\n"
+        "RHS\n rhs demand 1\nBOUNDS\n BV bounds chooseA\n BV bounds chooseB\nENDATA\n"
+    )
+
+    def solve(argv, **kwargs):
+        if driver is CbcDriver:
+            solution = Path(argv[argv.index("-solution") + 1])
+            solution.write_text("Stopped on time - objective value 1\n0 chooseA 1 1\n")
+            log = "Result - Stopped on time limit\n"
+        else:
+            solution = Path(
+                next(
+                    arg for arg in argv if arg.startswith("write solution ")
+                ).removeprefix("write solution ")
+            )
+            solution.write_text(
+                "solution status: feasible solution found\nobjective value: 1\nchooseA 1\n"
+            )
+            log = "SCIP Status : solving was interrupted [time limit reached]\n"
+        return subprocess.CompletedProcess(argv, 0, log, "")
+
+    monkeypatch.setattr(subprocess, "run", solve)
+    output = tmp_path / "result.json"
+    driver.main(
+        [
+            "--solver",
+            "solver",
+            "--instance",
+            str(instance),
+            "--output",
+            str(output),
+            "--trajectory",
+            str(tmp_path / "trajectory.jsonl"),
+            "--seed",
+            "1",
+            "--budget",
+            "1",
+            "--threads",
+            "1",
+        ]
+    )
+    result = json.loads(output.read_text())
+    solution_path = output.with_suffix(".solution.json")
+    assert json.loads(solution_path.read_text())["values"] == {
+        "chooseA": 1,
+        "chooseB": 0,
+    }
+    assert result["has_solution"] is True
+    assert MIPFamily().verify(instance, solution_path).feasible
+    observed = RunObservation(
+        task_id="fixture",
+        code_state="base",
+        instance_set="judge_id",
+        instance_set_kind="judge_id",
+        instance_id="cover",
+        solver_seed=1,
+        budget_sec=1,
+        status="completed",
+        valid=True,
+        objective=1,
+        reported_objective=1,
+        optimal_or_bks=1,
+        solver_termination=result["solver_termination"],
+    )
+    outcome = compute_exact_run_outcome(observed)
+    assert outcome.solved is False
+    assert outcome.penalized_runtime_sec == 2
+
+
 def test_choco_driver_uses_python3() -> None:
     assert ChocoRepositoryPlugin().driver_python == "python3"
 
@@ -705,6 +815,38 @@ def test_vrplib_uses_declared_euc_2d_semantics(tmp_path) -> None:
     assert "EDGE_WEIGHT_TYPE : EUC_2D" in path.read_text()
 
 
+def test_euc_2d_half_distances_match_the_independent_verifier():
+    import numpy as np
+
+    from pitbench.problem_families.public_verification import edge_cost
+
+    values = np.array([0.5, 1.5, 2.5, 3.5])
+    rounded = PyVRPDriver.round_euc_2d(values)
+    assert (
+        rounded.tolist()
+        == [
+            edge_cost([[0, 0], [float(distance), 0]], 0, 1, "EUC_2D")
+            for distance in values
+        ]
+        == [1, 2, 3, 4]
+    )
+
+
+@pytest.mark.external
+def test_pyvrp_loader_preserves_exact_half_distance_semantics(tmp_path):
+    pyvrp = pytest.importorskip("pyvrp")
+    instance = {
+        "coordinates": [[0, 0], [0.5, 0], [1.5, 0]],
+        "demands": [0, 1, 1],
+        "capacity": 2,
+        "distance_metric": "EUC_2D",
+    }
+    path = tmp_path / "half.vrp"
+    PyVRPDriver._vrplib(instance, path)
+    data = pyvrp.read(path, round_func=PyVRPDriver.round_euc_2d)
+    assert data.distance_matrix(0).tolist() == [[0, 1, 2], [1, 0, 1], [2, 1, 0]]
+
+
 def test_vrplib_rejects_incompatible_declared_distance_semantics(tmp_path) -> None:
     instance = {
         "coordinates": [[0, 0], [1, 1]],
@@ -754,11 +896,12 @@ def test_pyvrp_builds_and_runs_in_per_workspace_virtual_environments(
     assert validation[3].env["PYTHONPATH"] == ".pitbench-metadata"
     assert validation[3].env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
     assert "--no-build-isolation" in performance[1].argv
-    assert validation[3].argv[-5:] == [
+    assert validation[3].argv[-6:] == [
         "-o",
         "addopts=",
         "tests",
         "--ignore=tests/plotting",
+        "--junitxml=.pitbench-upstream-tests.xml",
         "--deselect=tests/search/test_LocalSearch.py::test_debug_operator_logs",
     ]
     assert run.argv[0] == ".pitbench-venv/bin/python"

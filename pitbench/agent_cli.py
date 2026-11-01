@@ -334,23 +334,27 @@ def _public_verification(
     if not solution_path.is_file():
         return {"verification": "no_solution", "verified_valid": False}
     family = config["problem_family"]
-    if family == "mip" and instance.suffix.lower() == ".lp":
+    if family == "mip" and instance.suffix.lower() in {".lp", ".mps"}:
         known_hashes = {
             item.get("sha256")
             for item in config.get("development_targets", {}).values()
         }
-        if _sha256(instance) not in known_hashes:
+        if instance.suffix.lower() == ".lp" and _sha256(instance) not in known_hashes:
             return {"verification": "unavailable", "verified_valid": None}
         from pitbench.problem_families.verification import (
             MIPFamily,
-            _public_multidimensional_knapsack_data,
+            _public_multidimensional_knapsack_model,
             _public_scheduling_processing_times,
+            _read_mps_numeric_model,
         )
 
-        if (
-            _public_scheduling_processing_times(instance) is None
-            and _public_multidimensional_knapsack_data(instance) is None
-        ):
+        supported = (
+            _read_mps_numeric_model(instance) is not None
+            if instance.suffix.lower() == ".mps"
+            else _public_scheduling_processing_times(instance) is not None
+            or _public_multidimensional_knapsack_model(instance) is not None
+        )
+        if not supported:
             return {"verification": "unavailable", "verified_valid": None}
         checked = MIPFamily().verify(instance, solution_path)
         return {

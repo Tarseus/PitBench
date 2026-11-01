@@ -1,0 +1,94 @@
+schema_version: '1.0'
+source_campaign: gushengda/experiments/generalization/difficulty-v2/campaign
+inventory_file: .pitbench/remote/inventory.json
+credentials_file: .pitbench/remote/credentials.json
+known_hosts_file: .pitbench/remote/known_hosts
+proxy_jump: g52
+expected_hosts: 8
+cpu_fraction: 0.25
+max_physical_cores_per_host: 32
+deployment_workers: 4
+sync_interval_sec: 30
+stale_heartbeat_sec: 180
+python_runtime: .pitbench/remote/python
+wheels: .pitbench/remote/wheels
+requirements: gushengda/experiments/generalization/difficulty-v2/environment.txt
+group_by_instance: true
+resource_guard:
+  max_load1: 96
+  max_temperature_celsius: 85
+  min_memory_available_gib: 16
+  min_disk_free_gib: 4
+native_builds:
+  cbc_v2_10_12:
+    prebuilt: .pitbench/remote/performance-binaries/release_cbc_v2_10_12
+    executable: run
+    artifact_files:
+      run: 31458609256e4585831c76f44296c1e3ac6f4fe4733643ce0b8639cd31afa0d0
+      solver: d85a7b81da6e0f96fb1cf06635872e29595a8c6d8178069671757973496121f6
+      lib/libCoinUtils.so.3: c928026bd431dfc82c31b091950b0df7f65b13551f9a0ed4a6141fc65a8171d7
+      lib/libClp.so.1: 4bc462df65eeeda4af128e16ab80b2f82efa92142a50aa5e860472116a8052c3
+      lib/libc.so.6: 3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf
+      lib/ld-linux-x86-64.so.2: c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da
+      lib/libblas.so.3: e748efcae5753fe4a652877fccdb5895ac6f7605668a2db878b19c914e78e3a8
+      lib/libz.so.1: f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242
+      lib/liblapack.so.3: 851bb1fc5833ede9ed704b4417a251a899976d5e0915de40452615187a65278f
+      lib/libgcc_s.so.1: d93224d2b0dab4247598be683adca02f5cf00586f99c187579cd7e92058fb7cb
+      lib/libCgl.so.1: f739b6a1c8f84c1a6756bb4f06a7d0cf2c0857d6c3db8793a3509e8eb309c349
+      lib/libm.so.6: fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0
+      lib/libbz2.so.1.0: cc08c9f50a8009ffd6391e0116a100369b11ca9238fa52392c019e6645b122a1
+      lib/libgfortran.so.5: 342618ccfebe840446e4ef2b7893f4161b2084845e570f42d68a70bfde58a58d
+      lib/libstdc++.so.6: 1fd75fe70354a416d75aef22bcae68c47bd25d20e2d0568c30b1a9838cf62f11
+      lib/libOsi.so.1: 18dbabddc710f423bc8fd77da32f0ec0dfefef83509eaaa44ab4e7477e1cea4a
+      lib/libOsiClp.so.1: 712c6087635b6226678e42cd8285b3fa6db4f1e0ff670827263878f15ba66430
+  cbc_v2_10_13:
+    prebuilt: .pitbench/remote/performance-binaries/release_cbc_v2_10_13
+    executable: run
+    artifact_files:
+      run: 31458609256e4585831c76f44296c1e3ac6f4fe4733643ce0b8639cd31afa0d0
+      solver: 48d869bca08459647bef7772bffdc2223ba32dddd9436eae472fb64d62d0182b
+      lib/libCoinUtils.so.3: c928026bd431dfc82c31b091950b0df7f65b13551f9a0ed4a6141fc65a8171d7
+      lib/libClp.so.1: 4bc462df65eeeda4af128e16ab80b2f82efa92142a50aa5e860472116a8052c3
+      lib/libc.so.6: 3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf
+      lib/ld-linux-x86-64.so.2: c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da
+      lib/libblas.so.3: e748efcae5753fe4a652877fccdb5895ac6f7605668a2db878b19c914e78e3a8
+      lib/libz.so.1: f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242
+      lib/liblapack.so.3: 851bb1fc5833ede9ed704b4417a251a899976d5e0915de40452615187a65278f
+      lib/libgcc_s.so.1: d93224d2b0dab4247598be683adca02f5cf00586f99c187579cd7e92058fb7cb
+      lib/libCgl.so.1: f739b6a1c8f84c1a6756bb4f06a7d0cf2c0857d6c3db8793a3509e8eb309c349
+      lib/libm.so.6: fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0
+      lib/libbz2.so.1.0: cc08c9f50a8009ffd6391e0116a100369b11ca9238fa52392c019e6645b122a1
+      lib/libgfortran.so.5: 342618ccfebe840446e4ef2b7893f4161b2084845e570f42d68a70bfde58a58d
+      lib/libstdc++.so.6: 1fd75fe70354a416d75aef22bcae68c47bd25d20e2d0568c30b1a9838cf62f11
+      lib/libOsi.so.1: 18dbabddc710f423bc8fd77da32f0ec0dfefef83509eaaa44ab4e7477e1cea4a
+      lib/libOsiClp.so.1: 712c6087635b6226678e42cd8285b3fa6db4f1e0ff670827263878f15ba66430
+  scip_v10_0_3:
+    prebuilt: .pitbench/remote/performance-binaries/release_scip_v10_0_3
+    executable: run
+    artifact_files:
+      run: 31458609256e4585831c76f44296c1e3ac6f4fe4733643ce0b8639cd31afa0d0
+      solver: d8e63299ed1d145bde38badf2c3e707f9ea27dc74d71d3b36e88ecbae64d7c61
+      lib/libc.so.6: 3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf
+      lib/ld-linux-x86-64.so.2: c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da
+      lib/libz.so.1: f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242
+      lib/libgmp.so.10: 0ccdfb6d6f5c039465f6d002cf7e4c072d48ac6a2cffc8dd6c748dec31592804
+      lib/libgcc_s.so.1: d93224d2b0dab4247598be683adca02f5cf00586f99c187579cd7e92058fb7cb
+      lib/libtinfo.so.6: e6089d7bb95eee5b545f3770dd69095b0bca47d26701cad145af429561d16306
+      lib/libm.so.6: fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0
+      lib/libstdc++.so.6: 1fd75fe70354a416d75aef22bcae68c47bd25d20e2d0568c30b1a9838cf62f11
+      lib/libreadline.so.8: 0a079f958147699f7bb5bf228406a5d878dc2387fe9cdc5cce6f3e35e20380fc
+  scip_v10_1_0:
+    prebuilt: .pitbench/remote/performance-binaries/release_scip_v10_1_0
+    executable: run
+    artifact_files:
+      run: 31458609256e4585831c76f44296c1e3ac6f4fe4733643ce0b8639cd31afa0d0
+      solver: e6196d2fb3a13f7ebd7997aa896e2d68cf5a4e238d1c1082ffa451c6e113803a
+      lib/libc.so.6: 3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf
+      lib/ld-linux-x86-64.so.2: c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da
+      lib/libz.so.1: f61677c7bdb7c2aa2a243ea781bfd16afcb361cede7b4ef76127a9d8eb9a5242
+      lib/libgmp.so.10: 0ccdfb6d6f5c039465f6d002cf7e4c072d48ac6a2cffc8dd6c748dec31592804
+      lib/libgcc_s.so.1: d93224d2b0dab4247598be683adca02f5cf00586f99c187579cd7e92058fb7cb
+      lib/libtinfo.so.6: e6089d7bb95eee5b545f3770dd69095b0bca47d26701cad145af429561d16306
+      lib/libm.so.6: fce00b6f25f459cf4ae0b7fae4257909a1a8a86f9149e7c029a5d617baf1ccd0
+      lib/libstdc++.so.6: 1fd75fe70354a416d75aef22bcae68c47bd25d20e2d0568c30b1a9838cf62f11
+      lib/libreadline.so.8: 0a079f958147699f7bb5bf228406a5d878dc2387fe9cdc5cce6f3e35e20380fc

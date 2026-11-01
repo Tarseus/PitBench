@@ -59,6 +59,31 @@ def _metric_scenario_checks(context) -> list:
 
         path = resolve_repository_path(context.repository_root, configured)
         config = yaml.safe_load(path.read_text())
+        if config.get("source_build"):
+            recipe = config["source_build"]
+            plugin = RepositoryPluginRegistry.load(task.repository.plugin)
+            if (
+                recipe.get("source_commit") != task.release.base_commit
+                or recipe.get("repository_plugin") != task.repository.plugin
+                or recipe.get("session_plugin") != plugin.scenario_session_plugin
+                or recipe.get("from_evaluation_repository") is not True
+            ):
+                raise ValueError(
+                    "automatic scenario source-build recipe differs from the task"
+                )
+            if not plugin.scenario_build_commands(
+                adapter_source=context.repository_root
+                / "adapters/cpp/ScenarioSession.cpp",
+                source_commit=task.release.base_commit,
+            ):
+                raise ValueError("repository has no source-bound scenario build path")
+            return [
+                _check(
+                    CheckStatus.PASS,
+                    "metric scenario configuration",
+                    f"{len(task.metric_scenarios)} frozen protocols; Base/candidate APIs will be built from the selected source patch before hidden collection",
+                )
+            ]
         cpus = config["cpus"]
         if (
             not cpus
@@ -1427,7 +1452,14 @@ def evaluation_checks(
     try:
         for task_id in task_ids:
             try:
-                record = catalog.validate_one(task_id)
+                configured = config.resources_for(task_id).task_config_path
+                record = (
+                    catalog.validate_file(
+                        resolve_repository_path(repository_root, configured)
+                    )
+                    if configured
+                    else catalog.validate_one(task_id)
+                )
             except ValueError as error:
                 checks.append(_check(CheckStatus.FAIL, task_id, str(error)))
                 continue

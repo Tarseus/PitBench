@@ -8,6 +8,25 @@ from pitbench.evaluator.docker_judge import DockerJudge
 from pitbench.evaluator.private_assets import PrivateAssetError, PrivateAssetResolver
 
 
+def test_new_private_assets_use_the_configured_storage_namespace(tmp_path):
+    namespace = tmp_path / "private"
+    storage = tmp_path / "organized/private"
+    namespace.mkdir()
+    storage.mkdir(parents=True)
+    (namespace / ".asset-root").symlink_to(storage, target_is_directory=True)
+    resolver = PrivateAssetResolver(namespace)
+    assert (
+        resolver.destination_path(namespace / "research/new.json")
+        == storage / "research/new.json"
+    )
+    assert (
+        resolver.destination_path(storage / "research/new.json")
+        == storage / "research/new.json"
+    )
+    with pytest.raises(PrivateAssetError, match="escapes"):
+        resolver.destination_path(tmp_path / "elsewhere/new.json")
+
+
 def test_relocated_private_namespace_resolves_and_mounts_real_assets(tmp_path: Path):
     namespace = tmp_path / "private"
     storage = tmp_path / "organized" / "private"
