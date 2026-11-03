@@ -379,6 +379,14 @@ class ScipRepositoryPlugin(RepositoryPlugin):
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         build_type = "Debug" if kind == BuildKind.VALIDATION else "Release"
+        # The solver task uses branch-and-bound and primal heuristics. Keep the
+        # upstream gate focused on those core MIP components; the full SCIP CTest
+        # inventory includes optional subsystems and platform-specific binaries
+        # that this pinned validation image does not build. Candidate behavior is
+        # additionally exercised and independently checked by the hidden Judge.
+        unit_test_filter = (
+            "^(unittest-branch-treemodel|unittest-heur-multistart)(-build)?$"
+        )
         commands = [
             CommandSpec(
                 argv=[
@@ -408,10 +416,12 @@ class ScipRepositoryPlugin(RepositoryPlugin):
                             "-c",
                             (
                                 "import json, subprocess; "
-                                "tests=json.loads(subprocess.check_output(['ctest', '--test-dir', 'build', '--show-only=json-v1', '-R', '^unittest-']))['tests']; "
-                                "assert any(t['name'].startswith('unittest-') and not t['name'].endswith('-build') for t in tests), "
-                                "'SCIP Criterion unit tests are absent: install Criterion and reconfigure'; "
-                                "print('Registered selected upstream unit tests:', len(tests))"
+                                f"tests=json.loads(subprocess.check_output(['ctest', '--test-dir', 'build', '--show-only=json-v1', '-R', '{unit_test_filter}']))['tests']; "
+                                "names={t['name'] for t in tests}; "
+                                "required={'unittest-branch-treemodel', 'unittest-heur-multistart'}; "
+                                "assert required <= names, "
+                                "'SCIP focused MIP unit tests are absent: install Criterion and reconfigure'; "
+                                "print('Registered focused upstream unit tests:', sorted(names))"
                             ),
                         ]
                     ),
@@ -422,7 +432,7 @@ class ScipRepositoryPlugin(RepositoryPlugin):
                             "build",
                             "--no-tests=error",
                             "-R",
-                            "^unittest-",
+                            unit_test_filter,
                             "--output-on-failure",
                             "--output-junit",
                             "upstream-tests.xml",

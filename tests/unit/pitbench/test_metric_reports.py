@@ -55,6 +55,68 @@ from pitbench.solver_drivers.run import VroomDriver
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_seed_and_resource_reports_keep_five_development_and_thirty_hidden_seeds():
+    from pitbench.metrics.seed_robustness_report import (
+        SeedSelectionMetadata,
+        compute_exact_seed_robustness_report,
+    )
+
+    development, hidden = list(range(1, 6)), list(range(100, 130))
+    rows = []
+    # Retain one genuinely missing hidden seed; it must not be inferred away.
+    for panel, kind, seeds in (
+        ("agent_dev", "agent_dev", development),
+        ("judge_id", "judge_id", hidden[:-1]),
+    ):
+        for seed in seeds:
+            for state in CodeState:
+                rows.append(
+                    exact_observation(
+                        instance_set=panel,
+                        instance_set_kind=kind,
+                        solver_seed=seed,
+                        code_state=state,
+                        peak_rss_bytes=1024,
+                        resource_scope="solver_process_tree",
+                    )
+                )
+    report = compute_exact_seed_robustness_report(
+        rows,
+        task_id="exact-performance",
+        budgets_sec=[10],
+        primary_budget_sec=10,
+        time_basis=ExactTimeBasis.CPU_TIME,
+        seed_selection=SeedSelectionMetadata(
+            seed_min=1, seed_max=1000, seed_count=30, development_seed_count=5
+        ),
+        development_seeds=development,
+        evaluation_seeds=hidden,
+    )
+    assert (
+        report.by_instance_set[
+            "agent_dev"
+        ].primary.base.complete_capped_time_instance_count
+        == 1
+    )
+    assert (
+        report.by_instance_set[
+            "judge_id"
+        ].primary.base.complete_capped_time_instance_count
+        == 0
+    )
+    resources, details = compute_resource_reports(
+        rows,
+        primary_budget_sec=10,
+        expected_seed_count=30,
+        expected_seed_counts_by_instance_set={"agent_dev": 5},
+    )
+    assert (
+        resources.by_instance_set["agent_dev"]["10"].memory.complete_instance_count == 1
+    )
+    assert details.by_instance_set["agent_dev"]["10"][0].missing_seed_count == 0
+    assert details.by_instance_set["judge_id"]["10"][0].missing_seed_count == 1
+
+
 def exact_observation(**changes) -> RunObservation:
     values = {
         "task_id": "exact-performance",

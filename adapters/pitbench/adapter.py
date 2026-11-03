@@ -86,6 +86,7 @@ class PitBenchAdapter:
         judge_image: str | None = None,
         judge_cpus: float | None = None,
         judge_memory: str | None = None,
+        judge_tmpfs_size: str | None = None,
         judge_parallel_runs: int | None = None,
         judge_cpuset_cpus: str | None = None,
         base_observations_path: Path | None = None,
@@ -178,6 +179,7 @@ class PitBenchAdapter:
             judge_image=judge_image,
             judge_cpus=judge_cpus,
             judge_memory=judge_memory,
+            judge_tmpfs_size=judge_tmpfs_size,
             judge_parallel_runs=judge_parallel_runs,
             judge_cpuset_cpus=judge_cpuset_cpus,
             base_observations_path=base_observations_path,
@@ -472,6 +474,7 @@ class PitBenchAdapter:
         judge_image: str | None = None,
         judge_cpus: float | None = None,
         judge_memory: str | None = None,
+        judge_tmpfs_size: str | None = None,
         judge_parallel_runs: int | None = None,
         judge_cpuset_cpus: str | None = None,
         base_observations_path: Path | None = None,
@@ -520,6 +523,8 @@ class PitBenchAdapter:
             payload["evaluator_config"]["judge_cpus"] = judge_cpus
         if judge_memory is not None:
             payload["evaluator_config"]["judge_memory"] = judge_memory
+        if judge_tmpfs_size is not None:
+            payload["evaluator_config"]["judge_tmpfs_size"] = judge_tmpfs_size
         if judge_parallel_runs is not None:
             payload["evaluator_config"]["judge_parallel_runs"] = judge_parallel_runs
         if judge_cpuset_cpus is not None:

@@ -18,6 +18,78 @@ ROOT = Path(__file__).resolve().parents[3]
 PLAN = ROOT / "configs/research/archive/generalization.json"
 
 
+def test_study_seed_views_keep_development_and_freeze_private_holdout(tmp_path):
+    import hashlib
+
+    from pitbench.evaluator.judge import _development_seeds, _evaluation_seeds
+    from pitbench.evaluator.private_assets import (
+        PrivateAssetResolver,
+        load_private_seed_robustness_config,
+    )
+    from pitbench.research import (
+        prepare_generalization_seed_views,
+        study_evaluation_matches,
+    )
+
+    plan = GeneralizationStudyPlan.model_validate_json(
+        (ROOT / "configs/research/generalization_latest_high_v2.json").read_text()
+    )
+    original_path = ROOT / plan.task_configs[0]
+    plan.task_configs = [plan.task_configs[0]]
+    original = PitBenchTask.from_yaml(original_path)
+    before = hashlib.sha256(original_path.read_bytes()).hexdigest()
+    task_id = original.task_id
+    views = {
+        "tasks": {task_id: {"evaluator_task_config": str(original_path)}},
+        "arms": {
+            arm.id: {task_id: {"agent_task_config_path": str(original_path)}}
+            for arm in plan.arms
+        },
+    }
+    views_path = tmp_path / "source.json"
+    views_path.write_text(json.dumps(views))
+    private = tmp_path / "private"
+    output = tmp_path / "frozen"
+    result_path = prepare_generalization_seed_views(
+        plan=plan, views_path=views_path, private_root=private, destination=output
+    )
+    result = json.loads(result_path.read_text())
+    task = PitBenchTask.from_yaml(
+        Path(result["tasks"][task_id]["evaluator_task_config"])
+    )
+    resolver = PrivateAssetResolver(private)
+    hidden = load_private_seed_robustness_config(
+        resolver, task_id=task_id, public_config=task.evaluation.seed_robustness
+    )
+    assert len(_development_seeds(task)) == 5
+    assert len(_evaluation_seeds(task, resolver)) == 30
+    assert not set(hidden.evaluation_seeds) & set(_development_seeds(task))
+    assert min(hidden.evaluation_seeds) > 0
+    assert task.evaluation.solver_seeds is None
+    assert study_evaluation_matches(original, task, plan)
+    for arm in plan.arms:
+        public = PitBenchTask.from_yaml(
+            Path(result["arms"][arm.id][task_id]["agent_task_config_path"])
+        )
+        assert public.evaluation == task.evaluation
+    assert (
+        prepare_generalization_seed_views(
+            plan=plan, views_path=views_path, private_root=private, destination=output
+        )
+        == result_path
+    )
+    assert hashlib.sha256(original_path.read_bytes()).hexdigest() == before
+    changed = task.model_copy(deep=True)
+    changed.evaluation.primary_budget_sec *= 2
+    assert not study_evaluation_matches(original, changed, plan)
+    seed_file = resolver.resolve(task.evaluation.seed_robustness.evaluation_seeds_file)
+    seed_file.write_text(seed_file.read_text() + "\n")
+    with pytest.raises(ValueError, match="frozen seed view changed"):
+        prepare_generalization_seed_views(
+            plan=plan, views_path=views_path, private_root=private, destination=output
+        )
+
+
 def test_difficulty_selection_uses_discovery_and_retains_missing_profiles(tmp_path):
     from pitbench.research import analyze_population_difficulty
 

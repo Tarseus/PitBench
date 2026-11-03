@@ -13,6 +13,121 @@ ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = json.loads((ROOT / "configs/benchmarks/0.0.1.json").read_text())
 
 
+def test_default_run_profile_needs_no_environment_variables(tmp_path, monkeypatch):
+    from pitbench.cli.evaluate_config import EvaluationConfig
+    from scripts import run_benchmark_release as campaign
+
+    config = tmp_path / "evaluate.yaml"
+    config.write_text(EvaluationConfig().model_dump_json())
+    profile = tmp_path / "config/study.local.yaml"
+    profile.parent.mkdir()
+    profile.write_text(
+        yaml.safe_dump(
+            {
+                "phase": "study-models",
+                "manifest": str(ROOT / "configs/benchmarks/0.0.1.json"),
+                "config": str(config),
+                "output": str(tmp_path / "cohort"),
+                "study_plan": str(
+                    ROOT / "configs/research/generalization_latest_high_v2.json"
+                ),
+                "study_views": str(tmp_path / "views.json"),
+                "workers": 1,
+            }
+        )
+    )
+    called = []
+    monkeypatch.setattr(campaign, "ROOT", tmp_path)
+    monkeypatch.setattr(campaign, "study_models", called.append)
+    monkeypatch.setattr(campaign.sys, "argv", ["run_benchmark_release"])
+    campaign.main()
+    assert len(called) == 1
+    assert called[0].config == config
+    assert called[0].study_plan.name == "generalization_latest_high_v2.json"
+
+
+@pytest.mark.parametrize(
+    "completed,gaps",
+    [(True, []), (False, []), (True, ["missing scenario observations"])],
+)
+def test_captured_patch_queue_uses_native_evaluator_without_new_agent(
+    tmp_path, monkeypatch, completed, gaps
+):
+    import hashlib
+    from types import SimpleNamespace
+
+    from pitbench.harness.evaluation import EvaluationEnvelope
+    from scripts import run_benchmark_release as campaign
+
+    run_id, task_id = "run-1", "task"
+    patch = tmp_path / "runs" / run_id / task_id / "trial/evaluation/candidate.patch"
+    patch.parent.mkdir(parents=True)
+    patch.write_text("captured source patch")
+    task_path = tmp_path / "workspaces" / run_id / task_id
+    task_path.mkdir(parents=True)
+    (task_path / "task.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "evaluator_config": {
+                    "task_config_path": str(
+                        ROOT / "configs/tasks/release_cbc_v2_10_13.yaml"
+                    ),
+                    "judge_cpus": 8,
+                    "judge_memory": "32g",
+                    "judge_parallel_runs": 4,
+                }
+            }
+        )
+    )
+    campaign.write_json(
+        tmp_path / "runs" / run_id / "results.json",
+        {"results": [{"task_id": task_id, "trial_name": "trial"}]},
+    )
+    calls = []
+
+    def envelope(request):
+        calls.append(request)
+        return EvaluationEnvelope(
+            evaluator="pitbench",
+            evaluator_version="test",
+            completed=completed,
+            payload={},
+            error=None if completed else "retained failure",
+        )
+
+    monkeypatch.setattr(
+        campaign, "PitBenchEvaluator", lambda: SimpleNamespace(envelope=envelope)
+    )
+    monkeypatch.setattr(campaign, "_evaluation_metric_failures", lambda *a, **k: gaps)
+    monkeypatch.setattr(
+        campaign.subprocess, "Popen", lambda *a, **k: pytest.fail("new Agent")
+    )
+    state = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "model": {"agent": "codex", "model": "requested-model"},
+        "audit": {
+            "candidate_patch": str(patch),
+            "candidate_patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
+        },
+    }
+    result = campaign.evaluate_study_candidate(
+        state, SimpleNamespace(output=tmp_path), "48-55"
+    )
+    assert result["status"] == (
+        ("evaluation_incomplete" if gaps else "evaluation_completed")
+        if completed
+        else "evaluation_failed"
+    )
+    assert result["metric_gaps"] == gaps
+    assert len(calls) == 1 and calls[0].candidate_patch_path == patch
+    assert calls[0].evaluator_config["judge_cpuset_cpus"] == "48-55"
+    assert calls[0].evaluator_config["judge_parallel_runs"] == 4
+    saved = json.loads((tmp_path / "runs" / run_id / "results.json").read_text())
+    assert saved["results"][0]["evaluation"]["completed"] is completed
+    assert patch.read_text() == "captured source patch"
+
+
 @pytest.mark.parametrize("row", MANIFEST["task_matrix"], ids=lambda row: row["task_id"])
 def test_release_task_matches_pin_and_preserves_template_design(row):
     catalog = TaskCatalog(ROOT)
@@ -409,9 +524,7 @@ def test_deferred_model_audit_requires_captured_patch_and_model_execution(
     if has_patch:
         candidate.parent.mkdir(parents=True)
         candidate.write_bytes(b"")
-    audit = campaign.audit_model_run(
-        tmp_path, task_id, evaluation_required=False
-    )
+    audit = campaign.audit_model_run(tmp_path, task_id, evaluation_required=False)
     assert audit["complete"] is has_patch
     assert not audit["retryable"]
     if has_patch:
@@ -431,6 +544,9 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
 
     plan_path = ROOT / "configs/research/generalization_latest_high_v2.json"
     plan = json.loads(plan_path.read_text())
+    plan["evaluation_seed_policy"] = None
+    plan_path = tmp_path / "selection-plan.json"
+    plan_path.write_text(json.dumps(plan))
     selected = [Path(path).stem for path in plan["task_configs"]]
     latest = {
         row["task_id"] for row in MANIFEST["task_matrix"] if row["role"] == "latest"
@@ -495,7 +611,8 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     assert len(frozen["jobs"]) == 18
     assert set(validated) == set(selected)
     assert {row["model"]["label"] for row in frozen["jobs"]} == {
-        "sol-high", "terra-high"
+        "sol-high",
+        "terra-high",
     }
     assert all(row["attempt"] == 1 for row in frozen["jobs"])
     assert all(

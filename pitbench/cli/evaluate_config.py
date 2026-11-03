@@ -28,6 +28,7 @@ class TaskResources(BaseModel):
     judge_image: str | None = None
     judge_cpus: float | None = None
     judge_memory: str | None = None
+    judge_tmpfs_size: str | None = None
     judge_parallel_runs: int | None = None
     judge_cpuset_cpus: str | None = None
     base_observations_path: Path | None = None
@@ -85,6 +86,7 @@ class EvaluationConfig(BaseModel):
     agents: dict[str, dict[str, ConfigValue]] = Field(default_factory=dict)
     judge_cpus: float | None = None
     judge_memory: str | None = None
+    judge_tmpfs_size: str | None = None
     judge_parallel_runs: int | None = None
     base_cache: bool = False
     metric_scenario_configs: dict[str, Path] = Field(default_factory=dict)

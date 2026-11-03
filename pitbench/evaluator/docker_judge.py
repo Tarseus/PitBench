@@ -27,6 +27,13 @@ def judge_harness_sha256(package_root: Path) -> str:
     return digest.hexdigest()
 
 
+def docker_cli_image(image: str) -> str:
+    """Return a Docker CLI image argument while preserving the pinned identity."""
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", image):
+        return image.removeprefix("sha256:")
+    return image
+
+
 class DockerJudge:
     """Launch a fresh, network-disabled judge container for one candidate."""
 
@@ -41,6 +48,7 @@ class DockerJudge:
         output_dir: Path,
         cpus: float = 8.0,
         memory: str = "8g",
+        tmpfs_size: str = "4g",
         cpuset_cpus: str | None = None,
         code_states: tuple[CodeState, ...] = tuple(CodeState),
         parallel_runs: int = 1,
@@ -54,6 +62,10 @@ class DockerJudge:
         if digest_pinned is None and local_image_id is None:
             raise ValueError("judge image must be pinned by sha256 digest")
         self.image = image
+        # Docker accepts a local image ID as the bare hexadecimal ID in `run`;
+        # the `sha256:` prefix is valid for identity checks but is parsed as an
+        # invalid repository reference when passed to the CLI.
+        self.docker_image = docker_cli_image(image)
         self.task_config_path = task_config_path.resolve()
         self.base_repository = base_repository.resolve()
         self.private_root = PrivateAssetResolver(private_root).root
@@ -61,6 +73,7 @@ class DockerJudge:
         self.output_dir = output_dir.resolve()
         self.cpus = cpus
         self.memory = memory
+        self.tmpfs_size = tmpfs_size
         self.cpuset_cpus = cpuset_cpus
         self.code_states = code_states
         self.parallel_runs = parallel_runs
@@ -89,6 +102,7 @@ class DockerJudge:
             "judge_image": self.image,
             "cpus": self.cpus,
             "memory": self.memory,
+            "tmpfs_size": self.tmpfs_size,
             "cpuset_cpus": self.cpuset_cpus,
             "code_states": [state.value for state in self.code_states],
             "parallel_runs": self.parallel_runs,
@@ -100,6 +114,8 @@ class DockerJudge:
     def run(self) -> list[RunObservation]:
         package_root = self.package_root
         self._check_inputs_unchanged("before launch")
+        judge_tmp = self.output_dir / "judge-tmp"
+        judge_tmp.mkdir(parents=True, exist_ok=True)
         observations = self.output_dir / "judge-observations.jsonl"
         command = [
             "docker",
@@ -115,7 +131,7 @@ class DockerJudge:
             "--pids-limit",
             "2048",
             "--tmpfs",
-            "/tmp:rw,exec,nosuid,size=4g",
+            f"/tmp:rw,exec,nosuid,size={self.tmpfs_size}",
             "--env",
             "PYTHONPATH=/opt/pitbench",
             "--volume",
@@ -130,7 +146,11 @@ class DockerJudge:
             f"{self.candidate_patch}:/input/candidate.patch:ro",
             "--volume",
             f"{self.output_dir}:/output:rw",
-            self.image,
+            "--volume",
+            f"{judge_tmp}:/work-tmp:rw",
+            "--env",
+            "TMPDIR=/work-tmp",
+            self.docker_image,
             "python3",
             "-m",
             "pitbench.evaluator.runner",
@@ -171,6 +191,9 @@ class DockerJudge:
             command.extend(["--solver-seed-limit", str(self.solver_seed_limit)])
         for state in self.code_states:
             command.extend(["--code-state", state.value])
+        (self.output_dir / "docker-command.json").write_text(
+            json.dumps({"argv": command}, indent=2) + "\n"
+        )
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,

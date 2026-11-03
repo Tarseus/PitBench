@@ -6,7 +6,7 @@ import statistics
 from collections.abc import Sequence
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from pitbench.schema.observation import (
     CodeState,
@@ -116,6 +116,14 @@ class SeedSelectionMetadata(BaseModel):
     seed_min: int
     seed_max: int
     seed_count: int = Field(gt=0)
+    development_seed_count: int | None = Field(default=None, gt=0)
+
+    @model_serializer(mode="wrap")
+    def serialize_counts(self, handler):
+        result = handler(self)
+        if self.development_seed_count is None:
+            result.pop("development_seed_count", None)
+        return result
 
 
 class SeedRobustnessConfidenceInterval(BaseModel):
@@ -664,7 +672,12 @@ def _validate_declared_inputs(
         ("development_seeds", development_seed_list),
         ("evaluation_seeds", evaluation_seed_list),
     ):
-        if len(seed_list) != seed_selection.seed_count:
+        expected_count = (
+            seed_selection.development_seed_count or seed_selection.seed_count
+            if seed_list_name == "development_seeds"
+            else seed_selection.seed_count
+        )
+        if len(seed_list) != expected_count:
             raise ValueError(
                 f"{seed_list_name} must contain seed_count seed identifiers"
             )

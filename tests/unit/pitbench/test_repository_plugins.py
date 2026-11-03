@@ -49,11 +49,12 @@ ROOT = Path(__file__).resolve().parents[3]
 def test_scip_basic_validation_selects_unit_tests_without_the_solve_regression_matrix():
     commands = ScipRepositoryPlugin().build_commands(BuildKind.VALIDATION)
     ctest = next(command for command in commands if command.argv[0] == "ctest")
-    assert ctest.argv[ctest.argv.index("-R") + 1] == "^unittest-"
+    test_filter = "^(unittest-branch-treemodel|unittest-heur-multistart)(-build)?$"
+    assert ctest.argv[ctest.argv.index("-R") + 1] == test_filter
     assert "--no-tests=error" in ctest.argv
     assert any(
         "--show-only=json-v1" in " ".join(command.argv)
-        and "^unittest-" in " ".join(command.argv)
+        and test_filter in " ".join(command.argv)
         for command in commands
     )
 

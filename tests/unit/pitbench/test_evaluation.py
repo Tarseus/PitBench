@@ -24,7 +24,11 @@ from pitbench.cli.main import (
     _normal_metric_coverage,
 )
 from pitbench.evaluator.collection import AnchorCollection
-from pitbench.evaluator.docker_judge import DockerJudge, judge_harness_sha256
+from pitbench.evaluator.docker_judge import (
+    DockerJudge,
+    docker_cli_image,
+    judge_harness_sha256,
+)
 from pitbench.evaluator.evaluator import (
     PitBenchEvaluator,
     _base_cache_is_complete,
@@ -1888,6 +1892,7 @@ def test_docker_judge_failure_reports_last_progress_and_retained_observations(
     (tmp_path / "task.yaml").write_text("task_id: test\n")
     observations = output_dir / "judge-observations.jsonl"
     observations.write_text('{"completed":true}\n')
+    captured = {}
 
     class FailedProcess:
         stdout = [
@@ -1903,7 +1908,7 @@ def test_docker_judge_failure_reports_last_progress_and_retained_observations(
 
     monkeypatch.setattr(
         "pitbench.evaluator.docker_judge.subprocess.Popen",
-        lambda *args, **kwargs: FailedProcess(),
+        lambda *args, **kwargs: (captured.update(command=args[0]) or FailedProcess()),
     )
     judge = DockerJudge(
         image="sha256:" + "a" * 64,
@@ -1918,6 +1923,17 @@ def test_docker_judge_failure_reports_last_progress_and_retained_observations(
         judge.run()
 
     message = str(error.value)
+    command = captured["command"]
+    assert docker_cli_image("sha256:" + "a" * 64) == "a" * 64
+    assert docker_cli_image("solver@sha256:" + "b" * 64) == "solver@sha256:" + "b" * 64
+    assert command[command.index("python3") - 1] == "a" * 64
+    work_tmp = next(
+        i for i, arg in enumerate(command) if arg.endswith(":/work-tmp:rw")
+    )
+    assert command[work_tmp - 1] == "--volume"
+    assert '"judge_image": "sha256:' + "a" * 64 + '"' in command[
+        command.index("--checkpoint-identity") + 1
+    ]
     assert "Judge progress: 49/100" in message
     assert "Judge progress: 48/100" not in message
     assert "docker connection closed" in message

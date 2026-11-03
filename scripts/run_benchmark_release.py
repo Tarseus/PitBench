@@ -13,12 +13,14 @@ import subprocess
 import sys
 import threading
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
 
 from adapters.pitbench.adapter import PitBenchAdapter
+from pitbench.agent_tools import AgentTool
 from pitbench.cli.evaluate_config import EvaluationConfig, EvaluationPaths
 from pitbench.cli.main import _evaluation_metric_failures
 from pitbench.cli.solver_images import build_solver_image
@@ -26,7 +28,12 @@ from pitbench.evaluator.evaluator import PitBenchEvaluator
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.metrics.campaign_report import require_plotting, write_campaign_report
+from pitbench.research import (
+    prepare_generalization_seed_views,
+    study_evaluation_matches,
+)
 from pitbench.schema.observation import RunStatus
+from pitbench.schema.task import PitBenchTask
 from pitbench.tasks import TaskCatalog
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -663,6 +670,326 @@ def report(task_ids, args, config):
     return result
 
 
+def evaluate_study_candidate(state, args, cpu_pool):
+    """Consume one captured patch through the existing independent evaluator."""
+    job = dict(state)
+    run_id, task_id = job["run_id"], job["task_id"]
+    execution_id = job.get("execution_run_id", run_id)
+    status_path = args.output / "agent-status" / run_id / "status.json"
+    patch = Path(job["audit"]["candidate_patch"])
+    task_path = args.output / "workspaces" / execution_id / task_id
+    job.update(
+        status="evaluating", evaluation_cpu_pool=cpu_pool, evaluation_started_at=now()
+    )
+    write_json(status_path, job)
+    try:
+        configured = yaml.safe_load((task_path / "task.yaml").read_text())[
+            "evaluator_config"
+        ]
+        configured.update(judge_cpuset_cpus=cpu_pool)
+        request = EvaluationRequest(
+            task_id=task_id,
+            task_path=task_path,
+            candidate_patch_path=patch,
+            candidate_patch_sha256=job["audit"]["candidate_patch_sha256"],
+            output_dir=patch.parent,
+            agent_name=job["model"]["agent"],
+            model_name=job["model"]["model"],
+            evaluator_config=configured,
+        )
+        result = PitBenchEvaluator().envelope(request)
+        write_json(
+            patch.parent / "evaluation-envelope.json", result.model_dump(mode="json")
+        )
+        results_path = args.output / "runs" / execution_id / "results.json"
+        harness = json.loads(results_path.read_text())
+        trials = [row for row in harness["results"] if row["task_id"] == task_id]
+        if len(trials) != 1:
+            raise ValueError("expected one captured Agent trial")
+        trials[0]["evaluation"] = result.model_dump(mode="json")
+        write_json(results_path, harness)
+        gaps = (
+            _evaluation_metric_failures(
+                PitBenchTask.from_yaml(Path(configured["task_config_path"])),
+                patch.parent,
+                result.payload,
+            )
+            if result.completed
+            else []
+        )
+        job.update(
+            status=("evaluation_incomplete" if gaps else "evaluation_completed")
+            if result.completed
+            else "evaluation_failed",
+            evaluation_error=result.error,
+            metric_gaps=gaps,
+            metrics_complete=result.completed and not gaps,
+            scientific_interpretation="optimization_space_qualification_pending",
+        )
+    except Exception as error:
+        job.update(
+            status="evaluation_failed",
+            evaluation_error=f"{type(error).__name__}: {error}",
+        )
+    job["evaluation_finished_at"] = now()
+    write_json(status_path, job)
+    write_json(args.output / "evaluation-queue" / (run_id + ".json"), job)
+    return job
+
+
+def study_evaluations(args):
+    """Evaluate retained final patches without allocating another Agent start."""
+    output = args.output
+    cohort = json.loads((output / "cohort.json").read_text())
+    slots = queue.SimpleQueue()
+    for cpus in args.evaluation_cpu_pools:
+        slots.put(cpus)
+    pending = []
+    for job in cohort["jobs"]:
+        status_path = output / "agent-status" / job["run_id"] / "status.json"
+        if not status_path.is_file():
+            continue
+        state = json.loads(status_path.read_text())
+        retryable_statuses = set(
+            getattr(args, "retry_evaluation_statuses", None) or ["evaluation_failed"]
+        )
+        if state.get("status") not in retryable_statuses:
+            continue
+        audit = state.get("audit") or {
+            key: state[key]
+            for key in (
+                "candidate_patch",
+                "candidate_patch_sha256",
+                "tokens",
+                "completed_turn",
+            )
+            if key in state
+        }
+        candidate = Path(audit.get("candidate_patch", ""))
+        if not candidate.is_file() or hashlib.sha256(
+            candidate.read_bytes()
+        ).hexdigest() != audit.get("candidate_patch_sha256"):
+            state.update(
+                status="evaluation_failed",
+                evaluation_error="final captured candidate is missing or changed",
+            )
+            write_json(status_path, state)
+            continue
+        receipt_dir = output / "evaluation-attempts" / job["run_id"]
+        receipt_dir.mkdir(parents=True, exist_ok=True)
+        previous = {
+            key: state.get(key) for key in ("status", "evaluation_error", "judge_image")
+        }
+        write_json(
+            receipt_dir
+            / f"attempt-{int(state.get('evaluation_attempt', 0)) + 1:02d}-previous.json",
+            previous,
+        )
+        state.update(
+            audit=audit,
+            status="evaluation_pending",
+            evaluation_attempt=int(state.get("evaluation_attempt", 0)) + 1,
+        )
+        write_json(status_path, state)
+        pending.append(state)
+
+    def run(state):
+        cpus = slots.get()
+        try:
+            return evaluate_study_candidate(state, args, cpus)
+        finally:
+            slots.put(cpus)
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=args.evaluation_workers
+    ) as pool:
+        for future in concurrent.futures.as_completed(
+            [pool.submit(run, state) for state in pending]
+        ):
+            future.result()
+    records = []
+    for job in cohort["jobs"]:
+        path = output / "agent-status" / job["run_id"] / "status.json"
+        state = (
+            json.loads(path.read_text())
+            if path.exists()
+            else {**job, "status": "not_started"}
+        )
+        records.append(
+            {
+                **state,
+                "condition_id": job["run_id"],
+                "model": job["model"]["model"],
+                "setting": job["model"]["setting"],
+                "arm": job["arm"],
+                "task_id": job["task_id"],
+            }
+        )
+    write_json(output / "model-runs.json", records)
+    print(
+        json.dumps(
+            {
+                "evaluation_candidates": len(pending),
+                "without_agent_calls": True,
+                "statuses": dict(Counter(row["status"] for row in records)),
+            }
+        )
+    )
+
+
+def retry_unexecuted_condition(args):
+    """Run the one authorized retry after a zero-token model stream disconnect."""
+    from pitbench.schema.research import GeneralizationStudyPlan
+
+    plan = GeneralizationStudyPlan.model_validate_json(args.study_plan.read_text())
+    views = json.loads((args.output / "frozen-seed-views/task-views.json").read_text())
+    cohort = json.loads((args.output / "cohort.json").read_text())
+    matches = [row for row in cohort["jobs"] if row["run_id"] == args.retry_run_id]
+    if len(matches) != 1:
+        raise ValueError("retry run ID is absent from the frozen cohort")
+    job = matches[0]
+    status_path = args.output / "agent-status" / job["run_id"] / "status.json"
+    original = json.loads(status_path.read_text())
+    audit = audit_model_run(
+        args.output / "runs" / job["run_id"],
+        job["task_id"],
+        evaluation_required=False,
+    )
+    if (
+        original.get("status") != "development_failed"
+        or audit.get("reason")
+        != "model stream disconnected; retain partial infrastructure-failed attempt"
+        or int(audit.get("tokens") or 0) != 0
+        or audit.get("completed_turn")
+        or audit.get("candidate_patch")
+    ):
+        raise ValueError("retry is restricted to the audited zero-token disconnect")
+    receipt_dir = args.output / "infrastructure-retries" / job["run_id"]
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    receipt = receipt_dir / "retry.json"
+    if receipt.exists():
+        raise ValueError("the one-time retry has already been used")
+    write_json(receipt_dir / "initial-status.json", original)
+    retry_id = job["run_id"] + "-infra1"
+    run_root = args.output / "runs"
+    workspace_root = args.output / "workspaces"
+    if (run_root / retry_id).exists() or (workspace_root / retry_id).exists():
+        raise RuntimeError("retry run ID already exists")
+    template = EvaluationConfig.from_yaml(args.config)
+    config = template.model_copy(deep=True)
+    config.paths.output_path = run_root.resolve()
+    config.paths.workspace_path = workspace_root.resolve()
+    config.research_budget = plan.research_budget
+    config.research_track = None
+    config.candidate_hypotheses_required = job["hypotheses_required"]
+    config.agent_tools = [AgentTool(tool) for tool in plan.shared_agent_tools]
+    config.configuration_robustness.enabled = False
+    resources = config.resources_for(job["task_id"]).model_copy(deep=True)
+    arm = views["arms"][job["arm"]][job["task_id"]]
+    resources.task_config_path = Path(arm["task_config_path"])
+    resources.agent_task_config_path = Path(arm["agent_task_config_path"])
+    resources.research_budget = plan.research_budget
+    resources.judge_cpuset_cpus = args.cpu_pool
+    config.tasks[job["task_id"]] = resources
+    config.agent_cpuset_cpus = args.cpu_pool
+    config.metric_scenario_configs[job["task_id"]] = Path(
+        views["tasks"][job["task_id"]]["metric_scenario_config"]
+    )
+    config.agents.setdefault(job["model"]["agent"], {})["timeout_sec"] = (
+        plan.research_budget.wall_time_sec
+    )
+    attempt = receipt_dir / retry_id
+    attempt.mkdir()
+    config_path = attempt / "evaluation.local.yaml"
+    config_path.write_text(
+        yaml.safe_dump(config.model_dump(mode="json"), sort_keys=False)
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "pitbench.cli.main",
+        "evaluate",
+        job["task_id"],
+        "--config",
+        str(config_path),
+        "--agent",
+        job["model"]["agent"],
+        "--model",
+        job["model"]["model"],
+        "--agent-kwarg",
+        job["model"]["setting"],
+        "--run-id",
+        retry_id,
+        "--n-attempts",
+        "1",
+        "--n-concurrent",
+        "1",
+        "--no-configuration-robustness",
+        "--defer-evaluation",
+    ]
+    write_json(
+        receipt,
+        {
+            "status": "retry_running",
+            "original_run_id": job["run_id"],
+            "retry_run_id": retry_id,
+            "audit": audit,
+            "cpu_pool": args.cpu_pool,
+            "agent_attempts": 1,
+            "budget": plan.research_budget.model_dump(mode="json"),
+        },
+    )
+    with (attempt / "controller.log").open("w") as log:
+        code = subprocess.run(
+            command,
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=False,
+        ).returncode
+    recovered = audit_model_run(
+        run_root / retry_id, job["task_id"], evaluation_required=False
+    )
+    record = json.loads(receipt.read_text())
+    record.update(
+        returncode=code,
+        recovered_audit=recovered,
+        status="evaluation_pending" if recovered["complete"] else "retry_failed",
+        finished_at=now(),
+    )
+    write_json(receipt, record)
+    if recovered["complete"]:
+        original.update(
+            status="evaluation_pending",
+            audit=recovered,
+            execution_run_id=retry_id,
+            infrastructure_retry=str(receipt),
+        )
+        write_json(status_path, original)
+        write_json(
+            args.output / "evaluation-queue" / (job["run_id"] + ".json"),
+            {
+                **job,
+                **recovered,
+                "original_run_id": job["run_id"],
+                "execution_run_id": retry_id,
+                "evaluation_config": str(config_path),
+                "status": "queued_for_independent_measurement",
+            },
+        )
+    print(
+        json.dumps(
+            {
+                "original_condition": job["run_id"],
+                "retry_run": retry_id,
+                "status": record["status"],
+                "model_calls": 1,
+            }
+        )
+    )
+
+
 def study_models(args):
     """Run the frozen three-arm development cohort; queue hidden evaluation separately."""
     import itertools
@@ -671,11 +998,20 @@ def study_models(args):
     from pitbench.schema.research import GeneralizationStudyPlan
 
     plan = GeneralizationStudyPlan.model_validate_json(args.study_plan.read_text())
-    views = json.loads(args.study_views.read_text())
+    config_template = EvaluationConfig.from_yaml(args.config)
+    private_root = config_template.paths.private_root
+    if not private_root.is_absolute():
+        private_root = ROOT / private_root
+    views_path = prepare_generalization_seed_views(
+        plan=plan,
+        views_path=args.study_views,
+        private_root=private_root,
+        destination=args.output / "frozen-seed-views",
+    )
+    views = json.loads(views_path.read_text())
     if views.get("status") != "development_frozen_evaluation_gated":
         raise ValueError("development requires frozen scenario/task views")
     matrix = yaml.safe_load((ROOT / plan.model_matrix).read_text())["runs"]
-    config_template = EvaluationConfig.from_yaml(args.config)
     task_ids = [Path(name).stem for name in plan.task_configs]
     missing = set(task_ids) - set(views["tasks"])
     if missing:
@@ -689,10 +1025,7 @@ def study_models(args):
         task_file = Path(row["evaluator_task_config"])
         record = TaskCatalog(ROOT).validate_file(task_file)
         original = TaskCatalog(ROOT).validate_one(task_id).task
-        if (
-            record.task.release != original.release
-            or record.task.evaluation != original.evaluation
-        ):
+        if not study_evaluation_matches(original, record.task, plan):
             raise ValueError(
                 "study changed the frozen source or original primary contract"
             )
@@ -728,6 +1061,11 @@ def study_models(args):
     blocks = list(itertools.product(task_ids, matrix))
     random.Random(args.schedule_seed).shuffle(blocks)
     jobs = []
+    run_prefix = (
+        args.output.name
+        + "-"
+        + hashlib.sha256(str(args.output.resolve()).encode()).hexdigest()[:8]
+    )
     for index, (task_id, model) in enumerate(blocks):
         arms = list(plan.arms)
         arms = arms[index % len(arms) :] + arms[: index % len(arms)]
@@ -738,7 +1076,7 @@ def study_models(args):
                     "model": model,
                     "arm": arm.id,
                     "hypotheses_required": arm.require_candidate_hypotheses,
-                    "run_id": f"{args.output.name}-{len(jobs) + 1:03d}",
+                    "run_id": f"{run_prefix}-{len(jobs) + 1:03d}",
                     "attempt": 1,
                 }
             )
@@ -747,7 +1085,7 @@ def study_models(args):
         "kind": "generalization_agent_cohort",
         "study_id": plan.study_id,
         "plan_sha256": hashlib.sha256(args.study_plan.read_bytes()).hexdigest(),
-        "views_sha256": hashlib.sha256(args.study_views.read_bytes()).hexdigest(),
+        "views_sha256": hashlib.sha256(views_path.read_bytes()).hexdigest(),
         "input_files_sha256": snapshots,
         "scenario_model_files_sha256": model_files,
         "jobs": jobs,
@@ -820,7 +1158,7 @@ def study_models(args):
             config.research_budget = plan.research_budget
             config.research_track = None
             config.candidate_hypotheses_required = job["hypotheses_required"]
-            config.agent_tools = plan.shared_agent_tools
+            config.agent_tools = [AgentTool(tool) for tool in plan.shared_agent_tools]
             config.configuration_robustness.enabled = False
             resource = config.resources_for(job["task_id"]).model_copy(deep=True)
             arm = views["arms"][job["arm"]][job["task_id"]]
@@ -890,7 +1228,9 @@ def study_models(args):
                         **job,
                         **audit,
                         "evaluation_config": str(config_path),
-                        "status": "awaiting_scientific_gate",
+                        "status": "queued_for_independent_measurement"
+                        if getattr(args, "evaluate_candidates", False)
+                        else "awaiting_scientific_gate",
                     },
                 )
         except Exception as error:
@@ -914,18 +1254,142 @@ def study_models(args):
         )
         return state
 
+    evaluate = getattr(args, "evaluate_candidates", False)
+    evaluation_pools = getattr(args, "evaluation_cpu_pools", [])
+    evaluation_slots = queue.SimpleQueue()
+    for cpu_pool in evaluation_pools:
+        evaluation_slots.put(cpu_pool)
+
+    def collect(state):
+        cpu_pool = evaluation_slots.get()
+        try:
+            return evaluate_study_candidate(state, args, cpu_pool)
+        finally:
+            evaluation_slots.put(cpu_pool)
+
     with concurrent.futures.ThreadPoolExecutor(
-        max_workers=min(args.workers, len(pools))
-    ) as pool:
-        for _ in pool.map(one, jobs):
-            pass
+        max_workers=getattr(args, "evaluation_workers", 1)
+    ) as judges:
+        measured = []
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(args.workers, len(pools))
+        ) as agents:
+            futures = [agents.submit(one, job) for job in jobs]
+            for future in concurrent.futures.as_completed(futures):
+                state = future.result()
+                if evaluate and state["status"] == "evaluation_pending":
+                    measured.append(judges.submit(collect, state))
+        for future in concurrent.futures.as_completed(measured):
+            future.result()
+    if evaluate:
+        records = []
+        for job in jobs:
+            path = args.output / "agent-status" / job["run_id"] / "status.json"
+            state = json.loads(path.read_text()) if path.exists() else job
+            records.append(
+                {
+                    **state,
+                    "condition_id": job["run_id"],
+                    "model": job["model"]["model"],
+                    "setting": job["model"]["setting"],
+                }
+            )
+        index = args.output / "model-runs.json"
+        write_json(index, records)
+        write_campaign_report(
+            args.output,
+            args.output / "report",
+            repository_root=ROOT,
+            index=index,
+            runs_root=args.output / "runs",
+            task_configs={
+                key: Path(row["evaluator_task_config"])
+                for key, row in views["tasks"].items()
+            },
+        )
+        write_json(
+            args.output / "execution-complete.json",
+            {
+                "finished_at": now(),
+                "conditions": len(jobs),
+                "statuses": {
+                    status: sum(row.get("status") == status for row in records)
+                    for status in {row.get("status", "missing") for row in records}
+                },
+                "scientific_interpretation": "optimization_space_qualification_pending",
+            },
+        )
+
+
+def parse_run_arguments(parser, argv):
+    preliminary = argparse.ArgumentParser(add_help=False)
+    preliminary.add_argument("--profile", type=Path)
+    selected, _ = preliminary.parse_known_args(argv)
+    profile_path = selected.profile or ROOT / "config/study.local.yaml"
+    if selected.profile is not None or profile_path.is_file():
+        payload = yaml.safe_load(profile_path.read_text()) or {}
+        allowed = {action.dest for action in parser._actions}
+        unknown = set(payload) - allowed
+        if unknown:
+            parser.error(f"unknown run profile options: {sorted(unknown)}")
+        parser.set_defaults(**payload)
+    args = parser.parse_args(argv)
+    for name in ("manifest", "config", "output", "phase"):
+        if getattr(args, name) is None:
+            parser.error(f"--{name} is required, directly or through --profile")
+    return args
+
+
+def launch_background(args, argv):
+    receipt = args.output / "launcher-process.json"
+    if receipt.exists():
+        old = json.loads(receipt.read_text())
+        if Path(f"/proc/{old['pid']}").exists():
+            print(json.dumps({**old, "status": "already_running"}), flush=True)
+            return
+    command = [
+        sys.executable,
+        "-m",
+        "scripts.run_benchmark_release",
+        *argv,
+        "--foreground",
+    ]
+    with (args.output / "launcher.log").open("a") as log:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    result = {
+        "pid": process.pid,
+        "started_at": now(),
+        "status": "started",
+        "log": str(args.output / "launcher.log"),
+    }
+    write_json(receipt, result)
+    print(json.dumps(result), flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--profile", type=Path)
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--background", action="store_true")
+    parser.add_argument("--foreground", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--evaluate-candidates", action="store_true")
+    parser.add_argument("--evaluation-workers", type=int, default=1)
+    parser.add_argument("--evaluation-cpu-pools", action="append", default=[])
+    parser.add_argument(
+        "--retry-evaluation-status",
+        dest="retry_evaluation_statuses",
+        action="append",
+        default=[],
+    )
     parser.add_argument(
         "--phase",
         choices=[
@@ -936,8 +1400,9 @@ def main():
             "all",
             "_judge",
             "study-models",
+            "study-evaluations",
+            "study-agent-recovery",
         ],
-        required=True,
     )
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--models", type=Path)
@@ -949,10 +1414,11 @@ def main():
     parser.add_argument("--defer-evaluation-incomplete", action="store_true")
     parser.add_argument("--dispatch-interval-sec", type=float, default=0)
     parser.add_argument("--retry-errors", action="store_true")
+    parser.add_argument("--retry-run-id")
     parser.add_argument("--task-id")
     parser.add_argument("--cpu-pool")
     parser.add_argument("--cpu-pools", action="append", default=[])
-    args = parser.parse_args()
+    args = parse_run_arguments(parser, sys.argv[1:])
     for name in ("manifest", "config", "output"):
         setattr(args, name, getattr(args, name).resolve())
     if args.workers < 1 or (args.cpu_pools and len(args.cpu_pools) != args.workers):
@@ -963,18 +1429,52 @@ def main():
         and not args.cpu_pools
     ):
         parser.error("parallel model runs require disjoint --cpu-pools")
+    if args.evaluate_candidates:
+        if (
+            args.evaluation_workers < 1
+            or len(args.evaluation_cpu_pools) != args.evaluation_workers
+        ):
+            parser.error(
+                "candidate evaluation requires one CPU pool per evaluation worker"
+            )
+
+        def cpu_ids(pool):
+            result = set()
+            for part in pool.split(","):
+                bounds = [int(value) for value in part.split("-")]
+                result.update(range(bounds[0], bounds[-1] + 1))
+            return result
+
+        occupied = set()
+        for pool in args.cpu_pools + args.evaluation_cpu_pools:
+            cpus = cpu_ids(pool)
+            if not cpus or cpus & occupied:
+                parser.error(
+                    "Agent and evaluation CPU pools must be nonempty and disjoint"
+                )
+            occupied |= cpus
     args.output.mkdir(parents=True, exist_ok=True)
+    if args.background and not args.foreground and not args.prepare_only:
+        launch_background(args, sys.argv[1:])
+        return
     manifest = json.loads(args.manifest.read_text())
     task_ids = [row["task_id"] for row in manifest["task_matrix"]]
     if len(task_ids) != len(set(task_ids)):
         parser.error("manifest task IDs must be unique")
     config = EvaluationConfig.from_yaml(args.config)
-    if args.phase == "study-models":
+    if args.phase in {"study-models", "study-evaluations", "study-agent-recovery"}:
         if args.study_plan is None or args.study_views is None:
-            parser.error("study development requires --study-plan and --study-views")
+            parser.error("study phases require --study-plan and --study-views")
         args.study_plan = args.study_plan.resolve()
         args.study_views = args.study_views.resolve()
-        study_models(args)
+        if args.phase == "study-models":
+            study_models(args)
+        elif args.phase == "study-agent-recovery":
+            if not args.retry_run_id or not args.cpu_pool:
+                parser.error("a retry run ID and a dedicated CPU pool are required")
+            retry_unexecuted_condition(args)
+        else:
+            study_evaluations(args)
         return
     if args.phase in {"models", "all", "report"}:
         require_plotting()

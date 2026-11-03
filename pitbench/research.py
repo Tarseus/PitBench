@@ -1762,6 +1762,175 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def prepare_generalization_seed_views(
+    *,
+    plan: GeneralizationStudyPlan,
+    views_path: Path,
+    private_root: Path,
+    destination: Path,
+) -> Path:
+    """Freeze a new study's hidden seeds without changing historical task files."""
+    import copy
+    import random
+
+    from pitbench.evaluator.private_assets import (
+        PrivateAssetResolver,
+        load_private_seed_robustness_config,
+    )
+    from pitbench.schema.task import SeedRobustnessConfig, SeedSelectionConfig
+
+    policy = plan.evaluation_seed_policy
+    if policy is None:
+        return views_path
+    identity = {
+        "source_views_sha256": _sha(views_path),
+        "policy": policy.model_dump(mode="json"),
+        "study_id": plan.study_id,
+    }
+    receipt_path = destination / "seed-policy.json"
+    result_path = destination / "task-views.json"
+    if receipt_path.exists():
+        receipt = json.loads(receipt_path.read_text())
+        if receipt["identity"] != identity:
+            raise ValueError("frozen seed policy or source views changed")
+        for filename, expected in receipt["files_sha256"].items():
+            if _sha(Path(filename)) != expected:
+                raise ValueError("frozen seed view changed")
+        return result_path
+    source = json.loads(views_path.read_text())
+    result = copy.deepcopy(source)
+    selected = [Path(path).stem for path in plan.task_configs]
+    result["tasks"] = {key: result["tasks"][key] for key in selected}
+    result["arms"] = {
+        arm.id: {key: result["arms"][arm.id][key] for key in selected}
+        for arm in plan.arms
+    }
+    destination.mkdir(parents=True, exist_ok=True)
+    resolver = PrivateAssetResolver(private_root)
+    files, counts = {}, {}
+    for task_id in selected:
+        metadata = result["tasks"][task_id]
+        task = PitBenchTask.from_yaml(Path(metadata["evaluator_task_config"]))
+        current = task.evaluation.seed_robustness
+        if current is not None and policy.preserve_existing:
+            hidden = load_private_seed_robustness_config(
+                resolver, task_id=task_id, public_config=current
+            )
+            if len(hidden.evaluation_seeds) != policy.seed_count:
+                raise ValueError("existing hidden seed count differs from study policy")
+            files[str(resolver.resolve(current.evaluation_seeds_file))] = (
+                current.evaluation_seeds_file_sha256
+            )
+        else:
+            development = (
+                current.development_seeds if current else task.evaluation.solver_seeds
+            )
+            if not development:
+                raise ValueError("study requires declared development seeds")
+            selection = SeedSelectionConfig(
+                seed_min=policy.seed_min,
+                seed_max=policy.seed_max,
+                seed_count=policy.seed_count,
+                development_seed_count=len(development),
+            )
+            seed_file = (
+                resolver.root
+                / "research"
+                / plan.study_id
+                / "evaluation-seeds"
+                / (task_id + ".yaml")
+            )
+            if not seed_file.exists():
+                rng = random.SystemRandom()
+                chosen = set()
+                while len(chosen) < policy.seed_count:
+                    seed = rng.randint(policy.seed_min, policy.seed_max)
+                    if seed not in development:
+                        chosen.add(seed)
+                seed_file.parent.mkdir(parents=True, exist_ok=True)
+                seed_file.write_text(
+                    yaml.safe_dump(
+                        {"task_id": task_id, "evaluation_seeds": sorted(chosen)}
+                    )
+                )
+                seed_file.chmod(0o600)
+            current = SeedRobustnessConfig(
+                development_seeds=development,
+                evaluation_seeds_file="private://"
+                + seed_file.relative_to(resolver.root).as_posix(),
+                evaluation_seeds_file_sha256=_sha(seed_file),
+                seed_selection=selection,
+            )
+            hidden = load_private_seed_robustness_config(
+                resolver, task_id=task_id, public_config=current
+            )
+            files[str(seed_file)] = _sha(seed_file)
+        counts[task_id] = {
+            "development": len(current.development_seeds),
+            "evaluation": len(hidden.evaluation_seeds),
+        }
+        task.evaluation.solver_seeds = None
+        task.evaluation.seed_robustness = current
+        task_path = destination / "evaluator" / (task_id + ".yaml")
+        task_path.parent.mkdir(exist_ok=True)
+        task_path.write_text(
+            yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False)
+        )
+        metadata.update(
+            evaluator_task_config=str(task_path.resolve()),
+            evaluator_sha256=_sha(task_path),
+        )
+        files[str(task_path.resolve())] = _sha(task_path)
+        for arm in plan.arms:
+            row = result["arms"][arm.id][task_id]
+            public = PitBenchTask.from_yaml(Path(row["agent_task_config_path"]))
+            public.evaluation = task.evaluation.model_copy(deep=True)
+            path = destination / "agent-views" / arm.id / (task_id + ".yaml")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                yaml.safe_dump(public.model_dump(mode="json"), sort_keys=False)
+            )
+            row.update(
+                task_config_path=str(task_path.resolve()),
+                agent_task_config_path=str(path.resolve()),
+            )
+            files[str(path.resolve())] = _sha(path)
+    result["seed_policy"] = identity
+    _write(result_path, result)
+    files[str(result_path.resolve())] = _sha(result_path)
+    _write(
+        receipt_path, {"identity": identity, "files_sha256": files, "counts": counts}
+    )
+    return result_path
+
+
+def study_evaluation_matches(
+    original: PitBenchTask, study: PitBenchTask, plan: GeneralizationStudyPlan
+) -> bool:
+    """Only the explicitly selected seed policy may alter the native contract."""
+    if original.release != study.release:
+        return False
+    if original.evaluation == study.evaluation:
+        return True
+    policy = plan.evaluation_seed_policy
+    current = study.evaluation.seed_robustness
+    if policy is None or current is None or study.evaluation.solver_seeds is not None:
+        return False
+    if current.seed_selection.seed_count != policy.seed_count:
+        return False
+    old = original.evaluation.seed_robustness
+    if old is not None and policy.preserve_existing and old != current:
+        return False
+    if current.development_seeds != (
+        old.development_seeds if old else original.evaluation.solver_seeds
+    ):
+        return False
+    exclude = {"solver_seeds", "seed_robustness"}
+    return original.evaluation.model_dump(
+        exclude=exclude
+    ) == study.evaluation.model_dump(exclude=exclude)
+
+
 def freeze_generalization_measurements(
     *,
     views_path: Path,

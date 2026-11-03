@@ -58,12 +58,14 @@ class ResourceReport(BaseModel):
     primary_resource: str = "peak_rss_bytes"
     primary_budget_sec: float
     expected_seed_count: int = Field(gt=0)
+    expected_seed_counts_by_instance_set: dict[str, int] = Field(default_factory=dict)
     by_instance_set: dict[str, dict[str, BudgetResources]]
 
 
 class ResourceDetails(BaseModel):
     task_id: str
     expected_seed_count: int
+    expected_seed_counts_by_instance_set: dict[str, int] = Field(default_factory=dict)
     memory_unit: str = "bytes"
     cpu_unit: str = "seconds"
     gap_change_direction: str = "agent_minus_base"
@@ -167,6 +169,7 @@ def compute_resource_reports(
     budgets_sec: Sequence[float] | None = None,
     expected_instance_counts: Mapping[str, int] | None = None,
     budgets_by_instance_set: Mapping[str, Sequence[float]] | None = None,
+    expected_seed_counts_by_instance_set: Mapping[str, int] | None = None,
 ) -> tuple[ResourceReport, ResourceDetails]:
     """Return a public aggregate and private per-instance resource details.
 
@@ -218,7 +221,13 @@ def compute_resource_reports(
         keyed[key] = item
         instance_sets[item.instance_set].add(item.instance_id)
         seeds_by_instance[(item.instance_set, item.instance_id)].add(item.solver_seed)
-    if any(len(seeds) > expected_seed_count for seeds in seeds_by_instance.values()):
+    seed_counts = dict(expected_seed_counts_by_instance_set or {})
+    if any(value < 1 for value in seed_counts.values()):
+        raise ValueError("expected panel seed counts must be positive")
+    if any(
+        len(seeds) > seed_counts.get(panel, expected_seed_count)
+        for (panel, _), seeds in seeds_by_instance.items()
+    ):
         raise ValueError("observed seed count exceeds the declared seed count")
     if expected_instance_counts is not None:
         if set(instance_sets) - set(expected_instance_counts):
@@ -231,6 +240,7 @@ def compute_resource_reports(
     aggregate_sets = {}
     detailed_sets = {}
     for instance_set, instance_ids in sorted(instance_sets.items()):
+        panel_seed_count = seed_counts.get(instance_set, expected_seed_count)
         aggregate_budgets = {}
         detailed_budgets = {}
         panel_budgets = list((budgets_by_instance_set or {}).get(instance_set, budgets))
@@ -253,7 +263,7 @@ def compute_resource_reports(
                     )
                     for seed in seeds
                 ]
-                missing = expected_seed_count - len(seeds)
+                missing = panel_seed_count - len(seeds)
                 quality_changes = [
                     agent.normalized_gap - base.normalized_gap
                     for base, agent in pairs
@@ -307,8 +317,8 @@ def compute_resource_reports(
                     if expected_instance_counts is not None
                     else len(instances)
                 ),
-                memory=_aggregate(instances, "memory", expected_seed_count),
-                cpu=_aggregate(instances, "cpu", expected_seed_count),
+                memory=_aggregate(instances, "memory", panel_seed_count),
+                cpu=_aggregate(instances, "cpu", panel_seed_count),
             )
         aggregate_sets[instance_set] = aggregate_budgets
         detailed_sets[instance_set] = detailed_budgets
@@ -318,11 +328,13 @@ def compute_resource_reports(
             task_id=task_id,
             primary_budget_sec=primary_budget_sec,
             expected_seed_count=expected_seed_count,
+            expected_seed_counts_by_instance_set=seed_counts,
             by_instance_set=aggregate_sets,
         ),
         ResourceDetails(
             task_id=task_id,
             expected_seed_count=expected_seed_count,
+            expected_seed_counts_by_instance_set=seed_counts,
             by_instance_set=detailed_sets,
         ),
     )
@@ -340,6 +352,9 @@ def format_resource_report(report: ResourceReport) -> str:
         f"Primary: peak RSS. Expected seeds per instance: {report.expected_seed_count}.",
     ]
     for instance_set, budgets in report.by_instance_set.items():
+        seed_count = report.expected_seed_counts_by_instance_set.get(
+            instance_set, report.expected_seed_count
+        )
         for cell in budgets.values():
             memory = cell.memory
             cpu = cell.cpu
@@ -355,9 +370,9 @@ def format_resource_report(report: ResourceReport) -> str:
             )
             lines.append(
                 f"{instance_set} / {cell.budget_sec:g}s: memory {memory_ratio}, CPU {cpu_ratio}; "
-                f"memory pairs {memory.paired_seed_count}/{cell.expected_instance_count * report.expected_seed_count}, "
+                f"memory pairs {memory.paired_seed_count}/{cell.expected_instance_count * seed_count}, "
                 f"complete instances {memory.complete_instance_count}/{cell.expected_instance_count}; "
-                f"CPU pairs {cpu.paired_seed_count}/{cell.expected_instance_count * report.expected_seed_count}."
+                f"CPU pairs {cpu.paired_seed_count}/{cell.expected_instance_count * seed_count}."
             )
     lines.append(
         "Ratios divide paired seed means within each instance, then take an equal-instance geometric mean."

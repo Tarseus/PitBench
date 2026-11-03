@@ -886,6 +886,11 @@ def evaluate_task(
         judge_mem_val = resources.judge_memory or effective_config.judge_memory
         if judge_mem_val is not None:
             materialize_kwargs["judge_memory"] = judge_mem_val
+        judge_tmpfs_val = (
+            resources.judge_tmpfs_size or effective_config.judge_tmpfs_size
+        )
+        if judge_tmpfs_val is not None:
+            materialize_kwargs["judge_tmpfs_size"] = judge_tmpfs_val
         judge_par_val = (
             resources.judge_parallel_runs or effective_config.judge_parallel_runs
         )
@@ -1739,6 +1744,12 @@ def report_command(
                 if task.evaluation.seed_robustness is not None
                 else len(task.evaluation.solver_seeds or [])
             ),
+            expected_seed_counts_by_instance_set={
+                item.name: len(task.evaluation.seed_robustness.development_seeds)
+                for item in task.instance_sets
+                if task.evaluation.seed_robustness is not None
+                and item.kind.value == "agent_dev"
+            },
         )
         if standard
         else None

@@ -19,6 +19,7 @@ import yaml
 
 from pitbench.evaluator.artifacts import write_json
 from pitbench.evaluator.collection import run_collection_jobs, run_collection_process
+from pitbench.evaluator.docker_judge import docker_cli_image
 from pitbench.evaluator.representations import representation_type
 from pitbench.metrics.scenario_report import compute_scenario_report, sequence_key
 from pitbench.schema.scenarios import (
@@ -671,7 +672,7 @@ def _collect_source_build(task, candidate_patch, output, config_path, context, r
     for path, mode in mounts.items():
         command += ["--volume", path + ":" + path + ":" + mode]
     command += [
-        context["image"],
+        docker_cli_image(context["image"]),
         "python3",
         "-m",
         "scripts.collect_metric_scenarios",

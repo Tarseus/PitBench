@@ -6,7 +6,13 @@ from pathlib import Path, PurePosixPath
 from typing import Literal, Self
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from pitbench.schema.objectives import OptimizationProfile
 from pitbench.schema.research import ResearchBudget
@@ -177,6 +183,14 @@ class SeedSelectionConfig(BaseModel):
     seed_min: int
     seed_max: int
     seed_count: int = Field(gt=0)
+    development_seed_count: int | None = Field(default=None, gt=0)
+
+    @model_serializer(mode="wrap")
+    def serialize_counts(self, handler):
+        result = handler(self)
+        if self.development_seed_count is None:
+            result.pop("development_seed_count", None)
+        return result
 
     @model_validator(mode="after")
     def validate_seed_range(self) -> Self:
@@ -205,8 +219,13 @@ class SeedRobustnessConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_development_seeds(self) -> Self:
-        if len(self.development_seeds) != self.seed_selection.seed_count:
-            raise ValueError("development_seeds must contain seed_count values")
+        development_count = (
+            self.seed_selection.development_seed_count or self.seed_selection.seed_count
+        )
+        if len(self.development_seeds) != development_count:
+            raise ValueError(
+                "development_seeds must contain the declared seed_count values"
+            )
         if len(set(self.development_seeds)) != len(self.development_seeds):
             raise ValueError("development_seeds must be unique")
         if any(

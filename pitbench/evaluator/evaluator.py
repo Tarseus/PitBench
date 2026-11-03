@@ -324,6 +324,7 @@ class PitBenchEvaluator(Evaluator):
                 output_dir=request.output_dir,
                 cpus=cpus,
                 memory=str(config.get("judge_memory", "8g")),
+                tmpfs_size=str(config.get("judge_tmpfs_size", "4g")),
                 cpuset_cpus=config.get("judge_cpuset_cpus"),
                 code_states=judge_code_states,
                 parallel_runs=parallel_runs,
@@ -389,6 +390,7 @@ class PitBenchEvaluator(Evaluator):
                 seed_min=seed_robustness.seed_selection.seed_min,
                 seed_max=seed_robustness.seed_selection.seed_max,
                 seed_count=seed_robustness.seed_selection.seed_count,
+                development_seed_count=seed_robustness.seed_selection.development_seed_count,
             )
             seed_report_inputs = {
                 "task_id": task.task_id,
@@ -487,6 +489,11 @@ class PitBenchEvaluator(Evaluator):
                     if seed_robustness is not None
                     else len(task.evaluation.solver_seeds or [])
                 ),
+                expected_seed_counts_by_instance_set={
+                    item.name: len(seed_robustness.development_seeds)
+                    for item in task.instance_sets
+                    if seed_robustness is not None and item.kind.value == "agent_dev"
+                },
             )
             resource_details_path = request.output_dir / "resource_details.json"
             resource_details_path.write_text(

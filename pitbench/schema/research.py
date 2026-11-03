@@ -140,6 +140,14 @@ class StudyArm(BaseModel):
     instruction: str = Field(min_length=20)
 
 
+class StudySeedPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    seed_count: int = Field(gt=0)
+    seed_min: int = Field(default=1, ge=1)
+    seed_max: int = Field(default=2147483646, ge=1)
+    preserve_existing: bool = True
+
+
 class GeneralizationStudyPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -158,6 +166,7 @@ class GeneralizationStudyPlan(BaseModel):
         Literal["trajectory", "lifecycle", "scaling", "sequence", "numerical", "replay"]
     ] = Field(min_length=1)
     inference_scope: str = Field(min_length=20)
+    evaluation_seed_policy: StudySeedPolicy | None = None
 
     @model_validator(mode="after")
     def validate_controls(self):
