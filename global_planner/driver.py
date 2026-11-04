@@ -8,6 +8,7 @@ import logging
 import re
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -65,11 +66,44 @@ class PlanningSessionDriver:
             except Exception:
                 self.initial_budget_spent = 0.0
         self.start_wall_time = time.time()
+        if self.store.state_file.exists():
+            st = self.store.state
+            if st.budget_clock_started_at_utc is None:
+                st.budget_clock_started_at_utc = datetime.now(timezone.utc).isoformat()
+                self.store.save()
+        self._planning_call_started = 0.0
 
     def get_current_budget_spent(self) -> float:
         """Returns cumulative elapsed budget spent across sessions."""
+        if self.store.state_file.exists() and self.store.state.budget_clock_started_at_utc:
+            started = datetime.fromisoformat(self.store.state.budget_clock_started_at_utc)
+            return max(
+                self.initial_budget_spent,
+                (datetime.now(timezone.utc) - started).total_seconds(),
+            )
         elapsed = max(0.0, time.time() - self.start_wall_time)
         return self.initial_budget_spent + elapsed
+
+    def _request_and_record_decision(self, packet, repository_root=None):
+        started = time.monotonic()
+        decision = self.adapter.request_decision(
+            packet,
+            llm_callable=self.llm_callable,
+            allow_offline_fallback=self.allow_offline_fallback,
+            repository_root=repository_root,
+        )
+        spent = self.get_current_budget_spent()
+        self.store.update_budget_spent(spent)
+        self.store.record_event("planner.decision", {
+            "decision": decision.decision.value,
+            "selected_opportunity": decision.selected_opportunity,
+            "evidence_refs": decision.evidence_refs,
+            "duration_sec": max(0.0, time.monotonic() - started),
+        })
+        self.controller.parse_and_record_decision(
+            decision.model_dump(), current_budget_spent=spent
+        )
+        return decision
 
     def bootstrap(
         self,
@@ -99,13 +133,7 @@ class PlanningSessionDriver:
         spent = self.get_current_budget_spent()
         self.store.update_budget_spent(spent)
         packet = self.controller.build_context_packet(current_budget_spent=spent)
-        decision = self.adapter.request_decision(
-            packet,
-            llm_callable=self.llm_callable,
-            allow_offline_fallback=self.allow_offline_fallback,
-            repository_root=repo_root,
-        )
-        self.controller.parse_and_record_decision(decision.model_dump(), current_budget_spent=spent)
+        decision = self._request_and_record_decision(packet, repo_root)
         return packet, decision
 
     def on_experiment_boundary(
@@ -150,13 +178,7 @@ class PlanningSessionDriver:
         new_decision: ReplanningDecision | None = None
         if should_replan:
             packet = self.controller.build_context_packet(current_budget_spent=spent)
-            new_decision = self.adapter.request_decision(
-                packet,
-                llm_callable=self.llm_callable,
-                allow_offline_fallback=self.allow_offline_fallback,
-                repository_root=repository_root,
-            )
-            self.controller.parse_and_record_decision(new_decision.model_dump(), current_budget_spent=spent)
+            new_decision = self._request_and_record_decision(packet, repository_root)
 
         return ev, new_decision
 
@@ -173,6 +195,14 @@ class PlanningSessionDriver:
         decision delivery -> implementation -> experiment evaluation -> dynamic model update -> replanning.
         """
         repo_root = Path(repository_root) if repository_root else None
+        resumed = self.store.state_file.exists()
+        if resumed:
+            self.store.load()
+            if self.store.state.task_id != str(task_config.get("task_id", "unknown_task")):
+                raise ValueError(
+                    f"plan task '{self.store.state.task_id}' does not match requested "
+                    f"task '{task_config.get('task_id', 'unknown_task')}'"
+                )
         # 1. Bootstrap or resume
         if not self.store.state_file.exists() or len(self.store.state.decisions) == 0:
             packet, decision = self.bootstrap(
@@ -180,9 +210,21 @@ class PlanningSessionDriver:
             )
         else:
             decision = self.store.state.decisions[-1]
+            if decision.decision == DecisionType.STOP:
+                self.store.record_event(
+                    "session.resumed", {"study_id": study_id, "max_steps": max_steps}
+                )
+                self.store.record_event(
+                    "session.finished", {"executed_steps": 0, "stopped": True}
+                )
+                return [decision]
             packet = self.controller.build_context_packet(self.get_current_budget_spent())
 
         executed_decisions: list[ReplanningDecision] = [decision]
+        self.store.record_event(
+            "session.resumed" if resumed else "session.started",
+            {"study_id": study_id, "max_steps": max_steps},
+        )
 
         try:
             # 2. Closed-loop execution loop
@@ -200,6 +242,12 @@ class PlanningSessionDriver:
 
                 # Hand off decision and fresh context packet to the coding agent worker
                 worker_outcome = agent_worker(decision, packet)
+                # A real agent may run pitbench bench in a child process, which
+                # commits evidence and events through another PlanStore instance.
+                # Reload before any controller writes to avoid replacing that state
+                # with this process's stale in-memory snapshot.
+                if isinstance(worker_outcome, dict) and worker_outcome.get("evidence_recorded"):
+                    self.store.load()
 
                 # Validate worker outcome (never default missing/empty worker result to PASS/VALID)
                 if not isinstance(worker_outcome, dict) or not worker_outcome:
@@ -254,6 +302,13 @@ class PlanningSessionDriver:
                             if nid in self.store.state.nodes:
                                 self.store.state.nodes[nid].status = "active"
 
+                    self.store.record_event("agent.turn_completed", {
+                        "step": step_idx + 1,
+                        "experiment_id": worker_outcome.get("experiment_id"),
+                        "execution_status": str(worker_outcome.get("execution_status")),
+                        "solution_validity": str(worker_outcome.get("solution_validity")),
+                    })
+
                 # Invalidate nodes if source files were modified
                 modified_files = worker_outcome.get("modified_files") if isinstance(worker_outcome, dict) else None
                 patch_sha = worker_outcome.get("candidate_patch_sha256") if isinstance(worker_outcome, dict) else None
@@ -279,20 +334,33 @@ class PlanningSessionDriver:
                     else f"exp_step_{step_idx + 1:03d}"
                 )
 
-                ev, new_decision = self.on_experiment_boundary(
-                    experiment_id=exp_id,
-                    target_nodes=target_nodes,
-                    metrics_summary=metrics_summary,
-                    execution_status=exec_status,
-                    solution_validity=sol_validity,
-                    performance_delta=perf_delta,
-                    hypothesis_supported=hyp_supp,
-                    hypothesis_id=worker_outcome.get("hypothesis_id") if isinstance(worker_outcome, dict) else None,
-                    observations_path=worker_outcome.get("observations_path") if isinstance(worker_outcome, dict) else None,
-                    candidate_patch_sha256=patch_sha,
-                    current_budget_spent=self.get_current_budget_spent(),
-                    repository_root=repo_root,
-                )
+                if isinstance(worker_outcome, dict) and worker_outcome.get("evidence_recorded"):
+                    self.store.load()
+                    ev = self.store.state.evidence[-1]
+                    spent = self.get_current_budget_spent()
+                    should_replan = self.controller.should_trigger_replanning(
+                        current_budget_spent=spent,
+                        critical_evidence=ev.status == "refuted",
+                    )
+                    new_decision = None
+                    if should_replan:
+                        packet = self.controller.build_context_packet(spent)
+                        new_decision = self._request_and_record_decision(packet, repo_root)
+                else:
+                    ev, new_decision = self.on_experiment_boundary(
+                        experiment_id=exp_id,
+                        target_nodes=target_nodes,
+                        metrics_summary=metrics_summary,
+                        execution_status=exec_status,
+                        solution_validity=sol_validity,
+                        performance_delta=perf_delta,
+                        hypothesis_supported=hyp_supp,
+                        hypothesis_id=worker_outcome.get("hypothesis_id") if isinstance(worker_outcome, dict) else None,
+                        observations_path=worker_outcome.get("observations_path") if isinstance(worker_outcome, dict) else None,
+                        candidate_patch_sha256=patch_sha,
+                        current_budget_spent=self.get_current_budget_spent(),
+                        repository_root=repo_root,
+                    )
 
                 # If replanning was triggered, advance to new decision
                 if new_decision is not None:
@@ -301,6 +369,13 @@ class PlanningSessionDriver:
 
         finally:
             self.store.update_budget_spent(self.get_current_budget_spent())
+            self.store.record_event(
+                "session.finished",
+                {
+                    "executed_steps": len(executed_decisions) - 1,
+                    "budget_spent_sec": self.get_current_budget_spent(),
+                },
+            )
 
         return executed_decisions
 
@@ -438,6 +513,8 @@ Respond with a JSON object matching this schema:
                                 discovered_opps.append(o)
             except Exception as e:
                 logging.getLogger("global_planner.worker").warning("Error during worker agent invocation: %s", e)
+                if not allow_offline_fallback:
+                    raise RuntimeError(f"Coding agent invocation failed: {e}") from e
 
         # 3. Check for real repository modifications (git diff)
         candidate_patch_sha256 = None

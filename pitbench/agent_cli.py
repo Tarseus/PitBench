@@ -761,6 +761,9 @@ def bench_command(args: argparse.Namespace) -> int:
         "PITBENCH_GLOBAL_PLAN_DIR"
     )
     if global_plan_dir and Path(global_plan_dir).exists():
+        controller_managed_session = (
+            os.environ.get("PITBENCH_GLOBAL_PLAN_CONTROLLED_SESSION") == "1"
+        )
         try:
             from datetime import datetime, timezone
 
@@ -775,6 +778,11 @@ def bench_command(args: argparse.Namespace) -> int:
 
             store = PlanStore(global_plan_dir)
             controller = PlanningController(store=store)
+            if store.state.task_id != config.get("task_id"):
+                raise ValueError(
+                    f"global plan task '{store.state.task_id}' does not match "
+                    f"active task '{config.get('task_id')}'"
+                )
 
             # 1. Execution status & solution validity (never conflate with runtime performance)
             if not payloads:
@@ -863,6 +871,19 @@ def bench_command(args: argparse.Namespace) -> int:
                 "solution_validity": sol_validity.value,
                 "performance_delta": perf_delta.value,
                 "runs_count": len(payloads),
+                "expected_runs_count": len(grid),
+                "development_seeds": list(seeds),
+                "budgets_sec": list(budgets),
+                "threads": threads,
+                "instances": [str(instance) for instance in instances],
+                "candidate_patch_sha256": patch_sha256,
+                "experiment_id": exp_id,
+                "feedback_paths": [
+                    str(path)
+                    for path in sorted(run_root_label.glob("*.feedback.json"))
+                    if patch_sha256 is None
+                    or json.loads(path.read_text()).get("patch_sha256") == patch_sha256
+                ],
             }
             if payloads:
                 if gap_reductions:
@@ -882,15 +903,24 @@ def bench_command(args: argparse.Namespace) -> int:
                 hypothesis_supported=hyp_supported,
                 hypothesis_id=hyp_id,
                 candidate_patch_sha256=patch_sha256,
+                observations_path=json.dumps(
+                    metrics_summary["feedback_paths"], ensure_ascii=False
+                ),
                 current_budget_spent=elapsed_sec,
             )
 
-            if should_replan:
+            if should_replan and not controller_managed_session:
                 allow_fallback = (
                     getattr(args, "allow_offline_fallback", False)
                     or (os.environ.get("PITBENCH_ALLOW_OFFLINE_FALLBACK") == "1")
                 )
-                adapter = CodexPlannerAdapter(allow_offline_fallback=allow_fallback)
+                from global_planner.adapters.codex import create_default_llm_callable
+
+                llm_callable = create_default_llm_callable(repository_root=_repository())
+                adapter = CodexPlannerAdapter(
+                    default_llm_callable=llm_callable,
+                    allow_offline_fallback=allow_fallback,
+                )
                 packet = controller.build_context_packet(current_budget_spent=elapsed_sec)
                 new_decision = adapter.request_decision(
                     packet, allow_offline_fallback=allow_fallback

@@ -104,6 +104,110 @@ def test_plan_store_persistence_and_invalid_opportunity_check(tmp_path: Path):
     assert "search.branching" in new_store.state.nodes
 
 
+def test_event_log_persists_across_store_restarts(tmp_path: Path):
+    store = PlanStore(tmp_path)
+    store.initialize(study_id="study_events", task_id="task_events", solver="solver")
+    store.record_event("hook.session_started", {"source": "adapter"})
+
+    resumed = PlanStore(tmp_path)
+    assert resumed.state.events[0]["event_type"] == "hook.session_started"
+    assert resumed.state.events[0]["payload"] == {"source": "adapter"}
+
+
+def test_create_default_callable_supports_claude_code_adapter(monkeypatch):
+    from global_planner.adapters.codex import create_default_llm_callable
+
+    commands = []
+
+    class Result:
+        returncode = 0
+        stdout = "agent output"
+        stderr = ""
+
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/claude")
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda cmd, **kwargs: (commands.append((cmd, kwargs)) or Result()),
+    )
+    call = create_default_llm_callable(backend="claude-code", model_name="sonnet")
+    assert call is not None
+    assert call("do work") == "agent output"
+    assert commands[0][0][:4] == [
+        "/usr/bin/claude", "--print", "--dangerously-skip-permissions", "--model"
+    ]
+
+
+def test_recording_same_evidence_id_twice_is_rejected(tmp_path: Path):
+    store = PlanStore(tmp_path)
+    store.initialize(study_id="study_duplicate", task_id="task_duplicate", solver="solver")
+    controller = PlanningController(store=store)
+    controller.on_experiment_completed(
+        experiment_id="exp_duplicate",
+        target_nodes=[],
+        metrics_summary={"runs_count": 1},
+        execution_status=ExecutionStatus.MISSING,
+        solution_validity=SolutionValidity.UNVERIFIED,
+        performance_delta=PerformanceDelta.UNKNOWN,
+    )
+    with pytest.raises(ValueError, match="already been recorded"):
+        store.record_evidence(store.state.evidence[0])
+
+
+def test_session_driver_preserves_evidence_written_by_external_bench_process(tmp_path: Path):
+    store = PlanStore(tmp_path)
+    store.initialize(study_id="study_external", task_id="task_external", solver="solver")
+    store.register_opportunity(
+        Opportunity(
+            id="opp_external",
+            title="External run",
+            target_nodes=["search.external"],
+            proposal="Run the actual benchmark",
+            expected_effect="Record measured evidence",
+            cheapest_discriminating_experiment="pitbench bench",
+        )
+    )
+    controller = PlanningController(store)
+    controller.parse_and_record_decision(
+        {
+            "decision": "continue",
+            "selected_opportunity": "opp_external",
+            "next_experiment": "pitbench bench",
+        },
+        current_budget_spent=0,
+    )
+    driver = PlanningSessionDriver(store=store, allow_offline_fallback=True)
+
+    def external_worker(decision, packet):
+        external = PlanStore(tmp_path)
+        PlanningController(external).on_experiment_completed(
+            experiment_id="exp_external",
+            target_nodes=["search.external"],
+            metrics_summary={"runs_count": 2, "expected_runs_count": 2},
+            execution_status=ExecutionStatus.PASS,
+            solution_validity=SolutionValidity.VALID,
+            performance_delta=PerformanceDelta.IMPROVED,
+            hypothesis_supported=True,
+        )
+        return {
+            "experiment_id": "exp_external",
+            "execution_status": ExecutionStatus.PASS,
+            "solution_validity": SolutionValidity.VALID,
+            "performance_delta": PerformanceDelta.IMPROVED,
+            "actual_runs_count": 2,
+            "expected_runs_count": 2,
+            "evidence_recorded": True,
+        }
+
+    driver.run_session(
+        task_config={"task_id": "task_external", "release": {"repository": "solver"}},
+        agent_worker=external_worker,
+        max_steps=1,
+    )
+    persisted = PlanStore(tmp_path).state
+    assert [e.experiment_id for e in persisted.evidence] == ["exp_external"]
+    assert persisted.experiments_count == 1
+
+
 def test_path_matching_glob_and_containment():
     """Verifies glob matching, prefix containment, and false positive prevention."""
     # 1. Wildcard / glob matching in reference

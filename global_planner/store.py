@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -100,6 +102,7 @@ class PlanStore:
             performance_protocol=performance_protocol,
             revision=0,
             budget_spent_sec=accumulated_budget,
+            budget_clock_started_at_utc=datetime.now(timezone.utc).isoformat(),
             last_replanned_at_sec=accumulated_budget,
         )
         self.save()
@@ -186,6 +189,61 @@ class PlanStore:
             st.budget_spent_sec = float(current_budget_spent)
             self.save()
 
+    def record_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        """Append an auditable controller event to the versioned state."""
+        from datetime import datetime, timezone
+
+        st = self.state
+        st.events.append({
+            "event_id": f"event_{len(st.events) + 1:06d}",
+            "event_type": event_type,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": payload,
+        })
+        self.save()
+
+    def bind_source_revision(self, repository_root: Path | str) -> str | None:
+        """Bind the active model to the candidate patch currently in the repository."""
+        root = Path(repository_root)
+        try:
+            import subprocess
+
+            tracked = subprocess.run(
+                ["git", "diff", "--binary", "--no-ext-diff", "HEAD", "--", ".", ":(exclude).pitbench", ":(exclude).pitbench/**"], cwd=root,
+                check=True, capture_output=True,
+            )
+            patch = bytearray(tracked.stdout)
+            untracked = subprocess.run(
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                cwd=root, check=True, capture_output=True, text=True,
+            )
+            untracked_paths = [
+                path for path in untracked.stdout.splitlines()
+                if path != ".pitbench" and not path.startswith(".pitbench/")
+            ]
+            for rel_path in untracked_paths:
+                result = subprocess.run(
+                    ["git", "diff", "--binary", "--no-ext-diff", "--no-index", "--", "/dev/null", rel_path],
+                    cwd=root, check=False, capture_output=True,
+                )
+                if result.returncode not in (0, 1):
+                    raise subprocess.CalledProcessError(
+                        result.returncode, result.args,
+                        output=result.stdout, stderr=result.stderr,
+                    )
+                patch.extend(result.stdout)
+        except (OSError, subprocess.CalledProcessError):
+            return None
+        digest = hashlib.sha256(patch).hexdigest() if patch else None
+        changed = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD", "--", ".", ":(exclude).pitbench", ":(exclude).pitbench/**"],
+            cwd=root, check=False, capture_output=True, text=True,
+        )
+        modified_files = changed.stdout.splitlines() if changed.returncode == 0 else []
+        modified_files.extend(untracked_paths)
+        self.update_source_state(digest, modified_files=modified_files)
+        return digest
+
     def record_evidence(
         self,
         evidence: EvidenceRecord,
@@ -193,6 +251,8 @@ class PlanStore:
     ) -> None:
         """Record empirical experiment results and update affected node effects and cumulative budget."""
         st = self.state
+        if any(existing.id == evidence.id for existing in st.evidence):
+            raise ValueError(f"evidence '{evidence.id}' has already been recorded")
         st.evidence.append(evidence)
         st.experiments_count += 1
         if current_budget_spent is not None:

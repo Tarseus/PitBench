@@ -125,7 +125,7 @@ class PlanningController:
             status_str = "inconclusive"
 
         evidence = EvidenceRecord(
-            id=f"ev_{self.state.experiments_count + 1:03d}",
+            id=f"ev_{self.state.experiments_count + 1:06d}",
             experiment_id=experiment_id,
             hypothesis_id=hypothesis_id,
             target_nodes=target_nodes,
@@ -140,6 +140,16 @@ class PlanningController:
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
         self.store.record_evidence(evidence, current_budget_spent=current_budget_spent)
+        self.store.record_event("experiment.completed", {
+            "experiment_id": experiment_id,
+            "evidence_id": evidence.id,
+            "target_nodes": target_nodes,
+            "execution_status": execution_status.value,
+            "solution_validity": solution_validity.value,
+            "performance_delta": performance_delta.value,
+            "candidate_patch_sha256": candidate_patch_sha256,
+            "observations_path": observations_path,
+        })
 
         # Critical evidence (hypothesis refuted, crash, or regression) overrides cooldown
         is_critical = (status_str == "refuted")

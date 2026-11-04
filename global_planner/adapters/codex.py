@@ -21,7 +21,7 @@ def create_default_llm_callable(
     repository_root: Path | str | None = None,
     remaining_budget_sec: float | None = None,
 ) -> Callable[[str], str] | None:
-    """Creates a real LLM callable supporting Antigravity CLI (agy), LiteLLM/OpenAI, or Codex CLI."""
+    """Creates a real model callable for Codex, Claude Code, Antigravity, or LiteLLM."""
     import logging
     import shutil
     import subprocess
@@ -105,6 +105,32 @@ def create_default_llm_callable(
             return res.stdout
 
         return _codex_call
+
+    if selected_backend in ("claude", "claude-code"):
+        claude_bin = shutil.which("claude") or "claude"
+        effective_model = model_name or os.environ.get("PITBENCH_PLANNER_MODEL")
+
+        def _claude_call(prompt: str) -> str:
+            cmd = [claude_bin, "--print", "--dangerously-skip-permissions"]
+            if effective_model:
+                cmd.extend(["--model", effective_model])
+            cmd.append(prompt)
+            logging.getLogger("global_planner.claude_code").info(
+                "Invoking Claude Code: model=%s, cwd=%s, timeout=%.1f",
+                effective_model, cwd, effective_timeout,
+            )
+            res = subprocess.run(
+                cmd, cwd=cwd, capture_output=True, text=True,
+                timeout=effective_timeout,
+            )
+            if res.returncode != 0:
+                raise RuntimeError(
+                    f"Claude Code execution failed (exit code {res.returncode}): "
+                    f"{res.stderr or res.stdout}"
+                )
+            return res.stdout
+
+        return _claude_call
 
     effective_model = model_name or os.environ.get("PITBENCH_PLANNER_MODEL")
     effective_key = api_key

@@ -193,7 +193,9 @@ class GlobalPlanState(BaseModel):
     active_opportunity_id: str | None = None
     decisions: list[ReplanningDecision] = Field(default_factory=list)
     evidence: list[EvidenceRecord] = Field(default_factory=list)
+    events: list[dict[str, Any]] = Field(default_factory=list)
     budget_spent_sec: float = 0.0
+    budget_clock_started_at_utc: str | None = None
     experiments_count: int = 0
     experiments_count_at_last_review: int = 0
     last_replanned_at_sec: float = 0.0
