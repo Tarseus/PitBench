@@ -45,7 +45,7 @@ requires = ["setuptools>=75", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["pitbench*", "adapters*"]
+include = ["pitbench*", "adapters*", "global_planner*"]
 
 [tool.setuptools.package-data]
 "pitbench.schema" = ["objective_catalog.json", "qualification_protocols.json", "qualification_protocols_v1_1.json"]

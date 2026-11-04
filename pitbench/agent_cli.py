@@ -742,6 +742,40 @@ def bench_command(args: argparse.Namespace) -> int:
     )
     with ThreadPoolExecutor(max_workers=parallel) as executor:
         succeeded = list(executor.map(run_one, grid))
+
+    global_plan_dir = getattr(args, "global_plan_dir", None) or os.environ.get(
+        "PITBENCH_GLOBAL_PLAN_DIR"
+    )
+    if global_plan_dir and Path(global_plan_dir).exists():
+        try:
+            from global_planner.controller import PlanningController
+            from global_planner.store import PlanStore
+
+            controller = PlanningController(store=PlanStore(global_plan_dir))
+            exp_id = getattr(args, "experiment_id", None) or (
+                f"bench_{patch_sha256[:8]}" if patch_sha256 else "bench_clean"
+            )
+            hyp_id = getattr(args, "hypothesis_id", None)
+            all_ok = all(succeeded)
+            ev, should_replan = controller.on_experiment_completed(
+                experiment_id=exp_id,
+                target_nodes=[],
+                metrics_summary={
+                    "succeeded_count": sum(1 for s in succeeded if s),
+                    "total_count": len(succeeded),
+                },
+                is_supported=all_ok if args.label == "agent" else None,
+                hypothesis_id=hyp_id,
+                code_patch_sha256=patch_sha256,
+            )
+            if should_replan:
+                print(
+                    f"[global-plan] Replanning boundary reached. Review plan at {global_plan_dir}",
+                    file=sys.stderr,
+                )
+        except Exception:
+            pass
+
     return 0 if all(succeeded) else 1
 
 
@@ -974,6 +1008,11 @@ def parser() -> argparse.ArgumentParser:
             "--jobs",
             type=int,
             help="development workers; defaults to the task preference and fits its CPU allowance",
+        )
+        bench.add_argument(
+            "--global-plan-dir",
+            type=Path,
+            help="path to active global planner state directory to record evidence and boundary events",
         )
         _run_options(bench, instance_required=False)
         bench.set_defaults(handler=bench_command)
