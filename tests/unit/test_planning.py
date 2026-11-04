@@ -18,6 +18,7 @@ from pitbench.planning import AlgorithmPlanner
 from pitbench.schema.planning import (
     AlgorithmModel,
     Evidence,
+    ImplementationRecord,
     MechanismProposal,
     PlanningDecision,
     SourceVersion,
@@ -107,6 +108,19 @@ def decide(planner, source, selected, evidence_refs=()):
     ), source)
 
 
+def implemented(planner, source, record_id="implemented"):
+    record = ImplementationRecord(
+        id=record_id, decision_index=len(planner.state.decisions), source=source,
+        proposals=[
+            {"proposal_id": ref, "status": "implemented"}
+            for ref in planner.require_decision().selected_proposals
+        ],
+        source_refs=["src/branch.c"],
+    )
+    planner.add_implementation(record, source)
+    return record
+
+
 def test_partial_hats_preserves_unknowns_and_validates_semantic_connections(model):
     assert model.state[-1].hidden
     assert model.transitions[0].relation is None
@@ -176,6 +190,152 @@ def test_combining_proposals_cannot_silently_overwrite_the_same_transition(tmp_p
     assert planner.require_decision().selected_proposals == ["compound"]
 
 
+def test_replacement_mechanisms_expand_experiment_scope_across_subsystems(tmp_path, model, source):
+    planner = AlgorithmPlanner(tmp_path / "plan.json", "task", "Improve search")
+    planner.update_model(model, source)
+    proposal = proposal_for(model)
+    proposal.action_updates = [model.actions[1].model_copy(update={"id": "new_filter_action"})]
+    proposal.replacement_transitions[0].action_id = "new_filter_action"
+    proposal.replacement_transitions[0].implementation_nodes = ["filter_code"]
+    planner.add_proposal(proposal)
+    decide(planner, source, ["compound"])
+    candidate = planner.state.decisions[-1].candidate_model
+    assert next(item for item in candidate.transitions if item.id == "expand").implementation_nodes == ["filter_code"]
+    implemented(planner, source)
+    evidence = Evidence(
+        id="cross_subsystem", kind="experiment", source=source, summary="Compound transition run",
+        implementation_id="implemented", expected_runs=1, observations=[{"seed": 7}],
+        execution_status="pass", solution_validity="valid",
+    )
+    planner.record_experiment(evidence)
+    assert set(evidence.affected_nodes) == {
+        "solve", "search", "branch", "branch_code", "propagation", "filter", "filter_code",
+    }
+
+
+def test_dependency_influence_is_kept_separate_from_direct_scope(tmp_path, model, source):
+    model.dependencies.append(model.dependencies[1].model_copy(update={"source": "branch", "target": "filter"}))
+    planner = AlgorithmPlanner(tmp_path / "plan.json", "task", "Improve search")
+    planner.update_model(model, source)
+    planner.add_proposal(proposal_for(model))
+    decide(planner, source, ["compound"])
+    implemented(planner, source)
+    evidence = Evidence(
+        id="potential", kind="experiment", source=source, summary="Observe branching",
+        implementation_id="implemented", expected_runs=1, observations=[{}],
+    )
+    planner.record_experiment(evidence)
+    assert set(evidence.affected_nodes) == {"solve", "search", "branch", "branch_code"}
+    assert set(evidence.potential_affected_nodes) == {"filter", "propagation"}
+    assert not set(evidence.affected_nodes) & set(evidence.potential_affected_nodes)
+
+
+def test_implementation_records_expose_partial_abandoned_and_unplanned_mechanisms(tmp_path, model, source):
+    planner = AlgorithmPlanner(tmp_path / "plan.json", "task", "Improve search")
+    planner.update_model(model, source)
+    planner.add_proposal(proposal_for(model))
+    planner.add_proposal(proposal_for(model, "reduce", "propagation_instead"))
+    decide(planner, source, ["compound"])
+    actual = source.model_copy(update={"patch_sha256": "d" * 64})
+    record = ImplementationRecord(
+        id="shifted", decision_index=1, source=actual,
+        proposals=[
+            {"proposal_id": "compound", "status": "abandoned"},
+            {"proposal_id": "propagation_instead", "status": "partial"},
+        ],
+        source_refs=["src/filter.c"],
+    )
+    with pytest.raises(ValueError, match="source-backed deviations"):
+        planner.add_implementation(record, actual)
+    record = ImplementationRecord.model_validate({
+        **record.model_dump(), "deviations": [{
+            "description": "Abandoned compound branching; only implemented one propagation shortcut",
+            "source_refs": ["src/filter.c"],
+        }],
+    })
+    with pytest.raises(ValueError, match="current source"):
+        planner.add_implementation(record, source)
+    with pytest.raises(ValueError, match="current decision"):
+        planner.add_implementation(record.model_copy(update={"decision_index": 2}), actual)
+    with pytest.raises(ValueError, match="every selected proposal"):
+        planner.add_implementation(record.model_copy(update={"proposals": record.proposals[1:]}), actual)
+    planner.add_implementation(record, actual)
+    with pytest.raises(ValueError, match="does not match"):
+        planner.require_implementation(record.id, source)
+    evidence = Evidence(
+        id="measure_actual", kind="experiment", source=actual, summary="Measure partial propagation",
+        implementation_id=record.id, expected_runs=1, observations=[{}],
+    )
+    planner.record_experiment(evidence)
+    assert evidence.decision_index == 1
+    assert evidence.proposal_ids == ["propagation_instead"]
+    assert set(evidence.affected_nodes) == {"filter_code", "filter", "propagation", "solve"}
+    restored = AlgorithmPlanner(planner.path, "task", "Improve search")
+    assert restored.state.decisions[0].selected_proposals == ["compound"]
+    assert restored.state.implementations[record.id].source == actual
+    assert restored.state.implementations[record.id].deviations[0].source_refs == ["src/filter.c"]
+
+
+@pytest.mark.parametrize("failure", ["exit", "timeout", "missing_command", "no_commands"])
+def test_build_attempt_is_registered_before_execution_and_failures_remain_reviewable(
+    tmp_path, monkeypatch, model, source, failure
+):
+    runs = tmp_path / "runs"
+    planner = AlgorithmPlanner(runs / "algorithm_plan.json", "task", "Improve search")
+    planner.update_model(model, source)
+    planner.add_proposal(proposal_for(model))
+    decide(planner, source, ["compound"])
+    implemented(planner, source)
+    command = {"argv": [sys.executable, "-c", "import sys; print('build output'); print('build error', file=sys.stderr); sys.exit(9)"]}
+    if failure == "timeout":
+        command = {"argv": [sys.executable, "-c", "import time; time.sleep(1)"], "timeout_sec": 0.01}
+    elif failure == "missing_command":
+        command = {"argv": [str(tmp_path / "missing-compiler")]}
+    config = {
+        "task_id": "task", "instruction": "Improve search", "agent_tools": ["bench", "plan"],
+        "development_seeds": [7], "budgets_sec": [5.0], "primary_budget_sec": 5.0,
+        "threads": 1, "build_commands": [] if failure == "no_commands" else [command],
+    }
+    instance = tmp_path / "dev.json"
+    instance.write_text("{}")
+    monkeypatch.setattr(agent_cli, "_config", lambda: config)
+    monkeypatch.setattr(agent_cli, "_repository", lambda: tmp_path)
+    monkeypatch.setattr(agent_cli, "_runs_root", lambda _: runs)
+    monkeypatch.setattr(agent_cli, "_instances", lambda *_: [instance])
+    monkeypatch.setattr(agent_cli, "_candidate_patch", lambda _: b"candidate")
+    monkeypatch.setattr(agent_cli, "_planning_source", lambda *_: source)
+    monkeypatch.setattr(agent_cli, "_run_one", lambda *a, **kw: pytest.fail("solver ran after build failed"))
+    build = agent_cli._run_build_steps
+
+    def inspect_build(config, **kwargs):
+        active = AlgorithmPlanner(planner.path, "task", "Improve search")
+        state = active.state
+        attempt = list(state.evidence.values())[-1]
+        assert attempt.stage == "build" and attempt.attempt_status == "running"
+        assert attempt.implementation_id == "implemented"
+        assert attempt.proposal_ids == ["compound"]
+        assert state.pending_evidence == [attempt.id]
+        with pytest.raises(ValueError, match="finish the running experiment"):
+            decide(active, source, ["compound"], [attempt.id])
+        return build(config, **kwargs)
+
+    monkeypatch.setattr(agent_cli, "_run_build_steps", inspect_build)
+    args = agent_cli.parser().parse_args(["bench", "--build", "--implementation-id", "implemented"])
+    assert agent_cli.bench_command(args) == 1
+    restored = AlgorithmPlanner(planner.path, "task", "Improve search")
+    assert len(restored.state.evidence) == 1
+    attempt = next(iter(restored.state.evidence.values()))
+    assert attempt.execution_status == "fail" and attempt.solution_validity == "unverified"
+    assert attempt.attempt_status == "finished" and attempt.failure_stage == "build"
+    assert attempt.source == source and attempt.decision_index == 1
+    assert attempt.implementation_id == "implemented" and attempt.proposal_ids == ["compound"]
+    assert attempt.artifact_paths and all(Path(ref).is_file() for ref in attempt.artifact_paths)
+    report = next(Path(ref) for ref in attempt.artifact_paths if ref.endswith("report.json"))
+    assert json.loads(report.read_text())["status"] == "fail"
+    with pytest.raises(ValueError, match="review evidence"):
+        agent_cli.bench_command(args)
+
+
 @pytest.mark.parametrize("execution,validity,count", [("pass", "valid", 2), ("fail", "invalid", 2), ("pass", "valid", 1)])
 def test_experiments_feed_back_to_all_algorithm_levels_without_automatic_causal_claims(
     tmp_path, model, source, execution, validity, count
@@ -184,12 +344,14 @@ def test_experiments_feed_back_to_all_algorithm_levels_without_automatic_causal_
     planner.update_model(model, source)
     planner.add_proposal(proposal_for(model))
     decide(planner, source, ["compound"])
+    implemented(planner, source)
     original_model = model.model_dump()
     evidence = Evidence(
         id="measured", kind="experiment", source=source, summary="Public paired run",
         expected_runs=2, execution_status=execution, solution_validity=validity,
         observations=[{"seed": seed, "preview_par2_reduction_sec": -0.3} for seed in range(count)],
         workload={"budget_sec": 5, "threads": 1},
+        implementation_id="implemented",
     )
     planner.record_experiment(evidence)
     restored = AlgorithmPlanner(planner.path, "task", "Improve search")
@@ -254,11 +416,13 @@ def test_measured_outcomes_revise_the_model_and_change_global_mechanism_selectio
     planner.add_proposal(proposal_for(model, "reduce", "try_propagation"))
     decide(planner, source, ["compound"])
     changed = source.model_copy(update={"patch_sha256": "c" * 64})
+    implemented(planner, changed)
     planner.record_experiment(Evidence(
         id="compound_cost", kind="experiment", source=changed,
         summary="Compound work increased total search cost under matched conditions",
         expected_runs=1, execution_status="pass", solution_validity="valid",
         observations=[{"seed": 7, "preview_par2_reduction_sec": -0.4}],
+        implementation_id="implemented",
     ))
     revised = model.model_copy(deep=True)
     revised.source = changed
@@ -337,11 +501,33 @@ def test_planning_is_bundled_into_the_existing_agent_tools(tmp_path, model):
         global_reason="Test the compound mechanism while measuring global search cost",
     ))
     assert context["decision"]["selected_proposals"] == ["compound"]
+    assert context["decision"]["candidate_model"]["transitions"]
+    submit("implementation", ImplementationRecord(
+        id="branch_change", decision_index=context["decision_index"], source=model.source,
+        proposals=[{"proposal_id": "compound", "status": "implemented"}],
+        source_refs=["src/branch.c"],
+    ))
     persisted = AlgorithmPlanner(tmp_path / "runs/algorithm_plan.json", task.task_id, task.instruction)
     assert persisted.require_decision().model_revision == 1
+    assert persisted.require_implementation("branch_change", model.source).decision_index == 1
+    unbound = subprocess.run(
+        [sys.executable, "-m", "pitbench.agent_cli", "bench"],
+        cwd=task_dir, env=env, capture_output=True, text=True,
+    )
+    assert unbound.returncode != 0 and "--implementation-id" in unbound.stderr
+    (repository / "src/branch.c").write_text("int branch(void) { return 2; }\n")
+    stale = subprocess.run(
+        [sys.executable, "-m", "pitbench.agent_cli", "bench", "--implementation-id", "branch_change"],
+        cwd=task_dir, env=env, capture_output=True, text=True,
+    )
+    assert stale.returncode != 0 and "does not match the current source" in stale.stderr
+    assert all(
+        record.kind != "experiment"
+        for record in AlgorithmPlanner(persisted.path, task.task_id, task.instruction).state.evidence.values()
+    )
 
 
-@pytest.mark.parametrize("outcome", ["complete", "absent", "corrupt", "failed"])
+@pytest.mark.parametrize("outcome", ["complete", "built", "absent", "corrupt", "failed"])
 def test_existing_bench_records_raw_evidence_and_requests_model_revision(
     tmp_path, monkeypatch, model, source, outcome
 ):
@@ -351,6 +537,7 @@ def test_existing_bench_records_raw_evidence_and_requests_model_revision(
         "task_id": "task", "instruction": "Improve global solver performance",
         "agent_tools": ["bench", "plan"], "budgets_sec": [5.0],
         "primary_budget_sec": 5.0, "development_seeds": [7, 8], "threads": 1,
+        "build_commands": [{"argv": [sys.executable, "-c", "print('build succeeded')"]}],
     }
     runs = tmp_path / "runs"
     (runs / "agent").mkdir(parents=True)
@@ -358,6 +545,7 @@ def test_existing_bench_records_raw_evidence_and_requests_model_revision(
     planner.update_model(model, source)
     planner.add_proposal(proposal_for(model))
     decide(planner, source, ["compound"])
+    implemented(planner, source)
     monkeypatch.setattr(agent_cli, "_config", lambda: config)
     monkeypatch.setattr(agent_cli, "_repository", lambda: tmp_path)
     monkeypatch.setattr(agent_cli, "_candidate_patch", lambda _: b"candidate")
@@ -382,15 +570,21 @@ def test_existing_bench_records_raw_evidence_and_requests_model_revision(
         return outcome != "failed" or seed != 8
 
     monkeypatch.setattr(agent_cli, "_run_one", run_one)
-    args = agent_cli.parser().parse_args(["bench", "--all-seeds"])
-    assert agent_cli.bench_command(args) == (0 if outcome == "complete" else 1)
+    args = agent_cli.parser().parse_args(["bench", "--all-seeds", "--implementation-id", "implemented"])
+    args.build = outcome == "built"
+    assert agent_cli.bench_command(args) == (0 if outcome in ("complete", "built") else 1)
     restored = AlgorithmPlanner(planner.path, "task", config["instruction"])
     evidence = next(iter(restored.state.evidence.values()))
-    assert evidence.execution_status == {"complete": "pass", "failed": "fail"}.get(outcome, "missing")
+    assert evidence.execution_status == {"complete": "pass", "built": "pass", "failed": "fail"}.get(outcome, "missing")
     assert evidence.expected_runs == 2
     assert evidence.observations[0]["preview_gap_reduction"] == -0.2
     assert evidence.workload["seeds"] == [7, 8]
     assert evidence.proposal_ids == ["compound"]
+    assert evidence.implementation_id == "implemented"
+    assert evidence.decision_index == 1
+    assert evidence.attempt_status == "finished"
+    if outcome == "built":
+        assert any(ref.endswith("report.json") for ref in evidence.artifact_paths)
     assert set(evidence.affected_nodes) == {"solve", "search", "branch", "branch_code"}
     assert restored.state.pending_evidence == [evidence.id]
     with pytest.raises(ValueError, match="review evidence"):

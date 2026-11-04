@@ -15,6 +15,7 @@ from pitbench.schema.planning import (
     AlgorithmModel,
     Claim,
     Evidence,
+    ImplementationRecord,
     MechanismProposal,
     PlanningDecision,
     PlanningState,
@@ -163,11 +164,16 @@ class AlgorithmPlanner:
         for key in selected:
             if set(proposals[key].depends_on) - selected:
                 raise ValueError("select required mechanism dependencies together")
-        self._changed_model(self.state.models[-1], [proposals[key] for key in decision.selected_proposals])
+        candidate = self._changed_model(
+            self.state.models[-1], [proposals[key] for key in decision.selected_proposals]
+        )
         if set(decision.evidence_refs) - self.state.evidence.keys():
             raise ValueError("decision references unknown evidence")
         if set(self.state.pending_evidence) - set(decision.evidence_refs):
             raise ValueError("replanning must address the pending experiment observations")
+        if any(self.state.evidence[key].attempt_status == "running" for key in self.state.pending_evidence):
+            raise ValueError("finish the running experiment before reviewing its evidence")
+        decision.candidate_model = candidate
         self.state.decisions.append(decision.model_copy(deep=True))
         self.state.pending_evidence.clear()
         self._save()
@@ -180,32 +186,116 @@ class AlgorithmPlanner:
             raise ValueError("select a mechanism change in the current algorithm model first")
         return decision
 
+    def add_implementation(self, record: ImplementationRecord, source: SourceVersion) -> None:
+        decision = self.require_decision()
+        if record.id in self.state.implementations:
+            raise ValueError("implementation id already exists")
+        if record.decision_index != len(self.state.decisions):
+            raise ValueError("implementation must reference the current decision")
+        if record.source != source:
+            raise ValueError("implementation must describe the current source version")
+        refs = [item.proposal_id for item in record.proposals]
+        if len(set(refs)) != len(refs) or set(decision.selected_proposals) - set(refs):
+            raise ValueError("declare the implementation status of every selected proposal exactly once")
+        for ref in refs:
+            proposal = self.state.proposals.get(ref)
+            if proposal is None or proposal.model_revision != decision.model_revision:
+                raise ValueError("implementation references an unknown or different-revision proposal")
+        if (
+            set(refs) - set(decision.selected_proposals)
+            or any(item.status != "implemented" for item in record.proposals)
+        ) and not record.deviations:
+            raise ValueError("partial, abandoned, or unselected mechanisms need source-backed deviations")
+        self.state.implementations[record.id] = record.model_copy(deep=True)
+        self._save()
+
+    def require_implementation(self, implementation_id: str | None, source: SourceVersion) -> ImplementationRecord:
+        self.require_decision()
+        record = self.state.implementations.get(implementation_id)
+        if record is None:
+            raise ValueError("submit pitbench plan --implementation FILE and select --implementation-id before benchmarking")
+        if record.source != source or record.decision_index != len(self.state.decisions):
+            raise ValueError("implementation record does not match the current source and decision")
+        return record
+
+    def _experiment_scope(self, evidence: Evidence, implementation: ImplementationRecord) -> None:
+        decision = self.state.decisions[implementation.decision_index - 1]
+        model = self.state.models[decision.model_revision - 1]
+        nodes = {node.id: node for node in model.nodes}
+        actions = {action.id: action for action in model.actions}
+        transitions = {transition.id: transition for transition in model.transitions}
+        affected = set()
+        for key in evidence.proposal_ids:
+            proposal = self.state.proposals[key]
+            replacement_actions = {**actions, **{action.id: action for action in proposal.action_updates}}
+            for transition, owners in [
+                *((transitions[ref], actions) for ref in proposal.target_transitions),
+                *((transition, replacement_actions) for transition in proposal.replacement_transitions),
+            ]:
+                affected.add(owners[transition.action_id].node_id)
+                affected.update(transition.implementation_nodes)
+        # Deviation files may touch known nodes outside any implemented proposal.
+        source_refs = [*implementation.source_refs]
+        for deviation in implementation.deviations:
+            source_refs.extend(deviation.source_refs)
+        affected.update(
+            node.id for node in model.nodes
+            if any(path == ref or path.startswith(ref.rstrip("/") + "/")
+                   for path in source_refs for ref in node.source_refs)
+        )
+
+        def ancestors(keys):
+            result = set(keys)
+            for key in list(result):
+                while nodes[key].parent_id is not None:
+                    key = nodes[key].parent_id
+                    result.add(key)
+            return result
+
+        affected = ancestors(affected)
+        potential = set(affected)
+        while True:
+            reached = ancestors({
+                edge.target for edge in model.dependencies
+                if edge.source in potential and edge.status != "refuted"
+            })
+            if reached.issubset(potential):
+                break
+            potential.update(reached)
+        evidence.affected_nodes = sorted(affected)
+        evidence.potential_affected_nodes = sorted(potential - affected)
+
     def record_experiment(
         self, evidence: Evidence, *, baseline: bool = False
     ) -> Evidence:
         if evidence.kind != "experiment" or evidence.id in self.state.evidence:
             raise ValueError("experiment evidence needs a new id")
         if not baseline:
-            decision = self.require_decision()
-            evidence.proposal_ids = list(decision.selected_proposals)
-        affected = set()
-        if self.state.models:
-            model = self.state.models[-1]
-            nodes = {node.id: node for node in model.nodes}
-            actions = {action.id: action for action in model.actions}
-            transitions = {transition.id: transition for transition in model.transitions}
-            for key in evidence.proposal_ids:
-                for ref in self.state.proposals[key].target_transitions:
-                    transition = transitions[ref]
-                    affected.add(actions[transition.action_id].node_id)
-                    affected.update(transition.implementation_nodes)
-            for key in list(affected):
-                while nodes[key].parent_id is not None:
-                    key = nodes[key].parent_id
-                    affected.add(key)
-        evidence.affected_nodes = sorted(affected)
+            implementation = self.require_implementation(evidence.implementation_id, evidence.source)
+            evidence.decision_index = implementation.decision_index
+            evidence.proposal_ids = [
+                item.proposal_id for item in implementation.proposals if item.status != "abandoned"
+            ]
+            self._experiment_scope(evidence, implementation)
         self.state.evidence[evidence.id] = evidence.model_copy(deep=True)
         self.state.pending_evidence.append(evidence.id)
+        self._save()
+        return evidence
+
+    def update_experiment(self, evidence: Evidence) -> Evidence:
+        previous = self.state.evidence.get(evidence.id)
+        if evidence.kind != "experiment" or previous is None or previous.kind != "experiment" or previous.attempt_status != "running":
+            raise ValueError("only a registered running experiment can be updated")
+        if (
+            evidence.source != previous.source
+            or evidence.implementation_id != previous.implementation_id
+            or evidence.expected_runs != previous.expected_runs
+        ):
+            raise ValueError("experiment update cannot change its source, implementation, or planned run count")
+        for name in ("decision_index", "proposal_ids", "affected_nodes", "potential_affected_nodes"):
+            setattr(evidence, name, getattr(previous, name))
+        evidence = Evidence.model_validate(evidence.model_dump())
+        self.state.evidence[evidence.id] = evidence.model_copy(deep=True)
         self._save()
         return evidence
 
@@ -223,6 +313,11 @@ class AlgorithmPlanner:
                 if proposal.model_revision == len(self.state.models)
             ],
             "decision": self.state.decisions[-1].model_dump() if self.state.decisions else None,
+            "decision_index": len(self.state.decisions),
+            "implementations": [
+                record.model_dump() for record in self.state.implementations.values()
+                if record.decision_index == len(self.state.decisions)
+            ],
             "evidence": [
                 record.model_dump(exclude={"observations"}) for record in self.state.evidence.values()
             ],
@@ -248,9 +343,14 @@ Proposals describe transition replacements (including state/action changes), the
 global effects and dependencies, concrete source changes, and falsifiable paired
 experiments. Compare proposals across the known subsystems using `--decision FILE`.
 An empty selection records a reasoned stop. Staying with the same mechanism is valid.
-Implement the selected change and use the existing `pitbench bench` for measurement
-and independent verification. Bench preserves raw public results and maps affected
-mechanisms back to their subsystem and global ancestors. Then inspect `pitbench plan`,
+After editing, submit `pitbench plan --implementation FILE`: reference the decision
+index, actual source version, each proposal's implemented/partial/abandoned status,
+and any deviations with source-file references. The planned candidate model is a
+hypothesis; selection does not imply that the code implements it. Run the existing
+`pitbench bench --implementation-id ID` for measurement and independent verification.
+Bench registers attempts before building and retains build failures and log paths.
+It maps original and replacement mechanisms back to their global ancestors, while
+keeping dependency-inferred potential effects separate. Then inspect `pitbench plan`,
 revise model claims using those observations, and record a new global decision before
 another candidate experiment. Performance improvement does not automatically prove
 a mechanism hypothesis. Keep all failures and missing observations in the record.

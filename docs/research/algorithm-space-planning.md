@@ -34,14 +34,23 @@ supply canned optimization opportunities.
    A decision selects one mechanism or a compatible combination, explains deferred
    alternatives, and addresses pending experimental evidence. An empty selection
    records a reasoned stop. Changing multiple modules is not a success criterion.
-5. Implement the selected mechanism and run the ordinary
-   `pitbench bench --label agent --build` with matched instances, seeds, and budgets.
-6. Read `pitbench plan`. Benchmark evidence identifies affected implementation and
+5. Implement the mechanism, then submit
+   `pitbench plan --implementation implementation.json`. Reference the recorded
+   `decision_index`, actual source version, and proposal IDs; declare each proposal
+   as `implemented`, `partial`, or `abandoned`. Give source-file references for the
+   implementation and explain deviations from the planned model with their own
+   source references. A deviation may explicitly identify a previously deferred
+   proposal that was implemented instead. The tool checks references and versions;
+   it does not prove semantic equivalence between source and model.
+6. Run the ordinary `pitbench bench --label agent --build --implementation-id ID`
+   with matched instances, seeds, and budgets. Editing source again requires a new
+   implementation record bound to that patch. Baseline runs need no such record.
+7. Read `pitbench plan`. Benchmark evidence identifies affected implementation and
    mechanism nodes and their subsystem/global ancestors. Update model claims from
    those observations, compare the remaining opportunities, and decide the next
    experiment. A new source version requires model review before the next decision.
 
-The model, proposed changes, and decisions are structured JSON; `--schema` supplies
+The model, proposed changes, decisions, and implementation records are structured JSON; `--schema` supplies
 the exact contracts. A transition declares its action, state reads/writes, relation,
 resource costs, progress, invariant references, and Level 3 implementation nodes.
 For example, a local-to-compound transition proposal may introduce a hidden search
@@ -52,10 +61,23 @@ The problem-specific feasibility and cost semantics still have to be instantiate
 ## Evidence and source versions
 
 `algorithm_plan.json` in the existing public runs directory retains model revisions,
-all proposals and decisions, source/trace evidence, and raw per-run benchmark
+all proposals, decisions, implementation records, source/trace evidence, and raw per-run benchmark
 feedback. Source identity uses repository HEAD and the same candidate patch hash as
 bench, including untracked source. Each experiment retains its instances, seeds,
 budgets, threads, verification status, failures, missing results, and artifact paths.
+
+Each decision retains its planned candidate model A'. Experiments reference the
+implementation record and its actual patch, rather than assuming selected proposals
+were fully implemented. Direct scope includes original and replacement transition
+owners, implementation nodes, declared deviation files, and their ancestors.
+`potential_affected_nodes` separately lists possible influence inferred through
+model dependencies; it does not establish a causal observation.
+
+An attempt enters the evidence history and pending-review list before the build
+starts. Build failure, compiler absence, or timeout records `failure_stage: build`,
+the implementation binding, and logs in a unique attempt directory. A successful
+build advances the same record to solver measurement. Failed attempts remain pending
+until reviewed; an attempt still running cannot be marked reviewed.
 
 Data/control dependencies and performance influence have separate edge types.
 An observed performance influence requires complete, independently valid experiment

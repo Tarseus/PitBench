@@ -165,6 +165,26 @@ class PlanningDecision(Record):
     global_reason: Text
     alternatives: list[Alternative] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
+    candidate_model: AlgorithmModel | None = None
+
+
+class ProposalImplementation(Record):
+    proposal_id: Text
+    status: Literal["implemented", "partial", "abandoned"]
+
+
+class ImplementationDeviation(Record):
+    description: Text
+    source_refs: list[Text] = Field(min_length=1)
+
+
+class ImplementationRecord(Record):
+    id: Text
+    decision_index: int = Field(ge=1)
+    source: SourceVersion
+    proposals: list[ProposalImplementation] = Field(min_length=1)
+    source_refs: list[Text] = Field(min_length=1)
+    deviations: list[ImplementationDeviation] = Field(default_factory=list)
 
 
 class Evidence(Record):
@@ -180,10 +200,18 @@ class Evidence(Record):
     solution_validity: Literal["valid", "invalid", "unverified"] = "unverified"
     proposal_ids: list[str] = Field(default_factory=list)
     affected_nodes: list[str] = Field(default_factory=list)
+    potential_affected_nodes: list[str] = Field(default_factory=list)
+    implementation_id: str | None = None
+    decision_index: int | None = Field(default=None, ge=1)
+    stage: Literal["build", "solve"] = "solve"
+    attempt_status: Literal["running", "finished"] = "finished"
+    failure_stage: Literal["build", "solve"] | None = None
 
     @model_validator(mode="after")
     def validate_measurement(self):
-        if self.kind == "experiment" and (
+        if self.stage == "build":
+            self.solution_validity = "unverified"
+        if self.kind == "experiment" and self.stage == "solve" and (
             self.expected_runs is None or len(self.observations) < self.expected_runs
         ):
             self.execution_status = "missing"
@@ -198,4 +226,5 @@ class PlanningState(Record):
     proposals: dict[str, MechanismProposal] = Field(default_factory=dict)
     evidence: dict[str, Evidence] = Field(default_factory=dict)
     decisions: list[PlanningDecision] = Field(default_factory=list)
+    implementations: dict[str, ImplementationRecord] = Field(default_factory=dict)
     pending_evidence: list[str] = Field(default_factory=list)
