@@ -852,7 +852,8 @@ def test_dynamic_model_updating_trajectory(tmp_path: Path):
 
 
 def test_autonomous_worker_session_end_to_end(tmp_path: Path):
-    """Verifies that build_autonomous_worker coordinates with driver for autonomous exploration."""
+    """Verifies that build_autonomous_worker invokes agent, parses discovered opportunities,
+    and coordinates with driver for autonomous exploration."""
     repo_dir = tmp_path / "repo"
     src_dir = repo_dir / "src"
     src_dir.mkdir(parents=True, exist_ok=True)
@@ -864,6 +865,31 @@ def test_autonomous_worker_session_end_to_end(tmp_path: Path):
         "repository": {"editable_paths": ["src"]},
     }
 
+    def mock_agent_reply(prompt: str) -> str:
+        return json.dumps({
+            "hypothesis_id": "hyp_solver_heur",
+            "hypothesis": "Identified solver_heur routine in src/solver_heur.c",
+            "discovered_nodes": [
+                {
+                    "id": "mechanism.solver_heur",
+                    "level": "level_2_mechanism",
+                    "parent_id": "subsystem.heuristics",
+                    "purpose": "Solver heur routine",
+                    "source_refs": ["src/solver_heur.c"],
+                }
+            ],
+            "discovered_opportunities": [
+                {
+                    "id": "opp_optimize_solver_heur",
+                    "title": "Optimize solver heur routine",
+                    "target_nodes": ["mechanism.solver_heur"],
+                    "proposal": "Improve heur solve frequency",
+                    "expected_effect": "Decrease solve time",
+                    "cheapest_discriminating_experiment": "bench",
+                }
+            ],
+        })
+
     store = PlanStore(tmp_path / "auto_store")
     driver = PlanningSessionDriver(
         store=store,
@@ -871,7 +897,12 @@ def test_autonomous_worker_session_end_to_end(tmp_path: Path):
         cooldown_sec=0.0,
         allow_offline_fallback=True,
     )
-    worker = build_autonomous_worker(task_config=task_config, repository_root=repo_dir)
+    worker = build_autonomous_worker(
+        task_config=task_config,
+        repository_root=repo_dir,
+        llm_callable=mock_agent_reply,
+        allow_offline_fallback=True,
+    )
 
     decisions = driver.run_session(
         task_config=task_config,
@@ -881,6 +912,171 @@ def test_autonomous_worker_session_end_to_end(tmp_path: Path):
     )
     assert len(decisions) >= 1
     assert store.state.experiments_count == 2
-    # Verify discovered opportunity was registered by autonomous worker
+    # Verify discovered opportunity was parsed and registered by autonomous worker
     assert any("opp_optimize_solver_heur" in o_id for o_id in store.state.opportunities)
+    # Verify evidence was recorded as MISSING / UNVERIFIED because no benchmark artifacts exist
+    assert all(e.execution_status == ExecutionStatus.MISSING for e in store.state.evidence)
+
+
+def test_empty_repository_autonomous_worker_no_false_success(tmp_path: Path):
+    """Verifies [P0]: On a completely empty repository, autonomous worker never writes
+    PASS / VALID / IMPROVED / supported without execution artifacts.
+    """
+    empty_repo = tmp_path / "empty_repo"
+    empty_repo.mkdir()
+    task_config = {
+        "task_id": "test_empty_task",
+        "release": {"repository": "scipopt/scip"},
+        "repository": {"editable_paths": ["src"]},
+    }
+    store = PlanStore(tmp_path / "empty_store")
+    driver = PlanningSessionDriver(store=store, allow_offline_fallback=True)
+
+    called_count = 0
+
+    def dummy_agent(prompt: str) -> str:
+        nonlocal called_count
+        called_count += 1
+        return "{}"
+
+    worker = build_autonomous_worker(
+        task_config=task_config,
+        repository_root=empty_repo,
+        llm_callable=dummy_agent,
+        allow_offline_fallback=True,
+    )
+    decisions = driver.run_session(
+        task_config=task_config,
+        agent_worker=worker,
+        max_steps=2,
+        repository_root=empty_repo,
+    )
+    assert len(decisions) >= 1
+    assert called_count == 2  # Agent was actually invoked on each step!
+    assert len(store.state.evidence) == 2
+    for ev in store.state.evidence:
+        assert ev.execution_status == ExecutionStatus.MISSING
+        assert ev.solution_validity == SolutionValidity.UNVERIFIED
+        assert ev.performance_delta == PerformanceDelta.UNKNOWN
+        assert ev.hypothesis_supported is None
+        assert ev.candidate_patch_sha256 is None
+
+
+def test_zero_runs_count_marked_missing(tmp_path: Path):
+    """Verifies [P1]: expected_runs_count=2, actual_runs_count=0 is marked MISSING / UNVERIFIED,
+    never defaulted to PASS / VALID.
+    """
+    store = PlanStore(tmp_path / "zero_store")
+    driver = PlanningSessionDriver(store=store, allow_offline_fallback=True)
+    task_config = {
+        "task_id": "test_zero_task",
+        "release": {"repository": "scipopt/scip"},
+        "repository": {"editable_paths": ["src"]},
+    }
+
+    def zero_runs_worker(decision: ReplanningDecision, packet: ContextPacket) -> dict[str, Any]:
+        return {
+            "expected_runs_count": 2,
+            "actual_runs_count": 0,
+            "execution_status": ExecutionStatus.PASS,
+            "solution_validity": SolutionValidity.VALID,
+            "performance_delta": PerformanceDelta.IMPROVED,
+            "hypothesis_supported": True,
+        }
+
+    driver.run_session(task_config=task_config, agent_worker=zero_runs_worker, max_steps=1)
+    assert len(store.state.evidence) == 1
+    ev = store.state.evidence[0]
+    assert ev.execution_status == ExecutionStatus.MISSING
+    assert ev.solution_validity == SolutionValidity.UNVERIFIED
+    assert ev.performance_delta == PerformanceDelta.UNKNOWN
+    assert ev.hypothesis_supported is None
+
+
+def test_dynamic_updates_from_raw_json_dicts(tmp_path: Path):
+    """Verifies [P1]: worker returning discovered_nodes and discovered_opportunities as raw JSON
+    dicts does not raise AttributeError and validates through Pydantic.
+    """
+    store = PlanStore(tmp_path / "json_store")
+    driver = PlanningSessionDriver(store=store, allow_offline_fallback=True)
+    task_config = {
+        "task_id": "test_json_task",
+        "release": {"repository": "scipopt/scip"},
+        "repository": {"editable_paths": ["src"]},
+    }
+
+    def json_worker(decision: ReplanningDecision, packet: ContextPacket) -> dict[str, Any]:
+        return {
+            "experiment_id": "exp_json_1",
+            "actual_runs_count": 1,
+            "expected_runs_count": 1,
+            "execution_status": ExecutionStatus.PASS,
+            "solution_validity": SolutionValidity.VALID,
+            "performance_delta": PerformanceDelta.IMPROVED,
+            "hypothesis_supported": True,
+            "discovered_nodes": [
+                {
+                    "id": "mechanism.raw_dict_node",
+                    "level": "level_2_mechanism",
+                    "parent_id": "subsystem.heuristics",
+                    "purpose": "Discovered via raw dict",
+                    "source_refs": ["src/dict.c"],
+                }
+            ],
+            "discovered_opportunities": [
+                {
+                    "id": "opp_raw_dict",
+                    "title": "Raw Dict Opp",
+                    "target_nodes": ["mechanism.raw_dict_node"],
+                    "proposal": "Proposal",
+                    "expected_effect": "Effect",
+                    "cheapest_discriminating_experiment": "bench",
+                }
+            ],
+        }
+
+    driver.run_session(task_config=task_config, agent_worker=json_worker, max_steps=1)
+    assert "mechanism.raw_dict_node" in store.state.nodes
+    assert "opp_raw_dict" in store.state.opportunities
+    assert store.state.nodes["mechanism.raw_dict_node"].purpose == "Discovered via raw dict"
+
+
+def test_codex_backend_honors_model_cwd_and_budget_timeout(monkeypatch, tmp_path: Path):
+    """Verifies [P1]: Codex backend passes --model, executes in repository_root cwd,
+    and constrains timeout by remaining budget.
+    """
+    import subprocess
+    from unittest.mock import MagicMock
+
+    from global_planner.adapters.codex import create_default_llm_callable
+
+    mock_run = MagicMock()
+    mock_run.return_value.returncode = 0
+    mock_run.return_value.stdout = '```json\n{"decision": "continue", "selected_opportunity": "opp_1", "next_experiment": "exp"}\n```'
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    repo_dir = tmp_path / "repo_dir"
+    repo_dir.mkdir()
+
+    callable_fn = create_default_llm_callable(
+        backend="codex",
+        model_name="o3-mini",
+        repository_root=repo_dir,
+        remaining_budget_sec=42.5,
+        timeout_sec=300.0,
+    )
+    assert callable_fn is not None
+    callable_fn("Test prompt for codex")
+
+    assert mock_run.called
+    cmd = mock_run.call_args[0][0]
+    kwargs = mock_run.call_args[1]
+
+    # Model flag
+    assert "--model" in cmd
+    assert "o3-mini" in cmd
+    # Cwd passed to subprocess
+    assert kwargs.get("cwd") == repo_dir.resolve()
+    # Timeout constrained by remaining budget
+    assert kwargs.get("timeout") == 42.5
 

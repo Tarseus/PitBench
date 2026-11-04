@@ -60,11 +60,12 @@ def discover_concrete_nodes_from_repository(
                     id=node_id,
                     level=HATSLevel.LEVEL_3_CODE,
                     parent_id=parent_id,
-                    purpose=f"Concrete algorithm component in {rel_file}",
+                    purpose=f"Candidate source file indexed from declared paths (unverified): {rel_file}",
                     source_refs=[rel_file],
                     reads=["search_state"],
                     writes=["solution_or_state"],
-                    invariants=["original objective semantics"],
+                    invariants=["pending empirical verification"],
+                    status="unknown",
                 )
             )
 

@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from global_planner.schema import (
     EvidenceRecord,
@@ -139,22 +140,25 @@ class PlanStore:
         snapshot_file = self.history_dir / f"plan_rev_{self._state.revision:04d}.json"
         snapshot_file.write_text(serialized, encoding="utf-8")
 
-    def register_node(self, node: HATSNode) -> None:
+    def register_node(self, node: HATSNode | dict[str, Any]) -> None:
         """Register or update a HATS transition node."""
         st = self.state
-        st.nodes[node.id] = node
+        node_obj = HATSNode.model_validate(node) if isinstance(node, dict) else node
+        st.nodes[node_obj.id] = node_obj
         self.save()
 
-    def register_nodes_batch(self, nodes: list[HATSNode]) -> None:
+    def register_nodes_batch(self, nodes: list[HATSNode | dict[str, Any]]) -> None:
         st = self.state
         for n in nodes:
-            st.nodes[n.id] = n
+            node_obj = HATSNode.model_validate(n) if isinstance(n, dict) else n
+            st.nodes[node_obj.id] = node_obj
         self.save()
 
-    def register_opportunity(self, opportunity: Opportunity) -> None:
+    def register_opportunity(self, opportunity: Opportunity | dict[str, Any]) -> None:
         """Register a new optimization opportunity."""
         st = self.state
-        st.opportunities[opportunity.id] = opportunity
+        opp = Opportunity.model_validate(opportunity) if isinstance(opportunity, dict) else opportunity
+        st.opportunities[opp.id] = opp
         self.save()
 
     def update_source_state(

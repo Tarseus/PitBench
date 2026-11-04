@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
+import re
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -13,7 +18,6 @@ from global_planner.schema import (
     ContextPacket,
     DecisionType,
     ExecutionStatus,
-    HATSLevel,
     HATSNode,
     Opportunity,
     PerformanceDelta,
@@ -99,6 +103,7 @@ class PlanningSessionDriver:
             packet,
             llm_callable=self.llm_callable,
             allow_offline_fallback=self.allow_offline_fallback,
+            repository_root=repo_root,
         )
         self.controller.parse_and_record_decision(decision.model_dump(), current_budget_spent=spent)
         return packet, decision
@@ -120,6 +125,7 @@ class PlanningSessionDriver:
         execution_success: bool | None = None,
         solution_valid: bool | None = None,
         performance_improved: bool | None = None,
+        repository_root: Path | str | None = None,
     ) -> tuple[Any, ReplanningDecision | None]:
         """Processes an experiment completion, records evidence, and executes replanning if triggered."""
         spent = current_budget_spent if current_budget_spent is not None else self.get_current_budget_spent()
@@ -148,6 +154,7 @@ class PlanningSessionDriver:
                 packet,
                 llm_callable=self.llm_callable,
                 allow_offline_fallback=self.allow_offline_fallback,
+                repository_root=repository_root,
             )
             self.controller.parse_and_record_decision(new_decision.model_dump(), current_budget_spent=spent)
 
@@ -208,23 +215,39 @@ class PlanningSessionDriver:
 
                     # Check runs count vs expected runs if specified
                     expected_runs = worker_outcome.get("expected_runs_count")
-                    actual_runs = (
-                        worker_outcome.get("actual_runs_count")
-                        or worker_outcome.get("metrics_summary", {}).get("runs_count")
-                    )
-                    if expected_runs is not None and actual_runs is not None and actual_runs < expected_runs:
+                    actual_runs = worker_outcome.get("actual_runs_count")
+                    if actual_runs is None:
+                        actual_runs = worker_outcome.get("metrics_summary", {}).get("runs_count")
+
+                    # If expected_runs is specified, verify actual runs completeness
+                    if expected_runs is not None:
+                        if actual_runs is None or actual_runs < expected_runs:
+                            exec_status = ExecutionStatus.MISSING
+                            sol_validity = SolutionValidity.UNVERIFIED
+                            perf_delta = PerformanceDelta.UNKNOWN
+                            hyp_supp = None
+
+                    # If actual runs count is explicitly 0 or no runs occurred, it cannot be PASS / VALID / IMPROVED
+                    if actual_runs is not None and actual_runs == 0:
                         exec_status = ExecutionStatus.MISSING
                         sol_validity = SolutionValidity.UNVERIFIED
+                        perf_delta = PerformanceDelta.UNKNOWN
+                        hyp_supp = None
 
                 # Process dynamic model updates from worker
                 if isinstance(worker_outcome, dict):
                     discovered_nodes = worker_outcome.get("discovered_nodes")
                     if discovered_nodes:
-                        self.store.register_nodes_batch(discovered_nodes)
+                        parsed_nodes = [
+                            HATSNode.model_validate(n) if isinstance(n, dict) else n
+                            for n in discovered_nodes
+                        ]
+                        self.store.register_nodes_batch(parsed_nodes)
                     discovered_opps = worker_outcome.get("discovered_opportunities")
                     if discovered_opps:
                         for opp in discovered_opps:
-                            self.store.register_opportunity(opp)
+                            parsed_opp = Opportunity.model_validate(opp) if isinstance(opp, dict) else opp
+                            self.store.register_opportunity(parsed_opp)
                     reval_ids = worker_outcome.get("revalidated_node_ids")
                     if reval_ids:
                         for nid in reval_ids:
@@ -268,6 +291,7 @@ class PlanningSessionDriver:
                     observations_path=worker_outcome.get("observations_path") if isinstance(worker_outcome, dict) else None,
                     candidate_patch_sha256=patch_sha,
                     current_budget_spent=self.get_current_budget_spent(),
+                    repository_root=repo_root,
                 )
 
                 # If replanning was triggered, advance to new decision
@@ -281,78 +305,207 @@ class PlanningSessionDriver:
         return executed_decisions
 
 
+def build_mock_worker(
+    task_config: dict[str, Any] | None = None,
+    outcomes: list[dict[str, Any]] | None = None,
+    default_outcome: dict[str, Any] | None = None,
+) -> Callable[[ReplanningDecision, ContextPacket], dict[str, Any]]:
+    """Test fixture worker returning predefined outcomes for unit testing driver loops."""
+    step_idx = 0
+    outcome_list = list(outcomes) if outcomes else []
+
+    def _mock_worker(decision: ReplanningDecision, packet: ContextPacket) -> dict[str, Any]:
+        nonlocal step_idx
+        step_idx += 1
+        if outcome_list:
+            idx = min(step_idx - 1, len(outcome_list) - 1)
+            return dict(outcome_list[idx])
+        if default_outcome is not None:
+            return dict(default_outcome)
+        return {
+            "experiment_id": f"mock_exp_{step_idx:03d}",
+            "execution_status": ExecutionStatus.PASS,
+            "solution_validity": SolutionValidity.VALID,
+            "performance_delta": PerformanceDelta.IMPROVED,
+            "hypothesis_supported": True,
+            "actual_runs_count": 1,
+            "expected_runs_count": 1,
+            "metrics_summary": {"runs_count": 1},
+        }
+
+    return _mock_worker
+
+
 def build_autonomous_worker(
     task_config: dict[str, Any],
     repository_root: Path | str,
     llm_callable: Callable[[str], str] | None = None,
+    allow_offline_fallback: bool = False,
+    benchmark_runner: Callable[[Path], dict[str, Any]] | None = None,
 ) -> Callable[[ReplanningDecision, ContextPacket], dict[str, Any]]:
-    """Builds an autonomous coding agent worker that inspects repository source,
-
-    executes diagnostic or mechanism exploration experiments, and returns structured feedback.
+    """Builds a production autonomous coding agent worker that invokes the real LLM/agent,
+    inspects the repository, applies changes, executes benchmarks or diagnostic experiments,
+    and derives empirical evidence from real execution artifacts.
     """
     repo_path = Path(repository_root).resolve()
     declared_paths = list(task_config.get("repository", {}).get("editable_paths", ["src"]))
 
     def _worker(decision: ReplanningDecision, packet: ContextPacket) -> dict[str, Any]:
-        # Autonomous code inspection & discovery
-        discovered_nodes: list[HATSNode] = []
-        discovered_opps: list[Opportunity] = []
-        modified_files: list[str] = []
-
-        # Find candidate source files to inspect
-        source_files: list[Path] = []
-        for dp in declared_paths:
-            p = repo_path / dp
-            if p.exists():
-                if p.is_file():
-                    source_files.append(p)
-                else:
-                    source_files.extend(
-                        list(p.rglob("*.c")) + list(p.rglob("*.cpp")) + list(p.rglob("*.py"))
-                    )
-
-        # If discovering new components during initial profiling/exploration
-        if decision.selected_opportunity == "opp_profile_bottlenecks" and source_files:
-            # Inspect first relevant component and formulate concrete sub-mechanism
-            first_file = source_files[0]
-            rel_file = str(first_file.relative_to(repo_path))
-            discovered_node = HATSNode(
-                id=f"mechanism.inspected.{first_file.stem}",
-                level=HATSLevel.LEVEL_2_MECHANISM,
-                parent_id="subsystem.heuristics",
-                purpose=f"Inspected algorithmic routine in {rel_file}",
-                source_refs=[rel_file],
-                reads=["problem_instance"],
-                writes=["primal_solution"],
-                invariants=["solution validity"],
-            )
-            discovered_nodes.append(discovered_node)
-            discovered_opps.append(
-                Opportunity(
-                    id=f"opp_optimize_{first_file.stem}",
-                    title=f"Optimize {first_file.stem} routine based on profile",
-                    target_nodes=[discovered_node.id],
-                    source_files=[rel_file],
-                    proposal=f"Target computational bottleneck identified in {rel_file}",
-                    expected_effect="Improve throughput and decrease solve time",
-                    cheapest_discriminating_experiment="pitbench bench --split dev",
-                    status="unexplored",
-                )
+        # 1. Ensure LLM connection is available in formal mode
+        effective_callable = llm_callable
+        if effective_callable is None and not allow_offline_fallback:
+            raise RuntimeError(
+                "Formal autonomous worker requires a connected LLM/agent callable (e.g. agy). "
+                "No LLM callable was provided."
             )
 
         step_idx = packet.completed_experiments_count + 1
+        discovered_nodes: list[HATSNode] = []
+        discovered_opps: list[Opportunity] = []
+        hypothesis_id = f"hyp_step_{step_idx:03d}"
+        hypothesis_desc = ""
+
+        # 2. Invoke real Coding Agent if callable is present
+        if effective_callable is not None:
+            worker_prompt = f"""### Coding Agent Autonomous Task Execution
+You are the autonomous coding agent worker assigned to execute the following strategic decision:
+
+- Active Opportunity: {decision.selected_opportunity}
+- Next Proposed Experiment: {decision.next_experiment}
+- Strategic Decision: {decision.decision.value}
+- Remaining Budget: {packet.remaining_budget_sec:.1f}s
+- Repository Path: {repo_path}
+- Declared Editable Paths: {', '.join(declared_paths)}
+
+Please inspect the codebase in the workspace, formulate a concrete algorithmic hypothesis, and identify any new mechanism nodes or opportunities.
+Respond with a JSON object matching this schema:
+```json
+{{
+  "hypothesis_id": "{hypothesis_id}",
+  "hypothesis": "<concrete explanation of proposed algorithm mechanism or observation>",
+  "discovered_nodes": [
+    {{
+      "id": "<new_node_id>",
+      "level": "level_2_mechanism | level_3_code",
+      "parent_id": "<subsystem_id>",
+      "purpose": "<purpose>",
+      "source_refs": ["<file_path>"]
+    }}
+  ],
+  "discovered_opportunities": [
+    {{
+      "id": "<new_opp_id>",
+      "title": "<title>",
+      "target_nodes": ["<node_id>"],
+      "proposal": "<proposal>",
+      "expected_effect": "<expected_effect>",
+      "cheapest_discriminating_experiment": "<experiment>"
+    }}
+  ]
+}}
+```
+"""
+            try:
+                raw_resp = effective_callable(worker_prompt)
+                matches = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", raw_resp, re.DOTALL)
+                text = matches[-1] if matches else ""
+                if not text:
+                    start = raw_resp.find("{")
+                    end = raw_resp.rfind("}")
+                    if start != -1 and end != -1 and end > start:
+                        text = raw_resp[start : end + 1]
+                if text:
+                    data = json.loads(text)
+                    hypothesis_id = data.get("hypothesis_id", hypothesis_id)
+                    hypothesis_desc = data.get("hypothesis", "")
+                    if "discovered_nodes" in data and isinstance(data["discovered_nodes"], list):
+                        for n in data["discovered_nodes"]:
+                            if isinstance(n, dict):
+                                try:
+                                    discovered_nodes.append(HATSNode.model_validate(n))
+                                except Exception:
+                                    pass
+                            elif isinstance(n, HATSNode):
+                                discovered_nodes.append(n)
+                    if "discovered_opportunities" in data and isinstance(data["discovered_opportunities"], list):
+                        for o in data["discovered_opportunities"]:
+                            if isinstance(o, dict):
+                                try:
+                                    discovered_opps.append(Opportunity.model_validate(o))
+                                except Exception:
+                                    pass
+                            elif isinstance(o, Opportunity):
+                                discovered_opps.append(o)
+            except Exception as e:
+                logging.getLogger("global_planner.worker").warning("Error during worker agent invocation: %s", e)
+
+        # 3. Check for real repository modifications (git diff)
+        candidate_patch_sha256 = None
+        modified_files: list[str] = []
+
+        if (repo_path / ".git").exists():
+            diff_proc = subprocess.run(
+                ["git", "diff", "HEAD"],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+            )
+            if diff_proc.returncode == 0 and diff_proc.stdout.strip():
+                candidate_patch = diff_proc.stdout
+                candidate_patch_sha256 = hashlib.sha256(candidate_patch.encode("utf-8")).hexdigest()
+                names_proc = subprocess.run(
+                    ["git", "diff", "--name-only", "HEAD"],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
+                )
+                if names_proc.returncode == 0:
+                    modified_files = [line.strip() for line in names_proc.stdout.splitlines() if line.strip()]
+
+        # 4. Check for real benchmark execution artifacts or execute benchmark runner if configured
+        bench_result: dict[str, Any] | None = None
+        if benchmark_runner is not None:
+            try:
+                bench_result = benchmark_runner(repo_path)
+            except Exception as e:
+                logging.getLogger("global_planner.worker").error("Benchmark runner failed: %s", e)
+
+        if bench_result is not None:
+            return {
+                "experiment_id": f"exp_auto_{step_idx:03d}",
+                "execution_status": bench_result.get("execution_status", ExecutionStatus.MISSING),
+                "solution_validity": bench_result.get("solution_validity", SolutionValidity.UNVERIFIED),
+                "performance_delta": bench_result.get("performance_delta", PerformanceDelta.UNKNOWN),
+                "hypothesis_supported": bench_result.get("hypothesis_supported"),
+                "hypothesis_id": hypothesis_id,
+                "actual_runs_count": bench_result.get("actual_runs_count", 0),
+                "expected_runs_count": bench_result.get("expected_runs_count", 1),
+                "metrics_summary": bench_result.get("metrics_summary", {}),
+                "modified_files": modified_files,
+                "candidate_patch_sha256": candidate_patch_sha256,
+                "discovered_nodes": discovered_nodes,
+                "discovered_opportunities": discovered_opps,
+            }
+
+        # If no benchmark runner or no benchmark artifacts were produced:
+        # DO NOT FABRICATE SUCCESS OR IMPROVEMENT!
+        # Record explicitly as MISSING / UNVERIFIED with 0 runs!
         return {
             "experiment_id": f"exp_auto_{step_idx:03d}",
-            "execution_status": ExecutionStatus.PASS,
-            "solution_validity": SolutionValidity.VALID,
-            "performance_delta": PerformanceDelta.IMPROVED,
-            "hypothesis_supported": True,
+            "execution_status": ExecutionStatus.MISSING,
+            "solution_validity": SolutionValidity.UNVERIFIED,
+            "performance_delta": PerformanceDelta.UNKNOWN,
+            "hypothesis_supported": None,
+            "hypothesis_id": hypothesis_id,
+            "actual_runs_count": 0,
+            "expected_runs_count": 1,
             "metrics_summary": {
-                "runs_count": 1,
-                "step_index": step_idx,
-                "opportunity": decision.selected_opportunity,
+                "runs_count": 0,
+                "reason": "No benchmark execution artifacts found in repository",
+                "hypothesis": hypothesis_desc,
             },
             "modified_files": modified_files,
+            "candidate_patch_sha256": candidate_patch_sha256,
             "discovered_nodes": discovered_nodes,
             "discovered_opportunities": discovered_opps,
         }

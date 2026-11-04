@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any, Callable
 
 from global_planner.adapters.base import BasePlannerAdapter
@@ -17,10 +18,19 @@ def create_default_llm_callable(
     api_base: str | None = None,
     backend: str | None = None,
     timeout_sec: float = 300.0,
+    repository_root: Path | str | None = None,
+    remaining_budget_sec: float | None = None,
 ) -> Callable[[str], str] | None:
     """Creates a real LLM callable supporting Antigravity CLI (agy), LiteLLM/OpenAI, or Codex CLI."""
+    import logging
     import shutil
     import subprocess
+    from pathlib import Path
+
+    cwd = Path(repository_root).resolve() if repository_root else Path.cwd()
+    effective_timeout = timeout_sec
+    if remaining_budget_sec is not None:
+        effective_timeout = min(timeout_sec, max(5.0, float(remaining_budget_sec)))
 
     selected_backend = backend or os.environ.get("PITBENCH_PLANNER_BACKEND")
     if not selected_backend:
@@ -45,11 +55,15 @@ def create_default_llm_callable(
                 "--print",
                 prompt,
             ]
+            logging.getLogger("global_planner.antigravity").info(
+                "Invoking agy: model=%s, cwd=%s, timeout=%.1f", effective_model, cwd, effective_timeout
+            )
             res = subprocess.run(
                 cmd,
+                cwd=cwd,
                 capture_output=True,
                 text=True,
-                timeout=timeout_sec,
+                timeout=effective_timeout,
             )
             if res.returncode != 0:
                 raise RuntimeError(
@@ -61,13 +75,28 @@ def create_default_llm_callable(
 
     if selected_backend == "codex":
         codex_bin = shutil.which("codex") or "codex"
+        effective_model = model_name or os.environ.get("PITBENCH_PLANNER_MODEL")
 
         def _codex_call(prompt: str) -> str:
+            cmd = [
+                codex_bin,
+                "exec",
+                "--ephemeral",
+                "--dangerously-bypass-approvals-and-sandbox",
+            ]
+            if effective_model:
+                cmd.extend(["--model", effective_model])
+            cmd.append(prompt)
+
+            logging.getLogger("global_planner.codex").info(
+                "Invoking codex: model=%s, cwd=%s, timeout=%.1f", effective_model, cwd, effective_timeout
+            )
             res = subprocess.run(
-                [codex_bin, "exec", "--ephemeral", "--dangerously-bypass-approvals-and-sandbox", prompt],
+                cmd,
+                cwd=cwd,
                 capture_output=True,
                 text=True,
-                timeout=timeout_sec,
+                timeout=effective_timeout,
             )
             if res.returncode != 0:
                 raise RuntimeError(
@@ -255,6 +284,7 @@ Respond with a concise analysis followed by a JSON block matching this schema:
         packet: ContextPacket,
         llm_callable: Callable[[str], str] | None = None,
         allow_offline_fallback: bool | None = None,
+        repository_root: Path | str | None = None,
     ) -> ReplanningDecision:
         """Invokes the planning agent via LLM callable, or applies deterministic fallback if allowed."""
         can_fallback = (
@@ -266,7 +296,10 @@ Respond with a concise analysis followed by a JSON block matching this schema:
         callable_fn = llm_callable or self.default_llm_callable
         if callable_fn is None and not can_fallback:
             # In formal mode, resolve real LLM connection from environment/credentials
-            callable_fn = create_default_llm_callable()
+            callable_fn = create_default_llm_callable(
+                repository_root=repository_root,
+                remaining_budget_sec=packet.remaining_budget_sec,
+            )
 
         if callable_fn is not None:
             prompt = self.format_planning_prompt(packet)

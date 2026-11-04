@@ -96,6 +96,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         api_key=getattr(args, "api_key", None),
         api_base=getattr(args, "api_base", None),
         backend=getattr(args, "agent", None) or getattr(args, "backend", None),
+        repository_root=repo_root,
     )
     if llm_callable is None and not getattr(args, "allow_offline_fallback", False):
         print(
@@ -118,6 +119,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         task_config=task_config,
         repository_root=repo_root,
         llm_callable=llm_callable,
+        allow_offline_fallback=getattr(args, "allow_offline_fallback", False),
     )
 
     max_steps = getattr(args, "max_steps", 2)
