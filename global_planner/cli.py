@@ -7,8 +7,11 @@ import json
 import sys
 from pathlib import Path
 
+import yaml
+
 from global_planner.adapters.codex import CodexPlannerAdapter
 from global_planner.controller import PlanningController
+from global_planner.driver import PlanningSessionDriver
 from global_planner.store import PlanStore
 
 
@@ -68,10 +71,24 @@ def cmd_record_evidence(args: argparse.Namespace) -> int:
         experiment_id=args.experiment_id,
         target_nodes=target_nodes,
         metrics_summary=metrics,
-        is_supported=is_supp,
+        execution_success=not args.refuted,
+        solution_valid=not args.refuted,
+        performance_improved=is_supp,
+        hypothesis_supported=is_supp,
         current_budget_spent=args.budget_spent,
     )
     print(f"Recorded evidence {ev.id} (Status: {ev.status}). Trigger replan: {should_replan}")
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    store = PlanStore(args.dir)
+    driver = PlanningSessionDriver(store=store)
+    task_config = yaml.safe_load(Path(args.task_config).read_text(encoding="utf-8"))
+    packet, decision = driver.bootstrap(task_config=task_config, study_id=args.study_id)
+    print(f"Bootstrapped plan for {packet.task_id} with {len(packet.unexplored_opportunities) + 1} opportunities.")
+    print(f"Initial Decision: {decision.decision.value} -> {decision.selected_opportunity}")
+    print(f"Initial Experiment: {decision.next_experiment}")
     return 0
 
 
@@ -110,6 +127,12 @@ def main(argv: list[str] | None = None) -> int:
     p_ev.add_argument("--metrics", default=None, help="JSON metrics summary")
     p_ev.add_argument("--budget-spent", type=float, default=0.0)
     p_ev.set_defaults(func=cmd_record_evidence)
+
+    p_run = subparsers.add_parser("run", help="Bootstrap and drive planning session from task config")
+    p_run.add_argument("--dir", required=True, help="Storage directory")
+    p_run.add_argument("--task-config", required=True, help="Path to task YAML config")
+    p_run.add_argument("--study-id", default="planning_study_v1", help="Study ID")
+    p_run.set_defaults(func=cmd_run)
 
     args = parser.parse_args(argv)
     return args.func(args)

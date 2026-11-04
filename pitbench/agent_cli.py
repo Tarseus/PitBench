@@ -734,49 +734,204 @@ def bench_command(args: argparse.Namespace) -> int:
             runs_root,
         )
 
-    grid = (
+    grid = [
         (instance, seed, budget)
         for instance in instances
         for seed in seeds
         for budget in budgets
-    )
+    ]
     with ThreadPoolExecutor(max_workers=parallel) as executor:
         succeeded = list(executor.map(run_one, grid))
+
+    payloads: list[dict[str, Any]] = []
+    run_root_label = runs_root / args.label
+    for instance, seed, budget in grid:
+        try:
+            inst_sha = _sha256(instance)
+            fb_path = run_root_label / (
+                f"{instance.stem}-{inst_sha[:12]}.seed-{seed}."
+                f"budget-{budget:g}.threads-{threads}.feedback.json"
+            )
+            if fb_path.is_file():
+                payloads.append(json.loads(fb_path.read_text(encoding="utf-8")))
+        except Exception:
+            pass
 
     global_plan_dir = getattr(args, "global_plan_dir", None) or os.environ.get(
         "PITBENCH_GLOBAL_PLAN_DIR"
     )
     if global_plan_dir and Path(global_plan_dir).exists():
         try:
+            from datetime import datetime, timezone
+
+            from global_planner.adapters.codex import CodexPlannerAdapter
             from global_planner.controller import PlanningController
             from global_planner.store import PlanStore
 
-            controller = PlanningController(store=PlanStore(global_plan_dir))
+            store = PlanStore(global_plan_dir)
+            controller = PlanningController(store=store)
+
+            # 1. Execution correctness & validity
+            exec_success = all(p.get("result_error") is None for p in payloads)
+            sol_valid = all(p.get("verified_valid") is not False for p in payloads)
+
+            # 2. Performance delta against matched baseline
+            perf_improved: bool | None = None
+            gap_reductions = [
+                float(p["preview_gap_reduction"])
+                for p in payloads
+                if p.get("preview_gap_reduction") is not None
+            ]
+            solved_changes = [
+                int(p["preview_solved_change"])
+                for p in payloads
+                if p.get("preview_solved_change") is not None
+            ]
+            par2_reductions = [
+                float(p["preview_par2_reduction_sec"])
+                for p in payloads
+                if p.get("preview_par2_reduction_sec") is not None
+            ]
+
+            if gap_reductions:
+                mean_gap = sum(gap_reductions) / len(gap_reductions)
+                perf_improved = mean_gap > 0
+            elif solved_changes or par2_reductions:
+                tot_solved = sum(solved_changes) if solved_changes else 0
+                tot_par2 = sum(par2_reductions) if par2_reductions else 0.0
+                perf_improved = (tot_solved > 0) or (tot_solved == 0 and tot_par2 > 0)
+
+            # 3. Hypothesis support
+            hyp_supported: bool | None = None
+            if args.label == "agent":
+                if not exec_success or not sol_valid or perf_improved is False:
+                    hyp_supported = False
+                elif perf_improved is True:
+                    hyp_supported = True
+
+            # 4. Target nodes lookup
+            target_nodes: list[str] = []
+            st = store.state
+            if st.active_opportunity_id and st.active_opportunity_id in st.opportunities:
+                target_nodes = list(st.opportunities[st.active_opportunity_id].target_nodes)
+
+            # 5. Budget spent calculation
+            elapsed_sec = 0.0
+            if getattr(st, "created_at_utc", None):
+                try:
+                    start_dt = datetime.fromisoformat(st.created_at_utc)
+                    elapsed_sec = max(
+                        0.0,
+                        (datetime.now(timezone.utc) - start_dt).total_seconds(),
+                    )
+                except Exception:
+                    elapsed_sec = 0.0
+
             exp_id = getattr(args, "experiment_id", None) or (
                 f"bench_{patch_sha256[:8]}" if patch_sha256 else "bench_clean"
             )
             hyp_id = getattr(args, "hypothesis_id", None)
-            all_ok = all(succeeded)
+
+            metrics_summary = {
+                "execution_success": exec_success,
+                "solution_valid": sol_valid,
+                "performance_improved": perf_improved,
+                "mean_gap_reduction": (
+                    sum(gap_reductions) / len(gap_reductions) if gap_reductions else None
+                ),
+                "total_solved_change": (
+                    sum(solved_changes) if solved_changes else None
+                ),
+                "total_par2_reduction_sec": (
+                    sum(par2_reductions) if par2_reductions else None
+                ),
+                "runs_count": len(payloads),
+            }
+
             ev, should_replan = controller.on_experiment_completed(
                 experiment_id=exp_id,
-                target_nodes=[],
-                metrics_summary={
-                    "succeeded_count": sum(1 for s in succeeded if s),
-                    "total_count": len(succeeded),
-                },
-                is_supported=all_ok if args.label == "agent" else None,
+                target_nodes=target_nodes,
+                metrics_summary=metrics_summary,
+                execution_success=exec_success,
+                solution_valid=sol_valid,
+                performance_improved=perf_improved,
+                hypothesis_supported=hyp_supported,
                 hypothesis_id=hyp_id,
-                code_patch_sha256=patch_sha256,
+                candidate_patch_sha256=patch_sha256,
+                current_budget_spent=elapsed_sec,
             )
+
             if should_replan:
+                adapter = CodexPlannerAdapter()
+                packet = controller.build_context_packet(current_budget_spent=elapsed_sec)
+                new_decision = adapter.request_decision(packet)
+                controller.parse_and_record_decision(
+                    new_decision.model_dump(), current_budget_spent=elapsed_sec
+                )
                 print(
-                    f"[global-plan] Replanning boundary reached. Review plan at {global_plan_dir}",
+                    f"[global-plan] Replanning boundary reached. "
+                    f"Decision: {new_decision.decision.value} -> {new_decision.selected_opportunity}. "
+                    f"Next experiment: {new_decision.next_experiment}",
                     file=sys.stderr,
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            # Non-blocking observer
+            print(f"[global-plan-warning] Failed to process planning boundary: {e}", file=sys.stderr)
 
     return 0 if all(succeeded) else 1
+
+
+def plan_command(args: argparse.Namespace) -> int:
+    config = _config()
+    runs_root = _runs_root(config)
+    plan_dir = (
+        getattr(args, "dir", None)
+        or os.environ.get("PITBENCH_GLOBAL_PLAN_DIR")
+        or (runs_root / "global_plan")
+    )
+    if not plan_dir or not Path(plan_dir).exists():
+        print(f"No global plan state found at {plan_dir}", file=sys.stderr)
+        return 1
+
+    from global_planner.adapters.codex import CodexPlannerAdapter
+    from global_planner.controller import PlanningController
+    from global_planner.store import PlanStore
+
+    store = PlanStore(plan_dir)
+    st = store.state
+
+    if getattr(args, "replan", False):
+        controller = PlanningController(store=store)
+        adapter = CodexPlannerAdapter()
+        packet = controller.build_context_packet(
+            current_budget_spent=st.budget_spent_sec
+        )
+        new_dec = adapter.request_decision(packet)
+        controller.parse_and_record_decision(
+            new_dec.model_dump(), current_budget_spent=st.budget_spent_sec
+        )
+        print(
+            f"Replanning completed: {new_dec.decision.value} -> {new_dec.selected_opportunity}"
+        )
+        print(f"Next experiment: {new_dec.next_experiment}")
+        return 0
+
+    print(f"=== Global Plan: {st.task_id} ({st.solver}) ===")
+    print(f"Active Opportunity: {st.active_opportunity_id or 'None'}")
+    if st.active_opportunity_id and st.active_opportunity_id in st.opportunities:
+        opp = st.opportunities[st.active_opportunity_id]
+        print(f"  Title: {opp.title}")
+        print(f"  Proposal: {opp.proposal}")
+        print(f"  Expected Effect: {opp.expected_effect}")
+        print(f"  Target Nodes: {', '.join(opp.target_nodes)}")
+    if st.decisions:
+        last = st.decisions[-1]
+        print(f"Current Decision: {last.decision.value}")
+        print(f"Next Experiment: {last.next_experiment}")
+    print(
+        f"Evidence Recorded: {len(st.evidence)} | Completed Experiments: {st.experiments_count}"
+    )
+    return 0
 
 
 def diagnose_command(args: argparse.Namespace) -> int:
@@ -1016,6 +1171,15 @@ def parser() -> argparse.ArgumentParser:
         )
         _run_options(bench, instance_required=False)
         bench.set_defaults(handler=bench_command)
+        plan_parser = commands.add_parser(
+            "plan",
+            help="Inspect or trigger global algorithm-space planning state",
+        )
+        plan_parser.add_argument("--dir", type=Path, help="plan state directory")
+        plan_parser.add_argument(
+            "--replan", action="store_true", help="force an immediate replanning cycle"
+        )
+        plan_parser.set_defaults(handler=plan_command)
         diagnose = commands.add_parser("diagnose")
         budget_selection = diagnose.add_mutually_exclusive_group()
         budget_selection.add_argument(

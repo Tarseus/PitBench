@@ -8,7 +8,6 @@ from typing import Any
 
 from global_planner.schema import (
     ContextPacket,
-    DecisionType,
     EvidenceRecord,
     GlobalPlanState,
     HATSNode,
@@ -45,6 +44,9 @@ class PlanningController:
         study_id: str,
         task_id: str,
         solver: str,
+        goal_statement: str = "Improve solver performance within budget",
+        problem_family: str | None = None,
+        performance_protocol: str | None = None,
         initial_nodes: list[HATSNode] | None = None,
         initial_opportunities: list[Opportunity] | None = None,
     ) -> bool:
@@ -54,7 +56,14 @@ class PlanningController:
         and returns True if an initial planning bootstrap is required.
         """
         if not self.store.state_file.exists():
-            self.store.initialize(study_id=study_id, task_id=task_id, solver=solver)
+            self.store.initialize(
+                study_id=study_id,
+                task_id=task_id,
+                solver=solver,
+                goal_statement=goal_statement,
+                problem_family=problem_family,
+                performance_protocol=performance_protocol,
+            )
             if initial_nodes:
                 self.store.register_nodes_batch(initial_nodes)
             if initial_opportunities:
@@ -68,40 +77,51 @@ class PlanningController:
         experiment_id: str,
         target_nodes: list[str],
         metrics_summary: dict[str, Any],
-        is_supported: bool | None,
+        execution_success: bool = True,
+        solution_valid: bool = True,
+        performance_improved: bool | None = None,
+        hypothesis_supported: bool | None = None,
         hypothesis_id: str | None = None,
         observations_path: str | None = None,
-        code_patch_sha256: str | None = None,
+        candidate_patch_sha256: str | None = None,
         current_budget_spent: float = 0.0,
     ) -> tuple[EvidenceRecord, bool]:
-        """Called immediately after an empirical experiment (e.g. `pitbench bench`) completes.
+        """Called immediately after an empirical experiment completes.
 
-        Records evidence and evaluates whether an algorithm-space replanning event is triggered.
+        Distinguishes execution success, solution correctness, performance delta vs baseline,
+        and whether the mechanism hypothesis was supported.
         Returns (evidence, should_replan).
         """
-        status_str = "inconclusive"
-        if is_supported is True:
-            status_str = "supported"
-        elif is_supported is False:
+        # Determine overall evidence status
+        if not execution_success or not solution_valid or performance_improved is False or hypothesis_supported is False:
             status_str = "refuted"
+        elif performance_improved is True and (hypothesis_supported is not False):
+            status_str = "supported"
+        else:
+            status_str = "inconclusive"
 
         evidence = EvidenceRecord(
             id=f"ev_{self.state.experiments_count + 1:03d}",
             experiment_id=experiment_id,
             hypothesis_id=hypothesis_id,
             target_nodes=target_nodes,
+            execution_success=execution_success,
+            solution_valid=solution_valid,
+            performance_improved=performance_improved,
+            hypothesis_supported=hypothesis_supported,
             status=status_str,
             metrics_summary=metrics_summary,
-            code_patch_sha256=code_patch_sha256,
+            candidate_patch_sha256=candidate_patch_sha256,
             observations_path=observations_path,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
         self.store.record_evidence(evidence)
 
-        # Evaluate trigger
+        # Critical evidence (hypothesis refuted, execution crash, or regression) overrides cooldown
+        is_critical = (status_str == "refuted")
         should_replan = self.should_trigger_replanning(
             current_budget_spent=current_budget_spent,
-            critical_evidence=(status_str == "refuted"),
+            critical_evidence=is_critical,
         )
         return evidence, should_replan
 
@@ -110,7 +130,7 @@ class PlanningController:
         current_budget_spent: float,
         critical_evidence: bool = False,
     ) -> bool:
-        """Determines whether to trigger replanning, respecting cooldowns and budget limits."""
+        """Determines whether to trigger replanning, respecting cooldowns and review intervals."""
         st = self.state
 
         # If budget exhausted, do not trigger
@@ -121,18 +141,16 @@ class PlanningController:
         if not st.decisions:
             return True
 
-        # Critical evidence (e.g. a core hypothesis is explicitly refuted) triggers faster
+        # Critical evidence (e.g. hypothesis refuted) triggers immediately
         if critical_evidence:
             return True
 
-        # Check experiment count since last replan
-        exps_since_replan = st.experiments_count - (
-            len([d for d in st.decisions if d.decision != DecisionType.STOP])
-        )
-        if exps_since_replan >= self.experiments_between_reviews:
-            # Check time cooldown
-            elapsed_since_replan = current_budget_spent - st.last_replanned_at_sec
-            if elapsed_since_replan >= self.cooldown_sec:
+        # Check experiment count since last review
+        exps_since_last_review = st.experiments_count - st.experiments_count_at_last_review
+        if exps_since_last_review >= self.experiments_between_reviews:
+            # Check elapsed time cooldown
+            elapsed_since_last_review = current_budget_spent - st.last_replanned_at_sec
+            if elapsed_since_last_review >= self.cooldown_sec:
                 return True
 
         return False
@@ -165,7 +183,7 @@ class PlanningController:
 
         return ContextPacket(
             task_id=st.task_id,
-            goal_statement=f"Improve verified solved coverage on {st.solver} under research budget",
+            goal_statement=st.goal_statement,
             remaining_budget_sec=remaining,
             completed_experiments_count=st.experiments_count,
             active_opportunity=active_opp,

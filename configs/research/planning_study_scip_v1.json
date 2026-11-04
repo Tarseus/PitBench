@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "study_id": "algorithm_space_planning_scip_v1",
+  "claim_scope": "diagnostic_single_attempt",
+  "release_manifest": "configs/benchmarks/0.0.1.json",
+  "task_configs": [
+    "configs/tasks/release_scip_v10_1_0.yaml"
+  ],
+  "model_matrix": "configs/experiments/generalization_high_matrix.yaml",
+  "population_plan": "configs/research/generalization_populations_v2.json",
+  "research_budget": {
+    "track": "standard",
+    "wall_time_sec": 14400,
+    "cpus": 8,
+    "memory_gib": 32,
+    "development_parallel_runs": 4,
+    "checkpoints_sec": [
+      1800,
+      3600,
+      7200,
+      14400
+    ]
+  },
+  "agent_attempts_per_condition": 1,
+  "shared_agent_tools": [
+    "inspect",
+    "workspace",
+    "bench"
+  ],
+  "required_scenario_kinds": [
+    "trajectory",
+    "lifecycle",
+    "scaling",
+    "sequence",
+    "numerical",
+    "replay"
+  ],
+  "arms": [
+    {
+      "id": "baseline",
+      "development_view": "diverse_development_v2",
+      "planning_mode": "none",
+      "instruction": "Improve the pinned solver using visible development instances and tools autonomously without explicit planning controllers."
+    },
+    {
+      "id": "review_only",
+      "development_view": "diverse_development_v2",
+      "planning_mode": "periodic_review",
+      "instruction": "Improve the pinned solver using visible development instances and tools. At regular experiment intervals, review your current progress and consider whether to continue or change strategy."
+    },
+    {
+      "id": "model_static",
+      "development_view": "diverse_development_v2",
+      "planning_mode": "static_model",
+      "instruction": "Improve the pinned solver with an initial hierarchical algorithmic transition model (HATS) describing solver subsystems and mechanisms. Use the model to plan and guide source modifications."
+    },
+    {
+      "id": "model_dynamic",
+      "development_view": "diverse_development_v2",
+      "planning_mode": "dynamic_replanning",
+      "instruction": "Improve the pinned solver using the global planner. The persistent controller maintains a hierarchical algorithmic transition model (HATS) and triggers structured replanning at experiment boundaries. Update mechanism hypotheses and select opportunities based on empirical evidence."
+    }
+  ],
+  "inference_scope": "One fresh independent Agent start per task/model/arm. Comparing baseline vs review_only isolates reflection tokens; review_only vs model_static tests structural representation; model_static vs model_dynamic tests closed-loop algorithmic replanning."
+}

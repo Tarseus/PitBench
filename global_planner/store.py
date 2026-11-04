@@ -17,7 +17,7 @@ from global_planner.schema import (
 
 
 class PlanStore:
-    """Manages the versioned persistence of an algorithm-space plan."""
+    """Manages versioned persistence of an algorithm-space plan."""
 
     def __init__(self, storage_dir: Path | str):
         self.storage_dir = Path(storage_dir).resolve()
@@ -36,12 +36,23 @@ class PlanStore:
                 raise FileNotFoundError(f"No plan state found at {self.state_file}")
         return self._state
 
-    def initialize(self, study_id: str, task_id: str, solver: str) -> GlobalPlanState:
+    def initialize(
+        self,
+        study_id: str,
+        task_id: str,
+        solver: str,
+        goal_statement: str = "Improve solver performance within budget",
+        problem_family: str | None = None,
+        performance_protocol: str | None = None,
+    ) -> GlobalPlanState:
         """Create or re-initialize a new plan state."""
         self._state = GlobalPlanState(
             study_id=study_id,
             task_id=task_id,
             solver=solver,
+            goal_statement=goal_statement,
+            problem_family=problem_family,
+            performance_protocol=performance_protocol,
             revision=0,
         )
         self.save()
@@ -100,6 +111,24 @@ class PlanStore:
         st.opportunities[opportunity.id] = opportunity
         self.save()
 
+    def update_source_state(
+        self,
+        candidate_patch_sha256: str | None,
+        modified_files: list[str] | None = None,
+    ) -> list[str]:
+        """Checks for patch modifications and marks overlapping model nodes as modified/stale."""
+        st = self.state
+        st.current_patch_sha256 = candidate_patch_sha256
+        invalidated_node_ids = []
+        if modified_files:
+            for node in st.nodes.values():
+                if any(any(mf.endswith(ref) or ref.endswith(mf) for ref in node.source_refs) for mf in modified_files):
+                    node.status = "modified"
+                    invalidated_node_ids.append(node.id)
+            if invalidated_node_ids:
+                self.save()
+        return invalidated_node_ids
+
     def record_evidence(self, evidence: EvidenceRecord) -> None:
         """Record empirical experiment results and update affected node effects."""
         st = self.state
@@ -119,12 +148,21 @@ class PlanStore:
         self.save()
 
     def record_decision(self, decision: ReplanningDecision, current_budget_spent: float) -> None:
-        """Record a structured replanning decision."""
+        """Record a structured replanning decision and reset review counters."""
         st = self.state
+
+        # Validate that selected opportunity exists
+        if decision.decision != "stop" and decision.selected_opportunity not in st.opportunities:
+            raise ValueError(
+                f"Selected opportunity '{decision.selected_opportunity}' does not exist in state opportunities "
+                f"({sorted(st.opportunities.keys())})"
+            )
+
         st.decisions.append(decision)
         st.active_opportunity_id = decision.selected_opportunity
         st.last_replanned_at_sec = current_budget_spent
         st.budget_spent_sec = current_budget_spent
+        st.experiments_count_at_last_review = st.experiments_count
 
         # Update opportunity status
         if decision.selected_opportunity in st.opportunities:

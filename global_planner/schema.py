@@ -1,11 +1,13 @@
 """Hierarchical Algorithmic Transition System (HATS) and Global Planning Schemas.
 
-Provides the formal models for representing solvers as layered transition systems,
-tracking opportunities and hypotheses, and recording structured replanning decisions.
+Provides formal models for representing solvers as layered transition systems,
+tracking opportunities and hypotheses, recording structured replanning decisions,
+and distinguishing execution correctness from empirical hypothesis support.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal
 
@@ -16,8 +18,8 @@ NonemptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_lengt
 
 class HATSLevel(str, Enum):
     """Hierarchy of abstraction for algorithmic transition systems."""
-    LEVEL_0_GOAL = "level_0_goal"            # Overall computational goal & budget
-    LEVEL_1_SUBSYSTEM = "level_1_subsystem"  # Algorithmic subsystem (Presolve, Search, Heuristic)
+    LEVEL_0_GOAL = "level_0_goal"            # Overall computational goal & resource budget
+    LEVEL_1_SUBSYSTEM = "level_1_subsystem"  # Algorithmic subsystem (Presolve, Search, Heuristic, Branching)
     LEVEL_2_MECHANISM = "level_2_mechanism"  # Mechanism & transition dynamics (e.g. 6-flip, cut rule)
     LEVEL_3_CODE = "level_3_code"            # Source-level files, functions, data structures
 
@@ -46,7 +48,8 @@ class HATSNode(BaseModel):
     preconditions: list[str] = Field(default_factory=list)  # Mathematical & structural preconditions
     invariants: list[str] = Field(default_factory=list)     # Invariants that must be strictly preserved
     effects: list[MechanismEffect] = Field(default_factory=list)
-    status: Literal["active", "proposed", "deprecated", "unknown"] = "active"
+    status: Literal["active", "proposed", "deprecated", "unknown", "modified", "stale"] = "active"
+    last_validated_patch_sha256: str | None = None
 
 
 class Opportunity(BaseModel):
@@ -56,6 +59,7 @@ class Opportunity(BaseModel):
     id: str = Field(pattern=r"^[a-zA-Z0-9_\-]{2,64}$")
     title: NonemptyText
     target_nodes: list[str] = Field(min_length=1)
+    source_files: list[str] = Field(default_factory=list)
     proposal: NonemptyText
     expected_effect: NonemptyText
     cheapest_discriminating_experiment: NonemptyText
@@ -86,16 +90,27 @@ class ReplanningDecision(BaseModel):
 
 
 class EvidenceRecord(BaseModel):
-    """Empirical result from a controlled experiment mapped back into the planning model."""
+    """Empirical result from a controlled experiment mapped back into the planning model.
+
+    Separates execution success, solution correctness, performance delta vs baseline,
+    and whether the underlying mechanism hypothesis was supported.
+    """
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^[a-zA-Z0-9_\-]{2,64}$")
     experiment_id: str
     hypothesis_id: str | None = None
     target_nodes: list[str] = Field(default_factory=list)
+
+    # Clean semantic separation
+    execution_success: bool = True
+    solution_valid: bool = True
+    performance_improved: bool | None = None
+    hypothesis_supported: bool | None = None
+
     status: Literal["supported", "refuted", "inconclusive"]
     metrics_summary: dict[str, Any] = Field(default_factory=dict)
-    code_patch_sha256: str | None = None
+    candidate_patch_sha256: str | None = None
     observations_path: str | None = None
     timestamp: str | None = None
 
@@ -123,6 +138,16 @@ class GlobalPlanState(BaseModel):
     task_id: str
     solver: str
     revision: int = 0
+    created_at_utc: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+    # Task context
+    problem_family: str | None = None
+    performance_protocol: str | None = None
+    goal_statement: str = "Improve solver performance within budget"
+    current_patch_sha256: str | None = None
+
     nodes: dict[str, HATSNode] = Field(default_factory=dict)
     opportunities: dict[str, Opportunity] = Field(default_factory=dict)
     active_opportunity_id: str | None = None
@@ -130,4 +155,5 @@ class GlobalPlanState(BaseModel):
     evidence: list[EvidenceRecord] = Field(default_factory=list)
     budget_spent_sec: float = 0.0
     experiments_count: int = 0
+    experiments_count_at_last_review: int = 0
     last_replanned_at_sec: float = 0.0
