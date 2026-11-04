@@ -1,62 +1,77 @@
-# Algorithm-space global planning
+# Algorithm-Space Global Planning
 
-The `global-plan` controller keeps a versioned HATS model, opportunities, decisions,
-experiment evidence, budget clock, and append-only event history in one state
-directory. The planner model and coding agent are configured separately. Codex,
-Claude Code, and Antigravity CLI adapters are available for local runs.
+The harness helps the existing coding Agent choose changes to algorithm mechanisms.
+Its model is a partial hierarchical transition system, with Level 0 goals, Level 1
+subsystems, Level 2 mechanisms, and Level 3 source references. State variables S,
+actions U, transitions T, resource costs C, progress signals R, and correctness
+invariants I are explicit. Hidden state, stochastic behavior, and unknown relations
+are allowed. Model claims are hypotheses or evidence-backed observations, not proofs.
 
-```bash
-global-plan run \
-  --agent codex \
-  --task task.md \
-  --task-config configs/tasks/release_scip_v10_1_0.yaml \
-  --repository /path/to/solver \
-  --dir runs/scip/global-plan \
-  --total-budget-sec 14400
+Enable `plan` alongside `bench` in the normal evaluation configuration:
+
+```yaml
+agent_tools: [inspect, workspace, bench, plan]
 ```
 
-Each Agent turn receives the current decision and compact context. It must run the
-visible development benchmark with the supplied `--global-plan-dir` and experiment
-ID. `pitbench bench` records execution, independent validity, performance change,
-patch identity, seeds, budgets, run count, and feedback paths. The outer controller
-then reloads that persisted boundary, updates the model, and decides whether to
-continue, switch, combine, or stop. If no benchmark boundary was recorded, the
-turn is stored as missing evidence. The controller resumes from the same directory
-after process restart; planning and Agent time share the persistent wall-clock
-budget.
+PitBench bundles the model tool and adds its instructions to the existing Agent
+session. Model construction, planning, implementation, and model revision use that
+Agent and the normal development budget. Models come from the Agent's source and
+public-trace inspection; the harness does not infer semantics from filenames or
+supply canned optimization opportunities.
 
-Persistence here covers the planning model, decisions, evidence, and budget. Each
-coding turn starts a new native Agent session and injects the saved planning context.
-Codex uses `exec --ephemeral`; native Agent conversations are not restored.
+## The development loop
 
-A benchmark saved before an Agent timeout remains valid evidence. The timeout is
-recorded separately as `agent.turn_failed`. Incomplete run grids are stored as
-`missing / unverified / unknown`. Previously recorded partial evidence is corrected
-with an `evidence.corrected` event containing the original and corrected records;
-the experiment count does not increase.
+1. Run the public baseline with `pitbench bench --label base`.
+2. Inspect `pitbench plan --schema`. Keep planning input JSON files in the public
+   runs directory, outside implementation source. Register source/trace observations with
+   `pitbench plan --evidence evidence.json`, then submit a partial model with
+   `pitbench plan --model model.json`.
+3. Submit competing mechanisms with `pitbench plan --proposal proposal.json`.
+   Each proposal identifies existing transitions and their replacements, any state
+   or action changes, expected global effects, required invariants, concrete source
+   changes, and a controlled experiment with observations that would falsify it.
+4. Compare the known proposals with `pitbench plan --decision decision.json`.
+   A decision selects one mechanism or a compatible combination, explains deferred
+   alternatives, and addresses pending experimental evidence. An empty selection
+   records a reasoned stop. Changing multiple modules is not a success criterion.
+5. Implement the selected mechanism and run the ordinary
+   `pitbench bench --label agent --build` with matched instances, seeds, and budgets.
+6. Read `pitbench plan`. Benchmark evidence identifies affected implementation and
+   mechanism nodes and their subsystem/global ancestors. Update model claims from
+   those observations, compare the remaining opportunities, and decide the next
+   experiment. A new source version requires model review before the next decision.
 
-The latest invocation exposes `session_status` in state, `global-plan status`, and
-the `session.finished` event. `completed` (exit 0) means all attempted turns have
-complete, verified execution evidence, or the planner explicitly stopped.
-`incomplete` (exit 2) means measurements or verification are missing, or the budget
-prevented a scheduled turn. `failed` (exit 1) means an Agent/controller error,
-execution failure, or invalid solution occurred, including an Agent timeout after
-a successful benchmark. Performance regression alone does not fail the session.
-These statuses describe execution of this invocation, not optimization benefit.
+The model, proposed changes, and decisions are structured JSON; `--schema` supplies
+the exact contracts. A transition declares its action, state reads/writes, relation,
+resource costs, progress, invariant references, and Level 3 implementation nodes.
+For example, a local-to-compound transition proposal may introduce a hidden search
+state variable, replace a single-variable action, retain feasibility obligations,
+and compare the added per-action work with the resulting global search reduction.
+The problem-specific feasibility and cost semantics still have to be instantiated.
 
-The coding Agent needs the normal PitBench task environment (`PITBENCH_AGENT_CONFIG`,
-development instances, solver runner, and writable results directory) available in
-its process environment. The task YAML supplies model bootstrapping metadata; `--task`
-supplies the coding objective. Hidden Judge data is not passed to the planner.
+## Evidence and source versions
 
-Adapters can write and consume hook events without implementing planning logic:
+`algorithm_plan.json` in the existing public runs directory retains model revisions,
+all proposals and decisions, source/trace evidence, and raw per-run benchmark
+feedback. Source identity uses repository HEAD and the same candidate patch hash as
+bench, including untracked source. Each experiment retains its instances, seeds,
+budgets, threads, verification status, failures, missing results, and artifact paths.
 
-```bash
-global-plan record-event --dir runs/scip/global-plan \
-  --event-type hook.session-restored --payload '{"client":"codex"}'
-global-plan events --dir runs/scip/global-plan --since 10
-```
+Data/control dependencies and performance influence have separate edge types.
+An observed performance influence requires complete, independently valid experiment
+evidence. A speedup does not automatically validate a causal mechanism: the Agent
+must revise the relevant claims and cite its evidence. Observations from another
+source version cannot silently become current facts. The harness consumes only
+public development data and reuses PitBench's execution and verification paths.
+It introduces no performance thresholds, averaging rule, or separate scoring metric.
 
-The JSON state and revision snapshots are stored in `plan_state.json` and `history/`.
-Only the controller decides replanning boundaries; a hook may report task, resume,
-or completion events but should not independently invoke another planning loop.
+## Initial comparison on SCIP 10.1.0
+
+Use three representation conditions: original source and tools; source plus an
+Agent-built call/dependence graph; and the partial algorithm model with dynamic
+mechanism planning. The graph condition describes software structure; the algorithm
+condition additionally records state transitions, costs, progress, and invariants.
+Keep the foundation model, development information, total budget, solver seeds,
+transformations, and final scoring protocol fixed, with independent Agent repeats.
+Study whether the representation changes opportunity comparisons and experiments;
+module count is not an optimization-quality metric.

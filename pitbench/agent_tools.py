@@ -13,6 +13,7 @@ class AgentTool(str, Enum):
     WORKSPACE = "workspace"
     BENCH = "bench"
     VALIDATE = "validate"
+    PLAN = "plan"
 
 
 _DEVELOPMENT_INSTANCE_TOOLS = frozenset({AgentTool.INSPECT, AgentTool.BENCH})
@@ -22,7 +23,10 @@ _RUN_DIRECTORY_TOOLS = frozenset({AgentTool.BENCH})
 def normalize_agent_tools(
     tools: Iterable[AgentTool | str],
 ) -> frozenset[AgentTool]:
-    return frozenset(AgentTool(tool) for tool in tools)
+    selected = frozenset(AgentTool(tool) for tool in tools)
+    if AgentTool.PLAN in selected and AgentTool.BENCH not in selected:
+        raise ValueError("algorithm-space planning requires the existing bench tool")
+    return selected
 
 
 def agent_tool_names(tools: Iterable[AgentTool | str]) -> list[str]:

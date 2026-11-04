@@ -24,7 +24,6 @@ dependencies = [
 
 [project.scripts]
 pitbench = "pitbench.cli.main:app"
-global-plan = "global_planner.cli:main"
 
 [project.optional-dependencies]
 reports = ["matplotlib>=3.9"]
@@ -46,7 +45,7 @@ requires = ["setuptools>=75", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["pitbench*", "adapters*", "global_planner*"]
+include = ["pitbench*", "adapters*"]
 
 [tool.setuptools.package-data]
 "pitbench.schema" = ["objective_catalog.json", "qualification_protocols.json", "qualification_protocols_v1_1.json"]

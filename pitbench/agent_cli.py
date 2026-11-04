@@ -679,6 +679,8 @@ def bench_command(args: argparse.Namespace) -> int:
         print("base benchmark requires a clean repository", file=sys.stderr)
         return 2
     patch_sha256 = hashlib.sha256(patch).hexdigest() if not args.dry_run else None
+    if "plan" in config.get("agent_tools", []) and args.label == "agent" and not args.dry_run:
+        _algorithm_planner(config).require_decision()
     if not args.dry_run:
         experiment = _candidate_experiment(config, args, patch, patch_sha256)
         if experiment is not None:
@@ -743,8 +745,12 @@ def bench_command(args: argparse.Namespace) -> int:
     with ThreadPoolExecutor(max_workers=parallel) as executor:
         succeeded = list(executor.map(run_one, grid))
 
+    if "plan" not in config.get("agent_tools", []) or args.dry_run:
+        return 0 if all(succeeded) else 1
+
     payloads: list[dict[str, Any]] = []
     feedback_paths: list[str] = []
+    missing_feedback: list[dict[str, Any]] = []
     run_root_label = runs_root / args.label
     for instance, seed, budget in grid:
         try:
@@ -756,258 +762,118 @@ def bench_command(args: argparse.Namespace) -> int:
             if fb_path.is_file():
                 payloads.append(json.loads(fb_path.read_text(encoding="utf-8")))
                 feedback_paths.append(str(fb_path))
-        except Exception:
-            pass
-
-    global_plan_dir = getattr(args, "global_plan_dir", None) or os.environ.get(
-        "PITBENCH_GLOBAL_PLAN_DIR"
-    )
-    if global_plan_dir and Path(global_plan_dir).exists() and not args.dry_run:
-        controller_managed_session = (
-            os.environ.get("PITBENCH_GLOBAL_PLAN_CONTROLLED_SESSION") == "1"
-        )
-        try:
-            from datetime import datetime, timezone
-
-            from global_planner.adapters.codex import CodexPlannerAdapter
-            from global_planner.controller import PlanningController
-            from global_planner.schema import (
-                ExecutionStatus,
-                PerformanceDelta,
-                SolutionValidity,
-            )
-            from global_planner.store import PlanStore
-
-            store = PlanStore(global_plan_dir)
-            controller = PlanningController(store=store)
-            if store.state.task_id != config.get("task_id"):
-                raise ValueError(
-                    f"global plan task '{store.state.task_id}' does not match "
-                    f"active task '{config.get('task_id')}'"
-                )
-
-            # 1. Execution status & solution validity (never conflate with runtime performance)
-            if not payloads:
-                exec_status = ExecutionStatus.MISSING
-                sol_validity = SolutionValidity.UNVERIFIED
-                perf_delta = PerformanceDelta.UNKNOWN
             else:
-                exec_ok = all(p.get("result_error") is None for p in payloads)
-                exec_status = ExecutionStatus.PASS if exec_ok else ExecutionStatus.FAIL
+                missing_feedback.append({"path": str(fb_path), "error": "feedback missing"})
+        except (OSError, ValueError) as error:
+            missing_feedback.append({
+                "instance": str(instance), "seed": seed, "budget_sec": budget,
+                "error": str(error),
+            })
 
-                valid_flags = [p.get("verified_valid") for p in payloads]
-                if any(v is False for v in valid_flags):
-                    sol_validity = SolutionValidity.INVALID
-                elif all(v is True for v in valid_flags):
-                    sol_validity = SolutionValidity.VALID
-                else:
-                    sol_validity = SolutionValidity.UNVERIFIED
+    from uuid import uuid4
 
-                # 2. Performance delta against matched baseline
-                gap_reductions = [
-                    float(p["preview_gap_reduction"])
-                    for p in payloads
-                    if p.get("preview_gap_reduction") is not None
-                ]
-                solved_changes = [
-                    int(p["preview_solved_change"])
-                    for p in payloads
-                    if p.get("preview_solved_change") is not None
-                ]
-                par2_reductions = [
-                    float(p["preview_par2_reduction_sec"])
-                    for p in payloads
-                    if p.get("preview_par2_reduction_sec") is not None
-                ]
+    from pitbench.schema.planning import Evidence
 
-                if gap_reductions:
-                    mean_gap = sum(gap_reductions) / len(gap_reductions)
-                    if mean_gap > 1e-6:
-                        perf_delta = PerformanceDelta.IMPROVED
-                    elif mean_gap < -1e-6:
-                        perf_delta = PerformanceDelta.REGRESSED
-                    else:
-                        perf_delta = PerformanceDelta.NEUTRAL
-                elif solved_changes or par2_reductions:
-                    tot_solved = sum(solved_changes) if solved_changes else 0
-                    tot_par2 = sum(par2_reductions) if par2_reductions else 0.0
-                    if tot_solved > 0 or (tot_solved == 0 and tot_par2 > 1e-4):
-                        perf_delta = PerformanceDelta.IMPROVED
-                    elif tot_solved < 0 or (tot_solved == 0 and tot_par2 < -1e-4):
-                        perf_delta = PerformanceDelta.REGRESSED
-                    else:
-                        perf_delta = PerformanceDelta.NEUTRAL
-                else:
-                    perf_delta = PerformanceDelta.UNKNOWN
-
-            # 3. Hypothesis support (mechanism support must be explicitly verified, not assumed)
-            hyp_supported: bool | None = None
-            if getattr(args, "hypothesis_supported", None) is not None:
-                hyp_supported = bool(args.hypothesis_supported)
-
-            # An aggregate cannot certify a grid containing missing/unreadable feedback.
-            if len(payloads) < len(grid):
-                exec_status = ExecutionStatus.MISSING
-                sol_validity = SolutionValidity.UNVERIFIED
-                perf_delta = PerformanceDelta.UNKNOWN
-                hyp_supported = None
-                succeeded.append(False)
-
-            # 4. Target nodes lookup
-            target_nodes: list[str] = []
-            st = store.state
-            if st.active_opportunity_id and st.active_opportunity_id in st.opportunities:
-                target_nodes = list(st.opportunities[st.active_opportunity_id].target_nodes)
-
-            # 5. Budget spent calculation
-            elapsed_sec = st.budget_spent_sec
-            if getattr(st, "created_at_utc", None):
-                try:
-                    start_dt = datetime.fromisoformat(st.created_at_utc)
-                    elapsed_sec = max(
-                        st.budget_spent_sec,
-                        (datetime.now(timezone.utc) - start_dt).total_seconds(),
-                    )
-                except Exception:
-                    pass
-
-            exp_id = getattr(args, "experiment_id", None) or (
-                f"bench_{patch_sha256[:8]}" if patch_sha256 else "bench_clean"
-            )
-            hyp_id = getattr(args, "hypothesis_id", None)
-
-            metrics_summary = {
-                "execution_status": exec_status.value,
-                "solution_validity": sol_validity.value,
-                "performance_delta": perf_delta.value,
-                "runs_count": len(payloads),
-                "expected_runs_count": len(grid),
-                "development_seeds": list(seeds),
-                "budgets_sec": list(budgets),
-                "threads": threads,
-                "instances": [str(instance) for instance in instances],
-                "candidate_patch_sha256": patch_sha256,
-                "experiment_id": exp_id,
-                "feedback_paths": feedback_paths,
-            }
-            if payloads:
-                if gap_reductions:
-                    metrics_summary["mean_gap_reduction"] = sum(gap_reductions) / len(gap_reductions)
-                if solved_changes:
-                    metrics_summary["total_solved_change"] = sum(solved_changes)
-                if par2_reductions:
-                    metrics_summary["total_par2_reduction_sec"] = sum(par2_reductions)
-
-            ev, should_replan = controller.on_experiment_completed(
-                experiment_id=exp_id,
-                target_nodes=target_nodes,
-                metrics_summary=metrics_summary,
-                execution_status=exec_status,
-                solution_validity=sol_validity,
-                performance_delta=perf_delta,
-                hypothesis_supported=hyp_supported,
-                hypothesis_id=hyp_id,
-                candidate_patch_sha256=patch_sha256,
-                observations_path=json.dumps(
-                    metrics_summary["feedback_paths"], ensure_ascii=False
-                ),
-                current_budget_spent=elapsed_sec,
-            )
-
-            if should_replan and not controller_managed_session:
-                allow_fallback = (
-                    getattr(args, "allow_offline_fallback", False)
-                    or (os.environ.get("PITBENCH_ALLOW_OFFLINE_FALLBACK") == "1")
-                )
-                from global_planner.adapters.codex import create_default_llm_callable
-
-                llm_callable = create_default_llm_callable(repository_root=_repository())
-                adapter = CodexPlannerAdapter(
-                    default_llm_callable=llm_callable,
-                    allow_offline_fallback=allow_fallback,
-                )
-                packet = controller.build_context_packet(current_budget_spent=elapsed_sec)
-                new_decision = adapter.request_decision(
-                    packet, allow_offline_fallback=allow_fallback
-                )
-                controller.parse_and_record_decision(
-                    new_decision.model_dump(), current_budget_spent=elapsed_sec
-                )
-                print(
-                    f"[global-plan] Replanning boundary reached. "
-                    f"Decision: {new_decision.decision.value} -> {new_decision.selected_opportunity}. "
-                    f"Next experiment: {new_decision.next_experiment}",
-                    file=sys.stderr,
-                )
-        except Exception as e:
-            allow_fallback = (
-                getattr(args, "allow_offline_fallback", False)
-                or (os.environ.get("PITBENCH_ALLOW_OFFLINE_FALLBACK") == "1")
-            )
-            print(f"[global-plan-error] Failed to process planning boundary: {e}", file=sys.stderr)
-            if not allow_fallback:
-                # In formal planning conditions, planner failure must NOT be silently downgraded to success
-                return 1
+    planner = _algorithm_planner(config)
+    complete = len(payloads) == len(grid)
+    execution_status = "missing" if not complete else (
+        "fail" if any(
+            item.get("result_error") is not None or item.get("returncode") not in (None, 0)
+            for item in payloads
+        ) else "pass"
+    )
+    validity = [item.get("verified_valid") for item in payloads]
+    solution_validity = "unverified" if not complete else (
+        "invalid" if any(value is False for value in validity) else (
+            "valid" if all(value is True for value in validity) else "unverified"
+        )
+    )
+    evidence = Evidence(
+        id=f"bench_{uuid4().hex}", kind="experiment",
+        source=_planning_source(patch),
+        summary=f"Public development benchmark: {args.label}",
+        artifact_paths=feedback_paths, observations=payloads,
+        expected_runs=len(grid), execution_status=execution_status,
+        solution_validity=solution_validity,
+        workload={
+            "instances": [str(instance) for instance in instances],
+            "seeds": list(seeds), "budgets_sec": list(budgets), "threads": threads,
+            "label": args.label, "experiment_id": getattr(args, "experiment_id", None),
+            "hypothesis_id": getattr(args, "hypothesis_id", None),
+            "missing_feedback": missing_feedback,
+        },
+    )
+    planner.record_experiment(evidence, baseline=args.label == "base")
+    print(json.dumps({
+        "planning_evidence": evidence.id,
+        "affected_nodes": evidence.affected_nodes,
+        "next_action": "Run pitbench plan, update the algorithm model from observations, and compare mechanism changes before the next candidate experiment.",
+    }))
+    if not complete:
+        succeeded.append(False)
 
     return 0 if all(succeeded) else 1
 
 
+def _planning_source(patch: bytes | None = None):
+    from pitbench.schema.planning import SourceVersion
+
+    repository = _repository()
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if patch is None:
+        patch = _candidate_patch(repository)
+    return SourceVersion(base_commit=base, patch_sha256=hashlib.sha256(patch).hexdigest())
+
+
+def _algorithm_planner(config: dict[str, Any]):
+    from pitbench.planning import AlgorithmPlanner
+
+    return AlgorithmPlanner(
+        _runs_root(config) / "algorithm_plan.json", config["task_id"],
+        config["instruction"],
+    )
+
+
 def plan_command(args: argparse.Namespace) -> int:
-    config = _config()
-    runs_root = _runs_root(config)
-    plan_dir = (
-        getattr(args, "dir", None)
-        or os.environ.get("PITBENCH_GLOBAL_PLAN_DIR")
-        or (runs_root / "global_plan")
+    from pitbench.schema.planning import (
+        AlgorithmModel,
+        Evidence,
+        MechanismProposal,
+        PlanningDecision,
     )
-    if not plan_dir or not Path(plan_dir).exists():
-        print(f"No global plan state found at {plan_dir}", file=sys.stderr)
-        return 1
 
-    from global_planner.adapters.codex import CodexPlannerAdapter
-    from global_planner.controller import PlanningController
-    from global_planner.store import PlanStore
-
-    store = PlanStore(plan_dir)
-    st = store.state
-
-    if getattr(args, "replan", False):
-        controller = PlanningController(store=store)
-        allow_fallback = (
-            getattr(args, "allow_offline_fallback", False)
-            or (os.environ.get("PITBENCH_ALLOW_OFFLINE_FALLBACK") == "1")
-        )
-        adapter = CodexPlannerAdapter(allow_offline_fallback=allow_fallback)
-        packet = controller.build_context_packet(
-            current_budget_spent=st.budget_spent_sec
-        )
-        new_dec = adapter.request_decision(
-            packet, allow_offline_fallback=allow_fallback
-        )
-        controller.parse_and_record_decision(
-            new_dec.model_dump(), current_budget_spent=st.budget_spent_sec
-        )
-        print(
-            f"Replanning completed: {new_dec.decision.value} -> {new_dec.selected_opportunity}"
-        )
-        print(f"Next experiment: {new_dec.next_experiment}")
+    if args.schema:
+        print(json.dumps({
+            "model": AlgorithmModel.model_json_schema(),
+            "proposal": MechanismProposal.model_json_schema(),
+            "decision": PlanningDecision.model_json_schema(),
+            "evidence": Evidence.model_json_schema(),
+        }, indent=2))
         return 0
-
-    print(f"=== Global Plan: {st.task_id} ({st.solver}) ===")
-    print(f"Active Opportunity: {st.active_opportunity_id or 'None'}")
-    if st.active_opportunity_id and st.active_opportunity_id in st.opportunities:
-        opp = st.opportunities[st.active_opportunity_id]
-        print(f"  Title: {opp.title}")
-        print(f"  Proposal: {opp.proposal}")
-        print(f"  Expected Effect: {opp.expected_effect}")
-        print(f"  Target Nodes: {', '.join(opp.target_nodes)}")
-    if st.decisions:
-        last = st.decisions[-1]
-        print(f"Current Decision: {last.decision.value}")
-        print(f"Next Experiment: {last.next_experiment}")
-    print(
-        f"Evidence Recorded: {len(st.evidence)} | Completed Experiments: {st.experiments_count}"
-    )
+    config = _config()
+    planner = _algorithm_planner(config)
+    source = _planning_source()
+    if args.model:
+        planner.update_model(AlgorithmModel.model_validate_json(args.model.read_text()), source)
+    elif args.proposal:
+        planner.add_proposal(MechanismProposal.model_validate_json(args.proposal.read_text()))
+    elif args.decision:
+        planner.decide(PlanningDecision.model_validate_json(args.decision.read_text()), source)
+    elif args.evidence:
+        evidence = Evidence.model_validate_json(args.evidence.read_text())
+        if not evidence.artifact_paths:
+            raise ValueError("source/trace evidence requires an inspectable artifact")
+        for ref in evidence.artifact_paths:
+            artifact = Path(ref)
+            if not artifact.is_absolute():
+                artifact = _repository() / artifact
+            if not artifact.is_file():
+                raise ValueError(f"evidence artifact does not exist: {ref}")
+        planner.add_evidence(evidence, source)
+    print(json.dumps(planner.context(source), indent=2))
     return 0
 
 
@@ -1228,11 +1094,6 @@ def parser() -> argparse.ArgumentParser:
         hypothesis.set_defaults(handler=hypothesis_command)
         bench = commands.add_parser("bench")
         bench.add_argument("--hypothesis-id")
-        bench.add_argument(
-            "--hypothesis-supported",
-            type=lambda v: str(v).lower() in ("true", "1", "yes"),
-            help="whether the empirical outcome confirms the targeted mechanism hypothesis",
-        )
         bench.add_argument("--experiment-id")
         bench.add_argument("--split", default="dev")
         bench.add_argument("--label", choices=("base", "agent"), default="agent")
@@ -1246,32 +1107,8 @@ def parser() -> argparse.ArgumentParser:
             type=int,
             help="development workers; defaults to the task preference and fits its CPU allowance",
         )
-        bench.add_argument(
-            "--global-plan-dir",
-            type=Path,
-            help="path to active global planner state directory to record evidence and boundary events",
-        )
-        bench.add_argument(
-            "--allow-offline-fallback",
-            action="store_true",
-            help="allow heuristic fallback when no LLM connection is configured (test mode only)",
-        )
         _run_options(bench, instance_required=False)
         bench.set_defaults(handler=bench_command)
-        plan_parser = commands.add_parser(
-            "plan",
-            help="Inspect or trigger global algorithm-space planning state",
-        )
-        plan_parser.add_argument("--dir", type=Path, help="plan state directory")
-        plan_parser.add_argument(
-            "--replan", action="store_true", help="force an immediate replanning cycle"
-        )
-        plan_parser.add_argument(
-            "--allow-offline-fallback",
-            action="store_true",
-            help="allow heuristic fallback when no LLM connection is configured (test mode only)",
-        )
-        plan_parser.set_defaults(handler=plan_command)
         diagnose = commands.add_parser("diagnose")
         budget_selection = diagnose.add_mutually_exclusive_group()
         budget_selection.add_argument(
@@ -1285,6 +1122,13 @@ def parser() -> argparse.ArgumentParser:
             help="diagnose every declared development budget",
         )
         diagnose.set_defaults(handler=diagnose_command)
+    if "plan" in tools:
+        planning = commands.add_parser("plan", help="Model algorithm transitions and compare mechanism changes")
+        action = planning.add_mutually_exclusive_group()
+        action.add_argument("--schema", action="store_true", help="show the model and planning JSON schemas")
+        for name in ("model", "proposal", "decision", "evidence"):
+            action.add_argument(f"--{name}", type=Path, help=f"submit a {name} JSON file")
+        planning.set_defaults(handler=plan_command)
     if "validate" in tools:
         validate = commands.add_parser("validate")
         validate.set_defaults(handler=validate_command)

@@ -462,6 +462,11 @@ class PitBenchAdapter:
             )
             sections.append(f"Optional PitBench helper commands: {commands}.")
 
+        if AgentTool.PLAN in agent_tools:
+            from pitbench.planning import PLANNING_INSTRUCTION
+
+            sections.append(PLANNING_INSTRUCTION)
+
         return "\n\n".join(sections)
 
     def _write_task_yaml(

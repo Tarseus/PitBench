@@ -41,6 +41,9 @@ def write_agent_tooling(
         (schema / "__init__.py").write_text("")
         for name in ("research.py", "objective_catalog.json"):
             shutil.copy2(repository_root / "pitbench/schema" / name, schema / name)
+        if AgentTool.PLAN in tools:
+            shutil.copy2(repository_root / "pitbench/planning.py", tooling)
+            shutil.copy2(repository_root / "pitbench/schema/planning.py", schema)
         shutil.copytree(
             repository_root / "pitbench" / "solver_drivers",
             tooling / "solver_drivers",
@@ -65,6 +68,7 @@ def write_agent_tooling(
         "agent_tools": sorted(tool.value for tool in tools),
         "agent_feedback_mode": agent_feedback_mode,
         "candidate_hypotheses_required": candidate_hypotheses_required,
+        "instruction": task.instruction,
         "development_parallel_runs": research_budget.development_parallel_runs
         if research_budget
         else 1,

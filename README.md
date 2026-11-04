@@ -1118,6 +1118,11 @@ Feedback records the input hash and runner artifact hash
 so Base/Agent comparisons expose stale builds. Set `agent_tools: []` explicitly
 in the local config to omit these tools and instances.
 
+For [Algorithm-Space Global Planning](docs/research/algorithm-space-planning.md),
+enable `agent_tools: [inspect, workspace, bench, plan]`. The same Agent builds a
+partial hierarchical algorithm model, compares mechanism changes, maps them to
+source, and revises the model from public benchmark evidence using `pitbench plan`.
+
 The normal candidate judge collects Performance and Resource Efficiency data,
 plus the seed and representation runs enabled by each task config. Solver
 failures, missing runs, and independent solution checks remain in the raw
