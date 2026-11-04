@@ -23,6 +23,7 @@ from global_planner.schema import (
     Opportunity,
     PerformanceDelta,
     ReplanningDecision,
+    SessionStatus,
     SolutionValidity,
 )
 from global_planner.store import PlanStore
@@ -203,37 +204,32 @@ class PlanningSessionDriver:
                     f"plan task '{self.store.state.task_id}' does not match requested "
                     f"task '{task_config.get('task_id', 'unknown_task')}'"
                 )
-        # 1. Bootstrap or resume
-        if not self.store.state_file.exists() or len(self.store.state.decisions) == 0:
-            packet, decision = self.bootstrap(
-                task_config=task_config, study_id=study_id, repository_root=repo_root
-            )
-        else:
-            decision = self.store.state.decisions[-1]
-            if decision.decision == DecisionType.STOP:
-                self.store.record_event(
-                    "session.resumed", {"study_id": study_id, "max_steps": max_steps}
-                )
-                self.store.record_event(
-                    "session.finished", {"executed_steps": 0, "stopped": True}
-                )
-                return [decision]
-            packet = self.controller.build_context_packet(self.get_current_budget_spent())
-
-        executed_decisions: list[ReplanningDecision] = [decision]
-        self.store.record_event(
-            "session.resumed" if resumed else "session.started",
-            {"study_id": study_id, "max_steps": max_steps},
-        )
-
+        executed_decisions: list[ReplanningDecision] = []
+        first_evidence_count = len(self.store.state.evidence) if resumed else 0
+        executed_steps = 0
+        had_failure = False
+        had_incomplete = False
         try:
+            if not resumed or not self.store.state.decisions:
+                packet, decision = self.bootstrap(
+                    task_config=task_config, study_id=study_id, repository_root=repo_root
+                )
+            else:
+                decision = self.store.state.decisions[-1]
+            executed_decisions.append(decision)
+            self.store.state.session_status = SessionStatus.RUNNING
+            self.store.record_event(
+                "session.resumed" if resumed else "session.started",
+                {"study_id": study_id, "max_steps": max_steps},
+            )
             # 2. Closed-loop execution loop
             for step_idx in range(max_steps):
+                if decision.decision == DecisionType.STOP:
+                    break
                 spent = self.get_current_budget_spent()
                 self.store.update_budget_spent(spent)
                 if spent >= self.controller.total_budget_sec:
-                    break
-                if decision.decision == DecisionType.STOP:
+                    had_incomplete = True
                     break
 
                 # Always refresh context packet at the start of every step
@@ -241,13 +237,13 @@ class PlanningSessionDriver:
                 packet = self.controller.build_context_packet(spent)
 
                 # Hand off decision and fresh context packet to the coding agent worker
+                executed_steps += 1
                 worker_outcome = agent_worker(decision, packet)
                 # A real agent may run pitbench bench in a child process, which
                 # commits evidence and events through another PlanStore instance.
                 # Reload before any controller writes to avoid replacing that state
                 # with this process's stale in-memory snapshot.
-                if isinstance(worker_outcome, dict) and worker_outcome.get("evidence_recorded"):
-                    self.store.load()
+                self.store.load()
 
                 # Validate worker outcome (never default missing/empty worker result to PASS/VALID)
                 if not isinstance(worker_outcome, dict) or not worker_outcome:
@@ -260,27 +256,6 @@ class PlanningSessionDriver:
                     sol_validity = worker_outcome.get("solution_validity", SolutionValidity.UNVERIFIED)
                     perf_delta = worker_outcome.get("performance_delta", PerformanceDelta.UNKNOWN)
                     hyp_supp = worker_outcome.get("hypothesis_supported")
-
-                    # Check runs count vs expected runs if specified
-                    expected_runs = worker_outcome.get("expected_runs_count")
-                    actual_runs = worker_outcome.get("actual_runs_count")
-                    if actual_runs is None:
-                        actual_runs = worker_outcome.get("metrics_summary", {}).get("runs_count")
-
-                    # If expected_runs is specified, verify actual runs completeness
-                    if expected_runs is not None:
-                        if actual_runs is None or actual_runs < expected_runs:
-                            exec_status = ExecutionStatus.MISSING
-                            sol_validity = SolutionValidity.UNVERIFIED
-                            perf_delta = PerformanceDelta.UNKNOWN
-                            hyp_supp = None
-
-                    # If actual runs count is explicitly 0 or no runs occurred, it cannot be PASS / VALID / IMPROVED
-                    if actual_runs is not None and actual_runs == 0:
-                        exec_status = ExecutionStatus.MISSING
-                        sol_validity = SolutionValidity.UNVERIFIED
-                        perf_delta = PerformanceDelta.UNKNOWN
-                        hyp_supp = None
 
                 # Process dynamic model updates from worker
                 if isinstance(worker_outcome, dict):
@@ -302,12 +277,13 @@ class PlanningSessionDriver:
                             if nid in self.store.state.nodes:
                                 self.store.state.nodes[nid].status = "active"
 
-                    self.store.record_event("agent.turn_completed", {
-                        "step": step_idx + 1,
-                        "experiment_id": worker_outcome.get("experiment_id"),
-                        "execution_status": str(worker_outcome.get("execution_status")),
-                        "solution_validity": str(worker_outcome.get("solution_validity")),
-                    })
+                    if not worker_outcome.get("agent_error"):
+                        self.store.record_event("agent.turn_completed", {
+                            "step": step_idx + 1,
+                            "experiment_id": worker_outcome.get("experiment_id"),
+                            "execution_status": str(worker_outcome.get("execution_status")),
+                            "solution_validity": str(worker_outcome.get("solution_validity")),
+                        })
 
                 # Invalidate nodes if source files were modified
                 modified_files = worker_outcome.get("modified_files") if isinstance(worker_outcome, dict) else None
@@ -327,7 +303,21 @@ class PlanningSessionDriver:
                         else []
                     )
 
-                metrics_summary = worker_outcome.get("metrics_summary", {}) if isinstance(worker_outcome, dict) else {}
+                metrics_summary = dict(worker_outcome.get("metrics_summary", {})) if isinstance(worker_outcome, dict) else {}
+                actual_runs = None
+                expected_runs = None
+                if isinstance(worker_outcome, dict):
+                    actual_runs = worker_outcome.get("actual_runs_count")
+                    expected_runs = worker_outcome.get("expected_runs_count")
+                if actual_runs is None:
+                    actual_runs = metrics_summary.get("actual_runs_count", metrics_summary.get("runs_count"))
+                if expected_runs is None:
+                    expected_runs = metrics_summary.get("expected_runs_count")
+                if actual_runs is not None:
+                    metrics_summary["runs_count"] = actual_runs
+                    metrics_summary["actual_runs_count"] = actual_runs
+                if expected_runs is not None:
+                    metrics_summary["expected_runs_count"] = expected_runs
                 exp_id = (
                     worker_outcome.get("experiment_id", f"exp_step_{step_idx + 1:03d}")
                     if isinstance(worker_outcome, dict)
@@ -335,8 +325,17 @@ class PlanningSessionDriver:
                 )
 
                 if isinstance(worker_outcome, dict) and worker_outcome.get("evidence_recorded"):
-                    self.store.load()
-                    ev = self.store.state.evidence[-1]
+                    evidence_id = worker_outcome.get("evidence_id")
+                    ev = next(
+                        record for record in reversed(self.store.state.evidence)
+                        if record.id == evidence_id or (
+                            evidence_id is None and record.experiment_id == exp_id
+                        )
+                    )
+                    ev = self.store.correct_evidence_completeness(
+                        ev.id, actual_runs_count=actual_runs,
+                        expected_runs_count=expected_runs,
+                    )
                     spent = self.get_current_budget_spent()
                     should_replan = self.controller.should_trigger_replanning(
                         current_budget_spent=spent,
@@ -362,20 +361,55 @@ class PlanningSessionDriver:
                         repository_root=repo_root,
                     )
 
+                agent_failed = isinstance(worker_outcome, dict) and bool(worker_outcome.get("agent_error"))
+                had_failure |= (
+                    agent_failed
+                    or ExecutionStatus(exec_status) == ExecutionStatus.FAIL
+                    or SolutionValidity(sol_validity) == SolutionValidity.INVALID
+                    or ev.execution_status == ExecutionStatus.FAIL
+                    or ev.solution_validity == SolutionValidity.INVALID
+                )
+                had_incomplete |= (
+                    ev.execution_status == ExecutionStatus.MISSING
+                    or ev.solution_validity == SolutionValidity.UNVERIFIED
+                )
+
                 # If replanning was triggered, advance to new decision
                 if new_decision is not None:
                     decision = new_decision
                     executed_decisions.append(decision)
 
+        except Exception:
+            had_failure = True
+            raise
         finally:
-            self.store.update_budget_spent(self.get_current_budget_spent())
-            self.store.record_event(
-                "session.finished",
-                {
-                    "executed_steps": len(executed_decisions) - 1,
-                    "budget_spent_sec": self.get_current_budget_spent(),
-                },
-            )
+            if self.store.state_file.exists():
+                # This also protects child evidence if a worker or planner raised.
+                self.store.load()
+                new_evidence = self.store.state.evidence[first_evidence_count:]
+                had_failure |= any(
+                    record.execution_status == ExecutionStatus.FAIL
+                    or record.solution_validity == SolutionValidity.INVALID
+                    for record in new_evidence
+                )
+                had_incomplete |= any(
+                    record.execution_status == ExecutionStatus.MISSING
+                    or record.solution_validity == SolutionValidity.UNVERIFIED
+                    for record in new_evidence
+                )
+                status = SessionStatus.FAILED if had_failure else (
+                    SessionStatus.INCOMPLETE if had_incomplete else SessionStatus.COMPLETED
+                )
+                self.store.state.session_status = status
+                self.store.update_budget_spent(self.get_current_budget_spent())
+                self.store.record_event(
+                    "session.finished",
+                    {
+                        "status": status.value,
+                        "executed_steps": executed_steps,
+                        "budget_spent_sec": self.get_current_budget_spent(),
+                    },
+                )
 
         return executed_decisions
 

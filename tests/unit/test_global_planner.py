@@ -1,6 +1,7 @@
 """Unit tests for the Global Planner and Hierarchical Algorithmic Transition System (HATS)."""
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -22,10 +23,178 @@ from global_planner.schema import (
     Opportunity,
     PerformanceDelta,
     ReplanningDecision,
+    SessionStatus,
     SolutionValidity,
 )
 from global_planner.store import PlanStore, match_source_ref
 from pitbench.schema.research import PlanningStudyPlan
+
+
+@pytest.mark.parametrize(
+    "case,expected_exit,expected_status",
+    [
+        ("complete", 0, SessionStatus.COMPLETED),
+        ("timeout_after_bench", 1, SessionStatus.FAILED),
+        ("error_after_bench", 1, SessionStatus.FAILED),
+        ("timeout_before_bench", 1, SessionStatus.FAILED),
+        ("no_bench", 2, SessionStatus.INCOMPLETE),
+        ("partial", 2, SessionStatus.INCOMPLETE),
+        ("partial_then_complete", 2, SessionStatus.INCOMPLETE),
+        ("planner_failure_after_bench", 1, SessionStatus.FAILED),
+    ],
+)
+def test_cli_agent_boundaries_preserve_evidence_and_report_session_status(
+    tmp_path, monkeypatch, capsys, case, expected_exit, expected_status
+):
+    from global_planner import cli
+
+    plan_dir = tmp_path / "plan"
+    task_path = tmp_path / "task.yaml"
+    task_path.write_text(json.dumps({"task_id": "cli_task"}))
+    instructions = tmp_path / "task.md"
+    instructions.write_text("Improve the solver on public development instances.")
+    monkeypatch.delenv("PITBENCH_GLOBAL_PLAN_CONTROLLED_SESSION", raising=False)
+
+    def fake_agent(prompt):
+        assert "pitbench bench" in prompt
+        child_store = PlanStore(plan_dir)
+        if case == "partial_then_complete":
+            PlanningController(child_store).on_experiment_completed(
+                experiment_id="first_partial_exp", target_nodes=[],
+                metrics_summary={"runs_count": 1, "expected_runs_count": 2},
+                execution_status=ExecutionStatus.PASS,
+                solution_validity=SolutionValidity.VALID,
+                performance_delta=PerformanceDelta.IMPROVED,
+            )
+        if case not in ("no_bench", "timeout_before_bench"):
+            PlanningController(child_store).on_experiment_completed(
+                experiment_id="child_exp",
+                target_nodes=["subsystem.search_engine"],
+                metrics_summary={
+                    "runs_count": 1 if case == "partial" else 2,
+                    "expected_runs_count": 2,
+                    "raw_measurement": [10.0],
+                },
+                execution_status=ExecutionStatus.PASS,
+                solution_validity=SolutionValidity.VALID,
+                performance_delta=PerformanceDelta.IMPROVED,
+                hypothesis_supported=True,
+            )
+        child_store.record_event("child.observation", {"case": case})
+        if case.startswith("timeout"):
+            raise subprocess.TimeoutExpired(["fake-agent"], 10)
+        if case == "error_after_bench":
+            raise RuntimeError("agent connection closed after bench")
+        return "{}"
+
+    planner_calls = 0
+
+    def fake_planner(prompt):
+        nonlocal planner_calls
+        planner_calls += 1
+        if planner_calls > 1:
+            raise RuntimeError("planner failed after benchmark")
+        return json.dumps({
+            "decision": "continue", "selected_opportunity": "opp_profile_bottlenecks",
+            "next_experiment": "pitbench bench",
+        })
+
+    def fake_factory(**kwargs):
+        if kwargs.get("backend") == "codex":
+            return fake_agent
+        return fake_planner if case == "planner_failure_after_bench" else None
+
+    monkeypatch.setattr(cli, "create_default_llm_callable", fake_factory)
+    result = cli.main([
+        "run", "--dir", str(plan_dir), "--task-config", str(task_path),
+        "--task", str(instructions), "--repository", str(tmp_path),
+        "--agent", "codex", "--planner-backend", "litellm",
+        "--allow-offline-fallback", "--max-steps", "1",
+    ])
+    state = PlanStore(plan_dir).state
+    assert result == expected_exit
+    assert state.session_status == expected_status
+    output = capsys.readouterr()
+    assert f"Session {expected_status.value}:" in output.out + output.err
+    assert state.events[-1]["payload"]["status"] == expected_status.value
+    assert state.events[-1]["payload"]["executed_steps"] == 1
+    assert any(event["event_type"] == "child.observation" for event in state.events)
+    assert state.experiments_count == len(state.evidence) == (2 if case == "partial_then_complete" else 1)
+    assert "PITBENCH_GLOBAL_PLAN_CONTROLLED_SESSION" not in cli.os.environ
+    evidence = state.evidence[-1]
+    if case not in ("no_bench", "timeout_before_bench"):
+        assert evidence.experiment_id == "child_exp"
+        assert evidence.metrics_summary["raw_measurement"] == [10.0]
+    if case in ("complete", "timeout_after_bench", "error_after_bench", "planner_failure_after_bench", "partial_then_complete"):
+        assert evidence.execution_status == ExecutionStatus.PASS
+        assert evidence.performance_delta == PerformanceDelta.IMPROVED
+    else:
+        assert evidence.execution_status == ExecutionStatus.MISSING
+        assert evidence.solution_validity == SolutionValidity.UNVERIFIED
+        assert evidence.performance_delta == PerformanceDelta.UNKNOWN
+    errors = [event for event in state.events if event["event_type"] == "agent.turn_failed"]
+    assert len(errors) == (1 if case.startswith("timeout") or case == "error_after_bench" else 0)
+
+
+@pytest.mark.parametrize("reported_actual", [None, 1, 2])
+def test_recorded_partial_evidence_is_corrected_before_replanning(
+    tmp_path, monkeypatch, reported_actual
+):
+    store = PlanStore(tmp_path / "plan")
+    driver = PlanningSessionDriver(store, allow_offline_fallback=True, cooldown_sec=0)
+    planner_inputs = []
+    original_request = driver.adapter.request_decision
+
+    def observe_decision(packet, **kwargs):
+        planner_inputs.append(packet.model_dump(mode="json"))
+        return original_request(packet, **kwargs)
+
+    monkeypatch.setattr(driver.adapter, "request_decision", observe_decision)
+
+    def legacy_worker(decision, packet):
+        child = PlanStore(store.storage_dir)
+        evidence, _ = PlanningController(child).on_experiment_completed(
+            experiment_id="legacy_partial_exp", target_nodes=[],
+            metrics_summary={"runs_count": 2, "expected_runs_count": 2},
+            execution_status=ExecutionStatus.PASS,
+            solution_validity=SolutionValidity.VALID,
+            performance_delta=PerformanceDelta.IMPROVED,
+            hypothesis_supported=True,
+        )
+        # Reproduce a record saved by the old writer: favorable statuses with a
+        # partial run count. Keep a revision snapshot of that original record.
+        evidence.metrics_summary["runs_count"] = 1
+        child.save()
+        result = {
+            "experiment_id": evidence.experiment_id,
+            "evidence_recorded": True,
+            "execution_status": "pass", "solution_validity": "valid",
+            "performance_delta": "improved", "hypothesis_supported": True,
+        }
+        if reported_actual is not None:
+            result.update(actual_runs_count=reported_actual, expected_runs_count=2)
+        return result
+
+    driver.run_session({"task_id": "partial_task"}, legacy_worker, max_steps=1)
+    state = PlanStore(store.storage_dir).state
+    assert state.experiments_count == len(state.evidence) == 1
+    evidence = state.evidence[0]
+    assert evidence.execution_status == ExecutionStatus.MISSING
+    assert evidence.solution_validity == SolutionValidity.UNVERIFIED
+    assert evidence.performance_delta == PerformanceDelta.UNKNOWN
+    assert evidence.hypothesis_supported is None
+    assert evidence.status == "inconclusive"
+    assert state.session_status == SessionStatus.INCOMPLETE
+    correction = [event for event in state.events if event["event_type"] == "evidence.corrected"]
+    assert len(correction) == 1
+    assert correction[0]["payload"]["before"]["execution_status"] == "pass"
+    assert correction[0]["payload"]["after"]["execution_status"] == "missing"
+    assert correction[0]["payload"]["before"]["experiment_id"] == evidence.experiment_id
+    assert planner_inputs[-1]["recent_evidence"][0]["execution_status"] == "missing"
+    assert all(opp.status != "validated" for opp in state.opportunities.values())
+    event_count = len(state.events)
+    store.correct_evidence_completeness(evidence.id)
+    assert len(store.state.events) == event_count
 
 
 def test_schema_hats_node():

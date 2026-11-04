@@ -25,6 +25,25 @@ turn is stored as missing evidence. The controller resumes from the same directo
 after process restart; planning and Agent time share the persistent wall-clock
 budget.
 
+Persistence here covers the planning model, decisions, evidence, and budget. Each
+coding turn starts a new native Agent session and injects the saved planning context.
+Codex uses `exec --ephemeral`; native Agent conversations are not restored.
+
+A benchmark saved before an Agent timeout remains valid evidence. The timeout is
+recorded separately as `agent.turn_failed`. Incomplete run grids are stored as
+`missing / unverified / unknown`. Previously recorded partial evidence is corrected
+with an `evidence.corrected` event containing the original and corrected records;
+the experiment count does not increase.
+
+The latest invocation exposes `session_status` in state, `global-plan status`, and
+the `session.finished` event. `completed` (exit 0) means all attempted turns have
+complete, verified execution evidence, or the planner explicitly stopped.
+`incomplete` (exit 2) means measurements or verification are missing, or the budget
+prevented a scheduled turn. `failed` (exit 1) means an Agent/controller error,
+execution failure, or invalid solution occurred, including an Agent timeout after
+a successful benchmark. Performance regression alone does not fail the session.
+These statuses describe execution of this invocation, not optimization benefit.
+
 The coding Agent needs the normal PitBench task environment (`PITBENCH_AGENT_CONFIG`,
 development instances, solver runner, and writable results directory) available in
 its process environment. The task YAML supplies model bootstrapping metadata; `--task`

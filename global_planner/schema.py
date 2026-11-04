@@ -113,6 +113,13 @@ class PerformanceDelta(str, Enum):
     UNKNOWN = "unknown"
 
 
+class SessionStatus(str, Enum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    INCOMPLETE = "incomplete"
+    FAILED = "failed"
+
+
 class EvidenceRecord(BaseModel):
     """Empirical result from a controlled experiment mapped back into the planning model.
 
@@ -137,6 +144,39 @@ class EvidenceRecord(BaseModel):
     candidate_patch_sha256: str | None = None
     observations_path: str | None = None
     timestamp: str | None = None
+
+    def mark_incomplete_runs(
+        self,
+        actual_runs_count: int | None = None,
+        expected_runs_count: int | None = None,
+    ) -> None:
+        """Downgrade incomplete measurements without removing raw observations."""
+        actual = actual_runs_count
+        if actual is None:
+            actual = self.metrics_summary.get(
+                "actual_runs_count", self.metrics_summary.get("runs_count")
+            )
+        expected = expected_runs_count
+        if expected is None:
+            expected = self.metrics_summary.get("expected_runs_count")
+        if actual != 0 and not (
+            expected is not None and (actual is None or actual < expected)
+        ):
+            return
+        self.execution_status = ExecutionStatus.MISSING
+        self.solution_validity = SolutionValidity.UNVERIFIED
+        self.performance_delta = PerformanceDelta.UNKNOWN
+        self.hypothesis_supported = None
+        self.status = "inconclusive"
+        self.metrics_summary = {
+            **self.metrics_summary,
+            "runs_count": actual,
+            "actual_runs_count": actual,
+            "expected_runs_count": expected,
+            "execution_status": self.execution_status.value,
+            "solution_validity": self.solution_validity.value,
+            "performance_delta": self.performance_delta.value,
+        }
 
     @property
     def execution_success(self) -> bool:
@@ -194,6 +234,7 @@ class GlobalPlanState(BaseModel):
     decisions: list[ReplanningDecision] = Field(default_factory=list)
     evidence: list[EvidenceRecord] = Field(default_factory=list)
     events: list[dict[str, Any]] = Field(default_factory=list)
+    session_status: SessionStatus | None = None
     budget_spent_sec: float = 0.0
     budget_clock_started_at_utc: str | None = None
     experiments_count: int = 0

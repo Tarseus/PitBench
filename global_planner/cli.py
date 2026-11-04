@@ -21,7 +21,7 @@ from global_planner.adapters.codex import (
 )
 from global_planner.controller import PlanningController
 from global_planner.driver import PlanningSessionDriver
-from global_planner.schema import HATSNode, Opportunity
+from global_planner.schema import HATSNode, Opportunity, SessionStatus
 from global_planner.store import PlanStore
 
 
@@ -44,6 +44,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"Revision: {st.revision} | Experiments: {st.experiments_count} | Decisions: {len(st.decisions)}")
     print(f"Active Opportunity: {st.active_opportunity_id or 'None'}")
     print(f"Nodes: {len(st.nodes)} | Opportunities: {len(st.opportunities)} | Evidence: {len(st.evidence)}")
+    print(f"Session Status: {st.session_status.value if st.session_status else 'not_started'}")
     if st.decisions:
         last = st.decisions[-1]
         print(f"Last Decision: {last.decision.value} -> {last.selected_opportunity}")
@@ -176,9 +177,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     # agent to run `pitbench bench --global-plan-dir ...` before the next turn.
     def session_worker(decision, packet):
         evidence_count_before = len(store.state.evidence)
-        latest_exp_before = (
-            store.state.evidence[-1].experiment_id if store.state.evidence else None
-        )
         started = time.monotonic()
         if packet.remaining_budget_sec <= 0:
             return {
@@ -196,7 +194,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
         if agent_callable is None:
             raise RuntimeError(f"Could not initialize '{args.agent}' agent adapter")
-        os.environ["PITBENCH_GLOBAL_PLAN_CONTROLLED_SESSION"] = "1"
         prompt = (
             f"Task: {Path(args.task).read_text(encoding='utf-8')}\n\n"
             f"Global planning decision: {decision.model_dump_json()}\n"
@@ -212,15 +209,24 @@ def cmd_run(args: argparse.Namespace) -> int:
             "target_nodes, proposal, expected_effect, and "
             "cheapest_discriminating_experiment. On resumption, inspect persisted state."
         )
+        previous_controlled_session = os.environ.get("PITBENCH_GLOBAL_PLAN_CONTROLLED_SESSION")
+        os.environ["PITBENCH_GLOBAL_PLAN_CONTROLLED_SESSION"] = "1"
+        agent_error = None
         try:
             agent_output = agent_callable(prompt)
         except Exception as exc:
-            outcome = {"execution_status": "fail", "solution_validity": "unverified",
-                       "performance_delta": "unknown", "actual_runs_count": 0,
-                       "expected_runs_count": 1,
-                       "metrics_summary": {"agent_error": str(exc)}}
-            store.record_event("agent.turn_failed", {"error": str(exc)})
-            return outcome
+            agent_error = {"type": type(exc).__name__, "message": str(exc)}
+            agent_output = ""
+        finally:
+            if previous_controlled_session is None:
+                os.environ.pop("PITBENCH_GLOBAL_PLAN_CONTROLLED_SESSION", None)
+            else:
+                os.environ["PITBENCH_GLOBAL_PLAN_CONTROLLED_SESSION"] = previous_controlled_session
+            # bench may have saved evidence before the Agent timed out or failed.
+            # Reload on every return path before the parent writes any events.
+            store.load()
+        if agent_error is not None:
+            store.record_event("agent.turn_failed", {"error": agent_error})
         agent_summary: dict = {}
         try:
             match = re.search(r"\{.*\}", agent_output, re.DOTALL)
@@ -253,16 +259,17 @@ def cmd_run(args: argparse.Namespace) -> int:
             "discovered_nodes": discovered_nodes,
             "discovered_opportunities": discovered_opportunities,
             "revalidated_node_ids": agent_summary.get("revalidated_node_ids", []),
+            "agent_error": agent_error,
         }
         # Read the just-recorded bench boundary from the persistent state. If the
         # agent omitted bench, preserve the missing observation explicitly.
         try:
-            store.load()
-            if (len(store.state.evidence) == evidence_count_before or
-                    store.state.evidence[-1].experiment_id == latest_exp_before):
+            if len(store.state.evidence) == evidence_count_before:
                 raise IndexError
             latest = store.state.evidence[-1]
             return {
+                **model_updates,
+                "evidence_id": latest.id,
                 "experiment_id": latest.experiment_id,
                 "execution_status": latest.execution_status,
                 "solution_validity": latest.solution_validity,
@@ -277,18 +284,18 @@ def cmd_run(args: argparse.Namespace) -> int:
                 "target_nodes": latest.target_nodes,
                 "agent_duration_sec": time.monotonic() - started,
                 "evidence_recorded": True,
-                **model_updates,
             }
         except (IndexError, FileNotFoundError):
             return {
                 "experiment_id": f"agent_step_{packet.completed_experiments_count + 1:04d}",
-                "execution_status": "missing",
+                "execution_status": "fail" if agent_error else "missing",
                 "solution_validity": "unverified",
                 "performance_delta": "unknown",
                 "actual_runs_count": 0,
                 "expected_runs_count": 1,
                 "metrics_summary": {
-                    "reason": "Agent completed without recording pitbench bench",
+                    "reason": "Agent failed before recording pitbench bench" if agent_error
+                    else "Agent completed without recording pitbench bench",
                     "agent_output": agent_output[-2000:],
                 },
                 **model_updates,
@@ -296,18 +303,23 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     max_steps = getattr(args, "max_steps", 2)
     print(f"Starting closed-loop planning session for {task_config.get('task_id')} (max {max_steps} steps)...")
-    decisions = driver.run_session(
-        task_config=task_config,
-        agent_worker=session_worker,
-        max_steps=max_steps,
-        study_id=args.study_id,
-        repository_root=repo_root,
-    )
+    try:
+        decisions = driver.run_session(
+            task_config=task_config,
+            agent_worker=session_worker,
+            max_steps=max_steps,
+            study_id=args.study_id,
+            repository_root=repo_root,
+        )
+    except Exception as exc:
+        print(f"Session failed: {exc}", file=sys.stderr)
+        return 1
 
-    print(f"Completed session: executed {len(decisions)} replanning decisions.")
+    status = store.state.session_status
+    print(f"Session {status.value}: recorded {len(decisions)} planning decisions.")
     for i, dec in enumerate(decisions, 1):
         print(f"  Step {i}: {dec.decision.value} -> {dec.selected_opportunity} (Next: {dec.next_experiment})")
-    return 0
+    return {SessionStatus.COMPLETED: 0, SessionStatus.INCOMPLETE: 2, SessionStatus.FAILED: 1}[status]
 
 
 def main(argv: list[str] | None = None) -> int:

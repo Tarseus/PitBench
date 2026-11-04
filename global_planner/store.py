@@ -253,6 +253,7 @@ class PlanStore:
         st = self.state
         if any(existing.id == evidence.id for existing in st.evidence):
             raise ValueError(f"evidence '{evidence.id}' has already been recorded")
+        evidence.mark_incomplete_runs()
         st.evidence.append(evidence)
         st.experiments_count += 1
         if current_budget_spent is not None:
@@ -269,6 +270,45 @@ class PlanStore:
                 opp.status = "validated"
 
         self.save()
+
+    def correct_evidence_completeness(
+        self,
+        evidence_id: str,
+        actual_runs_count: int | None = None,
+        expected_runs_count: int | None = None,
+    ) -> EvidenceRecord:
+        """Persist an auditable correction without counting a new experiment."""
+        st = self.state
+        evidence = next(record for record in st.evidence if record.id == evidence_id)
+        before = evidence.model_dump(mode="json")
+        # Check both stored counts and the current worker's completeness report.
+        # Neither source can upgrade a measurement already known to be partial.
+        evidence.mark_incomplete_runs()
+        evidence.mark_incomplete_runs(actual_runs_count, expected_runs_count)
+        after = evidence.model_dump(mode="json")
+        if before != after:
+            for opp in st.opportunities.values():
+                if evidence_id not in opp.evidence_refs:
+                    continue
+                supported = [
+                    record.status for record in st.evidence
+                    if record.id in opp.evidence_refs
+                    and record.status in ("supported", "refuted")
+                ]
+                if opp.status in ("validated", "refuted"):
+                    if supported:
+                        opp.status = "validated" if supported[-1] == "supported" else "refuted"
+                    else:
+                        opp.status = (
+                            "in_progress" if opp.id == st.active_opportunity_id else "unexplored"
+                        )
+            self.record_event("evidence.corrected", {
+                "evidence_id": evidence.id,
+                "reason": "incomplete_run_count",
+                "before": before,
+                "after": after,
+            })
+        return evidence
 
     def record_decision(self, decision: ReplanningDecision, current_budget_spent: float) -> None:
         """Record a structured replanning decision, register discovered nodes/opps, and reset review counters."""

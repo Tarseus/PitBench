@@ -744,6 +744,7 @@ def bench_command(args: argparse.Namespace) -> int:
         succeeded = list(executor.map(run_one, grid))
 
     payloads: list[dict[str, Any]] = []
+    feedback_paths: list[str] = []
     run_root_label = runs_root / args.label
     for instance, seed, budget in grid:
         try:
@@ -754,13 +755,14 @@ def bench_command(args: argparse.Namespace) -> int:
             )
             if fb_path.is_file():
                 payloads.append(json.loads(fb_path.read_text(encoding="utf-8")))
+                feedback_paths.append(str(fb_path))
         except Exception:
             pass
 
     global_plan_dir = getattr(args, "global_plan_dir", None) or os.environ.get(
         "PITBENCH_GLOBAL_PLAN_DIR"
     )
-    if global_plan_dir and Path(global_plan_dir).exists():
+    if global_plan_dir and Path(global_plan_dir).exists() and not args.dry_run:
         controller_managed_session = (
             os.environ.get("PITBENCH_GLOBAL_PLAN_CONTROLLED_SESSION") == "1"
         )
@@ -843,6 +845,14 @@ def bench_command(args: argparse.Namespace) -> int:
             if getattr(args, "hypothesis_supported", None) is not None:
                 hyp_supported = bool(args.hypothesis_supported)
 
+            # An aggregate cannot certify a grid containing missing/unreadable feedback.
+            if len(payloads) < len(grid):
+                exec_status = ExecutionStatus.MISSING
+                sol_validity = SolutionValidity.UNVERIFIED
+                perf_delta = PerformanceDelta.UNKNOWN
+                hyp_supported = None
+                succeeded.append(False)
+
             # 4. Target nodes lookup
             target_nodes: list[str] = []
             st = store.state
@@ -878,12 +888,7 @@ def bench_command(args: argparse.Namespace) -> int:
                 "instances": [str(instance) for instance in instances],
                 "candidate_patch_sha256": patch_sha256,
                 "experiment_id": exp_id,
-                "feedback_paths": [
-                    str(path)
-                    for path in sorted(run_root_label.glob("*.feedback.json"))
-                    if patch_sha256 is None
-                    or json.loads(path.read_text()).get("patch_sha256") == patch_sha256
-                ],
+                "feedback_paths": feedback_paths,
             }
             if payloads:
                 if gap_reductions:

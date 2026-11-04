@@ -112,6 +112,10 @@ class PlanningController:
             else:
                 performance_delta = PerformanceDelta.NEUTRAL
 
+        execution_status = ExecutionStatus(execution_status)
+        solution_validity = SolutionValidity(solution_validity)
+        performance_delta = PerformanceDelta(performance_delta)
+
         # Disambiguate empirical statuses without conflating validity, performance, and mechanism
         if execution_status == ExecutionStatus.FAIL or solution_validity == SolutionValidity.INVALID:
             status_str = "refuted"
@@ -144,15 +148,15 @@ class PlanningController:
             "experiment_id": experiment_id,
             "evidence_id": evidence.id,
             "target_nodes": target_nodes,
-            "execution_status": execution_status.value,
-            "solution_validity": solution_validity.value,
-            "performance_delta": performance_delta.value,
+            "execution_status": evidence.execution_status.value,
+            "solution_validity": evidence.solution_validity.value,
+            "performance_delta": evidence.performance_delta.value,
             "candidate_patch_sha256": candidate_patch_sha256,
             "observations_path": observations_path,
         })
 
         # Critical evidence (hypothesis refuted, crash, or regression) overrides cooldown
-        is_critical = (status_str == "refuted")
+        is_critical = (evidence.status == "refuted")
         should_replan = self.should_trigger_replanning(
             current_budget_spent=current_budget_spent,
             critical_evidence=is_critical,
