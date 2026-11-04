@@ -34,7 +34,6 @@ from pitbench.harness.cli.harness_cli.runs import create as run_harness
 from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.harness.handlers.trial_handler import TrialHandler
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
-from pitbench.instances import materialize_instance_set
 from pitbench.metrics.behavior_report import (
     compute_behavior_metric_report,
     format_behavior_metric_report,
@@ -73,7 +72,7 @@ from pitbench.schema.observation import (
     RunObservation,
     RunStatus,
 )
-from pitbench.schema.task import InstanceSetKind, PerformanceProtocol, PitBenchTask
+from pitbench.schema.task import PerformanceProtocol, PitBenchTask
 from pitbench.tasks import TaskCatalog, TaskNotFoundError
 
 app = typer.Typer(help="PitBench task, execution harness, and evaluation tooling.")
@@ -83,13 +82,6 @@ app.add_typer(tasks_app, name="tasks")
 app.add_typer(images_app, name="images")
 app.add_typer(profiles_app, name="profiles")
 app.add_typer(auth_app, name="auth")
-
-# Direct unified run command: `pitbench run --dataset-path ... --agent ...`
-app.command(
-    name="run",
-    help="Run coding agents on materialized benchmark tasks (e.g. Codex on PyVRP).",
-)(run_harness)
-
 
 def _root(value: Path | None) -> Path:
     return (value or Path.cwd()).resolve()
@@ -591,15 +583,30 @@ def doctor_command(
     )
 
 
-@app.command("evaluate")
-def evaluate_task(
+@app.command(
+    "run",
+    help="Check, materialize, and evaluate tasks together in one harness run.",
+)
+@app.command(
+    "evaluate",
+    hidden=True,
+    help="Alias for 'run' (preserved for backwards compatibility).",
+)
+def run_task(
     task_ids: Annotated[
         list[str], typer.Argument(help="One or more PitBench task IDs")
     ],
     agent: Annotated[
-        AgentName,
-        typer.Option("--agent", "-a", help="Coding agent to evaluate"),
-    ],
+        AgentName | None,
+        typer.Option("--agent", "-a", help="Pre-registered coding agent to evaluate"),
+    ] = None,
+    agent_import_path: Annotated[
+        str | None,
+        typer.Option(
+            "--agent-import-path",
+            help="Custom agent class import path in 'module:Class' format (supports custom or open-source agent frameworks)",
+        ),
+    ] = None,
     model_name: Annotated[
         str | None,
         typer.Option("--model", "-m", help="Model used by the coding agent"),
@@ -718,6 +725,16 @@ def evaluate_task(
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
 ) -> None:
     """Check, materialize, and evaluate tasks together in one harness run."""
+    if (agent is None) == (agent_import_path is None):
+        raise typer.BadParameter(
+            "Exactly one of --agent or --agent-import-path must be specified.",
+            param_hint="--agent",
+        )
+    if agent_import_path is not None and ":" not in agent_import_path:
+        raise typer.BadParameter(
+            "agent_import_path must be in format 'module:Class'",
+            param_hint="--agent-import-path",
+        )
     task_ids = _normalize_task_ids(task_ids)
     if not task_ids:
         raise typer.BadParameter(
@@ -782,10 +799,11 @@ def evaluate_task(
             "run ID must be a directory name", param_hint="--run-id"
         )
     dataset_path = (resolved_workspace_path / resolved_run_id).resolve()
-    configured_agent_values = evaluation_config.kwargs_for(agent.value)
-    if agent.value not in evaluation_config.agents:
+    agent_key = agent.value if agent is not None else agent_import_path
+    configured_agent_values = evaluation_config.kwargs_for(agent_key)
+    if agent_key not in evaluation_config.agents:
         _warning(
-            f"agent parameters for {agent.value} are not configured; unspecified "
+            f"agent parameters for {agent_key} are not configured; unspecified "
             "settings use agent defaults"
         )
     if configured_agent_values.get("profile_path"):
@@ -932,7 +950,7 @@ def evaluate_task(
         cleanup=False,
         model_name=model_name,
         agent=agent,
-        agent_import_path=None,
+        agent_import_path=agent_import_path,
         agents=None,
         config=None,
         log_level=LogLevel.INFO,
@@ -1457,26 +1475,6 @@ def fixture_tasks(
                 f"OK {record.task.task_id} observations={summary['observation_count']}"
             )
     typer.echo(json.dumps(summaries, indent=2))
-
-
-@tasks_app.command("materialize-dev")
-def materialize_dev(
-    output: Annotated[Path, typer.Option(help="Destination directory")],
-    root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
-) -> None:
-    repository_root = _root(root)
-    records = TaskCatalog(repository_root).validate_all()
-    for record in records:
-        instance_set = next(
-            item
-            for item in record.task.instance_sets
-            if item.kind == InstanceSetKind.AGENT_DEV
-        )
-        paths = materialize_instance_set(
-            repository_root / instance_set.instance_set_config,
-            output / record.task.task_id,
-        )
-        typer.echo(f"OK {record.task.task_id} instances={len(paths)}")
 
 
 @tasks_app.command("materialize")
