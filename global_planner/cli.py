@@ -83,7 +83,10 @@ def cmd_record_evidence(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     store = PlanStore(args.dir)
-    driver = PlanningSessionDriver(store=store)
+    driver = PlanningSessionDriver(
+        store=store,
+        allow_offline_fallback=getattr(args, "allow_offline_fallback", False),
+    )
     task_config = yaml.safe_load(Path(args.task_config).read_text(encoding="utf-8"))
     packet, decision = driver.bootstrap(task_config=task_config, study_id=args.study_id)
     print(f"Bootstrapped plan for {packet.task_id} with {len(packet.unexplored_opportunities) + 1} opportunities.")
@@ -132,6 +135,11 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--dir", required=True, help="Storage directory")
     p_run.add_argument("--task-config", required=True, help="Path to task YAML config")
     p_run.add_argument("--study-id", default="planning_study_v1", help="Study ID")
+    p_run.add_argument(
+        "--allow-offline-fallback",
+        action="store_true",
+        help="allow heuristic fallback when no LLM connection is configured (test mode only)",
+    )
     p_run.set_defaults(func=cmd_run)
 
     args = parser.parse_args(argv)

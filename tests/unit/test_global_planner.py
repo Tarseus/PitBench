@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -10,14 +11,18 @@ from global_planner.bootstrap import bootstrap_hats_model
 from global_planner.controller import PlanningController
 from global_planner.driver import PlanningSessionDriver
 from global_planner.schema import (
+    ContextPacket,
     DecisionType,
+    ExecutionStatus,
     HATSLevel,
     HATSNode,
     MechanismEffect,
     Opportunity,
+    PerformanceDelta,
     ReplanningDecision,
+    SolutionValidity,
 )
-from global_planner.store import PlanStore
+from global_planner.store import PlanStore, match_source_ref
 from pitbench.schema.research import PlanningStudyPlan
 
 
@@ -25,7 +30,7 @@ def test_schema_hats_node():
     node = HATSNode(
         id="heuristics.oneopt.knapsack_exchange",
         level=HATSLevel.LEVEL_2_MECHANISM,
-        purpose="Enumerate 6-flip binary exchanges on tight knapsack constraints",
+        purpose="Enumerate binary exchanges on tight knapsack constraints",
         source_refs=["src/scip/heur_oneopt.c"],
         reads=["conshdlr", "solvals", "capacity"],
         writes=["bestsol"],
@@ -97,6 +102,160 @@ def test_plan_store_persistence_and_invalid_opportunity_check(tmp_path: Path):
     assert "search.branching" in new_store.state.nodes
 
 
+def test_path_matching_glob_and_containment():
+    """Verifies glob matching, prefix containment, and false positive prevention."""
+    # 1. Wildcard / glob matching in reference
+    assert match_source_ref("src/scip/heur_oneopt.c", "src/scip/heur_*.c")
+    assert match_source_ref("src/scip/heur_rens.c", "src/scip/heur_*.c")
+    assert not match_source_ref("src/scip/branch_relpscost.c", "src/scip/heur_*.c")
+
+    # 2. Directory prefix containment
+    assert match_source_ref("pyvrp/search/LocalSearch.cpp", "pyvrp/search")
+    assert match_source_ref("pyvrp/search/sub/operator.cpp", "pyvrp/search")
+
+    # 3. Exact match
+    assert match_source_ref("src/main.c", "src/main.c")
+
+    # 4. Prevention of unintended endswith match
+    assert not match_source_ref("vendor/other/src/a.c", "src/a.c")
+    assert not match_source_ref("external/pyvrp/search/LocalSearch.cpp", "pyvrp/search")
+
+
+def test_budget_preservation_on_resume(tmp_path: Path):
+    """Verifies cumulative budget is preserved across session re-instantiation."""
+    store = PlanStore(tmp_path)
+    driver1 = PlanningSessionDriver(store=store, allow_offline_fallback=True)
+    task_config = {
+        "task_id": "test_budget_task",
+        "release": {"repository": "scipopt/scip"},
+        "repository": {"editable_paths": ["src"]},
+    }
+    driver1.bootstrap(task_config=task_config)
+    # Simulate spending 150 seconds and recording a decision
+    dec = ReplanningDecision(
+        decision=DecisionType.CONTINUE,
+        selected_opportunity=driver1.store.state.active_opportunity_id or "opp_profile_bottlenecks",
+        next_experiment="bench",
+    )
+    driver1.controller.parse_and_record_decision(dec.model_dump(), current_budget_spent=150.0)
+    assert store.state.budget_spent_sec == 150.0
+
+    # Resume with new driver instance
+    driver2 = PlanningSessionDriver(store=PlanStore(tmp_path), allow_offline_fallback=True)
+    assert driver2.get_current_budget_spent() >= 150.0
+
+
+def test_bootstrap_context_packet_contains_subsystems(tmp_path: Path):
+    """Verifies that an initial bootstrap packet contains global Level 0 & Level 1 nodes (not empty)."""
+    store = PlanStore(tmp_path)
+    controller = PlanningController(store=store)
+    task_config = {
+        "task_id": "test_bootstrap_nodes",
+        "release": {"repository": "scipopt/scip"},
+        "repository": {"editable_paths": ["src"]},
+    }
+    goal, nodes, opps = bootstrap_hats_model(task_config)
+    controller.on_task_start(
+        study_id="study_test",
+        task_id="test_bootstrap_nodes",
+        solver="scip",
+        goal_statement=goal,
+        initial_nodes=nodes,
+        initial_opportunities=opps,
+    )
+
+    packet = controller.build_context_packet(current_budget_spent=0.0)
+    assert len(packet.affected_nodes) > 0
+    assert any(n.level == HATSLevel.LEVEL_0_GOAL for n in packet.affected_nodes)
+    assert any(n.level == HATSLevel.LEVEL_1_SUBSYSTEM for n in packet.affected_nodes)
+
+
+def test_evidence_status_disambiguation(tmp_path: Path):
+    """Verifies distinct separation of execution status, solution validity,
+
+    performance deltas, and mechanism hypothesis verification.
+    """
+    store = PlanStore(tmp_path)
+    controller = PlanningController(store=store)
+    controller.on_task_start(study_id="study_ev", task_id="task_ev", solver="solver")
+
+    # 1. Invalid solution despite runtime improvement -> REFUTED
+    ev_inv, _ = controller.on_experiment_completed(
+        experiment_id="exp_inv",
+        target_nodes=[],
+        metrics_summary={},
+        execution_status=ExecutionStatus.PASS,
+        solution_validity=SolutionValidity.INVALID,
+        performance_delta=PerformanceDelta.IMPROVED,
+    )
+    assert ev_inv.status == "refuted"
+    assert ev_inv.solution_validity == SolutionValidity.INVALID
+
+    # 2. Neutral performance change (0 delta) -> NEUTRAL (never blindly refuted!)
+    ev_neut, _ = controller.on_experiment_completed(
+        experiment_id="exp_neut",
+        target_nodes=[],
+        metrics_summary={},
+        execution_status=ExecutionStatus.PASS,
+        solution_validity=SolutionValidity.VALID,
+        performance_delta=PerformanceDelta.NEUTRAL,
+    )
+    assert ev_neut.status == "neutral"
+
+    # 3. Performance improved but mechanism support is None -> INCONCLUSIVE (not blindly supported)
+    ev_inc, _ = controller.on_experiment_completed(
+        experiment_id="exp_inc",
+        target_nodes=[],
+        metrics_summary={},
+        execution_status=ExecutionStatus.PASS,
+        solution_validity=SolutionValidity.VALID,
+        performance_delta=PerformanceDelta.IMPROVED,
+        hypothesis_supported=None,
+    )
+    assert ev_inc.status == "inconclusive"
+
+    # 4. Performance improved AND mechanism hypothesis confirmed -> SUPPORTED
+    ev_supp, _ = controller.on_experiment_completed(
+        experiment_id="exp_supp",
+        target_nodes=[],
+        metrics_summary={},
+        execution_status=ExecutionStatus.PASS,
+        solution_validity=SolutionValidity.VALID,
+        performance_delta=PerformanceDelta.IMPROVED,
+        hypothesis_supported=True,
+    )
+    assert ev_supp.status == "supported"
+
+    # 5. Crash -> REFUTED
+    ev_fail, _ = controller.on_experiment_completed(
+        experiment_id="exp_fail",
+        target_nodes=[],
+        metrics_summary={},
+        execution_status=ExecutionStatus.FAIL,
+        solution_validity=SolutionValidity.UNVERIFIED,
+    )
+    assert ev_fail.status == "refuted"
+
+
+def test_offline_fallback_fail_fast(tmp_path: Path):
+    """Verifies that calling decision without LLM callable fails fast in formal mode."""
+    adapter = CodexPlannerAdapter(allow_offline_fallback=False)
+    packet = ContextPacket(
+        task_id="t1",
+        goal_statement="Goal",
+        remaining_budget_sec=100.0,
+        completed_experiments_count=0,
+    )
+    # Must fail fast when offline fallback is disabled
+    with pytest.raises(RuntimeError, match="No LLM connection configured"):
+        adapter.request_decision(packet)
+
+    # Must succeed when explicitly enabled in test mode
+    adapter_test = CodexPlannerAdapter(allow_offline_fallback=True)
+    dec = adapter_test.request_decision(packet)
+    assert dec.decision == DecisionType.STOP
+
+
 def test_controller_reproduction_and_boundary_triggers(tmp_path: Path):
     """Reproduces and tests the exact reviewer scenario:
 
@@ -148,9 +307,9 @@ def test_controller_reproduction_and_boundary_triggers(tmp_path: Path):
         experiment_id="exp_01",
         target_nodes=["heuristics.oneopt"],
         metrics_summary={"gap_delta": -0.05},
-        execution_success=True,
-        solution_valid=True,
-        performance_improved=True,
+        execution_status=ExecutionStatus.PASS,
+        solution_validity=SolutionValidity.VALID,
+        performance_delta=PerformanceDelta.IMPROVED,
         hypothesis_supported=True,
         current_budget_spent=1.0,
     )
@@ -168,8 +327,8 @@ def test_controller_reproduction_and_boundary_triggers(tmp_path: Path):
         experiment_id="exp_02",
         target_nodes=["heuristics.oneopt"],
         metrics_summary={"error": "segfault"},
-        execution_success=False,
-        solution_valid=False,
+        execution_status=ExecutionStatus.FAIL,
+        solution_validity=SolutionValidity.INVALID,
         current_budget_spent=3.0,
     )
     assert ev_crash.status == "refuted"
@@ -177,24 +336,30 @@ def test_controller_reproduction_and_boundary_triggers(tmp_path: Path):
 
 
 def test_bootstrap_and_end_to_end_driver(tmp_path: Path):
-    """Tests the full end-to-end automated closed-loop driver."""
+    """Tests the full end-to-end automated closed-loop driver with solver-agnostic templates."""
     task_config = {
         "task_id": "release_scip_v10_1_0",
         "problem_family": "mip",
         "problem_variant": "multidimensional_knapsack",
         "release": {"repository": "scipopt/scip"},
+        "repository": {"editable_paths": ["src"]},
         "evaluation": {"primary_budget_sec": 20.0, "performance_protocol": "exact_verified_solve"},
     }
 
-    # 1. Verify bootstrap creates rich HATS model and opportunities
+    # 1. Verify bootstrap creates rich, solver-agnostic HATS model and opportunities
     goal, nodes, opps = bootstrap_hats_model(task_config)
-    assert "Maximize verified solved coverage" in goal
+    assert "Maximize independently verified solved coverage" in goal
     assert any(n.id == "subsystem.heuristics" for n in nodes)
-    assert any("opp_primal_compound_exchange" == o.id for o in opps)
+    assert any("opp_explore_primal_heuristics" == o.id for o in opps)
 
-    # 2. Driver bootstrap
+    # 2. Driver bootstrap in test mode
     store = PlanStore(tmp_path / "driver_store")
-    driver = PlanningSessionDriver(store=store, cooldown_sec=0.0, experiments_between_reviews=1)
+    driver = PlanningSessionDriver(
+        store=store,
+        cooldown_sec=0.0,
+        experiments_between_reviews=1,
+        allow_offline_fallback=True,
+    )
     packet, decision = driver.bootstrap(task_config=task_config)
     assert packet.task_id == "release_scip_v10_1_0"
     assert decision.decision in (DecisionType.CONTINUE, DecisionType.SWITCH)
@@ -205,9 +370,9 @@ def test_bootstrap_and_end_to_end_driver(tmp_path: Path):
         experiment_id="exp_bench_01",
         target_nodes=["subsystem.heuristics"],
         metrics_summary={"total_solved_change": 1},
-        execution_success=True,
-        solution_valid=True,
-        performance_improved=True,
+        execution_status=ExecutionStatus.PASS,
+        solution_validity=SolutionValidity.VALID,
+        performance_delta=PerformanceDelta.IMPROVED,
         hypothesis_supported=True,
         current_budget_spent=10.0,
     )
@@ -220,9 +385,9 @@ def test_bootstrap_and_end_to_end_driver(tmp_path: Path):
         experiment_id="exp_bench_02",
         target_nodes=["subsystem.heuristics"],
         metrics_summary={"total_solved_change": -2},
-        execution_success=True,
-        solution_valid=True,
-        performance_improved=False,
+        execution_status=ExecutionStatus.PASS,
+        solution_validity=SolutionValidity.VALID,
+        performance_delta=PerformanceDelta.REGRESSED,
         hypothesis_supported=False,
         current_budget_spent=20.0,
     )
@@ -237,8 +402,62 @@ def test_bootstrap_and_end_to_end_driver(tmp_path: Path):
     assert len(resumed_store.state.evidence) == 2
 
 
+def test_closed_loop_agent_worker_session(tmp_path: Path):
+    """Tests the full run_session loop driving a coding agent worker."""
+    store = PlanStore(tmp_path / "session_store")
+    driver = PlanningSessionDriver(
+        store=store,
+        cooldown_sec=0.0,
+        experiments_between_reviews=1,
+        allow_offline_fallback=True,
+    )
+    task_config = {
+        "task_id": "test_session_task",
+        "release": {"repository": "scipopt/scip"},
+        "repository": {"editable_paths": ["src"]},
+        "evaluation": {"primary_budget_sec": 20.0, "performance_protocol": "exact_verified_solve"},
+    }
+
+    worker_calls: list[ReplanningDecision] = []
+
+    def mock_agent_worker(decision: ReplanningDecision, packet: ContextPacket) -> dict[str, Any]:
+        worker_calls.append(decision)
+        step_num = len(worker_calls)
+        if step_num == 1:
+            # First step: successful improvement
+            return {
+                "experiment_id": f"exp_worker_{step_num}",
+                "modified_files": ["src/heuristic.c"],
+                "candidate_patch_sha256": "abc12345",
+                "execution_status": ExecutionStatus.PASS,
+                "solution_validity": SolutionValidity.VALID,
+                "performance_delta": PerformanceDelta.IMPROVED,
+                "hypothesis_supported": True,
+                "metrics_summary": {"solved_change": 2},
+            }
+        else:
+            # Second step: regression triggering switch
+            return {
+                "experiment_id": f"exp_worker_{step_num}",
+                "modified_files": ["src/heuristic.c"],
+                "candidate_patch_sha256": "def67890",
+                "execution_status": ExecutionStatus.PASS,
+                "solution_validity": SolutionValidity.VALID,
+                "performance_delta": PerformanceDelta.REGRESSED,
+                "hypothesis_supported": False,
+                "metrics_summary": {"solved_change": -1},
+            }
+
+    decisions = driver.run_session(task_config=task_config, agent_worker=mock_agent_worker, max_steps=2)
+    assert len(worker_calls) == 2
+    assert len(decisions) >= 2
+    assert store.state.experiments_count == 2
+    assert len(store.state.evidence) == 2
+    assert any(n.status == "modified" for n in store.state.nodes.values())
+
+
 def test_codex_adapter_format_and_extract():
-    adapter = CodexPlannerAdapter()
+    adapter = CodexPlannerAdapter(allow_offline_fallback=True)
     store = PlanStore("/tmp/test_planner_adapter_store")
     controller = PlanningController(store=store)
     controller.on_task_start(

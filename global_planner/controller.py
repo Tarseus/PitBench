@@ -9,10 +9,14 @@ from typing import Any
 from global_planner.schema import (
     ContextPacket,
     EvidenceRecord,
+    ExecutionStatus,
     GlobalPlanState,
+    HATSLevel,
     HATSNode,
     Opportunity,
+    PerformanceDelta,
     ReplanningDecision,
+    SolutionValidity,
 )
 from global_planner.store import PlanStore
 
@@ -77,14 +81,18 @@ class PlanningController:
         experiment_id: str,
         target_nodes: list[str],
         metrics_summary: dict[str, Any],
-        execution_success: bool = True,
-        solution_valid: bool = True,
-        performance_improved: bool | None = None,
+        execution_status: ExecutionStatus = ExecutionStatus.PASS,
+        solution_validity: SolutionValidity = SolutionValidity.VALID,
+        performance_delta: PerformanceDelta = PerformanceDelta.UNKNOWN,
         hypothesis_supported: bool | None = None,
         hypothesis_id: str | None = None,
         observations_path: str | None = None,
         candidate_patch_sha256: str | None = None,
         current_budget_spent: float = 0.0,
+        # Backward compatibility keyword arguments
+        execution_success: bool | None = None,
+        solution_valid: bool | None = None,
+        performance_improved: bool | None = None,
     ) -> tuple[EvidenceRecord, bool]:
         """Called immediately after an empirical experiment completes.
 
@@ -92,10 +100,26 @@ class PlanningController:
         and whether the mechanism hypothesis was supported.
         Returns (evidence, should_replan).
         """
-        # Determine overall evidence status
-        if not execution_success or not solution_valid or performance_improved is False or hypothesis_supported is False:
+        if execution_success is not None:
+            execution_status = ExecutionStatus.PASS if execution_success else ExecutionStatus.FAIL
+        if solution_valid is not None:
+            solution_validity = SolutionValidity.VALID if solution_valid else SolutionValidity.INVALID
+        if performance_improved is not None:
+            if performance_improved is True:
+                performance_delta = PerformanceDelta.IMPROVED
+            elif performance_improved is False:
+                performance_delta = PerformanceDelta.REGRESSED
+            else:
+                performance_delta = PerformanceDelta.NEUTRAL
+
+        # Disambiguate empirical statuses without conflating validity, performance, and mechanism
+        if execution_status == ExecutionStatus.FAIL or solution_validity == SolutionValidity.INVALID:
             status_str = "refuted"
-        elif performance_improved is True and (hypothesis_supported is not False):
+        elif hypothesis_supported is False or performance_delta == PerformanceDelta.REGRESSED:
+            status_str = "refuted"
+        elif performance_delta == PerformanceDelta.NEUTRAL:
+            status_str = "neutral"
+        elif performance_delta == PerformanceDelta.IMPROVED and hypothesis_supported is True:
             status_str = "supported"
         else:
             status_str = "inconclusive"
@@ -105,9 +129,9 @@ class PlanningController:
             experiment_id=experiment_id,
             hypothesis_id=hypothesis_id,
             target_nodes=target_nodes,
-            execution_success=execution_success,
-            solution_valid=solution_valid,
-            performance_improved=performance_improved,
+            execution_status=execution_status,
+            solution_validity=solution_validity,
+            performance_delta=performance_delta,
             hypothesis_supported=hypothesis_supported,
             status=status_str,
             metrics_summary=metrics_summary,
@@ -117,7 +141,7 @@ class PlanningController:
         )
         self.store.record_evidence(evidence)
 
-        # Critical evidence (hypothesis refuted, execution crash, or regression) overrides cooldown
+        # Critical evidence (hypothesis refuted, crash, or regression) overrides cooldown
         is_critical = (status_str == "refuted")
         should_replan = self.should_trigger_replanning(
             current_budget_spent=current_budget_spent,
@@ -174,6 +198,16 @@ class PlanningController:
         if active_opp:
             affected_node_ids.update(active_opp.target_nodes)
         affected_nodes = [st.nodes[nid] for nid in affected_node_ids if nid in st.nodes]
+
+        # If no specific nodes singled out (e.g. bootstrap or initial replan),
+        # supply global structural view of Level 0 & Level 1 nodes so model never plans blind
+        if not affected_nodes:
+            affected_nodes = [
+                n for n in st.nodes.values()
+                if n.level in (HATSLevel.LEVEL_0_GOAL, HATSLevel.LEVEL_1_SUBSYSTEM)
+            ]
+            if not affected_nodes:
+                affected_nodes = list(st.nodes.values())
 
         # Unexplored opportunities
         unexplored = [

@@ -766,48 +766,74 @@ def bench_command(args: argparse.Namespace) -> int:
 
             from global_planner.adapters.codex import CodexPlannerAdapter
             from global_planner.controller import PlanningController
+            from global_planner.schema import (
+                ExecutionStatus,
+                PerformanceDelta,
+                SolutionValidity,
+            )
             from global_planner.store import PlanStore
 
             store = PlanStore(global_plan_dir)
             controller = PlanningController(store=store)
 
-            # 1. Execution correctness & validity
-            exec_success = all(p.get("result_error") is None for p in payloads)
-            sol_valid = all(p.get("verified_valid") is not False for p in payloads)
+            # 1. Execution status & solution validity (never conflate with runtime performance)
+            if not payloads:
+                exec_status = ExecutionStatus.MISSING
+                sol_validity = SolutionValidity.UNVERIFIED
+                perf_delta = PerformanceDelta.UNKNOWN
+            else:
+                exec_ok = all(p.get("result_error") is None for p in payloads)
+                exec_status = ExecutionStatus.PASS if exec_ok else ExecutionStatus.FAIL
 
-            # 2. Performance delta against matched baseline
-            perf_improved: bool | None = None
-            gap_reductions = [
-                float(p["preview_gap_reduction"])
-                for p in payloads
-                if p.get("preview_gap_reduction") is not None
-            ]
-            solved_changes = [
-                int(p["preview_solved_change"])
-                for p in payloads
-                if p.get("preview_solved_change") is not None
-            ]
-            par2_reductions = [
-                float(p["preview_par2_reduction_sec"])
-                for p in payloads
-                if p.get("preview_par2_reduction_sec") is not None
-            ]
+                valid_flags = [p.get("verified_valid") for p in payloads]
+                if any(v is False for v in valid_flags):
+                    sol_validity = SolutionValidity.INVALID
+                elif all(v is True for v in valid_flags):
+                    sol_validity = SolutionValidity.VALID
+                else:
+                    sol_validity = SolutionValidity.UNVERIFIED
 
-            if gap_reductions:
-                mean_gap = sum(gap_reductions) / len(gap_reductions)
-                perf_improved = mean_gap > 0
-            elif solved_changes or par2_reductions:
-                tot_solved = sum(solved_changes) if solved_changes else 0
-                tot_par2 = sum(par2_reductions) if par2_reductions else 0.0
-                perf_improved = (tot_solved > 0) or (tot_solved == 0 and tot_par2 > 0)
+                # 2. Performance delta against matched baseline
+                gap_reductions = [
+                    float(p["preview_gap_reduction"])
+                    for p in payloads
+                    if p.get("preview_gap_reduction") is not None
+                ]
+                solved_changes = [
+                    int(p["preview_solved_change"])
+                    for p in payloads
+                    if p.get("preview_solved_change") is not None
+                ]
+                par2_reductions = [
+                    float(p["preview_par2_reduction_sec"])
+                    for p in payloads
+                    if p.get("preview_par2_reduction_sec") is not None
+                ]
 
-            # 3. Hypothesis support
+                if gap_reductions:
+                    mean_gap = sum(gap_reductions) / len(gap_reductions)
+                    if mean_gap > 1e-6:
+                        perf_delta = PerformanceDelta.IMPROVED
+                    elif mean_gap < -1e-6:
+                        perf_delta = PerformanceDelta.REGRESSED
+                    else:
+                        perf_delta = PerformanceDelta.NEUTRAL
+                elif solved_changes or par2_reductions:
+                    tot_solved = sum(solved_changes) if solved_changes else 0
+                    tot_par2 = sum(par2_reductions) if par2_reductions else 0.0
+                    if tot_solved > 0 or (tot_solved == 0 and tot_par2 > 1e-4):
+                        perf_delta = PerformanceDelta.IMPROVED
+                    elif tot_solved < 0 or (tot_solved == 0 and tot_par2 < -1e-4):
+                        perf_delta = PerformanceDelta.REGRESSED
+                    else:
+                        perf_delta = PerformanceDelta.NEUTRAL
+                else:
+                    perf_delta = PerformanceDelta.UNKNOWN
+
+            # 3. Hypothesis support (mechanism support must be explicitly verified, not assumed)
             hyp_supported: bool | None = None
-            if args.label == "agent":
-                if not exec_success or not sol_valid or perf_improved is False:
-                    hyp_supported = False
-                elif perf_improved is True:
-                    hyp_supported = True
+            if getattr(args, "hypothesis_supported", None) is not None:
+                hyp_supported = bool(args.hypothesis_supported)
 
             # 4. Target nodes lookup
             target_nodes: list[str] = []
@@ -816,16 +842,16 @@ def bench_command(args: argparse.Namespace) -> int:
                 target_nodes = list(st.opportunities[st.active_opportunity_id].target_nodes)
 
             # 5. Budget spent calculation
-            elapsed_sec = 0.0
+            elapsed_sec = st.budget_spent_sec
             if getattr(st, "created_at_utc", None):
                 try:
                     start_dt = datetime.fromisoformat(st.created_at_utc)
                     elapsed_sec = max(
-                        0.0,
+                        st.budget_spent_sec,
                         (datetime.now(timezone.utc) - start_dt).total_seconds(),
                     )
                 except Exception:
-                    elapsed_sec = 0.0
+                    pass
 
             exp_id = getattr(args, "experiment_id", None) or (
                 f"bench_{patch_sha256[:8]}" if patch_sha256 else "bench_clean"
@@ -833,28 +859,26 @@ def bench_command(args: argparse.Namespace) -> int:
             hyp_id = getattr(args, "hypothesis_id", None)
 
             metrics_summary = {
-                "execution_success": exec_success,
-                "solution_valid": sol_valid,
-                "performance_improved": perf_improved,
-                "mean_gap_reduction": (
-                    sum(gap_reductions) / len(gap_reductions) if gap_reductions else None
-                ),
-                "total_solved_change": (
-                    sum(solved_changes) if solved_changes else None
-                ),
-                "total_par2_reduction_sec": (
-                    sum(par2_reductions) if par2_reductions else None
-                ),
+                "execution_status": exec_status.value,
+                "solution_validity": sol_validity.value,
+                "performance_delta": perf_delta.value,
                 "runs_count": len(payloads),
             }
+            if payloads:
+                if gap_reductions:
+                    metrics_summary["mean_gap_reduction"] = sum(gap_reductions) / len(gap_reductions)
+                if solved_changes:
+                    metrics_summary["total_solved_change"] = sum(solved_changes)
+                if par2_reductions:
+                    metrics_summary["total_par2_reduction_sec"] = sum(par2_reductions)
 
             ev, should_replan = controller.on_experiment_completed(
                 experiment_id=exp_id,
                 target_nodes=target_nodes,
                 metrics_summary=metrics_summary,
-                execution_success=exec_success,
-                solution_valid=sol_valid,
-                performance_improved=perf_improved,
+                execution_status=exec_status,
+                solution_validity=sol_validity,
+                performance_delta=perf_delta,
                 hypothesis_supported=hyp_supported,
                 hypothesis_id=hyp_id,
                 candidate_patch_sha256=patch_sha256,
@@ -862,9 +886,15 @@ def bench_command(args: argparse.Namespace) -> int:
             )
 
             if should_replan:
-                adapter = CodexPlannerAdapter()
+                allow_fallback = (
+                    getattr(args, "allow_offline_fallback", False)
+                    or (os.environ.get("PITBENCH_ALLOW_OFFLINE_FALLBACK") == "1")
+                )
+                adapter = CodexPlannerAdapter(allow_offline_fallback=allow_fallback)
                 packet = controller.build_context_packet(current_budget_spent=elapsed_sec)
-                new_decision = adapter.request_decision(packet)
+                new_decision = adapter.request_decision(
+                    packet, allow_offline_fallback=allow_fallback
+                )
                 controller.parse_and_record_decision(
                     new_decision.model_dump(), current_budget_spent=elapsed_sec
                 )
@@ -902,11 +932,17 @@ def plan_command(args: argparse.Namespace) -> int:
 
     if getattr(args, "replan", False):
         controller = PlanningController(store=store)
-        adapter = CodexPlannerAdapter()
+        allow_fallback = (
+            getattr(args, "allow_offline_fallback", False)
+            or (os.environ.get("PITBENCH_ALLOW_OFFLINE_FALLBACK") == "1")
+        )
+        adapter = CodexPlannerAdapter(allow_offline_fallback=allow_fallback)
         packet = controller.build_context_packet(
             current_budget_spent=st.budget_spent_sec
         )
-        new_dec = adapter.request_decision(packet)
+        new_dec = adapter.request_decision(
+            packet, allow_offline_fallback=allow_fallback
+        )
         controller.parse_and_record_decision(
             new_dec.model_dump(), current_budget_spent=st.budget_spent_sec
         )
@@ -1151,6 +1187,11 @@ def parser() -> argparse.ArgumentParser:
         hypothesis.set_defaults(handler=hypothesis_command)
         bench = commands.add_parser("bench")
         bench.add_argument("--hypothesis-id")
+        bench.add_argument(
+            "--hypothesis-supported",
+            type=lambda v: str(v).lower() in ("true", "1", "yes"),
+            help="whether the empirical outcome confirms the targeted mechanism hypothesis",
+        )
         bench.add_argument("--experiment-id")
         bench.add_argument("--split", default="dev")
         bench.add_argument("--label", choices=("base", "agent"), default="agent")
@@ -1169,6 +1210,11 @@ def parser() -> argparse.ArgumentParser:
             type=Path,
             help="path to active global planner state directory to record evidence and boundary events",
         )
+        bench.add_argument(
+            "--allow-offline-fallback",
+            action="store_true",
+            help="allow heuristic fallback when no LLM connection is configured (test mode only)",
+        )
         _run_options(bench, instance_required=False)
         bench.set_defaults(handler=bench_command)
         plan_parser = commands.add_parser(
@@ -1178,6 +1224,11 @@ def parser() -> argparse.ArgumentParser:
         plan_parser.add_argument("--dir", type=Path, help="plan state directory")
         plan_parser.add_argument(
             "--replan", action="store_true", help="force an immediate replanning cycle"
+        )
+        plan_parser.add_argument(
+            "--allow-offline-fallback",
+            action="store_true",
+            help="allow heuristic fallback when no LLM connection is configured (test mode only)",
         )
         plan_parser.set_defaults(handler=plan_command)
         diagnose = commands.add_parser("diagnose")

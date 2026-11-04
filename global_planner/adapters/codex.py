@@ -13,14 +13,23 @@ from global_planner.schema import ContextPacket, DecisionType, ReplanningDecisio
 class CodexPlannerAdapter(BasePlannerAdapter):
     """Formats structured planning prompts and extracts replanning decisions for Codex."""
 
+    def __init__(
+        self,
+        default_llm_callable: Callable[[str], str] | None = None,
+        allow_offline_fallback: bool = False,
+    ):
+        self.default_llm_callable = default_llm_callable
+        self.allow_offline_fallback = allow_offline_fallback
+
     def format_planning_prompt(self, packet: ContextPacket) -> str:
         recent_ev_text = "None."
         if packet.recent_evidence:
             recent_ev_text = "\n".join(
                 f"- [Evidence {e.id}] Exp: {e.experiment_id} | Status: {e.status.upper()} | "
-                f"Execution: {'PASS' if e.execution_success else 'FAIL'} | "
-                f"Valid: {'YES' if e.solution_valid else 'NO'} | "
-                f"Performance Improved: {e.performance_improved} | "
+                f"Execution: {e.execution_status.value.upper()} | "
+                f"Validity: {e.solution_validity.value.upper()} | "
+                f"Performance: {e.performance_delta.value.upper()} | "
+                f"Mechanism Verified: {e.hypothesis_supported} | "
                 f"Metrics: {json.dumps(e.metrics_summary)}"
                 for e in packet.recent_evidence
             )
@@ -120,13 +129,27 @@ Respond with a concise analysis followed by a JSON block matching this exact sch
         self,
         packet: ContextPacket,
         llm_callable: Callable[[str], str] | None = None,
+        allow_offline_fallback: bool | None = None,
     ) -> ReplanningDecision:
-        """Invokes the planning agent via LLM callable, or applies deterministic fallback."""
+        """Invokes the planning agent via LLM callable, or applies deterministic fallback if allowed."""
         prompt = self.format_planning_prompt(packet)
-        if llm_callable is not None:
-            raw_response = llm_callable(prompt)
+        callable_fn = llm_callable or self.default_llm_callable
+        if callable_fn is not None:
+            raw_response = callable_fn(prompt)
             data = self.extract_decision(raw_response)
             return ReplanningDecision.model_validate(data)
+
+        can_fallback = (
+            allow_offline_fallback
+            if allow_offline_fallback is not None
+            else self.allow_offline_fallback
+        )
+        if not can_fallback:
+            raise RuntimeError(
+                "No LLM connection configured for global planning decision. "
+                "Formal evaluation requires a connected model callable. "
+                "For unit tests or offline simulation, explicitly pass allow_offline_fallback=True."
+            )
 
         # Fallback heuristic decision logic when offline or in test harnesses
         if packet.active_opportunity and packet.recent_evidence:

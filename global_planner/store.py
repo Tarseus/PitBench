@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from global_planner.schema import (
     EvidenceRecord,
@@ -14,6 +15,38 @@ from global_planner.schema import (
     Opportunity,
     ReplanningDecision,
 )
+
+
+def match_source_ref(file_path: str, ref: str) -> bool:
+    """Matches a modified file path against a node source reference.
+
+    Handles:
+    - Path equality (e.g. 'src/solver/main.c')
+    - Directory / prefix containment (e.g. ref='pyvrp/search' matches 'pyvrp/search/LocalSearch.cpp')
+    - Wildcards and globs (e.g. ref='src/scip/heur_*.c' matches 'src/scip/heur_oneopt.c')
+    """
+    p = PurePosixPath(file_path.strip().lstrip("/"))
+    r = PurePosixPath(ref.strip().lstrip("/"))
+
+    # Glob pattern in reference
+    if any(c in ref for c in ("*", "?", "[", "]")):
+        if fnmatch.fnmatch(str(p), str(r)):
+            return True
+        if fnmatch.fnmatch(p.name, str(r)):
+            return True
+
+    # Exact match
+    if p == r:
+        return True
+
+    # Prefix directory containment (file is inside ref directory)
+    try:
+        p.relative_to(r)
+        return True
+    except ValueError:
+        pass
+
+    return False
 
 
 class PlanStore:
@@ -44,8 +77,19 @@ class PlanStore:
         goal_statement: str = "Improve solver performance within budget",
         problem_family: str | None = None,
         performance_protocol: str | None = None,
+        budget_spent_sec: float = 0.0,
     ) -> GlobalPlanState:
-        """Create or re-initialize a new plan state."""
+        """Create or re-initialize a new plan state, preserving accumulated budget on restarts."""
+        accumulated_budget = budget_spent_sec
+        if self._state is not None:
+            accumulated_budget = max(accumulated_budget, self._state.budget_spent_sec)
+        elif self.state_file.exists():
+            try:
+                existing = self.load()
+                accumulated_budget = max(accumulated_budget, existing.budget_spent_sec)
+            except Exception:
+                pass
+
         self._state = GlobalPlanState(
             study_id=study_id,
             task_id=task_id,
@@ -54,6 +98,8 @@ class PlanStore:
             problem_family=problem_family,
             performance_protocol=performance_protocol,
             revision=0,
+            budget_spent_sec=accumulated_budget,
+            last_replanned_at_sec=accumulated_budget,
         )
         self.save()
         return self._state
@@ -122,7 +168,7 @@ class PlanStore:
         invalidated_node_ids = []
         if modified_files:
             for node in st.nodes.values():
-                if any(any(mf.endswith(ref) or ref.endswith(mf) for ref in node.source_refs) for mf in modified_files):
+                if any(any(match_source_ref(mf, ref) for ref in node.source_refs) for mf in modified_files):
                     node.status = "modified"
                     invalidated_node_ids.append(node.id)
             if invalidated_node_ids:
