@@ -65,6 +65,8 @@ all proposals, decisions, implementation records, source/trace evidence, and raw
 feedback. Source identity uses repository HEAD and the same candidate patch hash as
 bench, including untracked source. Each experiment retains its instances, seeds,
 budgets, threads, verification status, failures, missing results, and artifact paths.
+Generated tasks set `PITBENCH_RUNS=/agent-logs/development-runs`, under the retained
+Agent log volume, so development evidence survives task-container cleanup.
 
 Each decision retains its planned candidate model A'. Experiments reference the
 implementation record and its actual patch, rather than assuming selected proposals

@@ -817,7 +817,7 @@ USER pitbench-agent
                     f"    mem_limit: {int(research_budget.memory_gib * 1024**3)}\n"
                 )
         runs_environment = (
-            '      PITBENCH_RUNS: "/pitbench/runs"\n'
+            '      PITBENCH_RUNS: "/agent-logs/development-runs"\n'
             if needs_run_directory(agent_tools)
             else ""
         )

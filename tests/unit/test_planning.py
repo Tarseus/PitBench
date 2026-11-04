@@ -137,6 +137,18 @@ def test_partial_hats_preserves_unknowns_and_validates_semantic_connections(mode
         AlgorithmModel.model_validate(data)
 
 
+def test_development_evidence_uses_the_retained_agent_log_volume():
+    import yaml
+
+    from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
+
+    client = yaml.safe_load(PitBenchAdapter._compose(["bench", "plan"]))["services"]["client"]
+    assert Path(client["environment"]["PITBENCH_RUNS"]).is_relative_to(
+        DockerComposeManager.CONTAINER_AGENT_LOGS_PATH
+    )
+    assert "${T_BENCH_TASK_AGENT_LOGS_PATH}:${T_BENCH_CONTAINER_AGENT_LOGS_PATH}" in client["volumes"]
+
+
 def test_mechanism_changes_require_invariants_and_source_realization(tmp_path, model, source):
     planner = AlgorithmPlanner(tmp_path / "plan.json", "task", "Improve search")
     planner.update_model(model, source)

@@ -329,7 +329,7 @@ class AlgorithmPlanner:
 
 PLANNING_INSTRUCTION = """### Algorithm-Space Global Planning
 Use the same Agent and development budget to plan changes to algorithm mechanisms.
-Keep planning JSON inputs in the public runs directory, outside implementation source.
+Keep planning JSON inputs under PITBENCH_RUNS, outside implementation source.
 After the public baseline, run `pitbench plan --schema` and construct a partial
 model from source inspection, development traces, and domain knowledge. The model
 must connect Level 0 objectives, Level 1 subsystems, Level 2 mechanisms, and Level 3
