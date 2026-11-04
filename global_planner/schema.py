@@ -87,6 +87,10 @@ class ReplanningDecision(BaseModel):
     next_experiment: NonemptyText
     switch_justification: str | None = None
     revisit_condition: str | None = None
+    # Dynamic model updates discovered or updated during replanning
+    discovered_nodes: list[HATSNode] = Field(default_factory=list)
+    discovered_opportunities: list[Opportunity] = Field(default_factory=list)
+    revalidated_node_ids: list[str] = Field(default_factory=list)
     timestamp: str | None = None
 
 

@@ -139,7 +139,7 @@ class PlanningController:
             observations_path=observations_path,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
-        self.store.record_evidence(evidence)
+        self.store.record_evidence(evidence, current_budget_spent=current_budget_spent)
 
         # Critical evidence (hypothesis refuted, crash, or regression) overrides cooldown
         is_critical = (status_str == "refuted")

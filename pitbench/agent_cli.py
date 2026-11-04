@@ -905,8 +905,14 @@ def bench_command(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
         except Exception as e:
-            # Non-blocking observer
-            print(f"[global-plan-warning] Failed to process planning boundary: {e}", file=sys.stderr)
+            allow_fallback = (
+                getattr(args, "allow_offline_fallback", False)
+                or (os.environ.get("PITBENCH_ALLOW_OFFLINE_FALLBACK") == "1")
+            )
+            print(f"[global-plan-error] Failed to process planning boundary: {e}", file=sys.stderr)
+            if not allow_fallback:
+                # In formal planning conditions, planner failure must NOT be silently downgraded to success
+                return 1
 
     return 0 if all(succeeded) else 1
 

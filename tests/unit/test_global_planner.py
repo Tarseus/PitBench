@@ -6,10 +6,12 @@ from typing import Any
 
 import pytest
 
-from global_planner.adapters.codex import CodexPlannerAdapter
+from global_planner.adapters.codex import (
+    CodexPlannerAdapter,
+)
 from global_planner.bootstrap import bootstrap_hats_model
 from global_planner.controller import PlanningController
-from global_planner.driver import PlanningSessionDriver
+from global_planner.driver import PlanningSessionDriver, build_autonomous_worker
 from global_planner.schema import (
     ContextPacket,
     DecisionType,
@@ -237,8 +239,15 @@ def test_evidence_status_disambiguation(tmp_path: Path):
     assert ev_fail.status == "refuted"
 
 
-def test_offline_fallback_fail_fast(tmp_path: Path):
+def test_offline_fallback_fail_fast(monkeypatch):
     """Verifies that calling decision without LLM callable fails fast in formal mode."""
+    import shutil
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("PORTKEY_API_KEY", raising=False)
+    monkeypatch.delenv("PITBENCH_PLANNER_MODEL", raising=False)
+    monkeypatch.setattr(shutil, "which", lambda cmd: None)
+    monkeypatch.setenv("PITBENCH_PLANNER_BACKEND", "none")
     adapter = CodexPlannerAdapter(allow_offline_fallback=False)
     packet = ContextPacket(
         task_id="t1",
@@ -246,7 +255,7 @@ def test_offline_fallback_fail_fast(tmp_path: Path):
         remaining_budget_sec=100.0,
         completed_experiments_count=0,
     )
-    # Must fail fast when offline fallback is disabled
+    # Must fail fast when offline fallback is disabled and no credentials exist
     with pytest.raises(RuntimeError, match="No LLM connection configured"):
         adapter.request_decision(packet)
 
@@ -254,6 +263,36 @@ def test_offline_fallback_fail_fast(tmp_path: Path):
     adapter_test = CodexPlannerAdapter(allow_offline_fallback=True)
     dec = adapter_test.request_decision(packet)
     assert dec.decision == DecisionType.STOP
+
+
+def test_agy_agent_callable_configuration(monkeypatch):
+    """Verifies that create_default_llm_callable invokes agy with the expected arguments."""
+    import subprocess
+    from unittest.mock import MagicMock
+
+    from global_planner.adapters.codex import create_default_llm_callable
+
+    mock_run = MagicMock()
+    mock_run.return_value.returncode = 0
+    mock_run.return_value.stdout = '```json\n{"decision": "continue", "selected_opportunity": "opp_1", "next_experiment": "exp"}\n```'
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    callable_fn = create_default_llm_callable(backend="antigravity", model_name="gemini-3.8-flash-low")
+    assert callable_fn is not None
+
+    output = callable_fn("Test prompt")
+    assert "opp_1" in output
+    assert mock_run.called
+    cmd_called = mock_run.call_args[0][0]
+    assert cmd_called[0].endswith("agy")
+    assert "--dangerously-skip-permissions" in cmd_called
+    assert "--disable-slash-commands" in cmd_called
+    assert "--model" in cmd_called
+    assert "gemini-3.8-flash-low" in cmd_called
+    assert "--effort" in cmd_called
+    assert "low" in cmd_called
+    assert "--print" in cmd_called
+    assert "Test prompt" in cmd_called
 
 
 def test_controller_reproduction_and_boundary_triggers(tmp_path: Path):
@@ -565,3 +604,283 @@ def test_planning_study_plan_schema():
     }
     with pytest.raises(ValueError, match="differing from baseline"):
         PlanningStudyPlan.model_validate(invalid_data)
+
+
+def test_budget_preservation_across_experiments_without_replanning(tmp_path: Path):
+    """Verifies that experiment completion preserves cumulative budget even when in cooldown
+
+    and no replanning is triggered.
+    """
+    store = PlanStore(tmp_path)
+    controller = PlanningController(store=store, cooldown_sec=300.0, experiments_between_reviews=5)
+    controller.on_task_start(
+        study_id="study_budget",
+        task_id="task_budget",
+        solver="scip",
+        initial_opportunities=[
+            Opportunity(
+                id="opp_01",
+                title="Test",
+                target_nodes=["subsystem.heuristics"],
+                proposal="Test",
+                expected_effect="Test",
+                cheapest_discriminating_experiment="bench",
+            )
+        ],
+    )
+
+    # 1. Decision at t=10s
+    dec = ReplanningDecision(
+        decision=DecisionType.CONTINUE,
+        selected_opportunity="opp_01",
+        next_experiment="bench",
+    )
+    controller.parse_and_record_decision(dec.model_dump(), current_budget_spent=10.0)
+    assert store.state.budget_spent_sec == 10.0
+
+    # 2. Experiment completed at t=100s, but cooldown/interval prevents replanning
+    ev, should_replan = controller.on_experiment_completed(
+        experiment_id="exp_mid",
+        target_nodes=[],
+        metrics_summary={},
+        execution_status=ExecutionStatus.PASS,
+        solution_validity=SolutionValidity.VALID,
+        performance_delta=PerformanceDelta.IMPROVED,
+        hypothesis_supported=True,
+        current_budget_spent=100.0,
+    )
+    assert should_replan is False
+    # Budget MUST be updated to 100s (not stay at 10s!)
+    assert store.state.budget_spent_sec == 100.0
+
+    # 3. New driver instance recovers the full 100s
+    resumed_driver = PlanningSessionDriver(store=PlanStore(tmp_path), allow_offline_fallback=True)
+    assert resumed_driver.get_current_budget_spent() >= 100.0
+
+
+def test_worker_missing_results_not_defaulted(tmp_path: Path):
+    """Verifies that an empty worker result {} or incomplete run count is recorded as
+
+    MISSING / UNVERIFIED, never defaulted to PASS / VALID.
+    """
+    store = PlanStore(tmp_path)
+    driver = PlanningSessionDriver(store=store, allow_offline_fallback=True)
+    task_config = {
+        "task_id": "test_missing_task",
+        "release": {"repository": "scipopt/scip"},
+        "repository": {"editable_paths": ["src"]},
+    }
+
+    # Worker 1 returns empty dict
+    def empty_worker(decision: ReplanningDecision, packet: ContextPacket) -> dict[str, Any]:
+        return {}
+
+    driver.run_session(task_config=task_config, agent_worker=empty_worker, max_steps=1)
+    assert len(store.state.evidence) == 1
+    ev = store.state.evidence[0]
+    assert ev.execution_status == ExecutionStatus.MISSING
+    assert ev.solution_validity == SolutionValidity.UNVERIFIED
+    assert ev.performance_delta == PerformanceDelta.UNKNOWN
+
+    # Worker 2 returns incomplete runs (actual < expected)
+    def incomplete_worker(decision: ReplanningDecision, packet: ContextPacket) -> dict[str, Any]:
+        return {
+            "expected_runs_count": 4,
+            "actual_runs_count": 2,
+            "execution_status": ExecutionStatus.PASS,
+            "solution_validity": SolutionValidity.VALID,
+        }
+
+    driver.run_session(task_config=task_config, agent_worker=incomplete_worker, max_steps=1)
+    assert len(store.state.evidence) == 2
+    ev2 = store.state.evidence[1]
+    assert ev2.execution_status == ExecutionStatus.MISSING
+    assert ev2.solution_validity == SolutionValidity.UNVERIFIED
+
+
+def test_worker_receives_fresh_context_every_step_without_replanning(tmp_path: Path):
+    """Verifies that even when replanning is not triggered after step 1, worker in step 2
+
+    receives freshly updated completed_experiments_count and recent_evidence.
+    """
+    store = PlanStore(tmp_path)
+    # Review every 10 experiments so step 1 will NOT trigger replanning
+    driver = PlanningSessionDriver(
+        store=store,
+        experiments_between_reviews=10,
+        cooldown_sec=500.0,
+        allow_offline_fallback=True,
+    )
+    task_config = {
+        "task_id": "test_fresh_context",
+        "release": {"repository": "scipopt/scip"},
+        "repository": {"editable_paths": ["src"]},
+    }
+
+    packets_received: list[ContextPacket] = []
+
+    def tracking_worker(decision: ReplanningDecision, packet: ContextPacket) -> dict[str, Any]:
+        packets_received.append(packet)
+        return {
+            "experiment_id": f"exp_{len(packets_received)}",
+            "execution_status": ExecutionStatus.PASS,
+            "solution_validity": SolutionValidity.VALID,
+            "performance_delta": PerformanceDelta.IMPROVED,
+            "hypothesis_supported": True,
+        }
+
+    driver.run_session(task_config=task_config, agent_worker=tracking_worker, max_steps=2)
+    assert len(packets_received) == 2
+
+    # Step 1 context
+    assert packets_received[0].completed_experiments_count == 0
+    assert len(packets_received[0].recent_evidence) == 0
+
+    # Step 2 context MUST be fresh!
+    assert packets_received[1].completed_experiments_count == 1
+    assert len(packets_received[1].recent_evidence) == 1
+    assert packets_received[1].recent_evidence[0].experiment_id == "exp_1"
+
+
+def test_repository_source_scanning_and_concrete_nodes(tmp_path: Path):
+    """Verifies that repository scanning actively discovers concrete source components
+
+    and binds them to the Level 1 subsystems.
+    """
+    repo_dir = tmp_path / "repo"
+    src_scip = repo_dir / "src" / "scip"
+    src_scip.mkdir(parents=True, exist_ok=True)
+    (src_scip / "heur_oneopt.c").write_text("// Heuristic\n")
+    (src_scip / "presol_clean.c").write_text("// Presolve\n")
+    (src_scip / "branch_relpscost.c").write_text("// Branching\n")
+    (src_scip / "cons_linear.c").write_text("// Constraints\n")
+
+    task_config = {
+        "task_id": "scip_scan_task",
+        "release": {"repository": "scipopt/scip"},
+        "repository": {"editable_paths": ["src/scip"]},
+    }
+    goal, nodes, opps = bootstrap_hats_model(task_config, repository_root=repo_dir)
+
+    node_ids = {n.id: n for n in nodes}
+    assert "component.heuristics.heur_oneopt" in node_ids
+    assert node_ids["component.heuristics.heur_oneopt"].parent_id == "subsystem.heuristics"
+    assert "src/scip/heur_oneopt.c" in node_ids["component.heuristics.heur_oneopt"].source_refs
+
+    assert "component.presolve.presol_clean" in node_ids
+    assert node_ids["component.presolve.presol_clean"].parent_id == "subsystem.presolve"
+
+    assert "component.search_engine.branch_relpscost" in node_ids
+    assert node_ids["component.search_engine.branch_relpscost"].parent_id == "subsystem.search_engine"
+
+    assert "component.constraints.cons_linear" in node_ids
+    assert node_ids["component.constraints.cons_linear"].parent_id == "subsystem.constraints"
+
+
+def test_dynamic_model_updating_trajectory(tmp_path: Path):
+    """Verifies a trajectory where a newly discovered node and opportunity are added in step 1
+
+    and selected by the planner in step 2.
+    """
+    store = PlanStore(tmp_path)
+    driver = PlanningSessionDriver(
+        store=store,
+        experiments_between_reviews=1,
+        cooldown_sec=0.0,
+        allow_offline_fallback=True,
+    )
+    task_config = {
+        "task_id": "test_trajectory_task",
+        "release": {"repository": "scipopt/scip"},
+        "repository": {"editable_paths": ["src"]},
+    }
+
+    step_counter = 0
+
+    def dynamic_worker(decision: ReplanningDecision, packet: ContextPacket) -> dict[str, Any]:
+        nonlocal step_counter
+        step_counter += 1
+        if step_counter == 1:
+            # Discover a new node and opportunity
+            new_node = HATSNode(
+                id="mechanism.custom_relocate",
+                level=HATSLevel.LEVEL_2_MECHANISM,
+                parent_id="subsystem.heuristics",
+                purpose="Specialized relocate neighborhood",
+                source_refs=["src/custom_relocate.c"],
+            )
+            new_opp = Opportunity(
+                id="opp_custom_relocate",
+                title="Explore custom relocate neighborhood",
+                target_nodes=[new_node.id],
+                proposal="Test relocate proposal",
+                expected_effect="Improve cost by 5%",
+                cheapest_discriminating_experiment="bench --split dev",
+                status="unexplored",
+            )
+            return {
+                "experiment_id": "exp_dyn_1",
+                "execution_status": ExecutionStatus.PASS,
+                "solution_validity": SolutionValidity.VALID,
+                "performance_delta": PerformanceDelta.REGRESSED,
+                "hypothesis_supported": False,  # Triggers replanning switch!
+                "discovered_nodes": [new_node],
+                "discovered_opportunities": [new_opp],
+            }
+        else:
+            return {
+                "experiment_id": "exp_dyn_2",
+                "execution_status": ExecutionStatus.PASS,
+                "solution_validity": SolutionValidity.VALID,
+                "performance_delta": PerformanceDelta.IMPROVED,
+                "hypothesis_supported": True,
+            }
+
+    decisions = driver.run_session(task_config=task_config, agent_worker=dynamic_worker, max_steps=2)
+    assert len(decisions) >= 2
+    # Verify that the new node and opportunity were registered in store
+    assert "mechanism.custom_relocate" in store.state.nodes
+    assert "opp_custom_relocate" in store.state.opportunities
+
+    # In step 1 boundary, switch decision prioritized and selected the newly discovered opportunity
+    switch_decisions = [d for d in decisions if d.decision == DecisionType.SWITCH]
+    assert len(switch_decisions) >= 1
+    assert switch_decisions[0].selected_opportunity == "opp_custom_relocate"
+
+    # Step 2 continued and validated the newly discovered opportunity
+    assert decisions[-1].selected_opportunity == "opp_custom_relocate"
+
+
+def test_autonomous_worker_session_end_to_end(tmp_path: Path):
+    """Verifies that build_autonomous_worker coordinates with driver for autonomous exploration."""
+    repo_dir = tmp_path / "repo"
+    src_dir = repo_dir / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    (src_dir / "solver_heur.c").write_text("// Routine\n")
+
+    task_config = {
+        "task_id": "test_auto_task",
+        "release": {"repository": "scipopt/scip"},
+        "repository": {"editable_paths": ["src"]},
+    }
+
+    store = PlanStore(tmp_path / "auto_store")
+    driver = PlanningSessionDriver(
+        store=store,
+        experiments_between_reviews=1,
+        cooldown_sec=0.0,
+        allow_offline_fallback=True,
+    )
+    worker = build_autonomous_worker(task_config=task_config, repository_root=repo_dir)
+
+    decisions = driver.run_session(
+        task_config=task_config,
+        agent_worker=worker,
+        max_steps=2,
+        repository_root=repo_dir,
+    )
+    assert len(decisions) >= 1
+    assert store.state.experiments_count == 2
+    # Verify discovered opportunity was registered by autonomous worker
+    assert any("opp_optimize_solver_heur" in o_id for o_id in store.state.opportunities)
+

@@ -12,6 +12,65 @@ from global_planner.schema import (
 )
 
 
+def discover_concrete_nodes_from_repository(
+    repository_root: Path,
+    declared_paths: list[str],
+) -> list[HATSNode]:
+    """Scans the repository within declared editable paths and discovers concrete
+
+    code components and mechanisms, binding them into the appropriate Level 1 subsystems.
+    """
+    discovered: list[HATSNode] = []
+    if not repository_root or not repository_root.exists():
+        return discovered
+
+    source_extensions = {".c", ".h", ".cpp", ".hpp", ".cc", ".py"}
+
+    for rel_path in declared_paths:
+        target_dir = repository_root / rel_path
+        if not target_dir.exists():
+            continue
+
+        if target_dir.is_file() and target_dir.suffix in source_extensions:
+            candidate_files = [target_dir]
+        else:
+            candidate_files = [
+                p for p in target_dir.rglob("*")
+                if p.is_file() and p.suffix in source_extensions
+            ]
+
+        for file_p in candidate_files:
+            rel_file = str(file_p.relative_to(repository_root))
+            lower_name = file_p.name.lower()
+            stem = file_p.stem
+
+            parent_id = "subsystem.search_engine"
+            if any(k in lower_name for k in ("heur", "local", "exchange", "tour", "relocate", "swap")):
+                parent_id = "subsystem.heuristics"
+            elif any(k in lower_name for k in ("presol", "prep", "bound", "tighten", "clean")):
+                parent_id = "subsystem.presolve"
+            elif any(k in lower_name for k in ("cons", "cut", "sepa", "prop", "penalty", "valid")):
+                parent_id = "subsystem.constraints"
+            elif any(k in lower_name for k in ("branch", "nodesel", "tree", "node", "dive", "plung")):
+                parent_id = "subsystem.search_engine"
+
+            node_id = f"component.{parent_id.split('.')[-1]}.{stem}"
+            discovered.append(
+                HATSNode(
+                    id=node_id,
+                    level=HATSLevel.LEVEL_3_CODE,
+                    parent_id=parent_id,
+                    purpose=f"Concrete algorithm component in {rel_file}",
+                    source_refs=[rel_file],
+                    reads=["search_state"],
+                    writes=["solution_or_state"],
+                    invariants=["original objective semantics"],
+                )
+            )
+
+    return discovered
+
+
 def bootstrap_hats_model(
     task_config: dict[str, Any],
     repository_root: Path | None = None,
@@ -19,7 +78,7 @@ def bootstrap_hats_model(
     """Generates a solver-agnostic Level 0 goal statement, universal subsystem nodes bound
 
     to the task's declared editable paths, and autonomous exploration opportunities.
-    Does NOT hardcode solver-specific filenames, C paths, or expert algorithmic solutions.
+    Actively populates concrete code nodes if repository_root is provided.
     """
     solver_repo = str(task_config.get("repository", {}).get("clone_url") or task_config.get("release", {}).get("repository", "solver"))
     solver_name = solver_repo.rstrip("/").split("/")[-1].replace(".git", "")
@@ -89,6 +148,13 @@ def bootstrap_hats_model(
             writes=["violation_status", "penalties_or_cuts"],
         ),
     ]
+
+    # Actively discover concrete code-level nodes from the repository if provided
+    if repository_root and Path(repository_root).exists():
+        concrete_nodes = discover_concrete_nodes_from_repository(
+            Path(repository_root), declared_paths
+        )
+        nodes.extend(concrete_nodes)
 
     # Universal autonomous exploration opportunities (NO human expert hints or problem answers!)
     opportunities: list[Opportunity] = [

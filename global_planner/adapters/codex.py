@@ -3,11 +3,117 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any, Callable
 
 from global_planner.adapters.base import BasePlannerAdapter
 from global_planner.schema import ContextPacket, DecisionType, ReplanningDecision
+
+
+def create_default_llm_callable(
+    model_name: str | None = None,
+    api_key: str | None = None,
+    api_base: str | None = None,
+    backend: str | None = None,
+    timeout_sec: float = 300.0,
+) -> Callable[[str], str] | None:
+    """Creates a real LLM callable supporting Antigravity CLI (agy), LiteLLM/OpenAI, or Codex CLI."""
+    import shutil
+    import subprocess
+
+    selected_backend = backend or os.environ.get("PITBENCH_PLANNER_BACKEND")
+    if not selected_backend:
+        # Default automatically to agy (Antigravity CLI) if installed on system
+        if shutil.which("agy"):
+            selected_backend = "antigravity"
+
+    if selected_backend in ("agy", "antigravity"):
+        agy_bin = shutil.which("agy") or "agy"
+        effective_model = model_name or os.environ.get("PITBENCH_PLANNER_MODEL") or "gemini-3.8-flash-low"
+        effective_effort = os.environ.get("PITBENCH_PLANNER_EFFORT", "low")
+
+        def _agy_call(prompt: str) -> str:
+            cmd = [
+                agy_bin,
+                "--dangerously-skip-permissions",
+                "--disable-slash-commands",
+                "--model",
+                effective_model,
+                "--effort",
+                effective_effort,
+                "--print",
+                prompt,
+            ]
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+            )
+            if res.returncode != 0:
+                raise RuntimeError(
+                    f"agy execution failed (exit code {res.returncode}): {res.stderr or res.stdout}"
+                )
+            return res.stdout
+
+        return _agy_call
+
+    if selected_backend == "codex":
+        codex_bin = shutil.which("codex") or "codex"
+
+        def _codex_call(prompt: str) -> str:
+            res = subprocess.run(
+                [codex_bin, "exec", "--ephemeral", "--dangerously-bypass-approvals-and-sandbox", prompt],
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+            )
+            if res.returncode != 0:
+                raise RuntimeError(
+                    f"codex execution failed (exit code {res.returncode}): {res.stderr or res.stdout}"
+                )
+            return res.stdout
+
+        return _codex_call
+
+    effective_model = model_name or os.environ.get("PITBENCH_PLANNER_MODEL")
+    effective_key = api_key
+    effective_base = api_base or os.environ.get("OPENAI_BASE_URL") or os.environ.get("PORTKEY_API_BASE")
+
+    if not effective_model:
+        if os.environ.get("DEEPSEEK_API_KEY"):
+            effective_model = "deepseek/deepseek-chat"
+            effective_key = effective_key or os.environ.get("DEEPSEEK_API_KEY")
+        elif os.environ.get("OPENAI_API_KEY"):
+            effective_model = "gpt-4o"
+            effective_key = effective_key or os.environ.get("OPENAI_API_KEY")
+        elif os.environ.get("PORTKEY_API_KEY"):
+            effective_model = "openai/gpt-4o"
+            effective_key = effective_key or os.environ.get("PORTKEY_API_KEY")
+
+    if not effective_key:
+        if effective_model and "deepseek" in effective_model:
+            effective_key = os.environ.get("DEEPSEEK_API_KEY")
+        elif effective_model and ("openai" in effective_model or "gpt" in effective_model):
+            effective_key = os.environ.get("OPENAI_API_KEY")
+
+    if not effective_model or not effective_key:
+        return None
+
+    def _call(prompt: str) -> str:
+        import litellm
+        resp = litellm.completion(
+            model=effective_model,
+            messages=[{"role": "user", "content": prompt}],
+            api_key=effective_key,
+            api_base=effective_base,
+            timeout=timeout_sec,
+            temperature=0.2,
+        )
+        return resp.choices[0].message.content or ""
+
+    return _call
 
 
 class CodexPlannerAdapter(BasePlannerAdapter):
@@ -91,7 +197,7 @@ Make an explicit strategic decision for the next development phase.
 {unexplored_text}
 
 #### Decision Contract
-Respond with a concise analysis followed by a JSON block matching this exact schema:
+Respond with a concise analysis followed by a JSON block matching this schema:
 
 ```json
 {{
@@ -103,7 +209,26 @@ Respond with a concise analysis followed by a JSON block matching this exact sch
   ],
   "next_experiment": "<concrete discriminating experiment to run next>",
   "switch_justification": "<required if switching: why previous opportunity is abandoned or saturated>",
-  "revisit_condition": "<condition under which deferred opportunities should be reconsidered>"
+  "revisit_condition": "<condition under which deferred opportunities should be reconsidered>",
+  "discovered_nodes": [
+    {{
+      "id": "<new_node_id>",
+      "level": "level_2_mechanism | level_3_code",
+      "parent_id": "<subsystem_id>",
+      "purpose": "<purpose>",
+      "source_refs": ["<file_path>"]
+    }}
+  ],
+  "discovered_opportunities": [
+    {{
+      "id": "<new_opp_id>",
+      "title": "<title>",
+      "target_nodes": ["<node_id>"],
+      "proposal": "<proposal>",
+      "expected_effect": "<expected_effect>",
+      "cheapest_discriminating_experiment": "<experiment>"
+    }}
+  ]
 }}
 ```
 """
@@ -132,32 +257,44 @@ Respond with a concise analysis followed by a JSON block matching this exact sch
         allow_offline_fallback: bool | None = None,
     ) -> ReplanningDecision:
         """Invokes the planning agent via LLM callable, or applies deterministic fallback if allowed."""
-        prompt = self.format_planning_prompt(packet)
-        callable_fn = llm_callable or self.default_llm_callable
-        if callable_fn is not None:
-            raw_response = callable_fn(prompt)
-            data = self.extract_decision(raw_response)
-            return ReplanningDecision.model_validate(data)
-
         can_fallback = (
             allow_offline_fallback
             if allow_offline_fallback is not None
             else self.allow_offline_fallback
         )
+
+        callable_fn = llm_callable or self.default_llm_callable
+        if callable_fn is None and not can_fallback:
+            # In formal mode, resolve real LLM connection from environment/credentials
+            callable_fn = create_default_llm_callable()
+
+        if callable_fn is not None:
+            prompt = self.format_planning_prompt(packet)
+            raw_response = callable_fn(prompt)
+            data = self.extract_decision(raw_response)
+            return ReplanningDecision.model_validate(data)
+
         if not can_fallback:
             raise RuntimeError(
                 "No LLM connection configured for global planning decision. "
                 "Formal evaluation requires a connected model callable. "
-                "For unit tests or offline simulation, explicitly pass allow_offline_fallback=True."
+                "Please configure DEEPSEEK_API_KEY, OPENAI_API_KEY, or pass --model/--api-key, "
+                "or explicitly pass allow_offline_fallback=True for offline testing."
             )
 
         # Fallback heuristic decision logic when offline or in test harnesses
         if packet.active_opportunity and packet.recent_evidence:
             last_ev = packet.recent_evidence[-1]
             if last_ev.status == "refuted":
-                # Switch to first unexplored opportunity if available
+                # Switch to first unexplored opportunity if available, prioritizing newly discovered or targeted opps
                 if packet.unexplored_opportunities:
-                    next_opp = packet.unexplored_opportunities[0]
+                    candidate_opps = [
+                        opp for opp in packet.unexplored_opportunities
+                        if any(nid in opp.target_nodes for nid in packet.affected_nodes)
+                        or opp.id.startswith("opp_custom")
+                        or opp.id.startswith("opp_optimize")
+                    ]
+                    next_opp = candidate_opps[0] if candidate_opps else packet.unexplored_opportunities[0]
                     return ReplanningDecision(
                         decision=DecisionType.SWITCH,
                         selected_opportunity=next_opp.id,

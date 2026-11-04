@@ -175,11 +175,24 @@ class PlanStore:
                 self.save()
         return invalidated_node_ids
 
-    def record_evidence(self, evidence: EvidenceRecord) -> None:
-        """Record empirical experiment results and update affected node effects."""
+    def update_budget_spent(self, current_budget_spent: float) -> None:
+        """Persist latest elapsed budget spent without waiting for a decision or experiment."""
+        st = self.state
+        if current_budget_spent > st.budget_spent_sec:
+            st.budget_spent_sec = float(current_budget_spent)
+            self.save()
+
+    def record_evidence(
+        self,
+        evidence: EvidenceRecord,
+        current_budget_spent: float | None = None,
+    ) -> None:
+        """Record empirical experiment results and update affected node effects and cumulative budget."""
         st = self.state
         st.evidence.append(evidence)
         st.experiments_count += 1
+        if current_budget_spent is not None:
+            st.budget_spent_sec = max(st.budget_spent_sec, float(current_budget_spent))
 
         # Link to active opportunity if present
         if st.active_opportunity_id and st.active_opportunity_id in st.opportunities:
@@ -194,8 +207,17 @@ class PlanStore:
         self.save()
 
     def record_decision(self, decision: ReplanningDecision, current_budget_spent: float) -> None:
-        """Record a structured replanning decision and reset review counters."""
+        """Record a structured replanning decision, register discovered nodes/opps, and reset review counters."""
         st = self.state
+
+        # Register dynamic model updates introduced in this decision
+        for n in decision.discovered_nodes:
+            st.nodes[n.id] = n
+        for opp in decision.discovered_opportunities:
+            st.opportunities[opp.id] = opp
+        for nid in decision.revalidated_node_ids:
+            if nid in st.nodes:
+                st.nodes[nid].status = "active"
 
         # Validate that selected opportunity exists
         if decision.decision != "stop" and decision.selected_opportunity not in st.opportunities:
@@ -207,7 +229,7 @@ class PlanStore:
         st.decisions.append(decision)
         st.active_opportunity_id = decision.selected_opportunity
         st.last_replanned_at_sec = current_budget_spent
-        st.budget_spent_sec = current_budget_spent
+        st.budget_spent_sec = max(st.budget_spent_sec, current_budget_spent)
         st.experiments_count_at_last_review = st.experiments_count
 
         # Update opportunity status
