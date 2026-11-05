@@ -725,3 +725,35 @@ def test_model_resume_preserves_completed_work_and_archives_infra_attempt(
     result = json.loads((tmp_path / "model-runs.json").read_text())
     assert len(result) == 2 and all(r["status"] == "command_completed" for r in result)
     assert len(list((tmp_path / "model-status").glob("*/attempts/*.json"))) == 1
+
+
+def test_restarted_evaluation_archives_prior_attempt_and_clears_live_completion(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from scripts import run_benchmark_release as campaign
+
+    status_path = tmp_path / "agent-status/run/status.json"
+    status_path.parent.mkdir(parents=True)
+    previous = {"run_id": "run", "task_id": "task", "model": {"agent": "codex", "model": "model"},
+                "audit": {"candidate_patch": str(tmp_path / "candidate.patch")},
+                "evaluation_started_at": "old start", "evaluation_finished_at": "old finish",
+                "evaluation_error": "old error", "metrics_complete": True, "metric_gaps": ["old gap"]}
+    status_path.write_text(json.dumps(previous))
+    writes = campaign.write_json
+
+    def inspect(path, value):
+        if path == status_path and value["status"] == "evaluating":
+            assert value["evaluation_error"] is None
+            assert value["evaluation_finished_at"] is None
+            assert value["metrics_complete"] is False
+            assert value["metric_gaps"] == []
+        writes(path, value)
+
+    monkeypatch.setattr(campaign, "write_json", inspect)
+    result = campaign.evaluate_study_candidate(previous, SimpleNamespace(output=tmp_path), "0-7")
+    # The intentionally absent captured task is a new failure, never a leftover success.
+    assert result["status"] == "evaluation_failed"
+    assert result["metrics_complete"] is False
+    assert result["evaluation_error"] != "old error"
+    (archived,) = status_path.parent.glob("evaluation-attempts/*.json")
+    assert json.loads(archived.read_text()) == previous

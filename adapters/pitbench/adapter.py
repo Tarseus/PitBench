@@ -462,11 +462,6 @@ class PitBenchAdapter:
             )
             sections.append(f"Optional PitBench helper commands: {commands}.")
 
-        if AgentTool.PLAN in agent_tools:
-            from pitbench.planning import PLANNING_INSTRUCTION
-
-            sections.append(PLANNING_INSTRUCTION)
-
         return "\n\n".join(sections)
 
     def _write_task_yaml(
@@ -724,7 +719,7 @@ RUN chmod 0755 /usr/local/bin/pitbench \
             "/agent-logs",
         ]
         if include_runs:
-            writable_paths.append("/pitbench/runs")
+            writable_paths.append("/workspace/repo/.pitbench")
         writable = " ".join(writable_paths)
         support_permissions = "".join(
             f"    && chmod -R a+rX {shlex.quote(path)} \\\n"
@@ -817,9 +812,13 @@ USER pitbench-agent
                     f"    mem_limit: {int(research_budget.memory_gib * 1024**3)}\n"
                 )
         runs_environment = (
-            '      PITBENCH_RUNS: "/agent-logs/development-runs"\n'
+            '      PITBENCH_RUNS: "/workspace/repo/.pitbench/runs"\n'
             if needs_run_directory(agent_tools)
             else ""
+        )
+        runs_volume = (
+            "      - ${T_BENCH_TASK_AGENT_LOGS_PATH}/development-runs:/workspace/repo/.pitbench/runs\n"
+            if needs_run_directory(agent_tools) else ""
         )
         return f"""services:
   client:
@@ -838,7 +837,7 @@ USER pitbench-agent
     volumes:
       - ${{T_BENCH_TASK_LOGS_PATH}}:${{T_BENCH_CONTAINER_LOGS_PATH}}
       - ${{T_BENCH_TASK_AGENT_LOGS_PATH}}:${{T_BENCH_CONTAINER_AGENT_LOGS_PATH}}
-    environment:
+{runs_volume}    environment:
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"

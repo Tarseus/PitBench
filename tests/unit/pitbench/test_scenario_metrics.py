@@ -456,3 +456,86 @@ def test_real_session_collects_all_seven_scenario_kinds_and_resumes(tmp_path):
     stale_file.write_text(yaml.safe_dump(stale_config))
     with pytest.raises(ValueError, match="no distinct built API artifact"):
         prepare(stale_file, tmp_path / "stale-agent")
+
+
+def _frozen_task_for_campaign(data):
+    from pitbench.schema.task import PitBenchTask
+
+    root = Path(__file__).resolve().parents[3]
+    task = PitBenchTask.model_validate(yaml.safe_load((root / "configs/tasks/release_scip_v10_1_0.yaml").read_text()))
+    panel = next(p for p in task.instance_sets if p.name == "judge_id").model_copy(update={"size": 2})
+    return task.model_copy(update={"task_id": data.task_id, "metric_scenarios": data.protocols, "instance_sets": [panel]})
+
+
+def test_scenario_completeness_requires_raw_campaign_even_when_flags_claim_success(tmp_path):
+    from pitbench.evaluator.scenarios import scenario_evidence_failures
+
+    task = _frozen_task_for_campaign(campaign(tmp_path, "scaling"))
+    failures = scenario_evidence_failures(task, tmp_path, {
+        "summary": {"metric_scenarios": {"complete": True}, "metric_scenario_error": "missing recipe"},
+        "artifacts": {},
+    })
+    assert any("collection failed" in item for item in failures)
+    assert any("campaign is missing" in item for item in failures)
+
+
+@pytest.mark.parametrize("problem", [None, "hash", "candidate", "protocol", "inventory"])
+def test_raw_scenario_evidence_is_bound_to_task_patch_and_artifact_hash(tmp_path, problem):
+    from pitbench.evaluator.scenarios import scenario_evidence_failures, task_digest
+
+    data = campaign(tmp_path, "scaling")
+    task = _frozen_task_for_campaign(data)
+    data.task_sha256 = task_digest(task)
+    patch = tmp_path / "candidate.patch"
+    patch.write_bytes(b"actual patch")
+    data.candidate_sha256 = hashlib.sha256(patch.read_bytes()).hexdigest()
+    if problem == "candidate":
+        data.candidate_sha256 = "0" * 64
+    elif problem == "protocol":
+        data.protocols[0].budget_sec += 1
+    elif problem == "inventory":
+        data.instances_by_set["judge_id"] = ["a"]
+    target = tmp_path / "campaign.json"
+    target.write_text(data.model_dump_json())
+    payload = {"artifacts": {"metric_scenario_campaign": {
+        "path": "campaign.json", "sha256": "0" * 64 if problem == "hash" else hashlib.sha256(target.read_bytes()).hexdigest(),
+    }}}
+    failures = scenario_evidence_failures(task, tmp_path, payload)
+    assert bool(failures) == (problem is not None)
+
+
+def test_scenario_inputs_resolve_relocated_private_storage_and_reject_wrong_hashes(tmp_path):
+    from pitbench.evaluator.private_assets import PrivateAssetError
+    from pitbench.evaluator.scenarios import resolve_model_inputs
+
+    data = campaign(tmp_path, "setup")
+    task = _frozen_task_for_campaign(data)
+    logical, storage = tmp_path / "private", tmp_path / "storage"
+    logical.mkdir()
+    storage.mkdir()
+    (logical / ".asset-root").symlink_to(storage, target_is_directory=True)
+    file = storage / "model.lp"
+    file.write_bytes((tmp_path / "a.lp").read_bytes())
+    cases = [{"id": iid, "models": [str(logical / "model.lp")]} for iid in ("a", "b")]
+    config = {"instances": {"judge_id": cases}}
+    result, mappings = resolve_model_inputs(config, task, private_root=logical, config_dir=tmp_path)
+    assert result["instances"]["judge_id"][0]["models_by_scenario"]["setup"] == [str(file)]
+    assert mappings[0]["sha256"] == hashlib.sha256(file.read_bytes()).hexdigest()
+    assert "models_by_scenario" not in config["instances"]["judge_id"][0]
+    file.write_text("different model")
+    with pytest.raises((ValueError, PrivateAssetError), match="hash mismatch"):
+        resolve_model_inputs(config, task, private_root=logical, config_dir=tmp_path)
+
+
+def test_runtime_probe_rejects_missing_representation_dependencies_before_solver_probe(monkeypatch):
+    from pitbench.evaluator.scenarios import main
+
+    def missing(name):
+        if name == "numpy":
+            raise ModuleNotFoundError("No module named 'numpy'")
+        pytest.fail("unexpected dependency import")
+
+    monkeypatch.setattr("pitbench.evaluator.representations.importlib.import_module", missing)
+    monkeypatch.setattr(sys, "argv", ["collect", "probe", "--session-plugin", "not.loaded:Session", "--representation", "row_column_permutation"])
+    with pytest.raises(ModuleNotFoundError, match="numpy"):
+        main()

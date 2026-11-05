@@ -367,7 +367,7 @@ echo "[ECR] Preflight OK for all discovered images."
             '. "$ENV_FILE"; '
             ': "${T_BENCH_TASK_LOGS_PATH:=/home/ec2-user/tbench-logs}"; '
             ': "${T_BENCH_TASK_AGENT_LOGS_PATH:=/home/ec2-user/tbench-agent-logs}"; '
-            'mkdir -p "$T_BENCH_TASK_LOGS_PATH" "$T_BENCH_TASK_AGENT_LOGS_PATH"'
+            'mkdir -p "$T_BENCH_TASK_LOGS_PATH" "$T_BENCH_TASK_AGENT_LOGS_PATH/development-runs"'
         )
         res = self.instance.exec_run(prep_cmd)
         if res.exit_code != 0:

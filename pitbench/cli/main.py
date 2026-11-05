@@ -367,6 +367,10 @@ def _evaluation_metric_failures(
         return failures
 
     summary = payload.get("summary", {})
+    if task.metric_scenarios:
+        from pitbench.evaluator.scenarios import scenario_evidence_failures
+
+        failures.extend(scenario_evidence_failures(task, output_dir, payload))
     performance = summary.get("performance")
     if performance is None:
         failures.append("performance report is missing")
@@ -411,6 +415,7 @@ def _normal_metric_coverage(
     configuration_error: str | None = None,
     *,
     smoke_test: bool = False,
+    evaluation_config: EvaluationConfig | None = None,
 ) -> dict[str, Any]:
     """Return one auditable metric coverage record for a normal evaluate run."""
     run_output = output_root / run_id
@@ -429,7 +434,12 @@ def _normal_metric_coverage(
         result_records = json.loads(results_path.read_text()).get("results", [])
         catalog = TaskCatalog(repository_root)
         for task_id in task_ids:
-            task = catalog.validate_one(task_id).task
+            resources = evaluation_config.resources_for(task_id) if evaluation_config else None
+            configured = (resources.task_config_path or resources.agent_task_config_path) if resources else None
+            task = (
+                catalog.validate_file(resolve_repository_path(repository_root, configured)).task
+                if configured is not None else catalog.validate_one(task_id).task
+            )
             trials = [item for item in result_records if item.get("task_id") == task_id]
             if not trials:
                 failures = ["task has no completed trial result"]
@@ -1002,6 +1012,7 @@ def run_task(
         configuration_output,
         configuration_error,
         smoke_test=smoke_test,
+        evaluation_config=effective_config,
     )
     coverage_path = resolved_output_path / resolved_run_id / "metric-coverage.json"
     coverage_path.write_text(json.dumps(coverage, indent=2) + "\n")

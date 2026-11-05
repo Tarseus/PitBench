@@ -15,6 +15,25 @@ from adapters.pitbench.adapter import (
     image_context_digest,
 )
 from pitbench.cli.task_image import prepare_task_image
+from pitbench.harness.handlers.trial_handler import TrialHandler
+
+
+def test_parallel_conditions_of_same_task_use_distinct_images(tmp_path: Path) -> None:
+    trials = []
+    for condition in ["source", "algorithm_space"]:
+        task_path = tmp_path / condition / "same_task"
+        task_path.mkdir(parents=True)
+        (task_path / "task.yaml").write_text(
+            "instruction: Optimize the solver\ndifficulty: hard\n"
+            "evaluator_import_path: pitbench.evaluator.evaluator:PitBenchEvaluator\n"
+        )
+        trials.append(TrialHandler(trial_name=condition, input_path=task_path))
+    assert trials[0].task_id == trials[1].task_id
+    assert trials[0].client_image_name != trials[1].client_image_name
+    prepared = TrialHandler(
+        trial_name="pitbench-image-prepare", input_path=trials[1].task_paths.input_path
+    )
+    assert prepared.client_image_name == trials[1].client_image_name
 
 
 @pytest.mark.parametrize(
@@ -100,3 +119,16 @@ def test_task_image_reuses_only_matching_immutable_sources(
                 trial_handler_type=Trial,
                 manager_type=Manager,
             )
+
+
+def test_public_output_mount_is_inside_workspace_and_excludes_protected_agent_logs():
+    import yaml
+
+    from adapters.pitbench.adapter import PitBenchAdapter
+
+    client = yaml.safe_load(PitBenchAdapter._compose(["bench"]))["services"]["client"]
+    path = client["environment"]["PITBENCH_RUNS"]
+    assert path == "/workspace/repo/.pitbench/runs"
+    assert "${T_BENCH_TASK_AGENT_LOGS_PATH}/development-runs:" + path in client["volumes"]
+    assert not any(v.endswith(":/workspace/repo/.pitbench") for v in client["volumes"])
+    assert "PITBENCH_RUNS" not in yaml.safe_load(PitBenchAdapter._compose([]))["services"]["client"]["environment"]

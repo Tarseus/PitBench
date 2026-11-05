@@ -27,6 +27,7 @@ from pitbench.cli.evaluate_config import (
 )
 from pitbench.evaluator.judge import JudgePlan
 from pitbench.evaluator.private_assets import (
+    PrivateAssetError,
     PrivateAssetResolver,
     load_private_seed_robustness_config,
 )
@@ -77,6 +78,10 @@ def _metric_scenario_checks(context) -> list:
                 source_commit=task.release.base_commit,
             ):
                 raise ValueError("repository has no source-bound scenario build path")
+            from pitbench.evaluator.scenarios import resolve_model_inputs
+
+            private_root = resolve_repository_path(context.repository_root, context.config.paths.private_root)
+            resolve_model_inputs(config, task, private_root=private_root, config_dir=path.parent)
             return [
                 _check(
                     CheckStatus.PASS,
@@ -110,7 +115,7 @@ def _metric_scenario_checks(context) -> list:
                 f"{len(task.metric_scenarios)} declared scenarios; source, binding, CPU and thread configuration present",
             )
         ]
-    except (OSError, KeyError, TypeError, ValueError) as error:
+    except (OSError, KeyError, TypeError, ValueError, PrivateAssetError) as error:
         return [
             _check(
                 CheckStatus.FAIL,
@@ -288,7 +293,18 @@ def _load_context(
 
     task: TaskRecord | None = None
     try:
-        task = TaskCatalog(repository_root).validate_one(task_id)
+        catalog = TaskCatalog(repository_root)
+        resources = config.resources_for(task_id)
+        task = (
+            catalog.validate_file(resolve_repository_path(repository_root, resources.task_config_path))
+            if resources.task_config_path is not None else catalog.validate_one(task_id)
+        )
+        if task.task.task_id != task_id:
+            raise ValueError("configured evaluator task ID differs from requested task")
+        if resources.agent_task_config_path is not None:
+            agent_task = catalog.validate_file(resolve_repository_path(repository_root, resources.agent_task_config_path))
+            if agent_task.task.task_id != task_id:
+                raise ValueError("configured Agent task ID differs from requested task")
     except Exception as error:
         checks.append(
             _check(
@@ -758,6 +774,24 @@ def _judge_environment_check(
     client: object,
 ) -> DoctorCheck:
     plugin = RepositoryPluginRegistry.load(context.task.task.repository.plugin)
+    from pitbench.evaluator.representations import representation_type
+
+    dependencies = sorted({
+        dependency
+        for protocol in getattr(context.task.task, "metric_scenarios", [])
+        for dependency in representation_type(protocol.representation).runtime_dependencies
+    })
+    if dependencies:
+        try:
+            client.containers.run(
+                reference,
+                ["python3", "-c", "import importlib; [importlib.import_module(name) for name in " + repr(dependencies) + "]"],
+                network_disabled=True, remove=True, stdout=True, stderr=True,
+            )
+        except Exception as error:
+            return _check(CheckStatus.FAIL, "judge environment",
+                          f"metric scenario runtime dependencies are unavailable: {error}",
+                          "Rebuild the configured image with the declared representation dependencies before collection.")
     requirements = plugin.judge_environment_requirements
     if not requirements:
         return _check(

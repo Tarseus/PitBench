@@ -109,6 +109,10 @@ struct Session {
 
 #ifdef PITBENCH_CBC
 CbcEventHandler::CbcAction Events::event(CbcEvent event) {
+  // Heuristic and parallel child models are not global incumbents. In particular,
+  // postProcessedSolver() follows parent preprocessing state and resolves an LP;
+  // invoking it from a child worker races with the parent's solver state.
+  if (model_->parentModel() != nullptr) return noAction;
   const bool incumbent = event == solution || event == heuristicSolution || event == endSearch;
   const double *values = nullptr;
   if (incumbent && model_->bestSolution()) {

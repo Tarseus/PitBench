@@ -694,12 +694,6 @@ def bench_command(args: argparse.Namespace) -> int:
         print("base benchmark requires a clean repository", file=sys.stderr)
         return 2
     patch_sha256 = hashlib.sha256(patch).hexdigest() if not args.dry_run else None
-    planner = None
-    if "plan" in config.get("agent_tools", []) and not args.dry_run:
-        planner = _algorithm_planner(config)
-        source = _planning_source(patch)
-        if args.label == "agent":
-            planner.require_implementation(getattr(args, "implementation_id", None), source)
     if not args.dry_run:
         experiment = _candidate_experiment(config, args, patch, patch_sha256)
         if experiment is not None:
@@ -740,56 +734,57 @@ def bench_command(args: argparse.Namespace) -> int:
         for seed in seeds
         for budget in budgets
     ]
-    attempt = None
-    build_root = runs_root
-    if planner is not None:
-        from uuid import uuid4
+    from uuid import uuid4
 
-        from pitbench.schema.planning import Evidence
+    result_id = f"bench_{uuid4().hex}"
+    result_path = getattr(args, "result", None) or runs_root / "results" / f"{result_id}.json"
+    build_root = runs_root / "attempts" / result_id
+    result = {
+        "schema_version": "1.0", "kind": "pitbench.development_result",
+        "id": result_id, "task_id": config["task_id"],
+        "source": _source_version(patch) if not args.dry_run else None,
+        "summary": f"Public development benchmark: {args.label}",
+        "stage": "build" if args.build else "solve", "attempt_status": "running",
+        "execution_status": "missing", "solution_validity": "unverified",
+        "expected_runs": len(grid), "observations": [], "artifact_paths": [],
+        "workload": {
+            "instances": [str(instance) for instance in instances],
+            "seeds": list(seeds), "budgets_sec": list(budgets), "threads": threads,
+            "label": args.label, "experiment_id": getattr(args, "experiment_id", None),
+            "hypothesis_id": getattr(args, "hypothesis_id", None),
+        },
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "failure_stage": None,
+    }
 
-        attempt = Evidence(
-            id=f"bench_{uuid4().hex}", kind="experiment", source=source,
-            summary=f"Public development benchmark attempt: {args.label}",
-            implementation_id=getattr(args, "implementation_id", None) if args.label == "agent" else None,
-            expected_runs=len(grid), stage="build" if args.build else "solve",
-            attempt_status="running",
-            workload={
-                "instances": [str(instance) for instance in instances],
-                "seeds": list(seeds), "budgets_sec": list(budgets), "threads": threads,
-                "label": args.label, "experiment_id": getattr(args, "experiment_id", None),
-                "hypothesis_id": getattr(args, "hypothesis_id", None),
-            },
-        )
-        planner.record_experiment(attempt, baseline=args.label == "base")
-        build_root = runs_root / "planning_attempts" / attempt.id
+    def save_result():
+        if not args.dry_run:
+            _write_development_result(Path(result_path), result)
+
+    save_result()
     if args.build:
-        build_error = None
         try:
             built = _run_build_steps(config, dry_run=args.dry_run, runs_root=build_root)
         except Exception as error:
-            build_error, built = error, False
-        if attempt is not None:
-            if build_error is not None:
-                log_path = build_root / "build" / "invocation-error.json"
-                log_path.parent.mkdir(parents=True, exist_ok=True)
-                log_path.write_text(json.dumps({"error": str(build_error)}, indent=2))
-            attempt.artifact_paths = [str(path) for path in sorted((build_root / "build").glob("*")) if path.is_file()]
-            if not built:
-                attempt.summary = "Public development benchmark failed during build"
-                attempt.execution_status = "fail"
-                attempt.attempt_status = "finished"
-                attempt.failure_stage = "build"
-                if build_error is not None:
-                    attempt.workload["build_error"] = str(build_error)
-            else:
-                attempt.stage = "solve"
-            _algorithm_planner(config).update_experiment(attempt)
+            log_path = build_root / "build" / "invocation-error.json"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(json.dumps({"error": str(error)}, indent=2))
+            result["workload"]["build_error"] = str(error)
+            built = False
+        result["artifact_paths"] = [str(path) for path in sorted((build_root / "build").glob("*")) if path.is_file()]
         if not built:
-            if build_error is not None:
-                raise build_error
+            result.update(execution_status="fail", attempt_status="finished", failure_stage="build",
+                          finished_at=datetime.now(timezone.utc).isoformat())
+            save_result()
+            print(json.dumps({"development_result": str(result_path), "execution_status": "fail"}))
             return 1
-    artifacts = _artifact_identity(config)
-
+        result["stage"] = "solve"
+        save_result()
+    # Each invocation retains its solver outputs; the top-level label points to the latest attempt.
+    if not args.dry_run:
+        (build_root / args.label).mkdir(parents=True, exist_ok=True)
+        if args.label == "agent" and (runs_root / "base").exists():
+            (build_root / "base").symlink_to((runs_root / "base").resolve(), target_is_directory=True)
     def run_one(spec):
         instance, seed, budget = spec
         return _run_one(
@@ -802,19 +797,23 @@ def bench_command(args: argparse.Namespace) -> int:
             patch_sha256,
             threads,
             artifacts,
-            runs_root,
+            build_root,
         )
 
-    with ThreadPoolExecutor(max_workers=parallel) as executor:
-        succeeded = list(executor.map(run_one, grid))
-
-    if "plan" not in config.get("agent_tools", []) or args.dry_run:
+    try:
+        artifacts = _artifact_identity(config)
+        with ThreadPoolExecutor(max_workers=parallel) as executor:
+            succeeded = list(executor.map(run_one, grid))
+    except Exception as error:
+        result["workload"]["invocation_error"] = str(error)
+        succeeded = [False]
+    if args.dry_run:
         return 0 if all(succeeded) else 1
 
     payloads: list[dict[str, Any]] = []
     feedback_paths: list[str] = []
     missing_feedback: list[dict[str, Any]] = []
-    run_root_label = runs_root / args.label
+    run_root_label = build_root / args.label
     for instance, seed, budget in grid:
         try:
             inst_sha = _sha256(instance)
@@ -833,7 +832,6 @@ def bench_command(args: argparse.Namespace) -> int:
                 "error": str(error),
             })
 
-    planner = _algorithm_planner(config)
     complete = len(payloads) == len(grid)
     execution_status = "missing" if not complete else (
         "fail" if any(
@@ -847,98 +845,49 @@ def bench_command(args: argparse.Namespace) -> int:
             "valid" if all(value is True for value in validity) else "unverified"
         )
     )
-    attempt.summary = f"Public development benchmark: {args.label}"
-    attempt.artifact_paths.extend(feedback_paths)
-    attempt.observations = payloads
-    attempt.stage = "solve"
-    attempt.attempt_status = "finished"
-    attempt.execution_status = execution_status
-    attempt.solution_validity = solution_validity
-    attempt.failure_stage = "solve" if execution_status != "pass" or solution_validity == "invalid" else None
-    attempt.workload["missing_feedback"] = missing_feedback
-    evidence = planner.update_experiment(attempt)
-    print(json.dumps({
-        "planning_evidence": evidence.id,
-        "affected_nodes": evidence.affected_nodes,
-        "potential_affected_nodes": evidence.potential_affected_nodes,
-        "implementation_id": evidence.implementation_id,
-        "next_action": "Run pitbench plan, update the algorithm model from observations, and compare mechanism changes before the next candidate experiment.",
-    }))
-    if not complete:
-        succeeded.append(False)
-
-    return 0 if all(succeeded) else 1
-
-
-def _planning_source(patch: bytes | None = None):
-    from pitbench.schema.planning import SourceVersion
-
-    repository = _repository()
-    base = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repository, check=True,
-        capture_output=True, text=True,
-    ).stdout.strip()
-    if patch is None:
-        patch = _candidate_patch(repository)
-    return SourceVersion(base_commit=base, patch_sha256=hashlib.sha256(patch).hexdigest())
-
-
-def _algorithm_planner(config: dict[str, Any]):
-    from pitbench.planning import AlgorithmPlanner
-
-    return AlgorithmPlanner(
-        _runs_root(config) / "algorithm_plan.json", config["task_id"],
-        config["instruction"],
+    result.update(
+        observations=payloads, stage="solve", attempt_status="finished",
+        execution_status=execution_status, solution_validity=solution_validity,
+        failure_stage="solve" if execution_status != "pass" or not all(succeeded) else None,
+        finished_at=datetime.now(timezone.utc).isoformat(),
     )
+    result["artifact_paths"].extend(feedback_paths)
+    result["workload"]["missing_feedback"] = missing_feedback
+    if not all(succeeded) and result["execution_status"] == "pass":
+        result["execution_status"] = "fail"
+    latest = runs_root / args.label
+    if latest.is_dir() and not latest.is_symlink():
+        legacy = runs_root / "attempts" / f"legacy_{uuid4().hex}"
+        legacy.mkdir(parents=True)
+        latest.rename(legacy / args.label)
+    latest_tmp = runs_root / (".latest_" + result_id)
+    latest_tmp.symlink_to(run_root_label.resolve(), target_is_directory=True)
+    os.replace(latest_tmp, latest)
+    save_result()
+    print(json.dumps({"development_result": str(result_path),
+                      "execution_status": result["execution_status"]}))
+    return 0 if all(succeeded) and complete else 1
 
 
-def plan_command(args: argparse.Namespace) -> int:
-    from pitbench.schema.planning import (
-        AlgorithmModel,
-        Evidence,
-        ImplementationRecord,
-        MechanismProposal,
-        PlanningDecision,
-    )
+def _write_development_result(path: Path, payload: dict) -> None:
+    """Atomically export public evidence; strategy-specific consumers live elsewhere."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
+        temporary = Path(output.name)
+        try:
+            json.dump(payload, output, indent=2)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+            output.close()
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
-    if args.schema:
-        print(json.dumps({
-            "model": AlgorithmModel.model_json_schema(),
-            "proposal": MechanismProposal.model_json_schema(),
-            "decision": PlanningDecision.model_json_schema(),
-            "evidence": Evidence.model_json_schema(),
-            "implementation": ImplementationRecord.model_json_schema(),
-        }, indent=2))
-        return 0
-    config = _config()
-    planner = _algorithm_planner(config)
-    source = _planning_source()
-    if args.model:
-        planner.update_model(AlgorithmModel.model_validate_json(args.model.read_text()), source)
-    elif args.proposal:
-        planner.add_proposal(MechanismProposal.model_validate_json(args.proposal.read_text()))
-    elif args.decision:
-        planner.decide(PlanningDecision.model_validate_json(args.decision.read_text()), source)
-    elif args.implementation:
-        record = ImplementationRecord.model_validate_json(args.implementation.read_text())
-        for ref in [*record.source_refs, *(ref for deviation in record.deviations for ref in deviation.source_refs)]:
-            path = (_repository() / ref).resolve()
-            if not path.is_relative_to(_repository().resolve()) or not path.is_file():
-                raise ValueError(f"implementation source reference does not exist: {ref}")
-        planner.add_implementation(record, source)
-    elif args.evidence:
-        evidence = Evidence.model_validate_json(args.evidence.read_text())
-        if not evidence.artifact_paths:
-            raise ValueError("source/trace evidence requires an inspectable artifact")
-        for ref in evidence.artifact_paths:
-            artifact = Path(ref)
-            if not artifact.is_absolute():
-                artifact = _repository() / artifact
-            if not artifact.is_file():
-                raise ValueError(f"evidence artifact does not exist: {ref}")
-        planner.add_evidence(evidence, source)
-    print(json.dumps(planner.context(source), indent=2))
-    return 0
+
+def _source_version(patch: bytes) -> dict[str, str]:
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=_repository(), text=True).strip()
+    return {"base_commit": base, "patch_sha256": hashlib.sha256(patch).hexdigest()}
 
 
 def diagnose_command(args: argparse.Namespace) -> int:
@@ -1159,7 +1108,7 @@ def parser() -> argparse.ArgumentParser:
         bench = commands.add_parser("bench")
         bench.add_argument("--hypothesis-id")
         bench.add_argument("--experiment-id")
-        bench.add_argument("--implementation-id", help="implementation record to measure when algorithm-space planning is enabled")
+        bench.add_argument("--result", type=Path, help="export versioned public benchmark evidence (including failures)")
         bench.add_argument("--split", default="dev")
         bench.add_argument("--label", choices=("base", "agent"), default="agent")
         bench.add_argument(
@@ -1187,13 +1136,6 @@ def parser() -> argparse.ArgumentParser:
             help="diagnose every declared development budget",
         )
         diagnose.set_defaults(handler=diagnose_command)
-    if "plan" in tools:
-        planning = commands.add_parser("plan", help="Model algorithm transitions and compare mechanism changes")
-        action = planning.add_mutually_exclusive_group()
-        action.add_argument("--schema", action="store_true", help="show the model and planning JSON schemas")
-        for name in ("model", "proposal", "decision", "evidence", "implementation"):
-            action.add_argument(f"--{name}", type=Path, help=f"submit a {name} JSON file")
-        planning.set_defaults(handler=plan_command)
     if "validate" in tools:
         validate = commands.add_parser("validate")
         validate.set_defaults(handler=validate_command)

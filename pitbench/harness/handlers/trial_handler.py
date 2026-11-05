@@ -1,3 +1,4 @@
+import hashlib
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -218,4 +219,5 @@ class TrialHandler:
 
     @property
     def client_image_name(self) -> str:
-        return f"{self.docker_image_name_prefix}__client"
+        workspace = hashlib.sha256(str(self.task_paths.input_path.resolve()).encode()).hexdigest()[:12]
+        return f"{self.docker_image_name_prefix}__client-{workspace}"

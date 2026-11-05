@@ -678,8 +678,13 @@ def evaluate_study_candidate(state, args, cpu_pool):
     status_path = args.output / "agent-status" / run_id / "status.json"
     patch = Path(job["audit"]["candidate_patch"])
     task_path = args.output / "workspaces" / execution_id / task_id
+    previous = json.loads(status_path.read_text()) if status_path.is_file() else dict(job)
+    if any(key in previous for key in ("evaluation_started_at", "evaluation_error", "metrics_complete")):
+        archive = status_path.parent / "evaluation-attempts" / (str(time.time_ns()) + ".json")
+        write_json(archive, previous)
     job.update(
-        status="evaluating", evaluation_cpu_pool=cpu_pool, evaluation_started_at=now()
+        status="evaluating", evaluation_cpu_pool=cpu_pool, evaluation_started_at=now(),
+        evaluation_finished_at=None, evaluation_error=None, metric_gaps=[], metrics_complete=False,
     )
     write_json(status_path, job)
     try:

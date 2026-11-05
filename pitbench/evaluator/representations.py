@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import math
 import random
@@ -20,6 +21,12 @@ class RepresentationPlugin(ABC):
     family: str
     requires_tolerance: bool
     suffix: str
+    runtime_dependencies: ClassVar[tuple[str, ...]] = ()
+
+    @classmethod
+    def check_runtime(cls) -> None:
+        for name in cls.runtime_dependencies:
+            importlib.import_module(name)
     _plugins: ClassVar[dict[str, type[RepresentationPlugin]]] = {}
 
     def __init_subclass__(cls, **kwargs) -> None:
@@ -400,6 +407,7 @@ ROW_FIELDS = ("row_lower", "row_upper", "row_names")
 class LinearModelRepresentation(RepresentationPlugin):
     """MILP row/column permutations and independent primal arithmetic checks."""
 
+    runtime_dependencies = ("numpy", "scipy")
     name = "row_column_permutation"
     family = "mip"
     requires_tolerance = True

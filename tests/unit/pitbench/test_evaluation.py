@@ -3192,3 +3192,24 @@ def test_invalid_base_solution_does_not_disqualify_candidate() -> None:
 
     assert result.accepted is True
     assert all(check.code != ValidityCode.SOLUTION for check in result.checks)
+
+
+def test_metric_coverage_uses_configured_frozen_evaluator_view(tmp_path, monkeypatch):
+    from pitbench.cli.evaluate_config import EvaluationConfig
+
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "results.json").write_text(json.dumps({"results": []}))
+    config = EvaluationConfig.model_validate({"tasks": {"task": {"task_config_path": "frozen.yaml", "agent_task_config_path": "public.yaml"}}})
+    calls = []
+
+    class Catalog:
+        def __init__(self, root): pass
+        def validate_file(self, path):
+            calls.append(path.name)
+            return SimpleNamespace(task=SimpleNamespace(task_id="task"))
+
+    monkeypatch.setattr("pitbench.cli.main.TaskCatalog", Catalog)
+    coverage = _normal_metric_coverage(ROOT, tmp_path, "run", ["task"], None, evaluation_config=config)
+    assert calls == ["frozen.yaml"]
+    assert not coverage["complete"]

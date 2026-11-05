@@ -41,9 +41,6 @@ def write_agent_tooling(
         (schema / "__init__.py").write_text("")
         for name in ("research.py", "objective_catalog.json"):
             shutil.copy2(repository_root / "pitbench/schema" / name, schema / name)
-        if AgentTool.PLAN in tools:
-            shutil.copy2(repository_root / "pitbench/planning.py", tooling)
-            shutil.copy2(repository_root / "pitbench/schema/planning.py", schema)
         shutil.copytree(
             repository_root / "pitbench" / "solver_drivers",
             tooling / "solver_drivers",

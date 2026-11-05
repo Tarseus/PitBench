@@ -1118,10 +1118,10 @@ Feedback records the input hash and runner artifact hash
 so Base/Agent comparisons expose stale builds. Set `agent_tools: []` explicitly
 in the local config to omit these tools and instances.
 
-For [Algorithm-Space Global Planning](docs/research/algorithm-space-planning.md),
-enable `agent_tools: [inspect, workspace, bench, plan]`. The same Agent builds a
-partial hierarchical algorithm model, compares mechanism changes, maps them to
-source, and revises the model from public benchmark evidence using `pitbench plan`.
+External Agent strategies can use the existing `--agent-import-path` extension
+and the [versioned public benchmark result interface](docs/development-results.md).
+Algorithm-Space Agent is maintained as an independent Python project;
+PitBench provides execution, independent verification and public evidence export.
 
 The normal candidate judge collects Performance and Resource Efficiency data,
 plus the seed and representation runs enabled by each task config. Solver

@@ -94,6 +94,8 @@ class DockerComposeManager:
         self._client_container: Container | None = None
         self._sessions_logs_path = sessions_logs_path
         self._agent_logs_path = agent_logs_path
+        if agent_logs_path is not None:
+            (agent_logs_path / "development-runs").mkdir(parents=True, exist_ok=True)
         self._cpuset_cpus = cpuset_cpus
         self._nested_sandbox = nested_sandbox
         self._compose_override_path: Path | None = None

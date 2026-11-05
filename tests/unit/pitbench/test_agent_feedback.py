@@ -158,6 +158,8 @@ def test_mechanism_bench_requires_current_declaration_before_build_or_solve(
     patch = [b"first candidate patch"]
     monkeypatch.setattr(agent_cli, "_config", lambda: config)
     monkeypatch.setattr(agent_cli, "_repository", lambda: tmp_path)
+    monkeypatch.setattr(agent_cli, "_source_version", lambda patch: {"base_commit": "a" * 40, "patch_sha256": hashlib.sha256(patch).hexdigest()})
+    monkeypatch.setenv("PITBENCH_RUNS", str(tmp_path / "runs"))
     monkeypatch.setattr(agent_cli, "_candidate_patch", lambda _: patch[0])
     monkeypatch.setenv("PITBENCH_RUNS", str(tmp_path / "runs"))
     calls = []
@@ -185,7 +187,7 @@ def test_mechanism_bench_requires_current_declaration_before_build_or_solve(
         agent_cli.bench_command(args)
     assert calls == []
     args.experiment_id = "feature_off"
-    assert agent_cli.bench_command(args) == 0
+    assert agent_cli.bench_command(args) == 1
     assert calls[0] == "build"
     assert calls[1]["record_sha256"] == registered["record_sha256"]
     calls.clear()
@@ -196,13 +198,13 @@ def test_mechanism_bench_requires_current_declaration_before_build_or_solve(
     args.hypothesis_id = args.experiment_id = None
     patch[0] = b""
     args.label = "base"
-    assert agent_cli.bench_command(args) == 0
+    assert agent_cli.bench_command(args) == 1
     assert calls == ["build", None]
     calls.clear()
     patch[0] = b"second candidate patch"
     args.label = "agent"
     config["candidate_hypotheses_required"] = False
-    assert agent_cli.bench_command(args) == 0
+    assert agent_cli.bench_command(args) == 1
     assert calls == ["build", None]
 
 
@@ -541,6 +543,7 @@ def test_bench_defaults_to_primary_budget_and_allows_experimental_settings(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     config = {
+        "task_id": "test",
         "budgets_sec": [5.0, 20.0],
         "primary_budget_sec": 20.0,
         "development_seeds": [7, 8],
@@ -549,6 +552,8 @@ def test_bench_defaults_to_primary_budget_and_allows_experimental_settings(
     calls: list[tuple[int, float, str, int]] = []
     monkeypatch.setattr(agent_cli, "_config", lambda: config)
     monkeypatch.setattr(agent_cli, "_repository", lambda: tmp_path)
+    monkeypatch.setattr(agent_cli, "_source_version", lambda patch: {"base_commit": "a" * 40, "patch_sha256": hashlib.sha256(patch).hexdigest()})
+    monkeypatch.setenv("PITBENCH_RUNS", str(tmp_path / "runs"))
     monkeypatch.setattr(agent_cli, "_candidate_patch", lambda _: b"")
     monkeypatch.setattr(
         agent_cli, "_instances", lambda _selected, _config: [tmp_path / "dev_0000.json"]
@@ -570,17 +575,17 @@ def test_bench_defaults_to_primary_budget_and_allows_experimental_settings(
         label="agent",
         build=False,
     )
-    assert agent_cli.bench_command(args) == 0
+    assert agent_cli.bench_command(args) == 1
     assert calls == [(7, 20.0, "agent", 1)]
     args.budget = 3.0
     args.threads = 4
-    assert agent_cli.bench_command(args) == 0
+    assert agent_cli.bench_command(args) == 1
     assert calls[-1] == (7, 3.0, "agent", 4)
     args.budget = None
     args.all_seeds = True
     args.all_budgets = True
     calls.clear()
-    assert agent_cli.bench_command(args) == 0
+    assert agent_cli.bench_command(args) == 1
     assert calls == [
         (7, 5.0, "agent", 4),
         (7, 20.0, "agent", 4),
@@ -600,7 +605,7 @@ def test_bench_defaults_to_primary_budget_and_allows_experimental_settings(
         "_run_build_steps",
         lambda _config, *, dry_run, runs_root: built.append(dry_run) or True,
     )
-    assert agent_cli.bench_command(args) == 0
+    assert agent_cli.bench_command(args) == 1
     assert built == [False]
 
 
@@ -1412,3 +1417,68 @@ def test_proto_feedback_labels_unverified_exact_preview(tmp_path: Path) -> None:
         {**limited, "performance_protocol": "exact_verified_solve"},
         {**limited, "performance_protocol": "exact_verified_solve"},
     )
+
+
+@pytest.mark.parametrize("failure", ["exit", "exception"])
+def test_public_result_retains_build_failure_before_any_solver_call(tmp_path, monkeypatch, failure):
+    config = {"task_id": "test", "agent_tools": ["bench"], "development_seeds": [1],
+              "budgets_sec": [5], "primary_budget_sec": 5, "threads": 1}
+    monkeypatch.setattr(agent_cli, "_config", lambda: config)
+    monkeypatch.setattr(agent_cli, "_repository", lambda: tmp_path)
+    monkeypatch.setattr(agent_cli, "_candidate_patch", lambda _: b"patch")
+    monkeypatch.setattr(agent_cli, "_source_version", lambda _: {"base_commit": "a" * 40, "patch_sha256": "b" * 64})
+    monkeypatch.setattr(agent_cli, "_instances", lambda *_: [tmp_path / "dev.json"])
+    monkeypatch.setenv("PITBENCH_RUNS", str(tmp_path / "runs"))
+    result_path = tmp_path / "result.json"
+
+    def build(*args, **kwargs):
+        active = json.loads(result_path.read_text())
+        assert active["stage"] == "build" and active["attempt_status"] == "running"
+        assert active["expected_runs"] == 1
+        if failure == "exception":
+            raise TimeoutError("compiler timed out")
+        return False
+
+    monkeypatch.setattr(agent_cli, "_run_build_steps", build)
+    monkeypatch.setattr(agent_cli, "_run_one", lambda *a: pytest.fail("solver ran after build failed"))
+    args = agent_cli.parser().parse_args(["bench", "--build", "--result", str(result_path)])
+    assert agent_cli.bench_command(args) == 1
+    result = json.loads(result_path.read_text())
+    assert result["execution_status"] == "fail"
+    assert result["attempt_status"] == "finished"
+    assert result["failure_stage"] == "build"
+    assert result["source"]["patch_sha256"] == "b" * 64
+    if failure == "exception":
+        assert Path(result["artifact_paths"][0]).is_file()
+
+
+def test_public_attempt_does_not_reuse_stale_feedback_and_retains_each_output(tmp_path, monkeypatch):
+    config = {"task_id": "test", "agent_tools": ["bench"], "development_seeds": [1, 2],
+              "budgets_sec": [5], "primary_budget_sec": 5, "threads": 1}
+    instance = tmp_path / "dev.json"
+    instance.write_text("{}")
+    monkeypatch.setattr(agent_cli, "_config", lambda: config)
+    monkeypatch.setattr(agent_cli, "_repository", lambda: tmp_path)
+    monkeypatch.setattr(agent_cli, "_candidate_patch", lambda _: b"patch")
+    monkeypatch.setattr(agent_cli, "_source_version", lambda _: {"base_commit": "a" * 40, "patch_sha256": "b" * 64})
+    monkeypatch.setattr(agent_cli, "_instances", lambda *_: [instance])
+    monkeypatch.setattr(agent_cli, "_artifact_identity", lambda _: {})
+    monkeypatch.setenv("PITBENCH_RUNS", str(tmp_path / "runs"))
+    calls = []
+
+    def run_one(config, path, seed, budget, dry, label, patch, threads, artifacts, root):
+        calls.append(root)
+        destination = root / label / f"{path.stem}-{agent_cli._sha256(path)[:12]}.seed-{seed}.budget-{budget:g}.threads-{threads}.feedback.json"
+        if len(calls) <= 2 or seed == 1:
+            destination.write_text(json.dumps({"seed": seed, "verified_valid": True, "returncode": 0}))
+        return True
+
+    monkeypatch.setattr(agent_cli, "_run_one", run_one)
+    args = agent_cli.parser().parse_args(["bench", "--all-seeds"])
+    assert agent_cli.bench_command(args) == 0
+    assert agent_cli.bench_command(args) == 1
+    results = [json.loads(p.read_text()) for p in (tmp_path / "runs/results").glob("*.json")]
+    assert {r["execution_status"] for r in results} == {"pass", "missing"}
+    assert sorted(len(r["observations"]) for r in results) == [1, 2]
+    assert all(Path(ref).is_file() for r in results for ref in r["artifact_paths"])
+    assert calls[0] != calls[2]

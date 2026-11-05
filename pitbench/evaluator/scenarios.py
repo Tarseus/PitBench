@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import gc
 import hashlib
 import itertools
@@ -20,6 +21,7 @@ import yaml
 from pitbench.evaluator.artifacts import write_json
 from pitbench.evaluator.collection import run_collection_jobs, run_collection_process
 from pitbench.evaluator.docker_judge import docker_cli_image
+from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.evaluator.representations import representation_type
 from pitbench.metrics.scenario_report import compute_scenario_report, sequence_key
 from pitbench.schema.scenarios import (
@@ -46,6 +48,54 @@ def task_digest(task: PitBenchTask) -> str:
 
 def _read(path):
     return yaml.safe_load(Path(path).read_text())
+
+
+def resolve_model_inputs(
+    config: dict, task: PitBenchTask, *, private_root: Path, config_dir: Path
+) -> tuple[dict, list[dict]]:
+    """Resolve transport paths through the declared asset namespace and frozen hashes."""
+    resolved = copy.deepcopy(config)
+    resolver = PrivateAssetResolver(private_root)
+    mappings = {}
+    panels = {panel.name: panel for panel in task.instance_sets}
+    for protocol in task.metric_scenarios:
+        for panel in protocol.instance_sets:
+            cases = resolved["instances"][panel]
+            if len(cases) != panels[panel].size or len({case["id"] for case in cases}) != len(cases):
+                raise ValueError("scenario model inventory differs from the frozen task")
+            frozen = protocol.model_sequences_sha256.get(panel, {})
+            if set(frozen) != {case["id"] for case in cases}:
+                raise ValueError("scenario instance identities differ from the frozen task")
+            for case in cases:
+                by_scenario = case.setdefault("models_by_scenario", {})
+                names = by_scenario.get(protocol.id, case.get("models", []))
+                hashes = frozen[case["id"]]
+                if not names or len(names) != len(hashes):
+                    raise ValueError("scenario model sequence differs from the frozen task")
+                paths = []
+                for name, expected in zip(names, hashes, strict=True):
+                    known = mappings.get(name)
+                    if known is not None:
+                        if known["sha256"] != expected:
+                            raise ValueError(f"conflicting frozen scenario hashes for {name}")
+                        paths.append(known["resolved"])
+                        continue
+                    if name.startswith("private://"):
+                        path = resolver.resolve(name, expected)
+                    else:
+                        path = Path(name)
+                        path = (config_dir / path).resolve() if not path.is_absolute() else path.resolve()
+                        if not path.is_file() and path.is_relative_to(resolver.logical_root):
+                            relative = path.relative_to(resolver.logical_root).as_posix()
+                            path = resolver.resolve("private://" + relative, expected)
+                        if not path.is_file():
+                            raise ValueError(f"scenario model input is missing: {name}")
+                        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                            raise ValueError(f"scenario model input hash mismatch: {name}")
+                    paths.append(str(path))
+                    mappings[name] = {"declared": name, "resolved": str(path), "sha256": expected}
+                by_scenario[protocol.id] = paths
+    return resolved, list(mappings.values())
 
 
 def _rss():
@@ -171,6 +221,7 @@ def prepare(config_path: Path, output: Path) -> dict:
                 "probe",
                 "--session-plugin",
                 runtime["session_plugin"],
+                *[arg for name in sorted({p.representation for p in protocols}) for arg in ("--representation", name)],
             ],
             capture_output=True,
             text=True,
@@ -575,7 +626,53 @@ def load_report(campaign_path: Path, task: PitBenchTask):
     campaign = ScenarioCampaign.model_validate_json(campaign_path.read_text())
     if campaign.task_id != task.task_id or campaign.task_sha256 != task_digest(task):
         raise ValueError("scenario campaign belongs to another frozen task")
+    if campaign.protocols != task.metric_scenarios:
+        raise ValueError("scenario protocols differ from the frozen task")
+    panels = {panel.name: panel for panel in task.instance_sets}
+    for protocol in task.metric_scenarios:
+        for panel in protocol.instance_sets:
+            instances = campaign.instances_by_set.get(panel, [])
+            if panel not in panels or len(instances) != panels[panel].size:
+                raise ValueError("scenario inventory differs from the frozen task")
+            frozen = protocol.model_sequences_sha256.get(panel)
+            if frozen is not None and set(instances) != set(frozen):
+                raise ValueError("scenario instance identities differ from the frozen task")
     return compute_scenario_report(campaign)
+
+
+
+def scenario_evidence_failures(task: PitBenchTask, output_dir: Path, payload: dict) -> list[str]:
+    """Recheck requested scenarios from raw campaigns, independent of report flags."""
+    failures = []
+    artifacts = payload.get("artifacts", {})
+    summary = payload.get("summary", {})
+    if task.metric_scenarios:
+        if summary.get("metric_scenario_error"):
+            failures.append("metric scenario collection failed: " + str(summary["metric_scenario_error"]))
+        campaign_ref = artifacts.get("metric_scenario_campaign")
+        if not isinstance(campaign_ref, dict) or not campaign_ref.get("path"):
+            failures.append("metric scenario campaign is missing")
+        else:
+            campaign_path = (output_dir / campaign_ref["path"]).resolve()
+            try:
+                if not campaign_path.is_relative_to(output_dir.resolve()):
+                    raise ValueError("campaign artifact escapes evaluation output")
+                if hashlib.sha256(campaign_path.read_bytes()).hexdigest() != campaign_ref.get("sha256"):
+                    raise ValueError("campaign artifact hash mismatch")
+                report = load_report(campaign_path, task)
+                candidate_ref = artifacts.get("candidate_patch") or {}
+                candidate_path = (output_dir / candidate_ref.get("path", "candidate.patch")).resolve()
+                if not candidate_path.is_relative_to(output_dir.resolve()):
+                    raise ValueError("candidate artifact escapes evaluation output")
+                if hashlib.sha256(candidate_path.read_bytes()).hexdigest() != report.candidate_sha256:
+                    raise ValueError("scenario campaign belongs to another candidate patch")
+                if not report.complete:
+                    failures.append("metric scenario report is incomplete")
+                if report.invalid_runs:
+                    failures.append(f"{len(report.invalid_runs)} invalid metric scenario runs")
+            except (OSError, ValueError, TypeError, KeyError) as error:
+                failures.append(f"metric scenario evidence is invalid: {error}")
+    return failures
 
 
 def collect_for_evaluation(
@@ -641,6 +738,20 @@ def _collect_source_build(task, candidate_patch, output, config_path, context, r
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     code_root = Path(__file__).resolve().parents[2]
+    source_config = Path(config_path).resolve()
+    config, inputs = resolve_model_inputs(
+        _read(source_config), task, private_root=Path(context["private_root"]),
+        config_dir=source_config.parent,
+    )
+    config_path = output / "resolved-scenario-config.yaml"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+    write_json(output / "scenario-input-resolution.json", {
+        "source_config": str(source_config),
+        "source_config_sha256": hashlib.sha256(source_config.read_bytes()).hexdigest(),
+        "resolved_config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+        "model_inputs": inputs,
+    })
+    private_root = PrivateAssetResolver(Path(context["private_root"])).root
     task_path = output / "scenario-source-task.yaml"
     task_path.write_text(yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False))
     command = [
@@ -663,12 +774,17 @@ def _collect_source_build(task, candidate_patch, output, config_path, context, r
     mounts = {
         str(code_root): "ro",
         str(Path(context["base_repository"]).resolve()): "ro",
-        str(Path(context["private_root"]).resolve()): "ro",
+        str(private_root): "ro",
         str(config_path.resolve()): "ro",
         str(candidate_patch.resolve()): "ro",
         str(output): "rw",
         "/etc/machine-id": "ro",
     }
+    mounted = [Path(name) for name in mounts]
+    for item in inputs:
+        path = Path(item["resolved"])
+        if not any(path.is_relative_to(root) for root in mounted):
+            mounts[str(path)] = "ro"
     for path, mode in mounts.items():
         command += ["--volume", path + ":" + path + ":" + mode]
     command += [
@@ -684,7 +800,7 @@ def _collect_source_build(task, candidate_patch, output, config_path, context, r
         "--base",
         str(Path(context["base_repository"]).resolve()),
         "--private-root",
-        str(Path(context["private_root"]).resolve()),
+        str(private_root),
         "--config",
         str(config_path.resolve()),
         "--output",
@@ -720,6 +836,8 @@ def evaluate_source_build(
 
     task = PitBenchTask.from_yaml(task_path)
     config = _read(config_path)
+    for protocol in task.metric_scenarios:
+        representation_type(protocol.representation).check_runtime()
     recipe = config.pop("source_build")
     if (
         recipe["source_commit"] != task.release.base_commit
@@ -803,6 +921,7 @@ def main():
     sub.add_argument("--job", type=Path, required=True)
     sub = subs.add_parser("probe")
     sub.add_argument("--session-plugin", required=True)
+    sub.add_argument("--representation", action="append", default=[])
     source = subs.add_parser("evaluate-source")
     for name in ("task", "candidate", "base", "private-root", "config", "output"):
         source.add_argument("--" + name, type=Path, required=True)
@@ -828,5 +947,7 @@ def main():
     elif args.action == "worker":
         result = worker(args.job)
     else:
+        for name in args.representation:
+            representation_type(name).check_runtime()
         result = ScenarioSession.load(args.session_plugin).probe()
     print(json.dumps(result, allow_nan=False))

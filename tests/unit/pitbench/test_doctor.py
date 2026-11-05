@@ -289,3 +289,40 @@ def test_reliability_plan_check_reports_materialized_cases(
 
     assert check.status is CheckStatus.PASS
     assert "2 boundary cases" in check.detail
+
+
+def test_preflight_validates_configured_evaluator_and_agent_views(tmp_path, monkeypatch):
+    import yaml
+
+    from pitbench.cli.doctor import _load_context
+
+    config_path = tmp_path / "evaluate.yaml"
+    config_path.write_text(yaml.safe_dump({"tasks": {"task": {
+        "task_config_path": "evaluator.yaml", "agent_task_config_path": "agent.yaml",
+    }}}))
+    calls = []
+
+    class Catalog:
+        def __init__(self, root): pass
+        def validate_file(self, path):
+            calls.append(path.name)
+            if path.name == "agent.yaml":
+                raise ValueError("public development inputs are missing")
+            return SimpleNamespace(task=SimpleNamespace(task_id="task"))
+
+    monkeypatch.setattr("pitbench.cli.doctor.TaskCatalog", Catalog)
+    context, checks = _load_context(tmp_path, config_path, "task")
+    assert calls == ["evaluator.yaml", "agent.yaml"]
+    assert any(c.status is CheckStatus.FAIL and "public development inputs" in c.detail for c in checks)
+
+
+def test_doctor_rejects_judge_without_declared_scenario_dependencies(tmp_path):
+    context = doctor_context(tmp_path)
+    context.task.task.repository.plugin = "pitbench.repositories.plugins:PyVRPRepositoryPlugin"
+    context.task.task.metric_scenarios = [SimpleNamespace(representation="row_column_permutation")]
+    run = Mock(side_effect=RuntimeError("No module named 'numpy'"))
+    client = SimpleNamespace(containers=SimpleNamespace(run=run))
+    result = _judge_environment_check(context, "immutable-image", client)
+    assert result.status is CheckStatus.FAIL
+    assert "numpy" in result.detail
+    assert run.call_args.kwargs["network_disabled"] is True
