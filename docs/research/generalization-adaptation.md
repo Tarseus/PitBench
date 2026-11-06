@@ -4,9 +4,17 @@
 
 当前缩减配置为 `configs/research/generalization_latest_high_v2.json`，模型矩阵为 `configs/experiments/generalization_high_matrix.yaml`：仅比较 `gpt-6.1-sol/high` 和 `gpt-6.1-terra/high`，仅保留清单已冻结的最新版本 CBC 2.10.13、SCIP 10.1.0 和 PyVRP 0.14.1，三组各一次，共 18 个条件。开发预算、问题集、指标、seed 和逐条件求解时限保持不变；历史 90 条件配置不覆盖修改。
 
-每个实例、每个预算的正式性能与资源评测中，CBC、SCIP 各使用原任务的 5 个 solver seed；PyVRP 使用 30 个隐藏评测 seed，另有 30 个互不重叠的开发 seed。CBC/SCIP 开发沿用同一组公共 seed，不能称为未见 seed 评测。`pitbench bench` 默认运行单个 seed，需指定 `--all-seeds` 才覆盖可见开发 seed 网格。扩展场景诊断目前每个分布条件取 2 个预定隐藏实例、1 个 solver seed；replay 重放 3 次，不代表 3 个独立 seed。实例生成随机流、表示重标号、solver seed 和 Agent 独立重复是不同维度，本轮 Agent 独立重复仍为 1 次。以上描述的是配置网格，不表示新一轮正式评测已经完成。
+每个实例、每个预算的正式性能与资源评测中，三种求解器统一使用 30 个隐藏评测 seed。CBC、SCIP 保留原来的 5 个开发 seed，评测另外抽取 30 个正整数 seed 并冻结在私有存储中；PyVRP 保留既有两组各 30 个 seed。开发与评测列表互不重叠，同一任务的 Base、候选和三组共享冻结评测列表。历史任务文件保留原样，新策略只写入本轮评测视图。`pitbench bench` 默认运行单个 seed，需指定 `--all-seeds` 才覆盖可见开发 seed 网格。扩展场景诊断目前每个分布条件取 2 个预定隐藏实例、1 个 solver seed；replay 重放 3 次，不代表 3 个独立 seed。实例生成随机流、表示重标号、solver seed 和 Agent 独立重复是不同维度，本轮 Agent 独立重复仍为 1 次。
 
-统一开发队列入口为 `scripts.run_benchmark_release --phase study-models`，通过 `--study-plan` 选择上述配置，并用 `--study-views` 复用 `formal-v2/task-views.json`。入口仅验证并使用计划中选中的任务；`--prepare-only` 冻结清单，不调用 Agent。去掉该选项会启动开发并将最终补丁排入独立隐藏评测队列，当前尚不代表完整的评测与报告闭环已经验收。正式启动前还需完成场景链路、优化空间及隐藏队列闭环验收，并明确处理与已暂停试跑重叠的条件，不能无记录地重新采样。
+统一入口为 `scripts.run_benchmark_release --phase study-models`。机器本地配置 `config/study.local.yaml` 可从 `configs/experiments/generalization_launch.yaml` 配置，包含计划、任务视图、运行配置、CPU 池和输出目录；代理、认证路径和镜像由其引用的本地 evaluation 配置提供，不要求调用者设置环境变量。配置就绪后直接执行：
+
+```bash
+.venv/bin/python -m scripts.run_benchmark_release
+```
+
+默认后台执行，日志和进程回执写入输出目录；`--prepare-only` 只冻结清单，`--foreground` 用于前台运行。每个开发结束的最终补丁通过现有独立 evaluator 进入隐藏评测，使用独立 CPU 池；无需新一次 Agent 调用。全部条件处理完后使用原生报告入口自动汇总，包括失败和缺测。实际源代码 API 构建和指标采集随候选执行，尚未资格化的优化空间在结果中标记为待确认，不能提前宣称能力结论。
+
+经用户确认，先前暂停的全部运行保留为中断预运行，不并入正式样本。新的 18 条件统一从头开始，每个正式条件仅一次 Agent 开发，不根据预运行补丁效果选择重启对象。
 
 本文件规定下一轮实验的比较方式和实施前提。截至 2026-10-31，已实现数据构造、三种求解器的场景接口与基础验证入口，构造并独立验证了 2,150 个新实例。六个固定版本的首轮参考干预校准产生了 76,800 条运行记录，其中有未求解和采集失败；集合打包与新增集合覆盖已修复驱动后完成有效校准。90 次新 Agent 实验尚未启动。实现验证与研究结果分别记录。历史 28 个完成条件不能据此扩充为完整指标覆盖。
 

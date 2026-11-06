@@ -11,7 +11,7 @@
 - `research/generalization_scenarios_v2.yaml`：轨迹、内存、线程、增量、数值及重放诊断的冻结协议。
 - `research/scenario_qualification.yaml`：API 语义检查用的小型解析病例，不是研究结果。
 
-开发队列统一使用 `scripts.run_benchmark_release --phase study-models --study-plan configs/research/generalization_latest_high_v2.json`，同时提供机器本地运行配置、冻结任务视图及输出目录等参数。`--prepare-only` 仅验证和冻结计划，不启动模型；开发完成后的隐藏评测队列仍需经过独立的场景与优化空间验收。详见 [研究说明](../docs/research/generalization-adaptation.md)。
+运行配置模板为 `experiments/generalization_launch.yaml`。在执行机器准备 `config/study.local.yaml` 后，一条 `.venv/bin/python -m scripts.run_benchmark_release` 即可后台启动开发、独立隐藏评测和最终原生报告，无需手动设置环境变量。`--prepare-only` 仅验证和冻结计划，不启动模型。未经优化空间资格化的分布保留待确认标记，详见 [研究说明](../docs/research/generalization-adaptation.md)。
 
 ## 数据准备与通用工具
 
