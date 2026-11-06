@@ -583,13 +583,37 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
         "tasks": {"unselected": {"evaluator_task_config": "missing.yaml"}},
         "arms": {arm["id"]: {} for arm in plan["arms"]},
     }
+    import hashlib
+
+    from tests.unit.pitbench.test_scenario_metrics import protocol
+
+    private = tmp_path / "private"
+    private.mkdir()
     for task_id, record in records.items():
         scenario = tmp_path / (task_id + ".scenario.json")
+        model = private / (task_id + ".json")
+        model.write_text("frozen model input")
+        digest = hashlib.sha256(model.read_bytes()).hexdigest()
+        p = protocol("setup")
+        p.model_sequences_sha256 = {"judge_id": {"one": [digest]}}
+        record.task.metric_scenarios = [p]
+        next(
+            panel for panel in record.task.instance_sets if panel.name == "judge_id"
+        ).size = 1
         scenario.write_text(
             json.dumps(
                 {
                     "source_build": {"source_commit": record.task.release.base_commit},
-                    "instances": {},
+                    "instances": {
+                        "judge_id": [
+                            {
+                                "id": "one",
+                                "models_by_scenario": {
+                                    p.id: ["private://" + model.name]
+                                },
+                            }
+                        ]
+                    },
                 }
             )
         )
@@ -604,7 +628,9 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     views_path = tmp_path / "views.json"
     views_path.write_text(json.dumps(views))
     config = tmp_path / "config.yaml"
-    config.write_text(EvaluationConfig().model_dump_json())
+    config.write_text(
+        EvaluationConfig(paths={"private_root": private}).model_dump_json()
+    )
     args = SimpleNamespace(
         study_plan=plan_path,
         study_views=views_path,

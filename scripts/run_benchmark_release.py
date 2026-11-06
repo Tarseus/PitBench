@@ -1071,6 +1071,14 @@ def study_models(args):
             scenario_file.read_text(),
             Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader),
         )
+        from pitbench.evaluator.scenarios import resolve_model_inputs
+
+        scenario, _ = resolve_model_inputs(
+            scenario,
+            record.task,
+            private_root=private_root,
+            config_dir=scenario_file.parent,
+        )
         if scenario["source_build"]["source_commit"] != record.task.release.base_commit:
             raise ValueError("scenario source differs from study task")
         snapshots[str(task_file)] = hashlib.sha256(task_file.read_bytes()).hexdigest()
