@@ -768,6 +768,114 @@ def test_route_extraction_supports_pre_and_post_v0_14_apis() -> None:
     assert PyVRPDriver._route_visits(_ModernRoute()) == [1, 4]
 
 
+@pytest.mark.parametrize("direct_api", [True, False])
+def test_pyvrp_driver_avoids_model_conversion_when_supported(
+    tmp_path, monkeypatch, direct_api
+):
+    import types
+
+    data = object()
+    calls = []
+    result = SimpleNamespace(
+        best=SimpleNamespace(is_feasible=lambda: True, routes=lambda: [_LegacyRoute()]),
+        cost=lambda: 123,
+        runtime=0.1,
+        num_iterations=1,
+        stats=SimpleNamespace(
+            runtimes=[0.1],
+            feas_stats=[SimpleNamespace(size=1, best_cost=123)],
+        ),
+    )
+
+    def solve(problem, *, stop, seed, display=True):
+        assert problem is data
+        assert stop == 0.1 and seed == 17 and display is False
+        calls.append("solve")
+        return result
+
+    class Model:
+        @classmethod
+        def from_data(cls, problem):
+            assert not direct_api, "driver rebuilt the complete edge graph"
+            assert problem is data
+            calls.append("conversion")
+            return cls()
+
+        def solve(self, *, stop, seed, display=True):
+            return solve(data, stop=stop, seed=seed, display=display)
+
+    module = types.ModuleType("pyvrp")
+    module.Model = Model
+    module.read = lambda *args, **kwargs: data
+    if direct_api:
+        module.solve = solve
+    stop = types.ModuleType("pyvrp.stop")
+    stop.MaxRuntime = lambda seconds: seconds
+    monkeypatch.setitem(sys.modules, "pyvrp", module)
+    monkeypatch.setitem(sys.modules, "pyvrp.stop", stop)
+    instance = tmp_path / "instance.json"
+    instance.write_text(
+        json.dumps(
+            {
+                "coordinates": [[0, 0], [1, 1]],
+                "demands": [0, 1],
+                "capacity": 2,
+            }
+        )
+    )
+    output, trajectory = tmp_path / "result.json", tmp_path / "trajectory.jsonl"
+    PyVRPDriver.main(
+        [
+            "--instance",
+            str(instance),
+            "--output",
+            str(output),
+            "--trajectory",
+            str(trajectory),
+            "--seed",
+            "17",
+            "--budget",
+            "0.1",
+            "--threads",
+            "1",
+        ]
+    )
+    assert calls == (["solve"] if direct_api else ["conversion", "solve"])
+    assert json.loads(output.read_text())["objective"] == 123
+    assert json.loads(output.with_suffix(".solution.json").read_text()) == {
+        "routes": [[1, 4]],
+    }
+    assert json.loads(trajectory.read_text()) == {"time_sec": 0.1, "objective": 123}
+
+
+def test_pyvrp_direct_solve_preserves_fixed_iteration_search(tmp_path):
+    pyvrp = pytest.importorskip("pyvrp")
+    from pyvrp.stop import MaxIterations
+
+    from pitbench.problem_families.public_verification import check_cvrp
+
+    instance = {
+        "coordinates": [[0, 0], [1, 2], [3, 4], [8, 2], [9, 6], [2, 8]],
+        "distance_metric": "EUC_2D",
+        "demands": [0, 1, 2, 1, 2, 1],
+        "capacity": 3,
+    }
+    path = tmp_path / "instance.vrp"
+    PyVRPDriver._vrplib(instance, path)
+    data = pyvrp.read(path, round_func=PyVRPDriver.round_euc_2d)
+    model = pyvrp.Model.from_data(data)
+    previous = model.solve(stop=MaxIterations(25), seed=17, display=False)
+    direct = pyvrp.solve(data, stop=MaxIterations(25), seed=17, display=False)
+
+    def routes(result):
+        return [PyVRPDriver._route_visits(route) for route in result.best.routes()]
+
+    assert routes(direct) == routes(previous)
+    assert direct.cost() == previous.cost()
+    checked = check_cvrp(instance, {"routes": routes(direct)})
+    assert checked["feasible"] and checked["objective"] == direct.cost()
+
+
 def test_statistics_supports_v0_12_instance_set_layout() -> None:
     stats = SimpleNamespace(
         runtimes=[0.1, 0.2],

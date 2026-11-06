@@ -167,6 +167,7 @@ class GeneralizationStudyPlan(BaseModel):
     ] = Field(min_length=1)
     inference_scope: str = Field(min_length=20)
     evaluation_seed_policy: StudySeedPolicy | None = None
+    evaluation_run_target: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def validate_controls(self):

@@ -2267,3 +2267,56 @@ def test_external_runner_removes_stale_solution_on_normal_no_solution(
 
     assert not solution.exists()
     assert json.loads(output.read_text())["solver_termination"] == "time_limit"
+
+
+@pytest.mark.parametrize('reference', [160.00000000000006, 159.99999999999994])
+def test_exact_objective_roundoff_is_consistent_with_independent_verification(reference):
+    from pitbench.metrics.seed_robustness_report import _exact_verified_optimal
+
+    row = exact_observation(objective=160.0, reported_objective=160.0, optimal_or_bks=reference)
+    assert compute_exact_run_outcome(row).kind is ExactRunOutcomeKind.VERIFIED_SOLVED
+    assert _exact_verified_optimal(row)
+
+
+@pytest.mark.parametrize('delta', [5e-7, -5e-7])
+def test_verified_and_reported_objectives_share_existing_absolute_tolerance(delta):
+    from pitbench.metrics.seed_robustness_report import _exact_verified_optimal
+
+    row = exact_observation(objective=42.0 + delta)
+    assert compute_exact_run_outcome(row).kind is ExactRunOutcomeKind.VERIFIED_SOLVED
+    assert _exact_verified_optimal(row)
+
+
+@pytest.mark.parametrize('changes,kind', [
+    ({'objective': 42.000002, 'reported_objective': 42.000002}, ExactRunOutcomeKind.QUALIFICATION_FAILURE),
+    ({'objective': 41.999998, 'reported_objective': 41.999998}, ExactRunOutcomeKind.ORACLE_DISCREPANCY),
+    ({'objective': 1e12, 'reported_objective': 1e12, 'optimal_or_bks': 1e12 + 1}, ExactRunOutcomeKind.ORACLE_DISCREPANCY),
+    ({'objective': math.nan}, ExactRunOutcomeKind.QUALIFICATION_FAILURE),
+    ({'objective': math.inf, 'reported_objective': math.inf}, ExactRunOutcomeKind.QUALIFICATION_FAILURE),
+    ({'optimal_or_bks': math.nan}, ExactRunOutcomeKind.INFRASTRUCTURE_MISSING),
+])
+def test_exact_roundoff_fix_preserves_real_discrepancies_and_invalid_evidence(changes, kind):
+    assert compute_exact_run_outcome(exact_observation(**changes)).kind is kind
+
+
+def test_report_recomputes_seed_outcomes_from_raw_data_instead_of_cached_counts(tmp_path):
+    payload = yaml.safe_load((ROOT / 'configs/tasks/highs_v1_15_1.yaml').read_text())
+    payload['task_id'] = 'exact-performance'
+    payload['evaluation'].update(budgets_sec=[10], primary_budget_sec=10, controlled_transfer=None,
+        seed_robustness=dict(development_seeds=[10, 11], evaluation_seeds_file='private://test.yaml',
+            evaluation_seeds_file_sha256='0'*64, seed_selection=dict(seed_min=0, seed_max=20, seed_count=2)))
+    task = PitBenchTask.model_validate(payload)
+    grid = exact_expected_grid(solver_seeds=(1,2))
+    rows = [exact_panel_observation(state, iid, seed, cpu_time_sec=1, solved=True).model_copy(update={
+        'objective': 160.0, 'reported_objective': 160.0, 'optimal_or_bks':160.00000000000006})
+        for state in CodeState for iid in ('i1','i2') for seed in (1,2)]
+    cached = compute_task_seed_robustness_report(rows, task=task, expected_run_grid=grid).model_dump(mode='json')
+    cached['by_instance_set']['judge_id']['primary']['base']['verified_optimal_count'] = 0
+    (tmp_path/'seed_robustness_details.json').write_text(json.dumps(cached))
+    ObservationStore.write_jsonl(tmp_path/'observations.jsonl',rows)
+    (tmp_path/'expected-run-grid.json').write_text(grid.model_dump_json())
+    (tmp_path/'task.yaml').write_text(yaml.safe_dump(payload))
+    result = CliRunner().invoke(app,['report',str(tmp_path/'observations.jsonl'),'--task-config',str(tmp_path/'task.yaml'),'--json'])
+    assert result.exit_code == 0, result.output
+    output = json.loads(result.output)
+    assert output['nuisance_robustness']['by_instance_set']['judge_id']['primary']['base']['verified_optimal_count'] == 4

@@ -437,11 +437,13 @@ def _feedback(
             else None
         )
     elif protocol == "exact_verified_solve":
+        from pitbench.problem_families.base import objectives_equal
+
         solved = (
             valid
             and result.get("solver_termination") == "optimal"
-            and objective == anchor
-            and reported_objective == objective
+            and objectives_equal(objective, anchor)
+            and objectives_equal(reported_objective, objective)
             if anchor is not None
             else None
         )

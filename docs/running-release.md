@@ -71,6 +71,27 @@ Completed stages are reused. Failed/interrupted stages require `--retry-errors`;
 prior statuses and appended logs are retained. For a changed experimental design,
 use a new output directory.
 
+Generalization studies can set `evaluation_run_target: 100000` in the study plan.
+The launcher freezes evaluation views with comparable solve counts per candidate,
+including Base, Agent and the configured representation transformations. It
+reduces supplemental panel instance counts evenly while preserving each condition,
+the primary panels, seeds and solve budgets. Selection follows the frozen input
+inventory order. The latest-release study enables this target. API scenarios and
+validation keep their declared schedules.
+
+To prepare new evaluation views for an existing frozen study:
+
+```bash
+python -m scripts.prepare_research_cases balance-views \
+  --views /path/to/cohort/frozen-seed-views/task-views.json \
+  --private-root /path/to/private \
+  --output-dir /path/to/new-evaluation-views --target-runs 100000
+```
+
+PyVRP drivers use the direct `pyvrp.solve(ProblemData, ...)` API when available.
+This avoids creating a complete Python edge graph and converting it back to
+distance matrices before each solve. Older APIs retain their existing adapter.
+
 These tasks run their declared metrics. Extended stateful/API scenarios still
 require explicit per-task protocols and source-built runtime capabilities as
 described in [metrics/scenarios.md](metrics/scenarios.md). Passing these baselines

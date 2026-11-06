@@ -545,6 +545,7 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     plan_path = ROOT / "configs/research/generalization_latest_high_v2.json"
     plan = json.loads(plan_path.read_text())
     plan["evaluation_seed_policy"] = None
+    plan["evaluation_run_target"] = None
     plan_path = tmp_path / "selection-plan.json"
     plan_path.write_text(json.dumps(plan))
     selected = [Path(path).stem for path in plan["task_configs"]]

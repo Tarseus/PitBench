@@ -7,6 +7,18 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel
 
+# Preserve the absolute tolerance already used by independent MPS verification.
+OBJECTIVE_ABSOLUTE_TOLERANCE = 1e-6
+
+
+def objectives_equal(left: float | None, right: float | None) -> bool:
+    """Compare finite verified objectives without introducing a relative tolerance."""
+    return (
+        left is not None and right is not None
+        and math.isfinite(left) and math.isfinite(right)
+        and math.isclose(left, right, rel_tol=0.0, abs_tol=OBJECTIVE_ABSOLUTE_TOLERANCE)
+    )
+
 
 class VerificationResult(BaseModel):
     feasible: bool

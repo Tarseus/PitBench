@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_serializer
 
+from pitbench.problem_families.base import objectives_equal
 from pitbench.schema.observation import (
     CodeState,
     ExpectedRunGrid,
@@ -234,9 +235,9 @@ def _exact_verified_optimal(observation: RunObservation | None) -> bool:
         and observation.valid
         and observation.solver_termination is SolverTermination.OPTIMAL
         and observation.objective is not None
-        and observation.reported_objective == observation.objective
+        and objectives_equal(observation.reported_objective, observation.objective)
         and observation.optimal_or_bks is not None
-        and observation.objective == observation.optimal_or_bks
+        and objectives_equal(observation.objective, observation.optimal_or_bks)
     )
 
 

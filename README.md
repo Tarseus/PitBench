@@ -555,6 +555,10 @@ status-by-status contract as a machine-checked field. Tasks lacking evidence
 for a scored status need that evidence or a score restricted to independently
 verifiable outcomes. Exact reports now count solver failures separately from
 normal unsolved outcomes while retaining the existing PAR2 penalty.
+Finite objective comparisons use the same absolute tolerance (`1e-6`, with
+zero relative tolerance) as independent MPS objective verification. Performance,
+seed statistics, and public exact-solve feedback apply this rule consistently.
+A verified feasible solution and optimal termination are still required.
 Previously saved reports keep their original categories until their raw ledgers
 are reprocessed.
 

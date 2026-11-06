@@ -1762,6 +1762,158 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def balance_generalization_task(
+    task: PitBenchTask, *, panel_names: set[str], target_runs: int
+) -> tuple[PitBenchTask, int, int]:
+    """Balance supplemental panel sizes; count both source states and relabelings."""
+    if target_runs < 1:
+        raise ValueError("target_runs must be positive")
+    from pitbench.evaluator.judge import _development_seeds
+
+    task = task.model_copy(deep=True)
+    development_seeds = len(_development_seeds(task))
+    seeds = task.evaluation.seed_robustness
+    hidden_seeds = seeds.seed_selection.seed_count if seeds else development_seeds
+    panels = [p for p in task.instance_sets if p.name in panel_names]
+    if len(panels) != len(panel_names) or any(p.scenario_only for p in panels):
+        raise ValueError("balancing requires declared non-scenario panels")
+    costs = {}
+    for panel in task.instance_sets:
+        if panel.scenario_only:
+            continue
+        public = panel.kind == InstanceSetKind.AGENT_DEV
+        if (
+            public
+            and seeds is None
+            and task.evaluation.representation_robustness is None
+            and task.evaluation.controlled_transfer is None
+        ):
+            continue
+        costs[panel.name] = (
+            2
+            * (development_seeds if public else hidden_seeds)
+            * len(panel.budgets_sec or task.evaluation.budgets_sec)
+        )
+    count = sum(p.size * costs.get(p.name, 0) for p in task.instance_sets)
+    representation = task.evaluation.representation_robustness
+    if representation is not None:
+        originals = next(
+            p.size for p in task.instance_sets if p.name == representation.instance_set
+        )
+        count += (
+            2
+            * originals
+            * representation.relabelings_per_instance
+            * len(task.evaluation.budgets_sec)
+        )
+    original_count = count
+    while count > target_runs:
+        eligible = [p for p in panels if p.size > 1]
+        if not eligible:
+            raise ValueError("target_runs cannot retain every panel and primary run")
+        panel = min(eligible, key=lambda p: (-p.size, p.name))
+        panel.size -= 1
+        count -= costs[panel.name]
+    return task, original_count, count
+
+
+def prepare_generalization_run_views(
+    *,
+    views_path: Path,
+    private_root: Path,
+    destination: Path,
+    target_runs: int,
+) -> Path:
+    """Freeze similarly sized evaluation grids independently of solver outcomes."""
+    import copy
+
+    from pitbench.evaluator.private_assets import PrivateAssetResolver
+
+    views_path, destination = views_path.resolve(), destination.resolve()
+    identity = {"source_views_sha256": _sha(views_path), "target_runs": target_runs}
+    result_path = destination / "task-views.json"
+    if result_path.exists():
+        result = json.loads(result_path.read_text())
+        if result.get("run_policy") != identity:
+            raise ValueError("frozen evaluation run policy or source views changed")
+        for metadata in result["tasks"].values():
+            if (
+                _sha(Path(metadata["evaluator_task_config"]))
+                != metadata["evaluator_sha256"]
+            ):
+                raise ValueError("frozen evaluation run view changed")
+        return result_path
+    result = copy.deepcopy(json.loads(views_path.read_text()))
+    resolver = PrivateAssetResolver(private_root)
+    namespace = hashlib.sha256(str(destination).encode()).hexdigest()[:12]
+    configs = resolver.root / "research/evaluation-panels" / namespace
+    destination.mkdir(parents=True, exist_ok=True)
+    for task_id, metadata in result["tasks"].items():
+        source = PitBenchTask.from_yaml(Path(metadata["evaluator_task_config"]))
+        task, before, after = balance_generalization_task(
+            source,
+            panel_names=set(metadata["scientific_panels"]),
+            target_runs=target_runs,
+        )
+        selected = {}
+        for panel, original in zip(
+            task.instance_sets, source.instance_sets, strict=True
+        ):
+            if panel.size == original.size:
+                continue
+            payload = yaml.safe_load(
+                resolver.resolve(
+                    original.instance_set_config, original.instance_set_config_sha256
+                ).read_text()
+            )
+            if len(payload.get("instances", [])) != original.size:
+                raise ValueError("balancing requires a complete materialized panel")
+            # Retain a nested prefix of the frozen input inventory, never rank
+            # instances by solver performance or by completed-result availability.
+            payload["instances"] = payload["instances"][: panel.size]
+            path = configs / task_id / (panel.name + ".yaml")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(yaml.safe_dump(payload, sort_keys=False))
+            panel.instance_set_config = (
+                "private://" + path.relative_to(resolver.root).as_posix()
+            )
+            panel.instance_set_config_sha256 = _sha(path)
+            selected[panel.name] = [row["id"] for row in payload["instances"]]
+            metadata["scientific_panels"][panel.name]["instances"] = panel.size
+        task_path = destination / "evaluator" / (task_id + ".yaml")
+        task_path.parent.mkdir(exist_ok=True)
+        task_path.write_text(
+            yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False)
+        )
+        metadata.update(
+            evaluator_task_config=str(task_path),
+            evaluator_sha256=_sha(task_path),
+            run_balance={
+                "original_runs": before,
+                "selected_runs": after,
+                "selected_instance_ids": selected,
+            },
+        )
+        changed = {p.name: p for p in task.instance_sets if p.name in selected}
+        for arm, tasks in result["arms"].items():
+            row = tasks[task_id]
+            public = PitBenchTask.from_yaml(Path(row["agent_task_config_path"]))
+            public.instance_sets = [
+                changed.get(p.name, p) for p in public.instance_sets
+            ]
+            path = destination / "agent-views" / arm / (task_id + ".yaml")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                yaml.safe_dump(public.model_dump(mode="json"), sort_keys=False)
+            )
+            row.update(
+                task_config_path=str(task_path), agent_task_config_path=str(path)
+            )
+    result["run_policy"] = identity
+    _write(result_path, result)
+    return result_path
+
+
 def prepare_generalization_seed_views(
     *,
     plan: GeneralizationStudyPlan,

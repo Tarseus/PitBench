@@ -730,21 +730,32 @@ class Harness:
 
     def _needs_nested_command_sandbox(self) -> bool:
         """Whether this task container must support Codex bubblewrap nesting."""
+        def needs_workspace(agent_name, import_path, kwargs):
+            if kwargs.get("runner_backend") != "workspace":
+                return False
+            if agent_name == AgentName.CODEX:
+                return True
+            if import_path:
+                from pitbench.harness.agents.codex_mcp_agent import CodexMCPAgent
+
+                return issubclass(
+                    AgentFactory.get_agent_from_import_path(import_path), CodexMCPAgent
+                )
+            return False
+
         if not self._is_multi_agent:
-            return (
-                self._agent_name == AgentName.CODEX
-                and self._agent_kwargs.get("runner_backend") == "workspace"
+            return needs_workspace(
+                self._agent_name, self._agent_import_path, self._agent_kwargs
             )
         if self._agent_configs is None:
             return False
-        for config in self._agent_configs:
-            kwargs = {**self._agent_kwargs, **config.agent_kwargs}
-            if (
-                config.agent_name == AgentName.CODEX
-                and kwargs.get("runner_backend") == "workspace"
-            ):
-                return True
-        return False
+        return any(
+            needs_workspace(
+                config.agent_name, config.agent_import_path,
+                {**self._agent_kwargs, **config.agent_kwargs},
+            )
+            for config in self._agent_configs
+        )
 
     def _validate_remote_workspace_compatibility(self) -> None:
         if self._remote_build and self._needs_nested_command_sandbox():

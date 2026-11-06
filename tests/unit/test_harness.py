@@ -468,3 +468,27 @@ def test_candidate_evaluator_owns_remote_snapshot_metadata():
     )
     assert results.evaluation_snapshot_bucket_name == "snapshots"
     assert results.evaluation_snapshot_s3_keys == {"setup": "run/task/setup.tar.gz"}
+
+
+class CustomWorkspaceCodex(CodexMCPAgent):
+    pass
+
+
+@pytest.mark.parametrize('multi_agent', [False, True])
+@pytest.mark.parametrize('backend,expected', [('workspace', True), ('container', False)])
+def test_imported_codex_subclass_keeps_nested_sandbox_requirements(multi_agent, backend, expected):
+    from pitbench.harness.harness.harness import MultiAgentConfig
+
+    harness = Harness.__new__(Harness)
+    harness._is_multi_agent = multi_agent
+    harness._agent_name = None
+    harness._agent_import_path = f'{__name__}:CustomWorkspaceCodex'
+    harness._agent_kwargs = {'runner_backend': backend}
+    harness._agent_configs = [MultiAgentConfig(agent_import_path=harness._agent_import_path)] if multi_agent else None
+    assert harness._needs_nested_command_sandbox() is expected
+    harness._remote_build = True
+    if expected:
+        with pytest.raises(ValueError, match='not supported'):
+            harness._validate_remote_workspace_compatibility()
+    else:
+        harness._validate_remote_workspace_compatibility()

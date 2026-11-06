@@ -7,6 +7,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef PITBENCH_CBC
@@ -60,6 +61,7 @@ struct Session {
   bool reoptimization;
   Observer observer = nullptr;
   Clock::time_point started;
+  std::thread::id solveThread;
   std::mutex mutex;
   std::vector<double> finalValues;
 #ifdef PITBENCH_CBC
@@ -112,7 +114,10 @@ CbcEventHandler::CbcAction Events::event(CbcEvent event) {
   // Heuristic and parallel child models are not global incumbents. In particular,
   // postProcessedSolver() follows parent preprocessing state and resolves an LP;
   // invoking it from a child worker races with the parent's solver state.
-  if (model_->parentModel() != nullptr) return noAction;
+  // Parallel search clones can have a null parentModel(); they still must not
+  // postprocess the shared original model from a background solver thread.
+  if (std::this_thread::get_id() != session_->solveThread ||
+      model_->parentModel() != nullptr) return noAction;
   const bool incumbent = event == solution || event == heuristicSolution || event == endSearch;
   const double *values = nullptr;
   if (incumbent && model_->bestSolution()) {
@@ -273,6 +278,7 @@ int pbs_solve(void *opaque, Observer observer) {
   auto &session = *static_cast<Session *>(opaque);
   session.observer = observer;
   session.started = Clock::now();
+  session.solveThread = std::this_thread::get_id();
   session.finalValues.clear();
   try {
 #ifdef PITBENCH_CBC

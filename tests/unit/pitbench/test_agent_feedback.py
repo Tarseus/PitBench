@@ -1482,3 +1482,21 @@ def test_public_attempt_does_not_reuse_stale_feedback_and_retains_each_output(tm
     assert sorted(len(r["observations"]) for r in results) == [1, 2]
     assert all(Path(ref).is_file() for r in results for ref in r["artifact_paths"])
     assert calls[0] != calls[2]
+
+
+def test_public_exact_feedback_accepts_verified_roundoff_but_not_suboptimality(tmp_path, monkeypatch):
+    config = {'performance_protocol': 'exact_verified_solve', 'exact_time_basis': 'cpu_time',
+              'agent_feedback_mode': 'outcome_only'}
+    checked = {'verified_valid': True, 'verified_objective': 160.0}
+    monkeypatch.setattr(agent_cli, '_public_verification', lambda *args: checked)
+    result = {'objective': 160.0, 'valid': True, 'solver_termination': 'optimal', 'cpu_time_sec': 0.01}
+    args = (config, result, 160.00000000000006, 1.0, tmp_path/'model.mps', tmp_path/'result.json')
+    feedback = agent_cli._feedback(*args)
+    assert feedback['preview_solved'] is True
+    assert feedback['preview_par2_sec'] == 0.01
+    checked['verified_objective'] = 160.00001
+    result['objective'] = 160.00001
+    assert agent_cli._feedback(*args)['preview_solved'] is False
+    checked['verified_valid'] = False
+    result['objective'] = checked['verified_objective'] = 160.0
+    assert agent_cli._feedback(*args)['preview_solved'] is False

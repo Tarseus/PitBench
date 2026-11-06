@@ -9,6 +9,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from pitbench.problem_families.base import objectives_equal
 from pitbench.schema.observation import (
     CodeState,
     ExpectedRun,
@@ -124,20 +125,15 @@ def compute_exact_run_outcome(
             penalized_runtime_sec=2 * observation.budget_sec,
         )
 
-    if observation.optimal_or_bks is None:
+    if observation.optimal_or_bks is None or not math.isfinite(observation.optimal_or_bks):
         return ExactRunOutcome(kind=ExactRunOutcomeKind.INFRASTRUCTURE_MISSING)
 
-    if (
-        observation.objective is None
-        or observation.reported_objective is None
-        or observation.objective != observation.reported_objective
-    ):
+    if not objectives_equal(observation.objective, observation.reported_objective):
         return ExactRunOutcome(kind=ExactRunOutcomeKind.QUALIFICATION_FAILURE)
 
-    if observation.objective < observation.optimal_or_bks:
-        return ExactRunOutcome(kind=ExactRunOutcomeKind.ORACLE_DISCREPANCY)
-
-    if observation.objective > observation.optimal_or_bks:
+    if not objectives_equal(observation.objective, observation.optimal_or_bks):
+        if observation.objective < observation.optimal_or_bks:
+            return ExactRunOutcome(kind=ExactRunOutcomeKind.ORACLE_DISCREPANCY)
         return ExactRunOutcome(kind=ExactRunOutcomeKind.QUALIFICATION_FAILURE)
 
     measured_time_sec = (

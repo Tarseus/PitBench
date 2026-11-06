@@ -226,14 +226,27 @@ class PyVRPDriver(SolverDriver):
                     )
                 else:
                     data = pyvrp.read(vrp, round_func=PyVRPDriver.round_euc_2d)
+                    solve = getattr(pyvrp, "solve", None)
+                    direct_solve = callable(solve)
                     solve_options = {
                         "stop": MaxRuntime(args.budget),
                         "seed": args.seed,
                         **options,
                     }
-                    if "display" in inspect.signature(model.solve).parameters:
+                    if (
+                        "display"
+                        in inspect.signature(
+                            solve if direct_solve else model.solve
+                        ).parameters
+                    ):
                         solve_options["display"] = False
-                    result = model.from_data(data).solve(**solve_options)
+                    # Model.from_data materializes every edge as a Python object;
+                    # Model.solve then converts those edges back to ProblemData.
+                    result = (
+                        solve(data, **solve_options)
+                        if direct_solve
+                        else model.from_data(data).solve(**solve_options)
+                    )
                 resources = process_resources()
             if not result.best.is_feasible():
                 write_result(

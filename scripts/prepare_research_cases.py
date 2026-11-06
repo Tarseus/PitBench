@@ -16,6 +16,7 @@ from pitbench.research import (
     materialize_generalization_views,
     materialize_research_experiment,
     measure_population_headroom,
+    prepare_generalization_run_views,
     prepare_generalization_study,
     prepare_population_references,
     qualify_scenario_runtime,
@@ -151,8 +152,23 @@ def main():
         "output-dir",
     ):
         views.add_argument("--" + flag, type=Path, required=True)
+    balanced = sub.add_parser(
+        "balance-views", help="Freeze supplemental panels within a common solve count"
+    )
+    balanced.add_argument("--views", type=Path, required=True)
+    balanced.add_argument("--private-root", type=Path, required=True)
+    balanced.add_argument("--output-dir", type=Path, required=True)
+    balanced.add_argument("--target-runs", type=int, required=True)
     args = parser.parse_args()
-    if args.command == "measurements":
+    if args.command == "balance-views":
+        result = prepare_generalization_run_views(
+            views_path=args.views,
+            private_root=args.private_root,
+            destination=args.output_dir,
+            target_runs=args.target_runs,
+        )
+        print(result)
+    elif args.command == "measurements":
         result = freeze_generalization_measurements(
             views_path=args.views,
             population_root=args.populations,

@@ -29,6 +29,7 @@ from pitbench.evaluator.storage import ObservationStore
 from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.metrics.campaign_report import require_plotting, write_campaign_report
 from pitbench.research import (
+    prepare_generalization_run_views,
     prepare_generalization_seed_views,
     study_evaluation_matches,
 )
@@ -847,7 +848,8 @@ def retry_unexecuted_condition(args):
     from pitbench.schema.research import GeneralizationStudyPlan
 
     plan = GeneralizationStudyPlan.model_validate_json(args.study_plan.read_text())
-    views = json.loads((args.output / "frozen-seed-views/task-views.json").read_text())
+    view_dir = "evaluation-views" if plan.evaluation_run_target is not None else "frozen-seed-views"
+    views = json.loads((args.output / view_dir / "task-views.json").read_text())
     cohort = json.loads((args.output / "cohort.json").read_text())
     matches = [row for row in cohort["jobs"] if row["run_id"] == args.retry_run_id]
     if len(matches) != 1:
@@ -1013,6 +1015,13 @@ def study_models(args):
         private_root=private_root,
         destination=args.output / "frozen-seed-views",
     )
+    if plan.evaluation_run_target is not None:
+        views_path = prepare_generalization_run_views(
+            views_path=views_path,
+            private_root=private_root,
+            destination=args.output / "evaluation-views",
+            target_runs=plan.evaluation_run_target,
+        )
     views = json.loads(views_path.read_text())
     if views.get("status") != "development_frozen_evaluation_gated":
         raise ValueError("development requires frozen scenario/task views")

@@ -1984,6 +1984,105 @@ def test_limited_judge_run_omits_retired_reliability_suite(tmp_path, monkeypatch
     assert received["additional_cases"] == []
 
 
+def test_runner_resumes_from_existing_observations_without_truncating(
+    tmp_path, monkeypatch
+):
+    from pitbench.evaluator import runner
+
+    task_config = ROOT / "configs/tasks/vroom_v1_15_0.yaml"
+    task = PitBenchTask.from_yaml(task_config)
+    candidate_patch = tmp_path / "candidate.patch"
+    candidate_patch.write_text("")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    observations_path = output_dir / "judge-observations.jsonl"
+    run_rows = [
+        ExpectedRun(
+            task_id=task.task_id,
+            code_state=CodeState.AGENT,
+            instance_set="dev",
+            instance_set_kind="dev",
+            instance_id=instance_id,
+            solver_seed=0,
+            budget_sec=5,
+        )
+        for instance_id in ("one", "two")
+    ]
+    (output_dir / "expected-run-grid.json").write_text(
+        ExpectedRunGrid(task_id=task.task_id, runs=run_rows).model_dump_json()
+    )
+    prior = RunObservation(
+        task_id=task.task_id,
+        code_state=CodeState.AGENT,
+        instance_set="dev",
+        instance_set_kind="dev",
+        instance_id="one",
+        solver_seed=0,
+        budget_sec=5,
+        status=RunStatus.COMPLETED,
+        valid=True,
+    )
+    new = prior.model_copy(update={"instance_id": "two"})
+    ObservationStore.write_jsonl(observations_path, [prior])
+    with observations_path.open("ab") as handle:
+        handle.write(b'{"partial":"interrupted')
+    original_checkpoint = observations_path.read_bytes()
+
+    class FakeJudge:
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self, cases=None, *, completed_runs, save_observation):
+            assert completed_runs == {("dev", "one", CodeState.AGENT, 0, 5.0)}
+            save_observation(new)
+            return [new]
+
+    monkeypatch.setattr(runner, "LocalProcessJudge", FakeJudge)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pitbench.evaluator.runner",
+            "--task-config",
+            str(task_config),
+            "--base-repository",
+            str(tmp_path),
+            "--public-root",
+            str(ROOT),
+            "--private-root",
+            str(tmp_path),
+            "--candidate-patch",
+            str(candidate_patch),
+            "--output-dir",
+            str(output_dir),
+            "--observations",
+            str(observations_path),
+            "--checkpoint-identity",
+            json.dumps(
+                {
+                    "task_config_sha256": hashlib.sha256(
+                        task_config.read_bytes()
+                    ).hexdigest(),
+                    "candidate_patch_sha256": hashlib.sha256(b"").hexdigest(),
+                    "code_states": [CodeState.AGENT.value],
+                }
+            ),
+            "--code-state",
+            CodeState.AGENT.value,
+            "--resume-existing-observations",
+        ],
+    )
+
+    runner.main()
+
+    saved = ObservationStore.read_jsonl(observations_path)
+    assert [item.instance_id for item in saved] == ["one", "two"]
+    assert len((output_dir / "judge-resume-events.jsonl").read_text().splitlines()) == 1
+    backups = list(output_dir.glob("judge-observations.pre-resume-*.raw"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == original_checkpoint
+
+
 def test_driver_preserves_inner_timeout_reason(tmp_path, monkeypatch):
     from pitbench.solver_drivers.run import HighsDriver
 
@@ -3213,3 +3312,27 @@ def test_metric_coverage_uses_configured_frozen_evaluator_view(tmp_path, monkeyp
     coverage = _normal_metric_coverage(ROOT, tmp_path, "run", ["task"], None, evaluation_config=config)
     assert calls == ["frozen.yaml"]
     assert not coverage["complete"]
+
+
+def test_custom_codex_agent_runs_native_preflight_without_registered_agent(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from pitbench.cli.main import app
+
+    import_path = 'pitbench.harness.agents.codex_mcp_agent:CodexMCPAgent'
+    config = tmp_path/'evaluate.yaml'
+    config.write_text(yaml.safe_dump({'agents': {import_path: {'runner_backend': 'workspace', 'timeout_sec': 14400}}}))
+    seen = []
+
+    def check(tasks, root, settings, agent, kwargs):
+        seen.append((tasks, agent, kwargs))
+        return []
+
+    monkeypatch.setattr('pitbench.cli.main.evaluation_checks', check)
+    response = CliRunner().invoke(app, ['run', 'task', '--agent-import-path', import_path,
+        '--model', 'test-model', '--config', str(config), '--root', str(tmp_path), '--check-only'])
+    assert response.exit_code == 0, response.output
+    assert seen[0][0:2] == (['task'], 'codex')
+    assert seen[0][2]['runner_backend'] == 'workspace'
+    assert seen[0][2]['model_name'] == 'test-model'
+    assert 'no agent was started' in response.output

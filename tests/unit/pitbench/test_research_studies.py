@@ -18,6 +18,132 @@ ROOT = Path(__file__).resolve().parents[3]
 PLAN = ROOT / "configs/research/archive/generalization.json"
 
 
+def test_run_balance_keeps_seeds_budgets_and_all_panel_conditions():
+    from pitbench.research import balance_generalization_task
+    from pitbench.schema.task import InstanceSetSpec
+
+    original = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    names = {"distribution-a", "distribution-b", "distribution-c"}
+    native_count = balance_generalization_task(
+        original, panel_names=set(), target_runs=100000
+    )[2]
+    for name in sorted(names):
+        original.instance_sets.append(
+            InstanceSetSpec(
+                name=name,
+                kind="judge_shift",
+                instance_set_config="private://panel.yaml",
+                size=10,
+                budgets_sec=[10, 60],
+                primary_budget_sec=60,
+            )
+        )
+    balanced, before, after = balance_generalization_task(
+        original, panel_names=names, target_runs=native_count + 7 * 120
+    )
+    assert before == native_count + 30 * 120
+    assert after == native_count + 7 * 120
+    assert sorted(p.size for p in balanced.instance_sets if p.name in names) == [
+        2,
+        2,
+        3,
+    ]
+    assert balanced.evaluation == original.evaluation
+    assert balanced.instance_sets[:3] == original.instance_sets[:3]
+    assert [p.budgets_sec for p in balanced.instance_sets] == [
+        p.budgets_sec for p in original.instance_sets
+    ]
+    assert [p.size for p in original.instance_sets if p.name in names] == [10] * 3
+    with pytest.raises(ValueError, match="retain every panel"):
+        balance_generalization_task(
+            original, panel_names=names, target_runs=native_count
+        )
+
+
+def test_balanced_views_freeze_matching_private_and_agent_panel_configs(tmp_path):
+    import hashlib
+
+    from pitbench.research import prepare_generalization_run_views
+    from pitbench.schema.task import InstanceSetSpec
+
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    private = tmp_path / "private"
+    private.mkdir()
+    panel_path = private / "panel.yaml"
+    panel_path.write_text(
+        yaml.safe_dump(
+            {
+                "visibility": "judge",
+                "instances": [
+                    {"id": f"case-{i}", "uri": f"private://{i}.json"} for i in range(4)
+                ],
+            }
+        )
+    )
+    task.instance_sets.append(
+        InstanceSetSpec(
+            name="distribution",
+            kind="judge_shift",
+            instance_set_config="private://panel.yaml",
+            instance_set_config_sha256=hashlib.sha256(
+                panel_path.read_bytes()
+            ).hexdigest(),
+            size=4,
+        )
+    )
+    task_path = tmp_path / "task.yaml"
+    task_path.write_text(yaml.safe_dump(task.model_dump(mode="json")))
+    from pitbench.research import balance_generalization_task
+
+    before = balance_generalization_task(task, panel_names=set(), target_runs=100000)[2]
+    source = tmp_path / "source.json"
+    source.write_text(
+        json.dumps(
+            {
+                "tasks": {
+                    task.task_id: {
+                        "evaluator_task_config": str(task_path),
+                        "scientific_panels": {"distribution": {"instances": 4}},
+                    }
+                },
+                "arms": {
+                    "original": {
+                        task.task_id: {"agent_task_config_path": str(task_path)}
+                    }
+                },
+            }
+        )
+    )
+    kwargs = dict(
+        views_path=source,
+        private_root=private,
+        destination=tmp_path / "balanced",
+        target_runs=before - 240,
+    )
+    result_path = prepare_generalization_run_views(**kwargs)
+    result = json.loads(result_path.read_text())
+    metadata = result["tasks"][task.task_id]
+    balanced = PitBenchTask.from_yaml(Path(metadata["evaluator_task_config"]))
+    panel = balanced.instance_sets[-1]
+    assert panel.size == 2
+    config = private / panel.instance_set_config.removeprefix("private://")
+    assert [r["id"] for r in yaml.safe_load(config.read_text())["instances"]] == [
+        "case-0",
+        "case-1",
+    ]
+    assert (
+        hashlib.sha256(config.read_bytes()).hexdigest()
+        == panel.instance_set_config_sha256
+    )
+    agent = PitBenchTask.from_yaml(
+        Path(result["arms"]["original"][task.task_id]["agent_task_config_path"])
+    )
+    assert agent.instance_sets == balanced.instance_sets
+    assert metadata["run_balance"]["selected_runs"] == before - 240
+    assert prepare_generalization_run_views(**kwargs) == result_path
+    assert PitBenchTask.from_yaml(task_path).instance_sets[-1].size == 4
+
+
 def test_study_seed_views_keep_development_and_freeze_private_holdout(tmp_path):
     import hashlib
 

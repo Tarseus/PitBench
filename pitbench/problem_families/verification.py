@@ -14,7 +14,12 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
-from pitbench.problem_families.base import ProblemFamilyPlugin, VerificationResult
+from pitbench.problem_families.base import (
+    OBJECTIVE_ABSOLUTE_TOLERANCE,
+    ProblemFamilyPlugin,
+    VerificationResult,
+    objectives_equal,
+)
 from pitbench.problem_families.public_verification import (
     check_bin_packing,
     check_cvrp,
@@ -1650,7 +1655,7 @@ class MIPFamily(ExternalVerifierFamily):
             values, objective = _parse_mip_primal_solution(solution, variable_names)
             if set(values) != set(variable_names):
                 raise ValueError("MPS primal solution variable set mismatch")
-            tolerance = 1e-6
+            tolerance = OBJECTIVE_ABSOLUTE_TOLERANCE
             bound_violation = max(
                 [0.0]
                 + [
@@ -1703,9 +1708,7 @@ class MIPFamily(ExternalVerifierFamily):
                 objective=checked_objective,
                 detail=json.dumps(detail, sort_keys=True),
             )
-        if checked_objective is None or not math.isclose(
-            float(objective), float(checked_objective), rel_tol=0, abs_tol=tolerance
-        ):
+        if not objectives_equal(float(objective), checked_objective):
             return VerificationResult(
                 feasible=False,
                 objective=checked_objective,

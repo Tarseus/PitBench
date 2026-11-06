@@ -856,8 +856,14 @@ def run_task(
                 )
         effective_config.tasks[task_id] = resources
 
+    if agent is not None:
+        preflight_agent = agent.value
+    else:
+        from pitbench.harness.agents.agent_factory import AgentFactory
+
+        preflight_agent = AgentFactory.get_agent_from_import_path(agent_import_path).name()
     checks = evaluation_checks(
-        task_ids, repository_root, effective_config, agent.value, effective_agent_kwargs
+        task_ids, repository_root, effective_config, preflight_agent, effective_agent_kwargs
     )
     for check in checks:
         typer.echo(f"{check.status.value} {check.name}: {check.detail}")
@@ -1797,9 +1803,7 @@ def report_command(
     seed_report = None
     seed_error = None
     if task.evaluation.seed_robustness is not None:
-        if seed_details.get("metric") == "exact_seed_robustness":
-            seed_report = ExactSeedRobustnessReport.model_validate(seed_details)
-        elif expected_run_grid is not None:
+        if expected_run_grid is not None:
             try:
                 seed_report = compute_task_seed_robustness_report(
                     observations,
@@ -1809,6 +1813,8 @@ def report_command(
                 )
             except ValueError as error:
                 seed_error = str(error)
+        elif seed_details.get("metric") == "exact_seed_robustness":
+            seed_report = ExactSeedRobustnessReport.model_validate(seed_details)
         else:
             seed_error = "Seed robustness requires the saved planned seed grid."
     if seed_report is not None and (
