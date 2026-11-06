@@ -4,7 +4,7 @@
 
 ## 当前泛化对照
 
-- `research/generalization_latest_high_v2.json`：当前唯一的 Agent 对照方案，三个最新版求解器、Sol/Terra high、三组各一次，共 18 个条件。
+- `research/generalization_latest_high_v2.json`：当前唯一的 Agent 对照方案，三个最新版求解器、Sol/Terra high、三组各一次，共 18 个条件；补充面板使用 5 个配对隐藏 seed 和校准主预算，原始主面板保留 30 个 seed，取消自动复测。
 - `experiments/generalization_high_matrix.yaml`：上述方案的两个模型设置。
 - `research/generalization_generation_v2.yaml`、`generalization_populations_v2.json`：问题生成定义及总体索引。
 - `research/generalization_difficulty_v2.yaml`：基于独立校准实例选择求解预算。

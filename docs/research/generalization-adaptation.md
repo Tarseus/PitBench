@@ -4,7 +4,9 @@
 
 当前缩减配置为 `configs/research/generalization_latest_high_v2.json`，模型矩阵为 `configs/experiments/generalization_high_matrix.yaml`：仅比较 `gpt-6.1-sol/high` 和 `gpt-6.1-terra/high`，仅保留清单已冻结的最新版本 CBC 2.10.13、SCIP 10.1.0 和 PyVRP 0.14.1，三组各一次，共 18 个条件。开发预算、问题集、指标、seed 和逐条件求解时限保持不变；历史 90 条件配置不覆盖修改。
 
-每个实例、每个预算的正式性能与资源评测中，三种求解器统一使用 30 个隐藏评测 seed。CBC、SCIP 保留原来的 5 个开发 seed，评测另外抽取 30 个正整数 seed 并冻结在私有存储中；PyVRP 保留既有两组各 30 个 seed。开发与评测列表互不重叠，同一任务的 Base、候选和三组共享冻结评测列表。历史任务文件保留原样，新策略只写入本轮评测视图。`pitbench bench` 默认运行单个 seed，需指定 `--all-seeds` 才覆盖可见开发 seed 网格。扩展场景诊断目前每个分布条件取 2 个预定隐藏实例、1 个 solver seed；replay 重放 3 次，不代表 3 个独立 seed。实例生成随机流、表示重标号、solver seed 和 Agent 独立重复是不同维度，本轮 Agent 独立重复仍为 1 次。
+2026-11-06 评测裁减：原始主面板保留 30 个隐藏评测 seed。新增泛化面板先按原 10 万次上限冻结实例，再仅使用冻结隐藏列表前 5 个 seed 和各面板的校准主预算，不扩回实例；所有模型和实验组共享同一选择。自动全网格和场景复测已删除，分类使用单次完整配对评测及独立合法性验证。扩展场景、表示变换和开发预算保持原设置，新方案写入独立输出目录。
+
+此前每个实例、每个预算的正式性能与资源评测中，三种求解器统一使用 30 个隐藏评测 seed。CBC、SCIP 保留原来的 5 个开发 seed，评测另外抽取 30 个正整数 seed 并冻结在私有存储中；PyVRP 保留既有两组各 30 个 seed。开发与评测列表互不重叠，同一任务的 Base、候选和三组共享冻结评测列表。历史任务文件保留原样，新策略只写入本轮评测视图。`pitbench bench` 默认运行单个 seed，需指定 `--all-seeds` 才覆盖可见开发 seed 网格。扩展场景诊断目前每个分布条件取 2 个预定隐藏实例、1 个 solver seed；replay 重放 3 次，不代表 3 个独立 seed。实例生成随机流、表示重标号、solver seed 和 Agent 独立重复是不同维度，本轮 Agent 独立重复仍为 1 次。
 
 统一入口为 `scripts.run_benchmark_release --phase study-models`。机器本地配置 `config/study.local.yaml` 可从 `configs/experiments/generalization_launch.yaml` 配置，包含计划、任务视图、运行配置、CPU 池和输出目录；代理、认证路径和镜像由其引用的本地 evaluation 配置提供，不要求调用者设置环境变量。配置就绪后直接执行：
 
@@ -116,7 +118,7 @@ SCIP 先前一小时超时来自整个串行 CTest 的外层上限：两个版�
 
 先完成数据与参考资格化，再完成源代码绑定的场景及上游测试接入，最后运行 Base 预检和 90 次计划实验。正式 Agent 开发不接收隐藏评估反馈；按既有 checkpoint 机制留存补丁和捕获失败。原始模型名、provider 修订、scaffold、源码、镜像、数据、配置、运行顺序和主机身份都进入实验记录。
 
-Base/候选及三组之间按共同实例、solver seed、预算配对，交替或按记录的随机顺序执行以控制漂移。新增主要对比、置信水平、重采样单位、层间归约及多重比较方式必须在计分计划中冻结。沿用已有任务的原生 CI 与 confirmation 规则；solver seed 不能替代独立实例，相关版本不能作为独立仓库。报告完整失败、超时、非法解、基础设施错误和缺测，保留计划分母。
+Base/候选及三组之间按共同实例、solver seed、预算配对，交替或按记录的随机顺序执行以控制漂移。新增主要对比、置信水平、重采样单位、层间归约及多重比较方式必须在计分计划中冻结。沿用已有任务的原生 CI；不再自动执行 confirmation 复测；solver seed 不能替代独立实例，相关版本不能作为独立仓库。报告完整失败、超时、非法解、基础设施错误和缺测，保留计划分母。
 
 复用现有自动报告，新增适配完成后输出：各模型/组的分布格子效应与 CI、预定义 shift 坐标曲线、规模和线程扩展曲线、incumbent/bound 轨迹、长期内存序列、cold/warm 对比、数值压力与失败、feature-off/always-on/conditional 消融。轨迹/严重程度不存在的数据不作插值假装完成。报告 better/equal/worse、尾部损失和去除最大影响实例后的敏感性；总体均值不能替代逐层退化检查。
 

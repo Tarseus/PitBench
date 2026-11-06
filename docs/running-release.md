@@ -72,20 +72,27 @@ prior statuses and appended logs are retained. For a changed experimental design
 use a new output directory.
 
 Generalization studies can set `evaluation_run_target: 100000` in the study plan.
-The launcher freezes evaluation views with comparable solve counts per candidate,
-including Base, Agent and the configured representation transformations. It
-reduces supplemental panel instance counts evenly while preserving each condition,
-the primary panels, seeds and solve budgets. Selection follows the frozen input
-inventory order. The latest-release study enables this target. API scenarios and
-validation keep their declared schedules.
+The launcher first selects supplemental panel instances within this solve-count
+ceiling, counting Base, Agent and configured representation transformations.
+Selection follows the frozen input inventory order and retains every condition.
+It then applies `supplemental_seed_count: 5` and
+`supplemental_primary_budget_only: true`, as enabled in the latest-release plan.
+Each supplemental panel uses the first five frozen hidden seeds and its calibrated
+primary solve budget. Selected instances are not expanded after this reduction.
+Original primary panels, development seeds, representation transformations and API
+scenario schedules retain their declared settings. The ceiling excludes API
+scenario calls and build/verification costs; it is not a wall-time estimate.
+The evaluator runs each declared grid and scenario campaign once, without an
+automatic confirmation repeat. Use a new output directory for the changed design.
 
-To prepare new evaluation views for an existing frozen study:
+To prepare reduced evaluation views for an existing frozen study:
 
 ```bash
 python -m scripts.prepare_research_cases balance-views \
   --views /path/to/cohort/frozen-seed-views/task-views.json \
   --private-root /path/to/private \
-  --output-dir /path/to/new-evaluation-views --target-runs 100000
+  --output-dir /path/to/new-evaluation-views --target-runs 100000 \
+  --supplemental-seed-count 5 --supplemental-primary-budget-only
 ```
 
 PyVRP drivers use the direct `pyvrp.solve(ProblemData, ...)` API when available.
@@ -110,7 +117,7 @@ equivalent-representation IQR, resource ratios and eligible-pair counts, boundar
 reliability, declared API scenarios, and a status/reason for every catalog metric.
 Seed reporting preserves the saved seed order when available and reuses retained
 exact seed reports. Representation details must match the task and candidate.
-Panel estimates do not inherit the primary result's confirmation and do not
+Each panel uses its own declared seed and budget grid; panel estimates do not
 create a retention protocol. Resource estimates based on partial eligible pairs
 remain explicitly partial. The command reads saved evidence; it does not collect
 missing scenarios or launch another Agent or solver run.
@@ -168,7 +175,8 @@ effects use their saved 95% intervals. Native seed IQR uses its saved 99%
 intervals; transfer benefits retain their original normalization and intervals.
 Units, panels and confidence levels are never mixed into one axis or score.
 Exact primary figures follow coverage-first and runtime-only-on-ties. A hollow
-point does not claim primary opposite-order confirmation. Missing intervals
+point denotes a paired evaluation estimate; filled points mark retained historical
+opposite-order repeats. Current evaluation does not require a repeat. Missing intervals
 do not become zero-width error bars. Resource ratios without saved intervals
 remain descriptive values with their paired-run counts.
 

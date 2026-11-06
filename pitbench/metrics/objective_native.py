@@ -20,7 +20,8 @@ from pitbench.schema.observation import RunStatus
 
 
 def native_objective_measurement(task, observations, grid, metric, panel) -> dict:
-    budget = task.evaluation.primary_budget_sec
+    spec = next(item for item in task.instance_sets if item.name == panel)
+    budget = spec.primary_budget_sec or task.evaluation.primary_budget_sec
     rows = [
         r for r in observations if r.instance_set == panel and r.budget_sec == budget
     ]
@@ -99,7 +100,7 @@ def native_objective_measurement(task, observations, grid, metric, panel) -> dic
             budgets_sec=[budget],
             primary_budget_sec=budget,
             seed_selection=SeedSelectionMetadata.model_validate(
-                config.seed_selection.model_dump()
+                {**config.seed_selection.model_dump(), "seed_count": len(seeds)}
             ),
             development_seeds=config.development_seeds,
             evaluation_seeds=seeds,

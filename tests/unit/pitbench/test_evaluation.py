@@ -601,6 +601,30 @@ def test_limited_real_judge_plan_preserves_full_seed_and_budget_grid(
         assert len(runs) == expected_runs_per_instance
 
 
+def test_supplemental_judge_plan_uses_frozen_seed_prefix_and_own_budget(tmp_path):
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/pyvrp_v0_14_0.yaml")
+    panel = next(item for item in task.instance_sets if item.name == "judge_shift")
+    panel.solver_seed_count = 5
+    panel.budgets_sec, panel.primary_budget_sec = [60], 60
+    seeds = (99, 3, 57, 8, 41, *range(100, 125))
+    plan = JudgePlan.from_instance_set_configs(
+        task,
+        PrivateAssetResolver(ROOT / "private"),
+        public_root=ROOT,
+        generated_root=tmp_path / "generated",
+        evaluation_seeds=seeds,
+        instances_per_instance_set=1,
+    )
+    grid = plan.expected_run_grid(evaluation_seeds=seeds)
+    hidden = [r for r in grid.runs if r.instance_set == "judge_shift"]
+    primary = [r for r in grid.runs if r.instance_set == "judge_id"]
+    assert {r.solver_seed for r in hidden} == set(seeds[:5])
+    assert {r.budget_sec for r in hidden} == {60}
+    assert len(hidden) == 5 * len(CodeState)
+    assert {r.solver_seed for r in primary} == set(seeds)
+    assert len(primary) == 30 * 2 * len(CodeState)
+
+
 def test_limited_evaluation_preflight_rejects_grid_and_infrastructure_errors(
     tmp_path: Path,
 ) -> None:
@@ -2314,7 +2338,16 @@ def test_base_cache_rejects_observations_from_other_thread_protocol(tmp_path: Pa
     task.evaluation.solver_seeds = [7]
     task.evaluation.budgets_sec = [5.0]
     task.evaluation.representation_robustness = None
-    task.instance_sets = [SimpleNamespace(name="judge_id", kind="judge_id", size=1)]
+    task.instance_sets = [
+        SimpleNamespace(
+            name="judge_id",
+            kind="judge_id",
+            size=1,
+            scenario_only=False,
+            budgets_sec=None,
+            solver_seed_count=None,
+        )
+    ]
     observation = RunObservation(
         task_id=task.task_id,
         code_state=CodeState.BASE,
@@ -2414,7 +2447,12 @@ def test_evaluator_uses_base_cache_when_available(tmp_path: Path):
     mock_task.evaluation.threads = 1
     mock_task.instance_sets = [
         SimpleNamespace(
-            name="judge_id", size=1, budgets_sec=None, performance_protocol=None
+            name="judge_id",
+            size=1,
+            budgets_sec=None,
+            performance_protocol=None,
+            solver_seed_count=None,
+            scenario_only=False,
         )
     ]
 
@@ -2512,7 +2550,12 @@ def test_evaluator_saves_base_cache_on_first_run(tmp_path: Path):
     mock_task.evaluation.threads = 1
     mock_task.instance_sets = [
         SimpleNamespace(
-            name="judge_id", size=1, budgets_sec=None, performance_protocol=None
+            name="judge_id",
+            size=1,
+            budgets_sec=None,
+            performance_protocol=None,
+            solver_seed_count=None,
+            scenario_only=False,
         )
     ]
 
@@ -2561,7 +2604,7 @@ def test_evaluator_saves_base_cache_on_first_run(tmp_path: Path):
         assert cached[0].code_state == CodeState.BASE
 
 
-def test_directional_performance_requires_fresh_opposite_order_confirmation(
+def test_directional_performance_runs_one_judge_without_confirmation(
     tmp_path: Path,
 ) -> None:
     task_id = "test_task"
@@ -2582,7 +2625,12 @@ def test_directional_performance_requires_fresh_opposite_order_confirmation(
     task.evaluation.threads = 1
     task.instance_sets = [
         SimpleNamespace(
-            name="judge_id", size=1, budgets_sec=None, performance_protocol=None
+            name="judge_id",
+            size=1,
+            budgets_sec=None,
+            performance_protocol=None,
+            solver_seed_count=None,
+            scenario_only=False,
         )
     ]
 
@@ -2664,27 +2712,15 @@ def test_directional_performance_requires_fresh_opposite_order_confirmation(
     ):
         result = PitBenchEvaluator().evaluate(request)
 
-    assert states_seen == [
-        (CodeState.BASE, CodeState.AGENT),
-        (CodeState.AGENT, CodeState.BASE),
-    ]
+    assert states_seen == [(CodeState.BASE, CodeState.AGENT)]
     assert result.summary.performance is not None
     assert (
-        result.summary.performance.classification
-        is PerformanceClassification.INCONCLUSIVE
+        result.summary.performance.classification is PerformanceClassification.IMPROVED
     )
-    assert result.summary.performance.confirmation is not None
-    assert (
-        result.summary.performance.confirmation.initial_classification
-        is PerformanceClassification.IMPROVED
-    )
-    assert (
-        result.summary.performance.confirmation.repeat_classification
-        is PerformanceClassification.INCONCLUSIVE
-    )
-    assert result.summary.performance_confirmation_observation_count == 2
-    assert result.artifacts.performance_confirmation_observations is not None
-    assert (request.output_dir / "performance-confirmation" / "report.json").is_file()
+    assert result.summary.performance.confirmation is None
+    assert result.summary.performance_confirmation_observation_count == 0
+    assert result.artifacts.performance_confirmation_observations is None
+    assert not (request.output_dir / "performance-confirmation").exists()
 
 
 # Tests consolidated from tests/unit/pitbench/test_collection.py

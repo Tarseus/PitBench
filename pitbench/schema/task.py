@@ -137,7 +137,16 @@ class InstanceSetSpec(BaseModel):
     performance_protocol: PerformanceProtocol | None = None
     budgets_sec: list[float] | None = None
     primary_budget_sec: float | None = None
+    solver_seed_count: int | None = Field(default=None, gt=0)
     scenario_only: bool = False
+
+    @model_serializer(mode="wrap")
+    def serialize_seed_count(self, handler):
+        data = handler(self)
+        # Preserve existing task/scenario hashes when no seed override is used.
+        if self.solver_seed_count is None:
+            data.pop("solver_seed_count", None)
+        return data
 
     @model_validator(mode="after")
     def validate_panel_overrides(self):
@@ -148,12 +157,13 @@ class InstanceSetSpec(BaseModel):
                     self.performance_protocol,
                     self.budgets_sec,
                     self.primary_budget_sec,
+                    self.solver_seed_count,
                 )
             )
             and self.kind != InstanceSetKind.JUDGE_SHIFT
         ):
             raise ValueError(
-                "panel-specific metrics and budgets apply only to supplemental hidden panels"
+                "panel-specific metrics, budgets and seeds apply only to supplemental hidden panels"
             )
         if (self.budgets_sec is None) != (self.primary_budget_sec is None):
             raise ValueError("panel budgets require an explicit primary budget")

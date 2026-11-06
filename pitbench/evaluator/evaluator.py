@@ -21,14 +21,10 @@ from pitbench.metrics.behavior_report import compute_behavior_metric_report
 from pitbench.metrics.controlled_transfer_report import (
     compute_controlled_transfer_report,
 )
-from pitbench.metrics.objective_qualification import compute_objective_qualification
 from pitbench.metrics.objective_report import compute_objective_report
 from pitbench.metrics.performance_report import (
     ExactPerformanceReport,
     ExactRunOutcomeKind,
-    PerformanceClassification,
-    PerformanceConfirmation,
-    adjudicate_performance_confirmation,
     compute_task_performance_report,
 )
 from pitbench.metrics.reliability_report import compute_reliability_reports
@@ -109,6 +105,8 @@ def _base_cache_is_complete(
         evaluation_seeds = development_seeds
     expected_count = 0
     for instance_set in task.instance_sets:
+        if instance_set.scenario_only:
+            continue
         instance_set_kind = getattr(instance_set, "kind", "judge_id")
         instance_set_kind = getattr(instance_set_kind, "value", instance_set_kind)
         if (
@@ -121,7 +119,9 @@ def _base_cache_is_complete(
             development_seeds if instance_set_kind == "agent_dev" else evaluation_seeds
         )
         expected_count += (
-            instance_set.size * len(seeds) * len(task.evaluation.budgets_sec)
+            instance_set.size
+            * (instance_set.solver_seed_count or len(seeds))
+            * len(instance_set.budgets_sec or task.evaluation.budgets_sec)
         )
     keys = {
         (item.instance_set, item.instance_id, item.solver_seed, item.budget_sec)
@@ -405,6 +405,7 @@ class PitBenchEvaluator(Evaluator):
                 for panel in task.instance_sets
                 if panel.performance_protocol is not None
                 or panel.budgets_sec is not None
+                or panel.solver_seed_count is not None
             }
             native_seed_observations = [
                 row
@@ -431,7 +432,9 @@ class PitBenchEvaluator(Evaluator):
                     **seed_report_inputs,
                 )
             if expected_run_grid is not None and any(
-                panel.performance_protocol is not None or panel.budgets_sec is not None
+                panel.performance_protocol is not None
+                or panel.budgets_sec is not None
+                or panel.solver_seed_count is not None
                 for panel in task.instance_sets
             ):
                 nuisance_robustness = compute_task_seed_robustness_report(
@@ -483,6 +486,7 @@ class PitBenchEvaluator(Evaluator):
                 },
                 expected_instance_counts={
                     item.name: item.size for item in task.instance_sets
+                    if not item.scenario_only
                 },
                 expected_seed_count=(
                     seed_robustness.seed_selection.seed_count
@@ -490,9 +494,12 @@ class PitBenchEvaluator(Evaluator):
                     else len(task.evaluation.solver_seeds or [])
                 ),
                 expected_seed_counts_by_instance_set={
-                    item.name: len(seed_robustness.development_seeds)
+                    item.name: item.solver_seed_count
+                    if item.solver_seed_count is not None
+                    else len(seed_robustness.development_seeds)
                     for item in task.instance_sets
-                    if seed_robustness is not None and item.kind.value == "agent_dev"
+                    if item.solver_seed_count is not None
+                    or (seed_robustness is not None and item.kind.value == "agent_dev")
                 },
             )
             resource_details_path = request.output_dir / "resource_details.json"
@@ -594,11 +601,7 @@ class PitBenchEvaluator(Evaluator):
             )
             else None
         )
-        confirmation_observations: list[RunObservation] = []
-        confirmation_report = None
-        confirmation_grid = None
         scenario_report = None
-        repeat_scenario_report = None
         scenario_error = None
         scenario_config = config.get("metric_scenario_config")
         scenario_build_context = {
@@ -631,169 +634,6 @@ class PitBenchEvaluator(Evaluator):
                 (request.output_dir / "metric-scenario-error.json").write_text(
                     json.dumps({"error": scenario_error}) + "\n"
                 )
-        objective_initial = compute_objective_qualification(
-            task=task,
-            observations=observations,
-            expected_run_grid=expected_run_grid,
-            scenario_report=scenario_report,
-            candidate_sha256=actual_patch_sha256,
-        )
-        if (
-            performance is not None
-            and (
-                performance.classification
-                in {
-                    PerformanceClassification.IMPROVED,
-                    PerformanceClassification.REGRESSED,
-                }
-                or (
-                    objective_initial is not None
-                    and objective_initial.eligible_for_confirmation
-                )
-            )
-            and is_real_full_eval
-            and not config.get("smoke_test", False)
-            and config.get("instances_per_instance_set") is None
-            and config.get("solver_seed_limit") is None
-            and config.get("confirm_directional_performance", True)
-            and set(code_states) == set(CodeState)
-        ):
-            initial_classification = performance.classification
-            if cached_base is not None:
-                performance = performance.model_copy(
-                    update={
-                        "classification": PerformanceClassification.INCONCLUSIVE,
-                        "confirmation": PerformanceConfirmation(
-                            initial_classification=initial_classification,
-                            confirmed=False,
-                            repeat_observation_count=0,
-                            repeat_valid_observation_count=0,
-                            repeat_order="not_run_cached_base",
-                        ),
-                    }
-                )
-            else:
-                confirmation_dir = request.output_dir / "performance-confirmation"
-                confirmation_judge = DockerJudge(
-                    image=image,
-                    task_config_path=task_config_path,
-                    base_repository=Path(config["base_repository"]),
-                    private_root=Path(config["private_root"]),
-                    candidate_patch=request.candidate_patch_path,
-                    output_dir=confirmation_dir,
-                    cpus=cpus,
-                    memory=str(config.get("judge_memory", "8g")),
-                    cpuset_cpus=config.get("judge_cpuset_cpus"),
-                    code_states=tuple(reversed(code_states)),
-                    parallel_runs=parallel_runs,
-                    progress_callback=progress_callback,
-                )
-                confirmation_identity = confirmation_judge.checkpoint_identity()
-                if any(
-                    judge_identity[key] != confirmation_identity[key]
-                    for key in judge_identity
-                    if key != "code_states"
-                ) or confirmation_identity["code_states"] != list(
-                    reversed(judge_identity["code_states"])
-                ):
-                    raise ValueError(
-                        "Performance confirmation changed task, patch, image, "
-                        "harness, resources, or Base/Agent order"
-                    )
-                confirmation_observations = (
-                    _checkpoint_observations_if_complete(
-                        confirmation_dir,
-                        task.task_id,
-                        confirmation_identity,
-                    )
-                    or confirmation_judge.run()
-                )
-                confirmation_parquet = confirmation_dir / "trials.parquet"
-                ObservationStore.write(confirmation_parquet, confirmation_observations)
-                confirmation_grid_path = confirmation_dir / "expected-run-grid.json"
-                confirmation_grid = ExpectedRunGrid.model_validate_json(
-                    confirmation_grid_path.read_text()
-                )
-                if expected_run_grid != confirmation_grid:
-                    raise ValueError(
-                        "Performance confirmation uses a different expected run grid"
-                    )
-                confirmation_report = compute_task_performance_report(
-                    [
-                        item
-                        for item in confirmation_observations
-                        if item.equivalence_parent_id is None
-                        and item.test_suite is None
-                    ],
-                    task=task,
-                    expected_run_grid=confirmation_grid,
-                )
-                if confirmation_report is None:
-                    raise ValueError("Performance confirmation produced no report")
-                if initial_classification in {
-                    PerformanceClassification.IMPROVED,
-                    PerformanceClassification.REGRESSED,
-                }:
-                    performance = adjudicate_performance_confirmation(
-                        performance,
-                        confirmation_report,
-                        repeat_observation_count=len(confirmation_observations),
-                        repeat_valid_observation_count=sum(
-                            item.valid for item in confirmation_observations
-                        ),
-                    )
-                (confirmation_dir / "report.json").write_text(
-                    json.dumps(
-                        {
-                            "initial_classification": initial_classification.value,
-                            "repeat_report": confirmation_report.model_dump(
-                                mode="json"
-                            ),
-                            "final_classification": performance.classification.value,
-                        },
-                        indent=2,
-                    )
-                    + "\n"
-                )
-                artifacts.performance_confirmation_observations = artifact_ref(
-                    confirmation_parquet,
-                    root=request.output_dir,
-                    media_type="application/vnd.apache.parquet",
-                    private=True,
-                )
-                artifacts.performance_confirmation_expected_run_grid = artifact_ref(
-                    confirmation_grid_path,
-                    root=request.output_dir,
-                    media_type="application/json",
-                    private=True,
-                )
-        if (
-            scenario_report is not None
-            and scenario_config
-            and confirmation_grid is not None
-        ):
-            from pitbench.evaluator.scenarios import collect_for_evaluation
-
-            try:
-                repeat_scenario_report, repeat_scenario_path = collect_for_evaluation(
-                    task,
-                    request.candidate_patch_path,
-                    request.output_dir / "performance-confirmation",
-                    Path(scenario_config),
-                    reverse=True,
-                    build_context=scenario_build_context,
-                )
-                artifacts.metric_scenario_confirmation = artifact_ref(
-                    repeat_scenario_path,
-                    root=request.output_dir,
-                    media_type="application/json",
-                    private=True,
-                )
-            except Exception as error:
-                scenario_error = f"confirmation: {type(error).__name__}: {error}"
-                (
-                    request.output_dir / "metric-scenario-confirmation-error.json"
-                ).write_text(json.dumps({"error": scenario_error}) + "\n")
         controlled_transfer = None
         controlled_transfer_config = getattr(
             task.evaluation,
@@ -816,21 +656,14 @@ class PitBenchEvaluator(Evaluator):
                 ]
                 for budget in performance.by_budget.values()
             )
-        if isinstance(confirmation_report, ExactPerformanceReport):
-            exact_qualification_failures += sum(
-                budget.agent.outcome_counts[
-                    ExactRunOutcomeKind.QUALIFICATION_FAILURE.value
-                ]
-                for budget in confirmation_report.by_budget.values()
-            )
         validity = evaluator_validity(
             patch_exists=patch_exists,
             fixture_mode=fixture_mode,
-            observations=[*observations, *confirmation_observations],
+            observations=observations,
             exact_qualification_failures=exact_qualification_failures,
             scenario_verification_failures=sum(
                 r.get("code_state") == "agent"
-                for report in (scenario_report, repeat_scenario_report)
+                for report in (scenario_report,)
                 if report is not None
                 for r in report.invalid_runs
             ),
@@ -842,9 +675,6 @@ class PitBenchEvaluator(Evaluator):
             summary=EvaluationSummary(
                 observation_count=len(observations),
                 valid_observation_count=sum(item.valid for item in observations),
-                performance_confirmation_observation_count=len(
-                    confirmation_observations
-                ),
                 counts_by_state=dict(counts),
                 performance=performance,
                 controlled_transfer=controlled_transfer,
@@ -864,11 +694,7 @@ class PitBenchEvaluator(Evaluator):
                     observations=observations,
                     validity_accepted=validity.accepted,
                     expected_run_grid=expected_run_grid,
-                    repeat_observations=confirmation_observations or None,
-                    repeat_expected_run_grid=confirmation_grid,
-                    repeat_identity_verified=confirmation_grid is not None,
                     scenario_report=scenario_report,
-                    repeat_scenario_report=repeat_scenario_report,
                     candidate_sha256=actual_patch_sha256,
                 ),
             ),

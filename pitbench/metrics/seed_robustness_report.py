@@ -45,24 +45,37 @@ def compute_task_seed_robustness_report(
         return None
     if expected_run_grid.task_id != task.task_id:
         raise ValueError("seed report grid belongs to another task")
+    supplemental = {
+        panel.name: panel
+        for panel in task.instance_sets
+        if panel.performance_protocol is not None
+        or panel.budgets_sec is not None
+        or panel.solver_seed_count is not None
+    }
     planned_seeds = list(
         dict.fromkeys(
             run.solver_seed
             for run in expected_run_grid.runs
             if run.instance_set_kind in {"judge_id", "judge_shift"}
+            and run.instance_set not in supplemental
             and run.test_suite is None
             and run.equivalence_parent_id is None
         )
     )
+    if not planned_seeds:
+        planned_seeds = list(
+            dict.fromkeys(
+                run.solver_seed
+                for run in expected_run_grid.runs
+                if run.instance_set_kind in {"judge_id", "judge_shift"}
+                and run.test_suite is None
+                and run.equivalence_parent_id is None
+            )
+        )
     if evaluation_seeds is None:
         evaluation_seeds = planned_seeds
     elif set(evaluation_seeds) != set(planned_seeds):
         raise ValueError("saved seed list differs from the expected run grid")
-    supplemental = {
-        panel.name: panel
-        for panel in task.instance_sets
-        if panel.performance_protocol is not None or panel.budgets_sec is not None
-    }
     original = [
         row
         for row in observations
@@ -103,11 +116,27 @@ def compute_task_seed_robustness_report(
         )
         if not panel_grid.runs:
             continue
+        panel_seeds = list(dict.fromkeys(row.solver_seed for row in panel_grid.runs))
+        expected_count = panel.solver_seed_count or len(evaluation_seeds)
+        if len(panel_seeds) != expected_count or not set(panel_seeds) <= set(
+            evaluation_seeds
+        ):
+            raise ValueError(
+                "panel seed grid differs from the declared frozen seed selection"
+            )
+        panel_task.evaluation.seed_robustness.seed_selection = (
+            config.seed_selection.model_copy(
+                update={
+                    "seed_count": expected_count,
+                    "development_seed_count": len(config.development_seeds),
+                }
+            )
+        )
         measured = compute_task_seed_robustness_report(
             [row for row in observations if row.instance_set == name],
             task=panel_task,
             expected_run_grid=panel_grid,
-            evaluation_seeds=evaluation_seeds,
+            evaluation_seeds=panel_seeds,
         )
         report.supplemental_by_instance_set[name] = measured.model_dump(mode="json")
     return report

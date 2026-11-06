@@ -1021,6 +1021,8 @@ def study_models(args):
             private_root=private_root,
             destination=args.output / "evaluation-views",
             target_runs=plan.evaluation_run_target,
+            supplemental_seed_count=plan.supplemental_seed_count,
+            supplemental_primary_budget_only=plan.supplemental_primary_budget_only,
         )
     views = json.loads(views_path.read_text())
     if views.get("status") != "development_frozen_evaluation_gated":

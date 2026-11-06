@@ -154,7 +154,7 @@ an explicitly declared hidden qualification panel on supported Judge backends.
 Boundary counts retain the declared case/seed denominator. Controlled retention
 uses all declared conditions and the existing simultaneous support decision.
 
-## Reporting, qualification and confirmation
+## Reporting and qualification
 
 Select `protocol_version: "1.1"` in the objective scoring plan and use
 `qualification_protocols_sha256("1.1")`. Freeze the scenario hashes in
@@ -173,30 +173,29 @@ total memory and cgroup resource limits. Resume validates that hardware contract
 A nonempty candidate patch with identical Base/Agent API fingerprints is rejected
 instead of measuring an unchanged installed binding as the candidate.
 
-The normal independent Judge grid is still required. A scenario primary can request
-confirmation, but acceptance additionally needs a new full Judge run and a fresh
-scenario collection with the same task, candidate, runtime fingerprints, model
-sequences and grid, a distinct collection ID, later start than the initial finish,
-and reversed Base/Agent order. Reusing, reducing or changing a collection cannot
-confirm an improvement. Invalid scenario solutions invalidate the candidate.
+The normal independent Judge grid is still required. Qualification uses one
+complete paired Judge grid and the declared scenario campaign, bound to the task,
+candidate and runtime fingerprints. Invalid scenario solutions invalidate the
+candidate. No automatic full-grid or scenario confirmation repeat is run. Removing
+that rule changes the qualification-protocol hash; freeze a new registration before new
+measurements. Existing saved runs and reports retain their original evidence.
 
 For unified evaluation, map each applicable task to its machine-local runtime
 configuration under `metric_scenario_configs` in the evaluation YAML. Preflight
-checks the explicit configuration; the evaluator collects initial and confirmation
-scenarios and retains their campaigns as artifacts. The API runtimes must be built
+checks the explicit configuration; the evaluator collects the declared scenarios
+once and retains their campaigns as artifacts. The API runtimes must be built
 from the pinned Base and selected candidate source; an installed release is not a
 substitute for the candidate binding. Build support remains a per-release capability.
 
-`pitbench report` discovers sibling `metric-scenarios/campaign.json` and confirmation
-campaigns, or accepts `--scenario-campaign`, `--repeat-scenario-campaign` and
-`--candidate-patch`. It recomputes from raw evidence and includes `metric_scenarios`
-in JSON. PR qualification exports and revalidates those campaign artifacts.
+`pitbench report` discovers sibling `metric-scenarios/campaign.json`, or accepts
+`--scenario-campaign` and `--candidate-patch`. It recomputes from raw evidence and
+includes `metric_scenarios` in JSON. PR qualification exports and revalidates those campaign artifacts.
 
 ## Verification scope
 
 The regression suite checks every extended adapter, malformed/missing evidence,
 normalization, late solutions, cold/warm controls, resource semantics, invalid
-solutions, protocol hashes and independent confirmation. The native collection
+solutions, protocol hashes and single-pass independent validity. The native collection
 test executes seven scenario kinds and forty isolated worker jobs on tiny LP
 fixtures using HiGHS 1.15.1, including stateful updates and resume. This validates
 the implementation path; it is not a performance result for the benchmark corpus

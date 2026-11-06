@@ -168,9 +168,16 @@ class GeneralizationStudyPlan(BaseModel):
     inference_scope: str = Field(min_length=20)
     evaluation_seed_policy: StudySeedPolicy | None = None
     evaluation_run_target: int | None = Field(default=None, gt=0)
+    supplemental_seed_count: int | None = Field(default=None, gt=0)
+    supplemental_primary_budget_only: bool = False
 
     @model_validator(mode="after")
     def validate_controls(self):
+        if (
+            self.supplemental_seed_count is not None
+            or self.supplemental_primary_budget_only
+        ) and self.evaluation_run_target is None:
+            raise ValueError("supplemental reduction requires an evaluation run target")
         arms = {arm.id: arm for arm in self.arms}
         if set(arms) != {"original", "diverse", "mechanism_aware"}:
             raise ValueError("study needs original, diverse and mechanism-aware arms")

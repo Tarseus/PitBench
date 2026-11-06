@@ -59,6 +59,8 @@
   ],
   "inference_scope": "One fresh independent Agent start per task/model/arm. Judge instance/solver-seed intervals describe the realized patch, not Agent-generation variance. Diversity is assessed with B-A; the mechanism intervention with C-B. Versions within a repository and distributions within a task are dependent, not independent software tasks. No best-of-model, best-of-arm or outcome-selected test panels. This reduced cohort includes only the already pinned latest release per repository and Sol/Terra at high effort; it makes no cross-version comparison.",
   "evaluation_run_target": 100000,
+  "supplemental_seed_count": 5,
+  "supplemental_primary_budget_only": true,
   "evaluation_seed_policy": {
     "seed_count": 30,
     "seed_min": 1,

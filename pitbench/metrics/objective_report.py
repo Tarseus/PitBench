@@ -60,7 +60,7 @@ class ObjectiveMeasurementReport(BaseModel):
     partial_metric_count: int = Field(ge=0)
     qualification: ObjectiveQualificationReport | None = None
     automatic_admission: Literal[False] = False
-    interpretation: str = "Qualification uses the frozen primary metric, declared guardrails, complete paired evidence and fresh confirmation. Type hints alone never admit a PR; task readiness additionally requires the existing curation gates."
+    interpretation: str = "Qualification uses the frozen primary metric, declared guardrails, complete paired evidence and independent validity. Type hints alone never admit a PR; task readiness additionally requires the existing curation gates."
 
 
 def compute_objective_report(
@@ -74,11 +74,7 @@ def compute_objective_report(
     observations: list[RunObservation] | None = None,
     validity_accepted: bool | None = None,
     expected_run_grid: ExpectedRunGrid | None = None,
-    repeat_observations: list[RunObservation] | None = None,
-    repeat_expected_run_grid: ExpectedRunGrid | None = None,
-    repeat_identity_verified: bool = False,
     scenario_report: ScenarioReport | None = None,
-    repeat_scenario_report: ScenarioReport | None = None,
     candidate_sha256: str | None = None,
     include_all_metrics: bool = False,
     representation: dict | None = None,
@@ -173,7 +169,7 @@ def compute_objective_report(
                 )
                 reference, detail = (
                     "performance.primary",
-                    "Uses the existing coverage-first exact protocol and its native confirmation.",
+                    "Uses the existing coverage-first exact protocol on the paired evaluation grid.",
                 )
         elif metric_id == "fixed_budget_normalized_gap":
             if task.evaluation.performance_protocol.value != "heuristic_fixed_budget":
@@ -192,11 +188,18 @@ def compute_objective_report(
             value, complete = (
                 {},
                 set(resources.by_instance_set)
-                == {item.name for item in task.instance_sets},
+                == {item.name for item in task.instance_sets if not item.scenario_only},
             )
             for instance_set, budgets in resources.by_instance_set.items():
+                spec = next(
+                    item for item in task.instance_sets if item.name == instance_set
+                )
+                seed_count = resources.expected_seed_counts_by_instance_set.get(
+                    instance_set, resources.expected_seed_count
+                )
                 complete = complete and set(budgets) == {
-                    format(budget, "g") for budget in task.evaluation.budgets_sec
+                    format(budget, "g")
+                    for budget in (spec.budgets_sec or task.evaluation.budgets_sec)
                 }
                 value[instance_set] = {}
                 for budget, cell in budgets.items():
@@ -204,14 +207,14 @@ def compute_objective_report(
                     value[instance_set][budget] = {
                         **measured.model_dump(mode="json"),
                         "expected_instance_count": cell.expected_instance_count,
-                        "expected_seed_count": resources.expected_seed_count,
+                        "expected_seed_count": seed_count,
                     }
                     complete = (
                         complete
                         and measured.complete_instance_count
                         == cell.expected_instance_count
                         and measured.paired_seed_count
-                        == cell.expected_instance_count * resources.expected_seed_count
+                        == cell.expected_instance_count * seed_count
                     )
             status, reference = (
                 ("reported" if complete and value else "partial"),
@@ -357,12 +360,8 @@ def compute_objective_report(
             task=task,
             observations=observations or [],
             expected_run_grid=expected_run_grid,
-            repeat_observations=repeat_observations,
-            repeat_expected_run_grid=repeat_expected_run_grid,
-            repeat_identity_verified=repeat_identity_verified,
             validity_accepted=validity_accepted,
             scenario_report=scenario_report,
-            repeat_scenario_report=repeat_scenario_report,
             candidate_sha256=candidate_sha256,
         )
         if include_qualification
@@ -381,9 +380,7 @@ def format_objective_report(report: ObjectiveMeasurementReport) -> str:
         )
         lines.append(f"{key} / {report.scenarios[key]}: {evidence}")
     if report.qualification:
-        lines.append(
-            f"Objective qualification: {report.qualification.classification}; confirmed: {report.qualification.confirmed}."
-        )
+        lines.append(f"Objective qualification: {report.qualification.classification}.")
         lines.extend(report.qualification.reasons)
     lines.append(
         "Missing or partial evidence is not a zero gain or automatic rejection. Task readiness also requires the source, build, checker and integration gates."

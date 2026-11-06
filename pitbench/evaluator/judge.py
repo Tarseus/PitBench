@@ -312,6 +312,14 @@ class JudgePlan:
                         anchor=1000.0 if objective_scored else None,
                         problem_scale=float(index + 1),
                         condition_id=condition_id,
+                        solver_seeds=(
+                            _development_seeds(task)[: instance_set.solver_seed_count]
+                            if instance_set.solver_seed_count is not None
+                            else None
+                        ),
+                        budgets_sec=tuple(instance_set.budgets_sec)
+                        if instance_set.budgets_sec
+                        else None,
                     )
                 )
         return cls(task, cases)
@@ -385,6 +393,11 @@ class JudgePlan:
             solver_seeds = (
                 development_seeds if public_instance_set else evaluation_seeds
             )
+            if instance_set.solver_seed_count is not None:
+                frozen_seeds = solver_seeds or _evaluation_seeds(task, resolver)
+                if instance_set.solver_seed_count > len(frozen_seeds):
+                    raise ValueError("panel seed count exceeds the frozen seed list")
+                solver_seeds = tuple(frozen_seeds[: instance_set.solver_seed_count])
             if (
                 public_instance_set
                 and task.evaluation.seed_robustness is None

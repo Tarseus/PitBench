@@ -10,7 +10,6 @@ from pitbench.evaluator.scenarios import task_digest
 from pitbench.metrics.objective_native import native_objective_measurement
 from pitbench.metrics.objective_qualification import (
     compute_objective_qualification,
-    objective_protocol_gaps,
 )
 from pitbench.metrics.scenario_report import compute_scenario_report
 from pitbench.schema.objectives import (
@@ -124,9 +123,11 @@ def fixture(tmp_path, kind="setup", metric="setup_time_sec"):
     return task, data, *normal_evidence(task)
 
 
-def test_new_protocol_has_all_adapters_while_frozen_protocol_is_unchanged():
+def test_protocols_preserve_adapter_coverage_with_single_pass_evaluation():
     old, new = qualification_protocols(), qualification_protocols("1.1")
     assert old["protocol_version"] == "1.0"
+    assert "confirmation" not in old["decision_rules"]
+    assert "confirmation" not in new["scenario_protocol"]
     assert old["metrics"]["setup_time_sec"]["status"] == "requires_scenario_protocol"
     assert sum(v["status"] == "implemented" for v in new["metrics"].values()) == 25
     assert new["metrics"]["search_work"]["status"] == "diagnostic_only"
@@ -135,66 +136,35 @@ def test_new_protocol_has_all_adapters_while_frozen_protocol_is_unchanged():
     }
 
 
-def test_scenario_primary_requires_real_reversed_fresh_confirmation(tmp_path):
+def test_scenario_primary_uses_one_complete_independently_verified_campaign(tmp_path):
     task, data, rows, grid = fixture(tmp_path)
-    assert not objective_protocol_gaps(task)
-    initial = compute_scenario_report(data)
-    args = dict(
-        task=task,
-        observations=rows,
-        expected_run_grid=grid,
-        scenario_report=initial,
-        candidate_sha256=data.candidate_sha256,
-        validity_accepted=True,
-    )
-    result = compute_objective_qualification(**args)
-    assert result.classification == "confirmation_required"
-    assert result.initial.primary[0].upper < 0
-    repeat = data.model_copy(deep=True)
-    repeat.collection_id = "independent-repeat"
-    repeat.order = "agent_first"
-    repeat.started_at, repeat.finished_at = 3, 4
-    final = compute_objective_qualification(
-        **args,
-        repeat_observations=rows,
-        repeat_expected_run_grid=grid,
-        repeat_identity_verified=True,
-        repeat_scenario_report=compute_scenario_report(repeat),
-    )
-    assert final.confirmed and final.classification == "improved"
-
-
-@pytest.mark.parametrize("fault", ["same_id", "same_order", "wrong_design", "old_time"])
-def test_reused_or_changed_scenario_evidence_cannot_confirm(tmp_path, fault):
-    task, data, rows, grid = fixture(tmp_path)
-    initial = compute_scenario_report(data)
-    repeat = initial.model_copy(
-        deep=True,
-        update=dict(
-            collection_id="new", order="agent_first", started_at=3, finished_at=4
-        ),
-    )
-    if fault == "same_id":
-        repeat.collection_id = initial.collection_id
-    elif fault == "same_order":
-        repeat.order = initial.order
-    elif fault == "wrong_design":
-        repeat.design_sha256 = "f" * 64
-    else:
-        repeat.started_at = 0
     result = compute_objective_qualification(
         task=task,
         observations=rows,
         expected_run_grid=grid,
-        repeat_observations=rows,
-        repeat_expected_run_grid=grid,
-        repeat_identity_verified=True,
-        validity_accepted=True,
-        scenario_report=initial,
-        repeat_scenario_report=repeat,
+        scenario_report=compute_scenario_report(data),
         candidate_sha256=data.candidate_sha256,
+        validity_accepted=True,
     )
-    assert result.classification == "incomplete" and not result.confirmed
+    assert result.classification == "improved"
+    assert result.initial.primary[0].upper < 0
+    assert result.performance_confirmed
+    assert "repeat" not in result.model_dump()
+
+
+@pytest.mark.parametrize("validity", [False, None])
+def test_single_pass_still_requires_independent_validity(tmp_path, validity):
+    task, data, rows, grid = fixture(tmp_path)
+    result = compute_objective_qualification(
+        task=task,
+        observations=rows,
+        expected_run_grid=grid,
+        scenario_report=compute_scenario_report(data),
+        candidate_sha256=data.candidate_sha256,
+        validity_accepted=validity,
+    )
+    assert result.classification == ("invalid" if validity is False else "incomplete")
+    assert not result.performance_confirmed
 
 
 def test_missing_or_wrong_candidate_scenario_cannot_be_scored(tmp_path):
@@ -223,7 +193,9 @@ def test_faster_setup_with_worse_final_quality_fails_scenario_guardrail(tmp_path
         scenario_report=report,
         candidate_sha256=data.candidate_sha256,
     )
-    assert result.classification == "guardrail_failed" and not result.confirmed
+    assert (
+        result.classification == "guardrail_failed" and not result.performance_confirmed
+    )
 
 
 def test_invalid_intermediate_solution_disqualifies_scenario_primary(tmp_path):
@@ -390,7 +362,7 @@ def test_cli_recomputes_scenarios_and_qualification_from_raw_campaign(tmp_path):
     assert report["metric_scenarios"]["complete"]
     assert (
         report["objective_measurements"]["qualification"]["classification"]
-        == "confirmation_required"
+        == "incomplete"
     )
     assert (
         report["objective_measurements"]["metrics"]["setup_time_sec"]["status"]

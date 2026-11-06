@@ -60,7 +60,10 @@ def test_run_balance_keeps_seeds_budgets_and_all_panel_conditions():
         )
 
 
-def test_balanced_views_freeze_matching_private_and_agent_panel_configs(tmp_path):
+@pytest.mark.parametrize("reduced", [False, True])
+def test_balanced_views_freeze_matching_private_and_agent_panel_configs(
+    tmp_path, reduced
+):
     import hashlib
 
     from pitbench.research import prepare_generalization_run_views
@@ -89,6 +92,8 @@ def test_balanced_views_freeze_matching_private_and_agent_panel_configs(tmp_path
                 panel_path.read_bytes()
             ).hexdigest(),
             size=4,
+            budgets_sec=[5, 10],
+            primary_budget_sec=10,
         )
     )
     task_path = tmp_path / "task.yaml"
@@ -119,6 +124,8 @@ def test_balanced_views_freeze_matching_private_and_agent_panel_configs(tmp_path
         private_root=private,
         destination=tmp_path / "balanced",
         target_runs=before - 240,
+        supplemental_seed_count=5 if reduced else None,
+        supplemental_primary_budget_only=reduced,
     )
     result_path = prepare_generalization_run_views(**kwargs)
     result = json.loads(result_path.read_text())
@@ -139,7 +146,14 @@ def test_balanced_views_freeze_matching_private_and_agent_panel_configs(tmp_path
         Path(result["arms"]["original"][task.task_id]["agent_task_config_path"])
     )
     assert agent.instance_sets == balanced.instance_sets
-    assert metadata["run_balance"]["selected_runs"] == before - 240
+    assert metadata["run_balance"]["balanced_runs"] == before - 240
+    assert metadata["run_balance"]["selected_runs"] == before - (
+        460 if reduced else 240
+    )
+    assert panel.solver_seed_count == (5 if reduced else None)
+    assert panel.budgets_sec == ([10] if reduced else [5, 10])
+    assert balanced.evaluation == task.evaluation
+    assert balanced.instance_sets[:3] == task.instance_sets[:3]
     assert prepare_generalization_run_views(**kwargs) == result_path
     assert PitBenchTask.from_yaml(task_path).instance_sets[-1].size == 4
 

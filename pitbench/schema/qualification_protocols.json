@@ -4,14 +4,14 @@
   "decision_rules": {
     "primary": "One metric chosen before outcomes; all declared qualification panels must improve. No best-of-metrics selection or composite score.",
     "improvement": "Native exact/gap decisions. For resources the upper 95% confidence bound on Agent/Base minus one must be strictly below zero. No universal minimum percent gain.",
-    "confirmation": "Fresh full Judge repeat with the same task, patch, image, harness, CPU/memory/cpuset and grid, reversed Base/Agent order; both runs must improve and pass all guardrails.",
+    "evaluation": "One complete pinned paired Base/Agent Judge grid with independent validity and all declared guardrails. No automatic confirmation repeat.",
     "guardrails": "Tasks explicitly declare allowed degradation in canonical absolute or relative units. The adverse confidence bound must be no greater than that limit. Missing declarations => needs_protocol.",
     "required_tradeoffs": "Cover solution quality/exact coverage, compute cost/exact PAR2 runtime, and peak RSS. Primary covers its own metric. Required guards cover every qualification panel. Extra control panels are allowed; final reporting panels cannot select tasks.",
     "correctness": "Independent semantic verification and complete run evidence are mandatory. Resource savings cannot excuse invalid solutions, bounds, optimum or infeasibility claims.",
     "pending": "Missing scenario/collector rules => needs_protocol; missing paired measurements => incomplete; no significant direction => inconclusive. These are not automatic rejections.",
     "panels": "Qualification and final reporting panels are disjoint frozen task instance sets. Qualification-selected effects are not independent final estimates.",
     "registration": "Freeze task/source/protocol hashes before measured runs. Judge checkpoints bind that task hash and record measurement start time. Revised plans require fresh runs.",
-    "admission": "Recomputed hash-bound confirmed improvement plus passing guardrails satisfies expert_reference performance_confirmed. Other source/build/workload/correctness/integration gates still apply. open_opportunity retains its baseline route without requiring human improvement."
+    "admission": "Recomputed hash-bound independently verified paired improvement plus passing guardrails satisfies expert_reference performance_confirmed. Other source/build/workload/correctness/integration gates still apply. open_opportunity retains its baseline route without requiring human improvement."
   },
   "metrics": {
     "exact_solved_coverage": {

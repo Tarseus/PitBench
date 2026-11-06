@@ -75,8 +75,8 @@ Unlike general repository-level coding benchmarks, solver optimization must pres
 
 3. **CO-Specific Quality-Time Performance-First Protocol**
    Heuristic tasks measure paired normalized optimality-gap reductions against best-known solutions; exact tasks measure independently verified optimal coverage and penalized solve time. Each task declares its own budgets and seeds, with instance-cluster bootstrap confidence intervals for paired comparisons.
-   A directional result is confirmed with a fresh, opposite-order Base/Agent
-   run before it becomes a public improvement or regression label.
+   A complete paired Base/Agent evaluation supplies the improvement or regression
+   classification; independent solution verification remains mandatory. No automatic repeat is run.
 
 4. **Prepared Docker Environments**
    PyVRP native extensions are compiled in prepared, commit-tagged images.
@@ -180,7 +180,7 @@ optimization_profile:
 ```
 
 This requests measurements only. Admission additionally requires the scoring
-plan, registration, complete runs, independent correctness and confirmation.
+plan, registration, complete paired runs and independent correctness.
 
 Solver behavior diagnostics are also included as `behavior_geometry` in the
 evaluation summary and `pitbench report --json`. They describe finite empirical
@@ -189,7 +189,7 @@ distance alone does not establish an improvement. Their
 [mathematical definitions](docs/solver-behavior-metric-definition.md) and the
 [bounded CVRP geometry and certificate API](docs/cvrp-problem-metric-definition.md)
 are research tools. Existing performance and robustness decisions keep their
-frozen estimators, budgets, seed panels, and confirmation rules.
+frozen estimators, budgets, seed panels, and validity rules.
 
 ### Formal objective qualification protocol 1.0
 
@@ -243,9 +243,9 @@ guards. Final reporting panels cannot act as qualification or control panels.
 Correctness failures are never an allowed tradeoff. All declared pairs, failures
 and missing observations are retained. Missing protocols yield `needs_protocol`,
 missing measurements yield `incomplete`, and uncertain primary directions yield
-`inconclusive`. A fresh full Judge repeat must independently improve and satisfy
-all guards, with identical identities/resources/grid and reversed Base/Agent
-order. Cached Base observations cannot provide this confirmation.
+`inconclusive`. Qualification uses one complete paired Judge grid and all declared
+guardrails, with independent validity evidence bound to the selected patch.
+Automatic full-grid and scenario confirmation repeats have been removed.
 
 For each indexed PR with a pinned task configuration, use the existing curator:
 
@@ -596,8 +596,8 @@ not repeatedly searched for admission; otherwise it is reported as
 selection-conditioned. Budgets, seeds, aggregation, missing runs, regressions,
 and retry rules are declared before the qualification run. The current
 `performance_confirmed` gate accepts a recorded positive paired
-classification; the report pipeline supports reverse-order confirmation, but
-the gate does not encode a distinct final reporting panel.
+classification with independent validity evidence. It does not require a second
+Judge run; the gate does not encode a distinct final reporting panel.
 
 The Agent receives the pinned pre-PR source, the public task goal, and
 development instances. Its source snapshot is shallow and has no named refs

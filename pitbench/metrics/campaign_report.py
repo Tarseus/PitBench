@@ -434,17 +434,20 @@ def _inventory(row: dict, trial: dict, evaluation_dir: Path, task_path: Path) ->
                 and r.test_suite is None
             ]
             seed_count = (
-                task.evaluation.seed_robustness.seed_selection.seed_count
+                panel.solver_seed_count
+                if panel.solver_seed_count
+                else task.evaluation.seed_robustness.seed_selection.seed_count
                 if task.evaluation.seed_robustness is not None
                 else len(task.evaluation.solver_seeds or [])
             )
-            full_count = panel.size * seed_count * len(task.evaluation.budgets_sec) * 2
+            budgets = panel.budgets_sec or task.evaluation.budgets_sec
+            full_count = panel.size * seed_count * len(budgets) * 2
             if (
                 not expected
                 or len(expected) != full_count
                 or len({r.instance_id for r in expected}) != panel.size
                 or len({r.solver_seed for r in expected}) != seed_count
-                or {r.budget_sec for r in expected} != set(task.evaluation.budgets_sec)
+                or {r.budget_sec for r in expected} != set(budgets)
                 or {r.code_state.value for r in expected} != {"base", "agent"}
                 or len(selected) != len(expected)
                 or len({_run_key(r) for r in expected}) != len(expected)
@@ -716,6 +719,10 @@ def collect_campaign(
                 and r.get("validity_accepted") is True
                 for r in conditions
             ),
+            "valid_improved": sum(
+                r["classification"] == "improved" and r.get("validity_accepted") is True
+                for r in conditions
+            ),
         },
         "interpretation": "Saved native primary intervals remain unchanged. Supplemental hidden-shift plots reuse the native gap estimator on complete retained raw grids and are labeled separately; they do not create a retention protocol. No solver execution. Exact primary plots follow the frozen coverage-first/runtime-tie rule. Conditions are not pooled as independent repetitions. Resource ratios without saved intervals remain descriptive. Transfer benefit intervals do not replace simultaneous retention decisions.",
     }
@@ -820,7 +827,7 @@ def _figures(estimates: list[dict], output: Path) -> list[dict]:
                 marker="o",
                 linestyle="none",
                 color="#235b78",
-                label="Reversed-order primary confirmation",
+                label="Historical reversed-order primary repeat",
             ),
             Line2D(
                 [],
@@ -829,7 +836,7 @@ def _figures(estimates: list[dict], output: Path) -> list[dict]:
                 linestyle="none",
                 markerfacecolor="white",
                 color="#66717a",
-                label="Other saved evidence / unconfirmed",
+                label="Paired evaluation estimate",
             ),
         ]
         axis.legend(

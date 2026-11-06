@@ -4,14 +4,14 @@
   "decision_rules": {
     "primary": "One metric chosen before outcomes; all declared qualification panels must improve. No best-of-metrics selection or composite score.",
     "improvement": "Native exact/gap decisions. For resources the upper 95% confidence bound on Agent/Base minus one must be strictly below zero. No universal minimum percent gain.",
-    "confirmation": "Fresh full Judge repeat with the same task, patch, image, harness, CPU/memory/cpuset and grid, reversed Base/Agent order; both runs must improve and pass all guardrails.",
+    "evaluation": "One complete pinned paired Base/Agent Judge grid with independent validity and all declared guardrails. No automatic confirmation repeat.",
     "guardrails": "Tasks explicitly declare allowed degradation in canonical absolute or relative units. The adverse confidence bound must be no greater than that limit. Missing declarations => needs_protocol.",
     "required_tradeoffs": "Cover solution quality/exact coverage, compute cost/exact PAR2 runtime, and peak RSS. Primary covers its own metric. Required guards cover every qualification panel. Extra control panels are allowed; final reporting panels cannot select tasks.",
     "correctness": "Independent semantic verification and complete run evidence are mandatory. Resource savings cannot excuse invalid solutions, bounds, optimum or infeasibility claims.",
     "pending": "Missing scenario/collector rules => needs_protocol; missing paired measurements => incomplete; no significant direction => inconclusive. These are not automatic rejections.",
     "panels": "Qualification and final reporting panels are disjoint frozen task instance sets. Qualification-selected effects are not independent final estimates.",
     "registration": "Freeze task/source/protocol hashes before measured runs. Judge checkpoints bind that task hash and record measurement start time. Revised plans require fresh runs.",
-    "admission": "Recomputed hash-bound confirmed improvement plus passing guardrails satisfies expert_reference performance_confirmed. Other source/build/workload/correctness/integration gates still apply. open_opportunity retains its baseline route without requiring human improvement."
+    "admission": "Recomputed hash-bound independently verified paired improvement plus passing guardrails satisfies expert_reference performance_confirmed. Other source/build/workload/correctness/integration gates still apply. open_opportunity retains its baseline route without requiring human improvement."
   },
   "metrics": {
     "exact_solved_coverage": {
@@ -36,7 +36,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "trajectory"
     },
@@ -44,7 +44,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "trajectory"
     },
@@ -52,7 +52,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "trajectory"
     },
@@ -60,7 +60,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "trajectory"
     },
@@ -87,7 +87,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "lifecycle"
     },
@@ -95,7 +95,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "lifecycle"
     },
@@ -103,7 +103,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "scaling"
     },
@@ -111,7 +111,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "scaling"
     },
@@ -119,7 +119,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "sequence"
     },
@@ -127,7 +127,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "sequence"
     },
@@ -135,7 +135,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "numerical"
     },
@@ -143,7 +143,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "numerical"
     },
@@ -179,7 +179,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "replay"
     },
@@ -194,7 +194,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "setup"
     },
@@ -202,7 +202,7 @@
       "adapter": "declared_scenario",
       "comparison": "absolute",
       "status": "implemented",
-      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and fresh reversed-order confirmation.",
+      "decision": "Requires a full source-bound scenario grid, explicit estimators and independently checked model evidence. Paired per-instance differences use the existing 95% instance bootstrap, at least two instances, declared guardrails and independent candidate validity.",
       "existing_definition": "requires_protocol",
       "scenario_kind": "setup"
     }
@@ -327,6 +327,6 @@
     "replay": "Compare every pair of identical-input/seed/resource repeats on declared fields and explicit tolerances. Report matching pairs over declared pairs.",
     "setup": "Measure binding API initialization/model loading including marshalling, excluding Python startup. Memory is the sampled stage RSS peak with declared resolution, not process-lifetime peak RSS.",
     "native_robustness": "Preserve native seed statistics and 99% paired seed bootstrap; reuse Type-7 representation IQR, declared boundary counts and simultaneous controlled transfer.",
-    "confirmation": "Identical design hash and candidate, distinct collection ID, reversed Base/Agent order, and repeat start after initial finish. Independent full Judge confirmation and correctness guardrails also remain mandatory."
+    "evaluation": "One complete source-bound scenario collection with the declared design and candidate, alongside the paired Judge grid and independent correctness guardrails. No automatic repeat."
   }
 }

@@ -847,6 +847,7 @@ def inspect_pinned_review_diff(
         return "cached_branch_base", patch.stdout, observed
     return "cached", patch.stdout, observed
 
+
 def apply_selection_reviews(
     rows: list[dict[str, Any]],
     catalog: dict[str, Any],
@@ -2536,10 +2537,10 @@ def recompute_objective_qualification_evidence(
         or task.release.repository != candidate["repository"]
     ):
         raise ValueError("objective scoring task/source identity differs")
-    checkpoints, grids, observations = {}, {}, {}
+    grids, observations = {}, {}
     problems = []
     registered_at = datetime.fromisoformat(registration["registered_at"])
-    for label in ("initial", "repeat"):
+    for label in ("initial",):
         if not evidence.get(f"{label}_checkpoint_path"):
             problems.append(f"{label}: full Judge checkpoint missing.")
             continue
@@ -2579,7 +2580,6 @@ def recompute_objective_qualification_evidence(
             problems.append(
                 f"{label}: measurements lack evidence of starting after registration."
             )
-        checkpoints[label] = identity
         grids[label] = ExpectedRunGrid.model_validate_json(grid_path.read_text())
         observations[label] = [
             RunObservation.model_validate(item)
@@ -2587,16 +2587,6 @@ def recompute_objective_qualification_evidence(
         ]
         if marker.get("observation_count") != len(observations[label]):
             raise ValueError("objective checkpoint observation count differs")
-    repeat_verified = False
-    if set(checkpoints) == {"initial", "repeat"}:
-        initial, repeat = checkpoints["initial"], checkpoints["repeat"]
-        if {key: value for key, value in initial.items() if key != "code_states"} != {
-            key: value for key, value in repeat.items() if key != "code_states"
-        } or repeat["code_states"] != list(reversed(initial["code_states"])):
-            raise ValueError(
-                "objective repeat changed Judge identity or did not reverse run order"
-            )
-        repeat_verified = True
     validity_accepted = None
     if evidence.get("evaluation_path"):
         evaluation = json.loads(
@@ -2623,8 +2613,6 @@ def recompute_objective_qualification_evidence(
             != evidence["evaluation_observations_sha256"]
             or ObservationStore.read(measured_path) != observations.get("initial")
             or summary.get("observation_count") != len(observations.get("initial", []))
-            or summary.get("performance_confirmation_observation_count")
-            != len(observations.get("repeat", []))
         ):
             raise ValueError(
                 "objective evaluation does not describe the pinned patch and run artifacts"
@@ -2633,7 +2621,7 @@ def recompute_objective_qualification_evidence(
     from pitbench.evaluator.scenarios import load_report
 
     scenario_reports = {}
-    for label in ("initial", "repeat"):
+    for label in ("initial",):
         name = f"{label}_scenario_campaign"
         if evidence.get(f"{name}_path"):
             scenario_reports[label] = load_report(
@@ -2643,18 +2631,14 @@ def recompute_objective_qualification_evidence(
         task=task,
         observations=observations.get("initial", []),
         expected_run_grid=grids.get("initial"),
-        repeat_observations=observations.get("repeat"),
-        repeat_expected_run_grid=grids.get("repeat"),
-        repeat_identity_verified=repeat_verified,
         validity_accepted=validity_accepted,
         scenario_report=scenario_reports.get("initial"),
-        repeat_scenario_report=scenario_reports.get("repeat"),
         candidate_sha256=candidate["source_patch_sha256"],
     )
     assert isinstance(report, ObjectiveQualificationReport)
     if problems and report.classification != "needs_protocol":
         report.classification = "incomplete"
-        report.confirmed = report.performance_confirmed = False
+        report.performance_confirmed = False
         report.reasons.extend(problems)
     return report.model_dump(mode="json")
 
@@ -2685,10 +2669,7 @@ def build_objective_qualification_evidence(
         repository_root / candidate["objective_registration_path"],
         repository_root,
     )
-    for label, directory in (
-        ("initial", run_directory),
-        ("repeat", run_directory / "performance-confirmation"),
-    ):
+    for label, directory in (("initial", run_directory),):
         scenario = directory / "metric-scenarios/campaign.json"
         if scenario.is_file():
             _record_artifact(

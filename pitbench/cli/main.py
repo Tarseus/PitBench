@@ -47,9 +47,6 @@ from pitbench.metrics.objective_report import (
     format_objective_report,
 )
 from pitbench.metrics.performance_report import (
-    PerformanceClassification,
-    PerformanceConfirmation,
-    adjudicate_performance_confirmation,
     compute_panel_performance_reports,
     compute_task_performance_report,
     format_performance_report,
@@ -82,6 +79,7 @@ app.add_typer(tasks_app, name="tasks")
 app.add_typer(images_app, name="images")
 app.add_typer(profiles_app, name="profiles")
 app.add_typer(auth_app, name="auth")
+
 
 def _root(value: Path | None) -> Path:
     return (value or Path.cwd()).resolve()
@@ -1244,14 +1242,6 @@ def judge_candidate(
         f"{summary['valid_observation_count']}/{summary['observation_count']} "
         "valid observations"
     )
-    confirmation = (summary.get("performance") or {}).get("confirmation")
-    if confirmation is not None:
-        typer.echo(
-            "Performance confirmation: "
-            f"{confirmation['repeat_valid_observation_count']}/"
-            f"{confirmation['repeat_observation_count']} valid observations; "
-            f"final={summary['performance']['classification']}"
-        )
     typer.echo(f"Artifacts: {resolved_output_dir}")
     typer.echo(
         f"Report: pitbench report {resolved_output_dir} --task-config {record.task_config_path}"
@@ -1557,10 +1547,6 @@ def report_command(
     scenario_campaign: Annotated[
         Path | None, typer.Option("--scenario-campaign", exists=True, dir_okay=False)
     ] = None,
-    repeat_scenario_campaign: Annotated[
-        Path | None,
-        typer.Option("--repeat-scenario-campaign", exists=True, dir_okay=False),
-    ] = None,
     candidate_patch: Annotated[
         Path | None, typer.Option("--candidate-patch", exists=True, dir_okay=False)
     ] = None,
@@ -1635,103 +1621,6 @@ def report_command(
         if standard
         else None
     )
-    initial_checkpoint_path = target.parent / "judge-checkpoint.json"
-    if performance_report is not None and initial_checkpoint_path.is_file():
-        initial_identity = json.loads(initial_checkpoint_path.read_text())["identity"]
-        if set(initial_identity["code_states"]) != {
-            "base",
-            "agent",
-        } and performance_report.classification in {
-            PerformanceClassification.IMPROVED,
-            PerformanceClassification.REGRESSED,
-        }:
-            performance_report = performance_report.model_copy(
-                update={
-                    "classification": PerformanceClassification.INCONCLUSIVE,
-                    "confirmation": PerformanceConfirmation(
-                        initial_classification=performance_report.classification,
-                        confirmed=False,
-                        repeat_observation_count=0,
-                        repeat_valid_observation_count=0,
-                        repeat_order="not_run_cached_base",
-                    ),
-                }
-            )
-    repeat_observations = None
-    repeat_grid = None
-    repeat_identity_verified = False
-    confirmation_dir = target.parent / "performance-confirmation"
-    if confirmation_dir.is_dir():
-        confirmation_parquet = confirmation_dir / "trials.parquet"
-        confirmation_grid_path = confirmation_dir / "expected-run-grid.json"
-        if not confirmation_parquet.is_file() or not confirmation_grid_path.is_file():
-            raise typer.BadParameter(
-                "Performance confirmation artifacts are incomplete",
-                param_hint=str(confirmation_dir),
-            )
-        initial_checkpoint = target.parent / "judge-checkpoint.json"
-        repeat_checkpoint = confirmation_dir / "judge-checkpoint.json"
-        if not initial_checkpoint.is_file() or not repeat_checkpoint.is_file():
-            raise typer.BadParameter(
-                "Performance confirmation is missing its judge identity",
-                param_hint=str(confirmation_dir),
-            )
-        initial_identity = json.loads(initial_checkpoint.read_text())["identity"]
-        repeat_identity = json.loads(repeat_checkpoint.read_text())["identity"]
-        for field in (
-            "candidate_patch_sha256",
-            "task_config_sha256",
-            "judge_image",
-            "cpus",
-            "memory",
-            "cpuset_cpus",
-            "parallel_runs",
-            "harness_sha256",
-        ):
-            if initial_identity.get(field) != repeat_identity.get(field):
-                raise typer.BadParameter(
-                    f"Performance confirmation differs in {field}",
-                    param_hint=str(confirmation_dir),
-                )
-        if initial_identity["code_states"] != list(
-            reversed(repeat_identity["code_states"])
-        ):
-            raise typer.BadParameter(
-                "Performance confirmation did not reverse Base/Agent order",
-                param_hint=str(confirmation_dir),
-            )
-        repeat_grid = ExpectedRunGrid.model_validate_json(
-            confirmation_grid_path.read_text()
-        )
-        if expected_run_grid != repeat_grid:
-            raise typer.BadParameter(
-                "Performance confirmation uses a different expected run grid",
-                param_hint=str(confirmation_dir),
-            )
-        repeat_observations = ObservationStore.read(confirmation_parquet)
-        repeat_identity_verified = True
-        repeat_report = compute_task_performance_report(
-            [item for item in repeat_observations if item.test_suite is None],
-            task=task,
-            expected_run_grid=repeat_grid,
-        )
-        if (
-            performance_report is not None
-            and repeat_report is not None
-            and performance_report.classification
-            in {
-                PerformanceClassification.IMPROVED,
-                PerformanceClassification.REGRESSED,
-            }
-        ):
-            performance_report = adjudicate_performance_confirmation(
-                performance_report,
-                repeat_report,
-                repeat_observation_count=len(repeat_observations),
-                repeat_valid_observation_count=sum(
-                    item.valid for item in repeat_observations
-                ),
-            )
     controlled_transfer_report = (
         compute_controlled_transfer_report(
             standard,
@@ -1753,6 +1642,7 @@ def report_command(
             },
             expected_instance_counts={
                 item.name: item.size for item in task.instance_sets
+                if not item.scenario_only
             },
             expected_seed_count=(
                 task.evaluation.seed_robustness.seed_selection.seed_count
@@ -1760,10 +1650,15 @@ def report_command(
                 else len(task.evaluation.solver_seeds or [])
             ),
             expected_seed_counts_by_instance_set={
-                item.name: len(task.evaluation.seed_robustness.development_seeds)
+                item.name: item.solver_seed_count
+                if item.solver_seed_count is not None
+                else len(task.evaluation.seed_robustness.development_seeds)
                 for item in task.instance_sets
-                if task.evaluation.seed_robustness is not None
-                and item.kind.value == "agent_dev"
+                if item.solver_seed_count is not None
+                or (
+                    task.evaluation.seed_robustness is not None
+                    and item.kind.value == "agent_dev"
+                )
             },
         )
         if standard
@@ -1780,16 +1675,7 @@ def report_command(
     scenario_path = (
         scenario_campaign or target.parent / "metric-scenarios/campaign.json"
     )
-    repeat_scenario_path = (
-        repeat_scenario_campaign
-        or target.parent / "performance-confirmation/metric-scenarios/campaign.json"
-    )
     scenarios = load_report(scenario_path, task) if scenario_path.is_file() else None
-    repeated_scenarios = (
-        load_report(repeat_scenario_path, task)
-        if repeat_scenario_path.is_file()
-        else None
-    )
     patch_path = candidate_patch or target.parent / "candidate.patch"
     scenario_candidate_hash = (
         hashlib.sha256(patch_path.read_bytes()).hexdigest()
@@ -1850,11 +1736,7 @@ def report_command(
         reliability=reliability_report,
         observations=observations,
         expected_run_grid=expected_run_grid,
-        repeat_observations=repeat_observations,
-        repeat_expected_run_grid=repeat_grid,
-        repeat_identity_verified=repeat_identity_verified,
         scenario_report=scenarios,
-        repeat_scenario_report=repeated_scenarios,
         candidate_sha256=scenario_candidate_hash,
     )
     if (
@@ -1872,7 +1754,7 @@ def report_command(
                     observations, task=task, expected_run_grid=expected_run_grid
                 ).items()
             },
-            "panel_performance_interpretation": "Supplementary native panel estimates; the frozen judge-ID classification and declared controlled-retention decision are reported separately. Panel estimates do not inherit the primary result's confirmation.",
+            "panel_performance_interpretation": "Supplementary native panel estimates; the frozen judge-ID classification and declared controlled-retention decision are reported separately. Each panel uses its own declared evaluation grid.",
             "nuisance_robustness": seed_report.model_dump(mode="json")
             if seed_report
             else None,

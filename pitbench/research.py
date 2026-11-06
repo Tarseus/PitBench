@@ -1791,7 +1791,13 @@ def balance_generalization_task(
             continue
         costs[panel.name] = (
             2
-            * (development_seeds if public else hidden_seeds)
+            * (
+                panel.solver_seed_count
+                if panel.solver_seed_count
+                else development_seeds
+                if public
+                else hidden_seeds
+            )
             * len(panel.budgets_sec or task.evaluation.budgets_sec)
         )
     count = sum(p.size * costs.get(p.name, 0) for p in task.instance_sets)
@@ -1823,6 +1829,8 @@ def prepare_generalization_run_views(
     private_root: Path,
     destination: Path,
     target_runs: int,
+    supplemental_seed_count: int | None = None,
+    supplemental_primary_budget_only: bool = False,
 ) -> Path:
     """Freeze similarly sized evaluation grids independently of solver outcomes."""
     import copy
@@ -1831,6 +1839,11 @@ def prepare_generalization_run_views(
 
     views_path, destination = views_path.resolve(), destination.resolve()
     identity = {"source_views_sha256": _sha(views_path), "target_runs": target_runs}
+    if supplemental_seed_count is not None or supplemental_primary_budget_only:
+        identity.update(
+            supplemental_seed_count=supplemental_seed_count,
+            supplemental_primary_budget_only=supplemental_primary_budget_only,
+        )
     result_path = destination / "task-views.json"
     if result_path.exists():
         result = json.loads(result_path.read_text())
@@ -1855,6 +1868,33 @@ def prepare_generalization_run_views(
             panel_names=set(metadata["scientific_panels"]),
             target_runs=target_runs,
         )
+        balanced_runs = after
+        if supplemental_seed_count is not None:
+            available_seeds = (
+                task.evaluation.seed_robustness.seed_selection.seed_count
+                if task.evaluation.seed_robustness
+                else len(task.evaluation.solver_seeds)
+            )
+            if not 0 < supplemental_seed_count <= available_seeds:
+                raise ValueError("supplemental seed count exceeds the frozen seed list")
+        for panel in task.instance_sets:
+            if panel.name not in metadata["scientific_panels"]:
+                continue
+            if supplemental_seed_count is not None:
+                panel.solver_seed_count = supplemental_seed_count
+            if supplemental_primary_budget_only:
+                if panel.primary_budget_sec is None:
+                    raise ValueError(
+                        "supplemental panel lacks a calibrated primary budget"
+                    )
+                panel.budgets_sec = [panel.primary_budget_sec]
+        # Count the reduced grid without expanding the already selected panels.
+        if supplemental_seed_count is not None or supplemental_primary_budget_only:
+            task, _, after = balance_generalization_task(
+                task,
+                panel_names=set(metadata["scientific_panels"]),
+                target_runs=target_runs,
+            )
         selected = {}
         for panel, original in zip(
             task.instance_sets, source.instance_sets, strict=True
@@ -1890,11 +1930,16 @@ def prepare_generalization_run_views(
             evaluator_sha256=_sha(task_path),
             run_balance={
                 "original_runs": before,
+                "balanced_runs": balanced_runs,
                 "selected_runs": after,
                 "selected_instance_ids": selected,
             },
         )
-        changed = {p.name: p for p in task.instance_sets if p.name in selected}
+        changed = {
+            p.name: p
+            for p in task.instance_sets
+            if p.name in metadata["scientific_panels"]
+        }
         for arm, tasks in result["arms"].items():
             row = tasks[task_id]
             public = PitBenchTask.from_yaml(Path(row["agent_task_config_path"]))

@@ -288,6 +288,84 @@ def test_supplemental_seed_report_uses_panel_budget_and_planned_seed_denominator
     assert "scientific" not in report.by_instance_set
 
 
+def test_mixed_seed_panels_keep_native_denominator_and_missing_supplemental_pairs():
+    from pitbench.schema.task import InstanceSetSpec
+
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/highs_v1_15_1.yaml")
+    payload = task.model_dump(mode="json")
+    payload["evaluation"].update(
+        budgets_sec=[10],
+        primary_budget_sec=10,
+        solver_seeds=None,
+        seed_robustness={
+            "development_seeds": [10, 11],
+            "evaluation_seeds_file": "private://seeds.yaml",
+            "evaluation_seeds_file_sha256": "0" * 64,
+            "seed_selection": {
+                "seed_min": 0,
+                "seed_max": 20,
+                "seed_count": 3,
+                "development_seed_count": 2,
+            },
+        },
+    )
+    task = PitBenchTask.model_validate(payload)
+    task.instance_sets.append(
+        InstanceSetSpec(
+            name="scientific",
+            kind="judge_shift",
+            size=1,
+            instance_set_config="private://panel.yaml",
+            solver_seed_count=2,
+            budgets_sec=[60],
+            primary_budget_sec=60,
+            performance_protocol="heuristic_fixed_budget",
+        )
+    )
+    rows = [
+        exact_observation(
+            task_id=task.task_id,
+            code_state=state,
+            solver_seed=seed,
+            instance_set=panel,
+            instance_set_kind=panel_kind,
+            budget_sec=budget,
+            normalized_gap=0.1,
+        )
+        for panel, panel_kind, budget, seeds in (
+            ("judge_id", "judge_id", 10, [1, 2, 3]),
+            ("scientific", "judge_shift", 60, [3, 1]),
+        )
+        for state in CodeState
+        for seed in seeds
+    ]
+    grid = ExpectedRunGrid(
+        task_id=task.task_id,
+        runs=[
+            ExpectedRun(**{key: getattr(row, key) for key in ExpectedRun.model_fields})
+            for row in rows
+        ],
+    )
+    observed = [
+        r for r in rows if not (r.instance_set == "scientific" and r.solver_seed == 1)
+    ]
+    report = compute_task_seed_robustness_report(
+        observed,
+        task=task,
+        expected_run_grid=grid,
+    )
+    assert report.seed_selection.seed_count == 3
+    assert report.by_instance_set["judge_id"].primary.base.expected_optimal_count == 3
+    nested = report.supplemental_by_instance_set["scientific"]
+    assert nested["seed_selection"]["seed_count"] == 2
+    assert (
+        nested["by_instance_set"]["scientific"]["primary"][
+            "paired_complete_instance_count"
+        ]
+        == 0
+    )
+
+
 def exact_expected_grid(
     *,
     instance_ids: tuple[str, ...] = ("i1", "i2"),

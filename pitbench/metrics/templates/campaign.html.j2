@@ -12,7 +12,7 @@ body{margin:0;background:#fafaf8;color:#242a30;font:14px/1.65 system-ui,sans-ser
 <div class="facts">
 <div><strong>{{ report.planned_conditions }}</strong><span>计划条件</span></div>
 <div><strong>{{ report.summary.evaluated }}</strong><span>评测完成</span></div>
-<div><strong>{{ report.summary.confirmed_improved }}</strong><span>主性能反序确认改善</span></div>
+<div><strong>{{ report.summary.valid_improved }}</strong><span>有效候选主性能改善</span></div>
 <div><strong>{{ report.summary.missing_or_failed }}</strong><span>缺测或评测失败</span></div>
 </div>
 <p class="note">主性能、seed 和迁移图读取已保存的区间。补充 shift 与规模切片按原生统计函数汇总完整的既有观测，不新增求解运行，也不作为收益保留判定。效应图正值表示改善；规模切片左图展示 gap 原值（越低越好），右图展示成对改进。不同指标、单位、面板和置信水平分开绘制。</p>
@@ -24,7 +24,7 @@ body{margin:0;background:#fafaf8;color:#242a30;font:14px/1.65 system-ui,sans-ser
 <figure>
 <h3>{{ figure.title }} · {{ figure.panel }}</h3>
 <img src="{{ figure.files.svg }}" alt="{{ figure.title }}，{{ figure.point_count }} 个原生估计及置信区间">
-<figcaption>{{ figure.point_count }} 个点；单位 {{ figure.unit }}；{{ '%g'|format(figure.confidence_level * 100) }}% 区间。{% if figure.origin == 'derived_scale' %}固定 shift 配方中的观测规模切片，按实例内 seed 均值、实例等权的原生估计量分组；单实例分组不估计跨实例区间。这不是 shift 强度梯度或正式 scalability 验收。{% elif figure.origin == 'derived' %}来自完整既有网格的补充统计，不是收益保留验收。{% else %}区间来自已保存的原生报告。实心点为已有主性能反序确认；空心点包括其他原生估计和未确认结果。{% endif %}<br><a href="{{ figure.files.png }}" download>PNG</a> · <a href="{{ figure.files.svg }}" download>SVG</a> · <a href="{{ figure.files.pdf }}" download>PDF</a></figcaption>
+<figcaption>{{ figure.point_count }} 个点；单位 {{ figure.unit }}；{{ '%g'|format(figure.confidence_level * 100) }}% 区间。{% if figure.origin == 'derived_scale' %}固定 shift 配方中的观测规模切片，按实例内 seed 均值、实例等权的原生估计量分组；单实例分组不估计跨实例区间。这不是 shift 强度梯度或正式 scalability 验收。{% elif figure.origin == 'derived' %}来自完整既有网格的补充统计，不是收益保留验收。{% else %}区间来自已保存的原生报告。实心点标记历史反序复测证据；空心点为配对评测估计，当前评测不要求额外复测。{% endif %}<br><a href="{{ figure.files.png }}" download>PNG</a> · <a href="{{ figure.files.svg }}" download>SVG</a> · <a href="{{ figure.files.pdf }}" download>PDF</a></figcaption>
 </figure>
 {% endfor %}
 </div>
@@ -34,7 +34,7 @@ body{margin:0;background:#fafaf8;color:#242a30;font:14px/1.65 system-ui,sans-ser
 {% for condition in report.conditions %}
 <tr><td><strong>{{ condition.task_id }}</strong><br>{{ condition.setting }}<br><small>{{ condition.model or '' }}<br>{{ condition.condition_id }}</small></td>
 <td>{{ condition.execution_status }}<br>{{ condition.evaluation_status }}</td>
-<td>{{ condition.classification or '未取得' }}<br><small>{{ '已反序确认' if condition.confirmed else '没有主指标反序确认' }}</small></td>
+<td>{{ condition.classification or '未取得' }}<br><small>{{ '历史反序复测' if condition.confirmed else '单次配对评测' }}</small></td>
 <td>{% if condition.primary_effect is defined %}{% set e=condition.primary_effect %}{{ e.metric_id }}<br>{{ e.estimate|number }} {{ e.unit }}<br>[{{ e.lower|number }}, {{ e.upper|number }}]<br><small>{{ e.budget_sec }} 秒</small>{% else %}未取得原生主端点{% endif %}</td>
 <td>{% for metric,prefix in [('cpu','CPU'),('memory','RSS')] %}{% set r=condition.get('primary_resources',{}).get(metric) %}{% if r %}{{ prefix }} {{ r.change_percent|number }}%<br><small>{{ r.paired_seed_count }}/{{ r.expected_pairs }} 有效配对</small><br>{% endif %}{% endfor %}</td>
 <td>{% for key,prefix in [('seed_iqr','Seed'),('representation_iqr','表示')] %}{% set s=condition.get(key) %}{% if s %}{{ prefix }} {{ s.base|magnitude }} → {{ s.agent|magnitude }}<br><small>{{ s.unit }}</small><br>{% endif %}{% endfor %}</td>

@@ -159,6 +159,8 @@ def main():
     balanced.add_argument("--private-root", type=Path, required=True)
     balanced.add_argument("--output-dir", type=Path, required=True)
     balanced.add_argument("--target-runs", type=int, required=True)
+    balanced.add_argument("--supplemental-seed-count", type=int)
+    balanced.add_argument("--supplemental-primary-budget-only", action="store_true")
     args = parser.parse_args()
     if args.command == "balance-views":
         result = prepare_generalization_run_views(
@@ -166,6 +168,8 @@ def main():
             private_root=args.private_root,
             destination=args.output_dir,
             target_runs=args.target_runs,
+            supplemental_seed_count=args.supplemental_seed_count,
+            supplemental_primary_budget_only=args.supplemental_primary_budget_only,
         )
         print(result)
     elif args.command == "measurements":

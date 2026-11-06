@@ -64,9 +64,6 @@ class ObjectiveQualificationReport(BaseModel):
     primary_metric_id: str | None
     classification: str
     initial: ObjectiveScore | None = None
-    repeat: ObjectiveScore | None = None
-    eligible_for_confirmation: bool = False
-    confirmed: bool = False
     performance_confirmed: bool = False
     reasons: list[str] = Field(default_factory=list)
 
@@ -265,11 +262,16 @@ def _grid_problems(
         combinations = {
             (state, budget)
             for state in CodeState
-            for budget in task.evaluation.budgets_sec
+            for budget in (spec.budgets_sec or task.evaluation.budgets_sec)
         }
+        panel_seed_count = (
+            spec.solver_seed_count if spec.solver_seed_count else seed_count
+        )
         if (
             len(seeds_by_instance) != spec.size
-            or any(len(values) != seed_count for values in seeds_by_instance.values())
+            or any(
+                len(values) != panel_seed_count for values in seeds_by_instance.values()
+            )
             or any(values != combinations for values in cells.values())
             or any(
                 (item.condition_id is not None or item.template_id is not None)
@@ -280,9 +282,11 @@ def _grid_problems(
             problems.append(
                 f"{spec.name}: qualification grid is reduced or uses an undeclared scenario adapter."
             )
-        if task.evaluation.solver_seeds is not None and any(
-            values != set(task.evaluation.solver_seeds)
-            for values in seeds_by_instance.values()
+        declared_seeds = task.evaluation.solver_seeds
+        if declared_seeds is not None and spec.solver_seed_count is not None:
+            declared_seeds = declared_seeds[: spec.solver_seed_count]
+        if declared_seeds is not None and any(
+            values != set(declared_seeds) for values in seeds_by_instance.values()
         ):
             problems.append(f"{spec.name}: solver seeds differ from the task.")
         if (
@@ -316,7 +320,8 @@ def _metric_decision(
     result = MetricDecision(
         metric_id=metric, instance_set=panel, comparison=rule["comparison"]
     )
-    budget = task.evaluation.primary_budget_sec
+    panel_spec = next(item for item in task.instance_sets if item.name == panel)
+    budget = panel_spec.primary_budget_sec or task.evaluation.primary_budget_sec
     selected = [
         item
         for item in observations
@@ -385,9 +390,12 @@ def _metric_decision(
             result.detail = str(error)
             return result
     if rule["adapter"] == "paired_resource":
-        count = next(item.size for item in task.instance_sets if item.name == panel)
+        spec = next(item for item in task.instance_sets if item.name == panel)
+        count = spec.size
         seed_count = (
-            task.evaluation.seed_robustness.seed_selection.seed_count
+            spec.solver_seed_count
+            if spec.solver_seed_count
+            else task.evaluation.seed_robustness.seed_selection.seed_count
             if task.evaluation.seed_robustness
             else len(task.evaluation.solver_seeds or [])
         )
@@ -573,15 +581,11 @@ def compute_objective_qualification(
     task: PitBenchTask,
     observations: list[RunObservation],
     expected_run_grid: ExpectedRunGrid | None,
-    repeat_observations: list[RunObservation] | None = None,
-    repeat_expected_run_grid: ExpectedRunGrid | None = None,
-    repeat_identity_verified: bool = False,
     validity_accepted: bool | None = None,
     scenario_report: ScenarioReport | None = None,
-    repeat_scenario_report: ScenarioReport | None = None,
     candidate_sha256: str | None = None,
 ) -> ObjectiveQualificationReport | None:
-    """A metric decision can satisfy performance confirmation, never other gates."""
+    """Score one complete paired evaluation, retaining independent validity gates."""
     profile = task.optimization_profile
     if profile is None:
         return None
@@ -616,48 +620,11 @@ def compute_objective_qualification(
         return result
     result.initial = _score(task, observations, expected_run_grid, scenario_report)
     result.classification = result.initial.classification
-    result.eligible_for_confirmation = result.initial.classification == "improved"
     if validity_accepted is False:
         result.classification = "invalid"
-        result.eligible_for_confirmation = False
         result.reasons.append("Evaluator correctness/build/patch validity failed.")
         return result
-    if not result.eligible_for_confirmation:
-        return result
-    if repeat_observations is None:
-        result.classification = "confirmation_required"
-        return result
-    if not repeat_identity_verified or expected_run_grid != repeat_expected_run_grid:
-        result.classification = "incomplete"
-        result.reasons.append(
-            "Fresh reversed-order Judge identity and identical expected grid are required."
-        )
-        return result
-    if needs_scenarios:
-        if (
-            repeat_scenario_report is None
-            or repeat_scenario_report.design_sha256 != scenario_report.design_sha256
-            or repeat_scenario_report.collection_id == scenario_report.collection_id
-            or repeat_scenario_report.order == scenario_report.order
-            or scenario_report.finished_at is None
-            or repeat_scenario_report.started_at is None
-            or repeat_scenario_report.started_at < scenario_report.finished_at
-        ):
-            result.classification = "incomplete"
-            result.reasons.append(
-                "Fresh scenario confirmation with identical design and reversed order is required."
-            )
-            return result
-    result.repeat = _score(
-        task, repeat_observations, repeat_expected_run_grid, repeat_scenario_report
-    )
-    if result.repeat.classification != "improved":
-        result.classification = (
-            result.repeat.classification
-            if result.repeat.classification
-            in {"invalid", "incomplete", "guardrail_failed"}
-            else "inconclusive"
-        )
+    if result.classification != "improved":
         return result
     if validity_accepted is not True:
         result.classification = "incomplete"
@@ -666,5 +633,5 @@ def compute_objective_qualification(
         )
         return result
     result.classification = "improved"
-    result.confirmed = result.performance_confirmed = True
+    result.performance_confirmed = True
     return result

@@ -244,7 +244,7 @@ def adjudicate_performance_confirmation(
     repeat_observation_count: int,
     repeat_valid_observation_count: int,
 ) -> PerformanceReport | ExactPerformanceReport:
-    """Accept a direction only when a fresh opposite-order run agrees."""
+    """Interpret retained historical confirmation artifacts without running solvers."""
     if type(initial) is not type(repeat):
         raise ValueError("confirmation uses a different Performance protocol")
     if (
@@ -815,7 +815,11 @@ def compute_panel_performance_reports(
                 ],
             )
         panel_task = task
-        if panel.performance_protocol is not None or panel.budgets_sec is not None:
+        if (
+            panel.performance_protocol is not None
+            or panel.budgets_sec is not None
+            or panel.solver_seed_count is not None
+        ):
             panel_task = task.model_copy(deep=True)
             if panel.performance_protocol is not None:
                 panel_task.evaluation.performance_protocol = panel.performance_protocol
