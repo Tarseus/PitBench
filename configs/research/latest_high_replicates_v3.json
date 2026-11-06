@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "study_id": "solver_latest_high_replicates_v3",
+  "claim_scope": "replicated_study",
+  "release_manifest": "configs/benchmarks/0.0.1.json",
+  "task_configs": [
+    "configs/tasks/release_cbc_v2_10_13.yaml",
+    "configs/tasks/release_scip_v10_1_0.yaml",
+    "configs/tasks/release_pyvrp_v0_14_1.yaml"
+  ],
+  "model_matrix": "configs/experiments/generalization_high_matrix.yaml",
+  "population_plan": "configs/research/generalization_populations_v2.json",
+  "research_budget": {
+    "track": "standard",
+    "wall_time_sec": 14400,
+    "cpus": 8,
+    "memory_gib": 32,
+    "development_parallel_runs": 4,
+    "checkpoints_sec": [
+      1800,
+      3600,
+      7200,
+      14400
+    ]
+  },
+  "agent_attempts_per_condition": 3,
+  "shared_agent_tools": [
+    "inspect",
+    "workspace",
+    "bench"
+  ],
+  "required_scenario_kinds": [
+    "trajectory",
+    "lifecycle",
+    "scaling",
+    "sequence",
+    "numerical",
+    "replay"
+  ],
+  "arms": [
+    {
+      "id": "standard",
+      "development_view": "diverse_development_v2",
+      "require_candidate_hypotheses": false,
+      "instruction": "Improve the pinned solver using the complete visible development population and shared tools. Select and validate source-level algorithmic or implementation improvements autonomously. Preserve feasibility, objective semantics and truthful statuses."
+    }
+  ],
+  "inference_scope": "Three fresh independent Agent starts per task and model on the same complete visible development view. No ABC intervention or extra hypothesis-registration requirement. Retain every outcome and report independent attempts separately, without selecting the best attempt for the primary comparison. Instance and solver-seed intervals describe each realized patch; Agent-generation variance is a separate dimension. No cross-version claim.",
+  "evaluation_run_target": 100000,
+  "supplemental_seed_count": 5,
+  "supplemental_primary_budget_only": true,
+  "evaluation_seed_policy": {
+    "seed_count": 30,
+    "seed_min": 1,
+    "seed_max": 2147483646,
+    "preserve_existing": true
+  },
+  "comparison_mode": "model_repeats"
+}

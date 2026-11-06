@@ -2,7 +2,9 @@
 
 2026-11-01 更新：问题集、难度和逐条件时限已扩展为 [难度校准版](difficulty-calibration.md)，共 78 个条件、3,230 个实例，六个固定版本均有实测分层。原配置为 `configs/research/archive/generalization_v2.json`；本文下方保留原设计及历史校准记录。此前首批 Agent 已试跑并按用户要求暂停，现场及基础设施失败记录保留。
 
-当前缩减配置为 `configs/research/generalization_latest_high_v2.json`，模型矩阵为 `configs/experiments/generalization_high_matrix.yaml`：仅比较 `gpt-6.1-sol/high` 和 `gpt-6.1-terra/high`，仅保留清单已冻结的最新版本 CBC 2.10.13、SCIP 10.1.0 和 PyVRP 0.14.1，三组各一次，共 18 个条件。开发预算、问题集、指标、seed 和逐条件求解时限保持不变；历史 90 条件配置不覆盖修改。
+2026-11-07：当前启动方案改为 `configs/research/latest_high_replicates_v3.json`，不运行 ABC 对照。统一完整可见开发集和普通 Codex 脚手架，`gpt-6.1-sol/high`、`gpt-6.1-terra/high` 各独立启动三次，每个求解器六次；所有 Agent 从头开始，旧运行、失败和原始数据保留，不挑选历史补丁。沿用四小时、8 vCPU、32 GiB 开发预算及已确认的评测裁减、共享 Base、构建缓存和续跑规则。
+
+此前的缩减配置为 `configs/research/generalization_latest_high_v2.json`，模型矩阵为 `configs/experiments/generalization_high_matrix.yaml`：仅比较 `gpt-6.1-sol/high` 和 `gpt-6.1-terra/high`，仅保留清单已冻结的最新版本 CBC 2.10.13、SCIP 10.1.0 和 PyVRP 0.14.1，三组各一次，共 18 个条件。开发预算、问题集、指标、seed 和逐条件求解时限保持不变；历史 90 条件配置不覆盖修改。
 
 2026-11-06 评测裁减：原始主面板保留 30 个隐藏评测 seed。新增泛化面板先按原 10 万次上限冻结实例，再仅使用冻结隐藏列表前 5 个 seed 和各面板的校准主预算，不扩回实例；所有模型和实验组共享同一选择。自动全网格和场景复测已删除，分类使用单次完整配对评测及独立合法性验证。扩展场景、表示变换和开发预算保持原设置，新方案写入独立输出目录。
 

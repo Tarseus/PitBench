@@ -534,15 +534,19 @@ def test_deferred_model_audit_requires_captured_patch_and_model_execution(
     assert not campaign.audit_model_run(tmp_path, task_id)["complete"]
 
 
+@pytest.mark.parametrize(
+    "plan_name",
+    ["generalization_latest_high_v2.json", "latest_high_replicates_v3.json"],
+)
 def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, plan_name
 ):
     from types import SimpleNamespace
 
     from pitbench.cli.evaluate_config import EvaluationConfig
     from scripts import run_benchmark_release as campaign
 
-    plan_path = ROOT / "configs/research/generalization_latest_high_v2.json"
+    plan_path = ROOT / "configs/research" / plan_name
     plan = json.loads(plan_path.read_text())
     plan["evaluation_seed_policy"] = None
     plan["evaluation_run_target"] = None
@@ -617,7 +621,25 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
         "sol-high",
         "terra-high",
     }
-    assert all(row["attempt"] == 1 for row in frozen["jobs"])
+    if plan.get("comparison_mode") == "model_repeats":
+        assert {row["arm"] for row in frozen["jobs"]} == {"standard"}
+        assert {row["attempt"] for row in frozen["jobs"]} == {1, 2, 3}
+        assert frozen["agent_attempts_per_condition"] == 3
+        for task_id in selected:
+            for model in ("gpt-6.1-sol", "gpt-6.1-terra"):
+                assert (
+                    len(
+                        [
+                            row
+                            for row in frozen["jobs"]
+                            if row["task_id"] == task_id
+                            and row["model"]["model"] == model
+                        ]
+                    )
+                    == 3
+                )
+    else:
+        assert all(row["attempt"] == 1 for row in frozen["jobs"])
     assert all(
         row["hypotheses_required"] == (row["arm"] == "mechanism_aware")
         for row in frozen["jobs"]
@@ -730,17 +752,26 @@ def test_model_resume_preserves_completed_work_and_archives_infra_attempt(
     assert len(list((tmp_path / "model-status").glob("*/attempts/*.json"))) == 1
 
 
-def test_restarted_evaluation_archives_prior_attempt_and_clears_live_completion(tmp_path, monkeypatch):
+def test_restarted_evaluation_archives_prior_attempt_and_clears_live_completion(
+    tmp_path, monkeypatch
+):
     from types import SimpleNamespace
 
     from scripts import run_benchmark_release as campaign
 
     status_path = tmp_path / "agent-status/run/status.json"
     status_path.parent.mkdir(parents=True)
-    previous = {"run_id": "run", "task_id": "task", "model": {"agent": "codex", "model": "model"},
-                "audit": {"candidate_patch": str(tmp_path / "candidate.patch")},
-                "evaluation_started_at": "old start", "evaluation_finished_at": "old finish",
-                "evaluation_error": "old error", "metrics_complete": True, "metric_gaps": ["old gap"]}
+    previous = {
+        "run_id": "run",
+        "task_id": "task",
+        "model": {"agent": "codex", "model": "model"},
+        "audit": {"candidate_patch": str(tmp_path / "candidate.patch")},
+        "evaluation_started_at": "old start",
+        "evaluation_finished_at": "old finish",
+        "evaluation_error": "old error",
+        "metrics_complete": True,
+        "metric_gaps": ["old gap"],
+    }
     status_path.write_text(json.dumps(previous))
     writes = campaign.write_json
 
@@ -753,7 +784,9 @@ def test_restarted_evaluation_archives_prior_attempt_and_clears_live_completion(
         writes(path, value)
 
     monkeypatch.setattr(campaign, "write_json", inspect)
-    result = campaign.evaluate_study_candidate(previous, SimpleNamespace(output=tmp_path), "0-7")
+    result = campaign.evaluate_study_candidate(
+        previous, SimpleNamespace(output=tmp_path), "0-7"
+    )
     # The intentionally absent captured task is a new failure, never a leftover success.
     assert result["status"] == "evaluation_failed"
     assert result["metrics_complete"] is False

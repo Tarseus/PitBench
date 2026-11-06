@@ -1738,7 +1738,7 @@ def materialize_generalization_views(
         for arm in plan.arms:
             view = task.model_copy(deep=True)
             view.instruction = original.instruction + "\n\n" + arm.instruction
-            if arm.development_view != plan.arms[0].development_view:
+            if arm.id != "original":
                 view.instance_sets = [
                     diverse if item.kind == InstanceSetKind.AGENT_DEV else item
                     for item in view.instance_sets

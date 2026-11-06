@@ -85,6 +85,12 @@ scenario calls and build/verification costs; it is not a wall-time estimate.
 The evaluator runs each declared grid and scenario campaign once, without an
 automatic confirmation repeat. Use a new output directory for the changed design.
 
+`configs/research/latest_high_replicates_v3.json` selects `model_repeats`: one
+standard condition with the full visible development population, no ABC intervention,
+and three fresh independent starts per task/model. The existing high-effort matrix
+contains Sol and Terra, giving six starts per solver. Each repeat gets its own
+workspace, run ID and usage record; no best-of-three selection is applied.
+
 The study launcher enables campaign-local Base and build caches under
 `<output>/shared-cache/`. A single Base-only producer measures each complete grid
 (including representation transformations); candidates then run concurrently and

@@ -134,7 +134,7 @@ class CandidateHypothesis(BaseModel):
 
 class StudyArm(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: Literal["original", "diverse", "mechanism_aware"]
+    id: Literal["original", "diverse", "mechanism_aware", "standard"]
     development_view: str
     require_candidate_hypotheses: bool = False
     instruction: str = Field(min_length=20)
@@ -160,7 +160,8 @@ class GeneralizationStudyPlan(BaseModel):
     population_plan: str
     research_budget: ResearchBudget
     agent_attempts_per_condition: int = Field(gt=0)
-    arms: list[StudyArm] = Field(min_length=3, max_length=3)
+    comparison_mode: Literal["three_arm", "model_repeats"] = "three_arm"
+    arms: list[StudyArm] = Field(min_length=1, max_length=3)
     shared_agent_tools: list[str] = Field(min_length=1)
     required_scenario_kinds: list[
         Literal["trajectory", "lifecycle", "scaling", "sequence", "numerical", "replay"]
@@ -179,17 +180,32 @@ class GeneralizationStudyPlan(BaseModel):
         ) and self.evaluation_run_target is None:
             raise ValueError("supplemental reduction requires an evaluation run target")
         arms = {arm.id: arm for arm in self.arms}
-        if set(arms) != {"original", "diverse", "mechanism_aware"}:
+        if self.comparison_mode == "model_repeats":
+            if len(self.arms) != 1 or set(arms) != {"standard"}:
+                raise ValueError("model repeats require one shared standard condition")
+            if arms["standard"].require_candidate_hypotheses:
+                raise ValueError("the standard condition does not add an intervention")
+        elif (
+            set(arms) != {"original", "diverse", "mechanism_aware"}
+            or len(self.arms) != 3
+        ):
             raise ValueError("study needs original, diverse and mechanism-aware arms")
-        if arms["diverse"].development_view != arms["mechanism_aware"].development_view:
+        if (
+            self.comparison_mode == "three_arm"
+            and arms["diverse"].development_view
+            != arms["mechanism_aware"].development_view
+        ):
             raise ValueError(
                 "diverse and mechanism-aware arms must receive identical data"
             )
-        if arms["original"].development_view == arms["diverse"].development_view:
+        if (
+            self.comparison_mode == "three_arm"
+            and arms["original"].development_view == arms["diverse"].development_view
+        ):
             raise ValueError(
                 "information contrast needs a distinct original development view"
             )
-        if (
+        if self.comparison_mode == "three_arm" and (
             any(
                 arms[key].require_candidate_hypotheses
                 for key in ("original", "diverse")

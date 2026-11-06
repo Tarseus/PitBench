@@ -2,9 +2,11 @@
 
 配置按用途维护。求解器版本固定在 `benchmarks/` 和 `tasks/`；实例定义、参考干预分别在 `instance_sets/` 和 `references/`。
 
-## 当前泛化对照
+## 当前模型重复实验
 
-- `research/generalization_latest_high_v2.json`：当前唯一的 Agent 对照方案，三个最新版求解器、Sol/Terra high、三组各一次，共 18 个条件；补充面板使用 5 个配对隐藏 seed 和校准主预算，原始主面板保留 30 个 seed，取消自动复测。
+- `research/latest_high_replicates_v3.json`：当前启动方案。CBC、SCIP、PyVRP 最新冻结版本，统一完整可见开发集；Sol/Terra high 各独立重复三次，每个求解器六次，共 18 次 Agent 开发。不做 ABC 差异提示或额外假设注册。
+- `research/generalization_latest_high_v2.json`：保留的历史 ABC 对照方案，不用于本轮启动。
+- 两者均保留原始主面板的 30 个隐藏 seed；新方案的补充面板使用 5 个配对 seed 和校准主预算，不自动复测。
 - `experiments/generalization_high_matrix.yaml`：上述方案的两个模型设置。
 - `research/generalization_generation_v2.yaml`、`generalization_populations_v2.json`：问题生成定义及总体索引。
 - `research/generalization_difficulty_v2.yaml`：基于独立校准实例选择求解预算。

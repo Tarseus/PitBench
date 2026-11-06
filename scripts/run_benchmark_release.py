@@ -865,7 +865,11 @@ def retry_unexecuted_condition(args):
     from pitbench.schema.research import GeneralizationStudyPlan
 
     plan = GeneralizationStudyPlan.model_validate_json(args.study_plan.read_text())
-    view_dir = "evaluation-views" if plan.evaluation_run_target is not None else "frozen-seed-views"
+    view_dir = (
+        "evaluation-views"
+        if plan.evaluation_run_target is not None
+        else "frozen-seed-views"
+    )
     views = json.loads((args.output / view_dir / "task-views.json").read_text())
     cohort = json.loads((args.output / "cohort.json").read_text())
     matches = [row for row in cohort["jobs"] if row["run_id"] == args.retry_run_id]
@@ -1103,16 +1107,17 @@ def study_models(args):
         arms = list(plan.arms)
         arms = arms[index % len(arms) :] + arms[: index % len(arms)]
         for arm in arms:
-            jobs.append(
-                {
-                    "task_id": task_id,
-                    "model": model,
-                    "arm": arm.id,
-                    "hypotheses_required": arm.require_candidate_hypotheses,
-                    "run_id": f"{run_prefix}-{len(jobs) + 1:03d}",
-                    "attempt": 1,
-                }
-            )
+            for attempt in range(1, plan.agent_attempts_per_condition + 1):
+                jobs.append(
+                    {
+                        "task_id": task_id,
+                        "model": model,
+                        "arm": arm.id,
+                        "hypotheses_required": arm.require_candidate_hypotheses,
+                        "run_id": f"{run_prefix}-{len(jobs) + 1:03d}",
+                        "attempt": attempt,
+                    }
+                )
     args.output.mkdir(parents=True, exist_ok=True)
     manifest = {
         "kind": "generalization_agent_cohort",
@@ -1124,7 +1129,8 @@ def study_models(args):
         "jobs": jobs,
         "research_budget": plan.research_budget.model_dump(mode="json"),
         "schedule_seed": args.schedule_seed,
-        "agent_attempts_per_condition": 1,
+        "agent_attempts_per_condition": plan.agent_attempts_per_condition,
+        "comparison_mode": plan.comparison_mode,
         "execution_mode": "development_then_separate_hidden_evaluation",
         "scientific_evaluation_ready": False,
         "inference_scope": plan.inference_scope,

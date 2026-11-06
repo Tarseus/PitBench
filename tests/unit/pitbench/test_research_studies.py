@@ -18,6 +18,19 @@ ROOT = Path(__file__).resolve().parents[3]
 PLAN = ROOT / "configs/research/archive/generalization.json"
 
 
+def test_model_repeats_use_one_shared_condition_without_abc_interventions():
+    value = json.loads(
+        (ROOT / "configs/research/latest_high_replicates_v3.json").read_text()
+    )
+    plan = GeneralizationStudyPlan.model_validate(value)
+    assert plan.agent_attempts_per_condition == 3
+    assert [arm.id for arm in plan.arms] == ["standard"]
+    assert not plan.arms[0].require_candidate_hypotheses
+    value["arms"][0]["require_candidate_hypotheses"] = True
+    with pytest.raises(ValidationError, match="does not add an intervention"):
+        GeneralizationStudyPlan.model_validate(value)
+
+
 def test_run_balance_keeps_seeds_budgets_and_all_panel_conditions():
     from pitbench.research import balance_generalization_task
     from pitbench.schema.task import InstanceSetSpec
