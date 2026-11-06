@@ -14,15 +14,17 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import yaml
 
 from pitbench.evaluator.artifacts import write_json
 from pitbench.evaluator.collection import run_collection_jobs, run_collection_process
-from pitbench.evaluator.docker_judge import docker_cli_image
+from pitbench.evaluator.docker_judge import docker_cli_image, judge_harness_sha256
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.evaluator.representations import representation_type
+from pitbench.evaluator.storage import cache_lock, file_manifest
 from pitbench.metrics.scenario_report import compute_scenario_report, sequence_key
 from pitbench.schema.scenarios import (
     ScenarioCampaign,
@@ -221,7 +223,11 @@ def prepare(config_path: Path, output: Path) -> dict:
                 "probe",
                 "--session-plugin",
                 runtime["session_plugin"],
-                *[arg for name in sorted({p.representation for p in protocols}) for arg in ("--representation", name)],
+                *[
+                    arg
+                    for name in sorted({p.representation for p in protocols})
+                    for arg in ("--representation", name)
+                ],
             ],
             capture_output=True,
             text=True,
@@ -368,6 +374,7 @@ def prepare(config_path: Path, output: Path) -> dict:
             "runtimes": runtimes,
             "cpus": cpus,
             "watchdog_grace_sec": config["watchdog_grace_sec"],
+            "base_cache_path": config.get("base_cache_path"),
         },
     )
     (output / "task.yaml").write_text(
@@ -508,6 +515,11 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
     if campaign.started_at is None:
         campaign.started_at = time.time()
     runtime = json.loads((output / "runtime.json").read_text())
+    collector_sha256 = (
+        judge_harness_sha256(Path(__file__).resolve().parents[2])
+        if runtime.get("base_cache_path")
+        else None
+    )
     if campaign.hardware_identity != _hardware_identity(runtime["cpus"]):
         raise ValueError(
             "scenario hardware or resource allocation changed after preparation"
@@ -517,7 +529,7 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
     launched = threading.Event()
     states = ["base", "agent"] if campaign.order == "base_first" else ["agent", "base"]
 
-    def execute(key, cpus):
+    def execute_uncached(key, cpus):
         p = protocols[key.scenario_id]
         directory = output / "jobs" / digest(key.model_dump(mode="json"))
         attempts = sorted(directory.glob("attempt-*/result.json"))
@@ -541,6 +553,39 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
                     else "process_error",
                     error=str(saved.get("error", saved.get("execution_status"))),
                 )
+        if p.kind == "setup":
+            signature = execution_signature(key)
+            # Select by the frozen plan, never by completion time or success.
+            # A shared failure remains a failure rather than a hidden retry.
+            source = next(
+                (
+                    existing[planned]
+                    for planned in campaign.expected_runs
+                    if protocols[planned.scenario_id].kind != "setup"
+                    and execution_signature(planned) == signature
+                    and planned in existing
+                ),
+                None,
+            )
+            if source is not None:
+                reused = source.model_copy(
+                    update={
+                        "key": key,
+                        "protocol_sha256": p.digest(),
+                        "reused_from": source.key,
+                    }
+                )
+                attempt = (
+                    directory / f"attempt-{len(list(directory.glob('attempt-*'))):04d}"
+                )
+                write_json(
+                    attempt / "result.json",
+                    {
+                        "execution_status": "reused",
+                        "run": reused.model_dump(mode="json"),
+                    },
+                )
+                return reused
         attempt = directory / f"attempt-{len(list(directory.glob('attempt-*'))):04d}"
         launched.set()
         attempt.mkdir(parents=True)
@@ -593,14 +638,181 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
         )
         return failed
 
-    for state in states:
-        keys = [key for key in campaign.expected_runs if key.code_state == state]
-        records = run_collection_jobs(
-            keys, runtime["cpus"], execute, cpu_request=lambda key: key.threads
+    def execution_signature(key):
+        p = protocols[key.scenario_id]
+        selected = runtime["runtimes"][key.code_state]
+        return digest(
+            {
+                "state": key.code_state,
+                "instance_set": key.instance_set,
+                "instance_id": key.instance_id,
+                "seed": key.solver_seed,
+                "threads": key.threads,
+                "repeat": key.repeat,
+                "mode": key.mode,
+                "models": [
+                    row["sha256"]
+                    for row in campaign.model_sequences[
+                        sequence_key(key.instance_set, key.instance_id, p.id)
+                    ]
+                ],
+                "budget": p.budget_sec,
+                "tolerance": p.feasibility_tolerance,
+                "sample_interval": p.memory_sample_interval_sec,
+                "reset": p.reset_policy,
+                "cleanup": p.memory_cleanup,
+                "options": {
+                    **selected.get("options", {}),
+                    **selected.get("options_by_scenario", {}).get(p.id, {}),
+                },
+                "runtime": campaign.runtime_identities[key.code_state],
+                "python": selected.get("python"),
+                "session_plugin": selected.get("session_plugin"),
+                "environment_sha256": digest(selected.get("environment", {})),
+                "watchdog_grace_sec": runtime["watchdog_grace_sec"],
+            }
         )
-        existing.update({record.key: record for record in records})
-        campaign.runs = list(existing.values())
-        write_json(output / "campaign.json", campaign.model_dump(mode="json"))
+
+    def execute(key, cpus):
+        cache = runtime.get("base_cache_path")
+        if key.code_state != "base" or not cache:
+            return execute_uncached(key, cpus)
+        hardware = {
+            k: v for k, v in campaign.hardware_identity.items() if k != "cpu_pool"
+        }
+        hardware["boot_id"] = (
+            Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        )
+        identity = {
+            "collector_sha256": collector_sha256,
+            "task_sha256": campaign.task_sha256,
+            "protocol_sha256": protocols[key.scenario_id].digest(),
+            "hardware": hardware,
+            "cpu_count": len(runtime["cpus"]),
+            "execution": execution_signature(key),
+        }
+        cache_key = digest(identity)
+        entry = Path(cache) / cache_key
+        directory = output / "jobs" / digest(key.model_dump(mode="json"))
+        with cache_lock(Path(cache) / (cache_key + ".lock")):
+            receipt_path = entry / "ready.json"
+            saved = _read(receipt_path) if receipt_path.is_file() else None
+            own_attempts = sorted(directory.glob("attempt-*/result.json"))
+            if (
+                not own_attempts
+                and saved
+                and saved["identity"] == identity
+                and file_manifest(Path(saved["raw_artifacts"])) == saved["files"]
+            ):
+                record = ScenarioRun.model_validate(saved["run"])
+                models = campaign.model_sequences[
+                    sequence_key(key.instance_set, key.instance_id, key.scenario_id)
+                ]
+                record = record.model_copy(
+                    update={
+                        "key": key,
+                        "steps": [
+                            step.model_copy(update={"instance_path": model["path"]})
+                            for step, model in zip(record.steps, models, strict=True)
+                        ],
+                        "measurement_source": {
+                            "cache_key": cache_key,
+                            "receipt": saved["receipt"],
+                            "measurement_id": saved["measurement_id"],
+                            "collection_id": saved["collection_id"],
+                            "reused": True,
+                        },
+                    }
+                )
+                write_json(
+                    directory / "attempt-0000/result.json",
+                    {
+                        "execution_status": "reused_base",
+                        "run": record.model_dump(mode="json"),
+                    },
+                )
+                return record
+            record = execute_uncached(key, cpus)
+            if (
+                record.status == "returned"
+                and record.reused_from is None
+                and record.measurement_source is None
+            ):
+                attempt = sorted(directory.glob("attempt-*/result.json"))[-1].parent
+                measurement_id = uuid.uuid4().hex
+                artifacts = entry / ("artifacts-" + measurement_id)
+                measurement_receipt = entry / (
+                    "measurement-" + measurement_id + ".json"
+                )
+                shutil.copytree(attempt, artifacts)
+                for index, model in enumerate(
+                    campaign.model_sequences[
+                        sequence_key(key.instance_set, key.instance_id, key.scenario_id)
+                    ]
+                ):
+                    target = (
+                        artifacts / "models" / (str(index) + Path(model["path"]).suffix)
+                    )
+                    target.parent.mkdir(exist_ok=True)
+                    shutil.copy2(model["path"], target)
+                saved = {
+                    "identity": identity,
+                    "run": record.model_dump(mode="json"),
+                    "raw_artifacts": str(artifacts),
+                    "files": file_manifest(artifacts),
+                    "collection_id": campaign.collection_id,
+                    "source_campaign": str(output / "campaign.json"),
+                    "receipt": str(measurement_receipt),
+                    "measurement_id": measurement_id,
+                }
+                write_json(measurement_receipt, saved)
+                write_json(receipt_path, saved)
+                record = record.model_copy(
+                    update={
+                        "measurement_source": {
+                            "cache_key": cache_key,
+                            "receipt": str(measurement_receipt),
+                            "measurement_id": measurement_id,
+                            "collection_id": campaign.collection_id,
+                            "reused": False,
+                        }
+                    }
+                )
+                write_json(
+                    attempt / "result.json",
+                    {
+                        "execution_status": "completed",
+                        "run": record.model_dump(mode="json"),
+                    },
+                )
+            return record
+
+    for state in states:
+        for setup in (False, True):
+            keys = [
+                key
+                for key in campaign.expected_runs
+                if key.code_state == state
+                and (protocols[key.scenario_id].kind == "setup") == setup
+            ]
+            keys.sort(
+                key=lambda key: (
+                    -protocols[key.scenario_id].budget_sec
+                    * len(
+                        campaign.model_sequences[
+                            sequence_key(
+                                key.instance_set, key.instance_id, key.scenario_id
+                            )
+                        ]
+                    )
+                )
+            )
+            records = run_collection_jobs(
+                keys, runtime["cpus"], execute, cpu_request=lambda key: key.threads
+            )
+            existing.update({record.key: record for record in records})
+            campaign.runs = list(existing.values())
+            write_json(output / "campaign.json", campaign.model_dump(mode="json"))
     if launched.is_set() or campaign.finished_at is None:
         campaign.finished_at = time.time()
     write_json(output / "campaign.json", campaign.model_dump(mode="json"))
@@ -618,6 +830,11 @@ def report(output: Path) -> dict:
         "recorded_runs": len(campaign.runs),
         "complete": result.complete,
         "invalid_runs": len(result.invalid_runs),
+        "reused_runs": sum(run.reused_from is not None for run in campaign.runs),
+        "shared_base_runs": sum(
+            bool(run.measurement_source and run.measurement_source.get("reused"))
+            for run in campaign.runs
+        ),
         "metrics": len(result.results),
     }
 
@@ -638,7 +855,6 @@ def load_report(campaign_path: Path, task: PitBenchTask):
             if frozen is not None and set(instances) != set(frozen):
                 raise ValueError("scenario instance identities differ from the frozen task")
     return compute_scenario_report(campaign)
-
 
 
 def scenario_evidence_failures(task: PitBenchTask, output_dir: Path, payload: dict) -> list[str]:
@@ -740,17 +956,30 @@ def _collect_source_build(task, candidate_patch, output, config_path, context, r
     code_root = Path(__file__).resolve().parents[2]
     source_config = Path(config_path).resolve()
     config, inputs = resolve_model_inputs(
-        _read(source_config), task, private_root=Path(context["private_root"]),
+        _read(source_config),
+        task,
+        private_root=Path(context["private_root"]),
         config_dir=source_config.parent,
     )
+    if context.get("base_cache_path"):
+        config["base_cache_path"] = str(
+            Path(context["base_cache_path"]).resolve() / "scenarios"
+        )
     config_path = output / "resolved-scenario-config.yaml"
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))
-    write_json(output / "scenario-input-resolution.json", {
-        "source_config": str(source_config),
-        "source_config_sha256": hashlib.sha256(source_config.read_bytes()).hexdigest(),
-        "resolved_config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
-        "model_inputs": inputs,
-    })
+    write_json(
+        output / "scenario-input-resolution.json",
+        {
+            "source_config": str(source_config),
+            "source_config_sha256": hashlib.sha256(
+                source_config.read_bytes()
+            ).hexdigest(),
+            "resolved_config_sha256": hashlib.sha256(
+                config_path.read_bytes()
+            ).hexdigest(),
+            "model_inputs": inputs,
+        },
+    )
     private_root = PrivateAssetResolver(Path(context["private_root"])).root
     task_path = output / "scenario-source-task.yaml"
     task_path.write_text(yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False))
@@ -769,6 +998,23 @@ def _collect_source_build(task, candidate_patch, output, config_path, context, r
         "--workdir",
         str(code_root),
     ]
+    if context.get("build_cache_path"):
+        cache = Path(context["build_cache_path"]).resolve()
+        cache.mkdir(parents=True, exist_ok=True)
+        command += [
+            "--env",
+            f"PITBENCH_BUILD_CACHE={cache}",
+            "--env",
+            "PITBENCH_BUILD_CONTEXT="
+            + json.dumps(
+                {
+                    "judge_image": context["image"],
+                    "harness_sha256": judge_harness_sha256(code_root),
+                    "cpus": float(context["cpus"]),
+                    "memory": context["memory"],
+                }
+            ),
+        ]
     if context.get("cpuset_cpus"):
         command += ["--cpuset-cpus", context["cpuset_cpus"]]
     mounts = {
@@ -780,6 +1026,12 @@ def _collect_source_build(task, candidate_patch, output, config_path, context, r
         str(output): "rw",
         "/etc/machine-id": "ro",
     }
+    if context.get("build_cache_path"):
+        mounts[str(Path(context["build_cache_path"]).resolve())] = "rw"
+    if context.get("base_cache_path"):
+        cache = Path(context["base_cache_path"]).resolve()
+        cache.mkdir(parents=True, exist_ok=True)
+        mounts[str(cache)] = "rw"
     mounted = [Path(name) for name in mounts]
     for item in inputs:
         path = Path(item["resolved"])

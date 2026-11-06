@@ -85,6 +85,36 @@ scenario calls and build/verification costs; it is not a wall-time estimate.
 The evaluator runs each declared grid and scenario campaign once, without an
 automatic confirmation repeat. Use a new output directory for the changed design.
 
+The study launcher enables campaign-local Base and build caches under
+`<output>/shared-cache/`. A single Base-only producer measures each complete grid
+(including representation transformations); candidates then run concurrently and
+reuse its raw observations and artifacts. Cache identities bind the frozen task, actual planned instance bytes and reference
+values, image/harness, hardware/SMT profile, thread count, CPU quota, memory and worker
+count. API scenarios also retain shared Base provenance. Shared measurements are
+correlated evidence across conditions, not additional independent repetitions.
+The HTML/JSON report identifies the shared Base source.
+
+Build caches retain successful validation, performance and API workspaces at their
+original absolute paths. Source/patch, recipe, toolchain/image and environment
+identities select entries; changed products cause a new build without relocating
+or deleting the prior workspace. Build failures and build-cache receipts remain
+in the retained logs. These caches do not reuse candidate solve observations.
+
+The Judge records its launch identity before starting. Re-running an interrupted
+candidate automatically resumes only missing instance/state/seed/budget cells,
+including representation runs. Existing solver failures remain terminal records;
+identity mismatches preserve the old output and require a separate directory.
+Setup metrics reuse a compatible cold scenario measurement when input hashes,
+seed, threads, budget, runtime and execution options match. Raw source observations
+and explicit reuse references remain available.
+
+Default Judge concurrency uses all slots in the declared CPU allocation; explicit
+`judge_parallel_runs` still takes precedence within that allocation. Long-budget
+jobs run first with adjacent Base/Agent pairs. `judge-scheduling.json` records the
+planned execution order, actual worker count and observed solver-stage throughput,
+so worker-count comparisons can use the same frozen grid. No new solver budget,
+seed selection or scoring threshold is inferred from scheduling.
+
 To prepare reduced evaluation views for an existing frozen study:
 
 ```bash

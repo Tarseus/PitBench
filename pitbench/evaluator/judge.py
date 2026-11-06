@@ -4,11 +4,14 @@ import hashlib
 import json
 import math
 import os
+import platform
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
@@ -21,6 +24,7 @@ from pitbench.evaluator.private_assets import (
     PrivateAssetResolver,
     load_private_seed_robustness_config,
 )
+from pitbench.evaluator.storage import cache_lock, file_manifest
 from pitbench.instances import materialize_generated_instance_set, verify_public_file
 from pitbench.problem_families.base import ProblemFamilyPlugin, ProblemFamilyRegistry
 from pitbench.problem_families.verification import (
@@ -720,6 +724,8 @@ class LocalProcessJudge:
         instances_per_instance_set: int | None = None,
         solver_seed_limit: int | None = None,
         observations_path: Path | None = None,
+        build_cache_path: Path | None = None,
+        build_cache_context: dict | None = None,
     ) -> None:
         self.task = task
         self.base_repository = base_repository
@@ -744,6 +750,13 @@ class LocalProcessJudge:
         self.progress_callback = progress_callback
         self.additional_cases = additional_cases or []
         self.observations_path = observations_path
+        configured_cache = build_cache_path or os.environ.get("PITBENCH_BUILD_CACHE")
+        self.build_cache_path = (
+            Path(configured_cache).resolve() if configured_cache else None
+        )
+        self.build_cache_context = build_cache_context or json.loads(
+            os.environ.get("PITBENCH_BUILD_CONTEXT", "{}")
+        )
         if instances_per_instance_set is not None and instances_per_instance_set < 1:
             raise ValueError("instances_per_instance_set must be positive")
         self.instances_per_instance_set = instances_per_instance_set
@@ -888,48 +901,53 @@ class LocalProcessJudge:
                     BuildKind.PERFORMANCE,
                     commands=commands,
                 )
-                manifest = workspace / ".pitbench/scenario-binding.json"
-                argv = [
-                    self.repository.driver_python,
-                    "-m",
-                    "scripts.prepare_research_cases",
-                    "binding",
-                    "--source",
-                    str(workspace),
-                    "--repository-plugin",
-                    self.task.repository.plugin,
-                    "--version",
-                    self.task.release.version,
-                    "--output",
-                    str(manifest),
-                ]
-                if self.repository.scenario_binding_package:
-                    argv.extend(["--package", self.repository.scenario_binding_package])
-                else:
-                    argv.extend(
-                        [
-                            "--native-library",
-                            str(workspace / "build/scenario/pitbench_binding.so"),
-                        ]
+                with cache_lock(workspace.parent / "binding-receipt.lock"):
+                    manifest = workspace / ".pitbench/scenario-binding.json"
+                    argv = [
+                        self.repository.driver_python,
+                        "-m",
+                        "scripts.prepare_research_cases",
+                        "binding",
+                        "--source",
+                        str(workspace),
+                        "--repository-plugin",
+                        self.task.repository.plugin,
+                        "--version",
+                        self.task.release.version,
+                        "--output",
+                        str(manifest),
+                    ]
+                    if self.repository.scenario_binding_package:
+                        argv.extend(
+                            ["--package", self.repository.scenario_binding_package]
+                        )
+                    else:
+                        argv.extend(
+                            [
+                                "--native-library",
+                                str(workspace / "build/scenario/pitbench_binding.so"),
+                            ]
+                        )
+                    command = CommandSpec(
+                        argv=argv, env={"PYTHONPATH": str(self.public_root)}
                     )
-                command = CommandSpec(
-                    argv=argv, env={"PYTHONPATH": str(self.public_root)}
-                )
-                outcome = self._run(command, workspace)
-                log = self.output_dir / "binding-receipts" / state.value
-                log.mkdir(parents=True)
-                (log / "command.json").write_text(command.model_dump_json(indent=2))
-                (log / "stdout.txt").write_text(outcome.stdout or "")
-                (log / "stderr.txt").write_text(outcome.stderr or "")
-                if outcome.returncode:
-                    raise RuntimeError(f"binding provenance failed: {outcome.stderr}")
-                entry.update(
-                    status="passed",
-                    workspace=str(workspace),
-                    manifest=str(manifest),
-                    session_plugin=self.repository.scenario_session_plugin,
-                    binding=json.loads(manifest.read_text()),
-                )
+                    outcome = self._run(command, workspace)
+                    log = self.output_dir / "binding-receipts" / state.value
+                    log.mkdir(parents=True)
+                    (log / "command.json").write_text(command.model_dump_json(indent=2))
+                    (log / "stdout.txt").write_text(outcome.stdout or "")
+                    (log / "stderr.txt").write_text(outcome.stderr or "")
+                    if outcome.returncode:
+                        raise RuntimeError(
+                            f"binding provenance failed: {outcome.stderr}"
+                        )
+                    entry.update(
+                        status="passed",
+                        workspace=str(workspace),
+                        manifest=str(manifest),
+                        session_plugin=self.repository.scenario_session_plugin,
+                        binding=json.loads(manifest.read_text()),
+                    )
             except Exception as error:
                 entry.update(status="failed", error=str(error))
             result["status"] = (
@@ -946,6 +964,150 @@ class LocalProcessJudge:
         return result
 
     def _workspace(
+        self,
+        state: CodeState,
+        root: Path,
+        build_kind: BuildKind,
+        *,
+        include_excluded_tests: bool = False,
+        commands: list[CommandSpec] | None = None,
+    ) -> Path:
+        cache = getattr(self, "build_cache_path", None)
+        if cache is None:
+            return self._build_workspace(
+                state,
+                root,
+                build_kind,
+                include_excluded_tests=include_excluded_tests,
+                commands=commands,
+            )
+        recipe = (
+            commands
+            if commands is not None
+            else self.repository.build_commands(build_kind)
+        )
+        patch = self._state_patch(state)
+        identity = {
+            "source_commit": self.task.release.base_commit,
+            "source_tree": self.task.release.tree_sha,
+            "repository_plugin": self.task.repository.plugin,
+            "version": self.task.release.version,
+            "editable_paths": self.task.repository.editable_paths,
+            "build_paths": list(self.repository.agent_build_paths),
+            "architecture": platform.machine(),
+            "python": sys.version,
+            "context": self.build_cache_context,
+            "patch_sha256": hashlib.sha256(
+                patch.read_bytes() if patch else b""
+            ).hexdigest(),
+            "validation_patch_sha256": hashlib.sha256(
+                self.validation_test_patch.read_bytes()
+            ).hexdigest()
+            if build_kind == BuildKind.VALIDATION and self.validation_test_patch
+            else None,
+            "kind": build_kind.value,
+            "commands": [c.model_dump(mode="json") for c in recipe],
+            "include_excluded_tests": include_excluded_tests,
+            "compiler_environment": {
+                k: os.environ.get(k)
+                for k in (
+                    "CC",
+                    "CXX",
+                    "CFLAGS",
+                    "CXXFLAGS",
+                    "CPPFLAGS",
+                    "LDFLAGS",
+                    "CMAKE_GENERATOR",
+                    "PATH",
+                )
+            },
+            "adapter_sha256": hashlib.sha256(
+                (self.public_root / "adapters/cpp/ScenarioSession.cpp").read_bytes()
+            ).hexdigest()
+            if any(
+                str(self.public_root / "adapters/cpp/ScenarioSession.cpp") in arg
+                for command in recipe
+                for arg in command.argv
+            )
+            and (self.public_root / "adapters/cpp/ScenarioSession.cpp").is_file()
+            else None,
+        }
+        cpu_info = Path("/proc/cpuinfo").read_text().splitlines()
+        identity["cpu"] = {
+            name: next(
+                (
+                    line.split(":", 1)[1].strip()
+                    for line in cpu_info
+                    if line.startswith(name + "\t")
+                ),
+                None,
+            )
+            for name in ("model name", "flags")
+        }
+        if not self.build_cache_context.get("judge_image"):
+            identity["host_tools"] = {
+                name: hashlib.sha256(Path(binary).read_bytes()).hexdigest()
+                for name in ("cc", "c++", "cmake", "ninja", "python3")
+                if (binary := shutil.which(name))
+            }
+        key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        entry = cache / key
+        ignored = (".pitbench/scenario-binding.json",)
+        with cache_lock(cache / (key + ".lock")):
+            receipt = entry / "ready.json"
+            cached = json.loads(receipt.read_text()) if receipt.is_file() else None
+            reused = bool(
+                cached
+                and cached["identity"] == identity
+                and Path(cached["workspace"]).is_dir()
+                and file_manifest(Path(cached["workspace"]), ignore=ignored)
+                == cached["files"]
+            )
+            if reused:
+                workspace = Path(cached["workspace"])
+            else:
+                # Build at its permanent absolute path: CMake and virtualenv
+                # products must never be relocated after compilation.
+                workspace = self._build_workspace(
+                    state,
+                    entry / ("attempt-" + uuid.uuid4().hex),
+                    build_kind,
+                    include_excluded_tests=include_excluded_tests,
+                    commands=recipe,
+                )
+                cached = {
+                    "identity": identity,
+                    "workspace": str(workspace),
+                    "files": file_manifest(workspace, ignore=ignored),
+                }
+                temporary = entry / "ready.json.tmp"
+                temporary.write_text(json.dumps(cached, sort_keys=True) + "\n")
+                temporary.replace(receipt)
+            log = (
+                self.output_dir
+                / "build-cache"
+                / (
+                    build_kind.value
+                    + "-"
+                    + state.value
+                    + "-"
+                    + key
+                    + "-"
+                    + str(time.time_ns())
+                    + ".json"
+                )
+            )
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text(
+                json.dumps({"key": key, "reused": reused, **cached}, sort_keys=True)
+                + "\n"
+            )
+            self._progress(
+                f"Judge build cache {'hit' if reused else 'published'}: {build_kind.value} {state.value} {key[:12]}"
+            )
+            return workspace
+
+    def _build_workspace(
         self,
         state: CodeState,
         root: Path,
@@ -1119,6 +1281,8 @@ class LocalProcessJudge:
             self._progress(
                 f"Judge plan: {len(cases)} instances, {total_solver_runs} solver runs"
             )
+            if not total_solver_runs:
+                return []
             if self.run_validation_builds:
                 for state in self.code_states:
                     started = time.monotonic()
@@ -1159,6 +1323,9 @@ class LocalProcessJudge:
                                 continue
                             jobs.append((case, state, workspace, seed, budget))
 
+            # Schedule expensive jobs first while keeping each Base/Agent pair
+            # adjacent and retaining the source-state order declared by the run.
+            jobs.sort(key=lambda job: -job[4])
             available = sorted(os.sched_getaffinity(0))
             threads = self.task.evaluation.threads
             possible_slots = len(available) // threads
@@ -1188,6 +1355,29 @@ class LocalProcessJudge:
             self._progress(
                 f"Judge progress: solver runs 0/{len(jobs)}, workers {workers}"
             )
+            (self.output_dir / "judge-scheduling.json").write_text(
+                json.dumps(
+                    {
+                        "policy": "longest_budget_first_paired_states",
+                        "workers": workers,
+                        "cpus": available,
+                        "threads_per_run": threads,
+                        "jobs": len(jobs),
+                        "execution_order": [
+                            [
+                                case.instance_set.name,
+                                case.instance_id,
+                                state.value,
+                                seed,
+                                budget,
+                            ]
+                            for case, state, _, seed, budget in jobs
+                        ],
+                    }
+                )
+                + "\n"
+            )
+            solver_stage_started = time.monotonic()
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 future_to_job = {executor.submit(execute, job): job for job in jobs}
                 seed_group_totals: dict[tuple[str, str, CodeState, int], int] = {}
@@ -1243,6 +1433,17 @@ class LocalProcessJudge:
             self._progress(
                 f"Judge solver grid complete: {valid_count}/{len(observations)} "
                 "valid observations"
+            )
+            stage_wall = time.monotonic() - solver_stage_started
+            schedule_path = self.output_dir / "judge-scheduling.json"
+            scheduling = json.loads(schedule_path.read_text())
+            scheduling.update(
+                wall_time_sec=stage_wall,
+                runs_per_sec=len(observations) / stage_wall if stage_wall else None,
+            )
+            schedule_path.write_text(json.dumps(scheduling) + "\n")
+            self._progress(
+                f"Judge throughput: {len(observations)} runs in {stage_wall:.3f}s with {workers} workers"
             )
         return observations
 

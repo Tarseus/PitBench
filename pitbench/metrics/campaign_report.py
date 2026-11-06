@@ -516,6 +516,9 @@ def _inventory(row: dict, trial: dict, evaluation_dir: Path, task_path: Path) ->
 def _summary_values(row: dict) -> None:
     """Expose native tradeoffs and eligible-pair counts beside performance."""
     summary = row["native_summary"]
+    baseline = summary.get("base_reuse") or {}
+    row["baseline_observations_sha256"] = baseline.get("observations_sha256")
+    row["shared_baseline"] = bool(baseline.get("reused"))
     resource = summary.get("resource_usage") or {}
     budget = row.get("primary_budget_sec", resource.get("primary_budget_sec"))
     row["primary_resources"] = {}

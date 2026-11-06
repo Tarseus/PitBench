@@ -344,6 +344,172 @@ def test_process_timeouts_remain_terminal_until_explicit_retry(tmp_path, monkeyp
     assert all(path.is_dir() for path in calls)
 
 
+@pytest.mark.parametrize("different_options", [False, True])
+@pytest.mark.parametrize("source_failed", [False, True])
+def test_setup_shares_one_measurement_only_with_matching_execution(
+    tmp_path, monkeypatch, different_options, source_failed
+):
+    from pitbench.evaluator.scenarios import run
+
+    data = campaign(tmp_path, "trajectory")
+    setup = protocol("setup")
+    setup.model_sequences_sha256 = data.protocols[0].model_sequences_sha256
+    originals = list(data.expected_runs)
+    data.protocols.append(setup)
+    data.expected_runs += [
+        key.model_copy(update={"scenario_id": "setup"}) for key in originals
+    ]
+    measured = {record.key: record for record in data.runs}
+    data.runs = []
+    for iid in ("a", "b"):
+        for kind in ("trajectory", "setup"):
+            data.model_sequences[sequence_key("judge_id", iid, kind)] = (
+                data.model_sequences[sequence_key("judge_id", iid)]
+            )
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "campaign.json").write_text(data.model_dump_json())
+    runtime = {
+        "python": sys.executable,
+        "options_by_scenario": {"setup": {"different": True}}
+        if different_options
+        else {},
+    }
+    (output / "runtime.json").write_text(
+        json.dumps(
+            {
+                "runtimes": {"base": runtime, "agent": runtime},
+                "cpus": [min(os.sched_getaffinity(0))],
+                "watchdog_grace_sec": 1,
+            }
+        )
+    )
+    calls = []
+
+    def collect(command, directory, identity, **kwargs):
+        key = ScenarioRunKey.model_validate(identity["scenario_run"])
+        calls.append(key)
+        source_key = key.model_copy(update={"scenario_id": "trajectory"})
+        record = measured[source_key].model_copy(
+            update={
+                "key": key,
+                "protocol_sha256": next(
+                    p.digest() for p in data.protocols if p.id == key.scenario_id
+                ),
+            }
+        )
+        if source_failed and key.scenario_id == "trajectory":
+            record = record.model_copy(
+                update={
+                    "status": "process_error",
+                    "steps": [],
+                    "error": "retained source failure",
+                }
+            )
+        payload = {
+            "execution_status": "completed",
+            "run": record.model_dump(mode="json"),
+        }
+        (directory / "result.json").write_text(json.dumps(payload))
+        return payload
+
+    monkeypatch.setattr("pitbench.evaluator.scenarios.run_collection_process", collect)
+    monkeypatch.setattr(
+        "pitbench.evaluator.scenarios._hardware_identity",
+        lambda cpus: data.hardware_identity,
+    )
+    summary = run(output)
+    assert len(calls) == (8 if different_options else 4)
+    assert summary["recorded_runs"] == summary["expected_runs"] == 8
+    assert summary["reused_runs"] == (0 if different_options else 4)
+    if source_failed and not different_options:
+        saved = ScenarioCampaign.model_validate_json(
+            (output / "campaign.json").read_text()
+        )
+        assert all(record.status == "process_error" for record in saved.runs)
+    run(output)
+    assert len(calls) == (8 if different_options else 4)
+
+
+def test_scenario_base_cache_is_shared_across_candidates_but_agents_are_measured(
+    tmp_path, monkeypatch
+):
+    from pitbench.evaluator.scenarios import run
+
+    data = campaign(tmp_path, "trajectory")
+    observed = {record.key: record for record in data.runs}
+    data.runs = []
+    for iid in ("a", "b"):
+        data.model_sequences[sequence_key("judge_id", iid, "trajectory")] = (
+            data.model_sequences[sequence_key("judge_id", iid)]
+        )
+    runtime = {"python": sys.executable}
+    calls = []
+
+    def collect(command, directory, identity, **kwargs):
+        key = ScenarioRunKey.model_validate(identity["scenario_run"])
+        calls.append(key.code_state)
+        payload = {
+            "execution_status": "completed",
+            "run": observed[key].model_dump(mode="json"),
+        }
+        (directory / "result.json").write_text(json.dumps(payload))
+        (directory / "trajectory.jsonl").write_text("raw incumbent trace\n")
+        return payload
+
+    monkeypatch.setattr("pitbench.evaluator.scenarios.run_collection_process", collect)
+    monkeypatch.setattr(
+        "pitbench.evaluator.scenarios._hardware_identity",
+        lambda cpus: data.hardware_identity,
+    )
+    summaries = []
+    old_receipts = {}
+    for index in range(4):
+        if index == 2:
+            for ready in (tmp_path / "base-cache").glob("*/ready.json"):
+                saved = json.loads(ready.read_text())
+                receipt = Path(saved["receipt"])
+                old_receipts[receipt] = receipt.read_text()
+                (Path(saved["raw_artifacts"]) / "trajectory.jsonl").write_text(
+                    "damaged"
+                )
+        if index == 3:
+            runtime = {**runtime, "environment": {"CONTROLLED_SOLVER_FLAG": "changed"}}
+        output = tmp_path / f"candidate-{index}"
+        output.mkdir()
+        selected = data.model_copy(
+            deep=True,
+            update={
+                "candidate_sha256": str(index + 1) * 64,
+                "collection_id": f"candidate-{index}",
+            },
+        )
+        (output / "campaign.json").write_text(selected.model_dump_json())
+        (output / "runtime.json").write_text(
+            json.dumps(
+                {
+                    "runtimes": {"base": runtime, "agent": runtime},
+                    "cpus": [min(os.sched_getaffinity(0))],
+                    "watchdog_grace_sec": 1,
+                    "base_cache_path": str(tmp_path / "base-cache"),
+                }
+            )
+        )
+        summaries.append(run(output))
+    assert calls.count("base") == 6
+    assert calls.count("agent") == 8
+    assert summaries[0]["shared_base_runs"] == 0
+    assert summaries[1]["shared_base_runs"] == 2
+    assert summaries[2]["shared_base_runs"] == 0
+    assert summaries[3]["shared_base_runs"] == 0
+    assert all(path.read_text() == contents for path, contents in old_receipts.items())
+    for receipt in (tmp_path / "base-cache").glob("*/ready.json"):
+        saved = json.loads(receipt.read_text())
+        assert (
+            Path(saved["raw_artifacts"]) / "trajectory.jsonl"
+        ).read_text() == "raw incumbent trace\n"
+
+
 @pytest.mark.external
 def test_real_session_collects_all_seven_scenario_kinds_and_resumes(tmp_path):
     pytest.importorskip("highspy")

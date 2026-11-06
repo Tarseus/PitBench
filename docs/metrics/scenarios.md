@@ -173,6 +173,19 @@ total memory and cgroup resource limits. Resume validates that hardware contract
 A nonempty candidate patch with identical Base/Agent API fingerprints is rejected
 instead of measuring an unchanged installed binding as the candidate.
 
+Compatible setup measurements may reference an already collected scenario run.
+Reuse requires identical model hashes, input/seed/thread/mode/repeat identity,
+budget, runtime, effective solver options and sampling/reset/cleanup settings.
+The setup run keeps its own protocol/metric identity and records `reused_from`;
+its values are measured once rather than counted as independent samples twice.
+The source is selected in frozen plan order, including failed outcomes; failure
+does not trigger a second attempt under the setup label.
+Campaign-local Base scenario caches additionally bind task, protocol, runtime and
+hardware/resource identities and retain raw worker artifacts. Candidate scenarios
+are measured separately. Shared Base runs record their source collection and
+cache receipt in `measurement_source`; changing the hardware/profile or source
+binding prevents reuse. Long-budget scenario jobs are scheduled first.
+
 The normal independent Judge grid is still required. Qualification uses one
 complete paired Judge grid and the declared scenario campaign, bound to the task,
 candidate and runtime fingerprints. Invalid scenario solutions invalidate the

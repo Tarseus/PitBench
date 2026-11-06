@@ -244,6 +244,8 @@ class ScenarioRun(BaseModel):
     ]
     steps: list[ScenarioStep] = Field(default_factory=list)
     error: str | None = None
+    reused_from: ScenarioRunKey | None = None
+    measurement_source: dict | None = None
 
 
 class ScenarioCampaign(BaseModel):

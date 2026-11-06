@@ -112,10 +112,13 @@ def test_native_mip_assignment_uses_existing_independent_checker(
     assert checked.objective == -4542
 
 
-def test_completed_judge_checkpoint_requires_matching_identity_and_hashes(tmp_path):
+@pytest.mark.parametrize("state", list(CodeState))
+def test_completed_judge_checkpoint_requires_matching_identity_and_hashes(
+    tmp_path, state
+):
     observation = RunObservation(
         task_id="task",
-        code_state=CodeState.AGENT,
+        code_state=state,
         instance_set="judge_id",
         instance_set_kind="judge_id",
         instance_id="one",
@@ -133,17 +136,18 @@ def test_completed_judge_checkpoint_requires_matching_identity_and_hashes(tmp_pa
             runs=[
                 ExpectedRun(
                     task_id="task",
-                    code_state=CodeState.AGENT,
+                    code_state=planned_state,
                     instance_set="judge_id",
                     instance_set_kind="judge_id",
                     instance_id="one",
                     solver_seed=7,
                     budget_sec=5.0,
                 )
+                for planned_state in CodeState
             ],
         ).model_dump_json()
     )
-    identity = {"candidate_patch_sha256": "first"}
+    identity = {"candidate_patch_sha256": "first", "code_states": [state.value]}
     marker = {
         "identity": identity,
         "observation_count": 1,
@@ -1915,7 +1919,6 @@ def test_docker_judge_failure_reports_last_progress_and_retained_observations(
     (tmp_path / "candidate.patch").write_bytes(b"")
     (tmp_path / "task.yaml").write_text("task_id: test\n")
     observations = output_dir / "judge-observations.jsonl"
-    observations.write_text('{"completed":true}\n')
     captured = {}
 
     class FailedProcess:
@@ -1928,11 +1931,12 @@ def test_docker_judge_failure_reports_last_progress_and_retained_observations(
         ]
 
         def wait(self):
+            observations.write_text('{"completed":true}\n')
             return 1
 
     monkeypatch.setattr(
         "pitbench.evaluator.docker_judge.subprocess.Popen",
-        lambda *args, **kwargs: (captured.update(command=args[0]) or FailedProcess()),
+        lambda *args, **kwargs: captured.update(command=args[0]) or FailedProcess(),
     )
     judge = DockerJudge(
         image="sha256:" + "a" * 64,
@@ -1951,13 +1955,12 @@ def test_docker_judge_failure_reports_last_progress_and_retained_observations(
     assert docker_cli_image("sha256:" + "a" * 64) == "a" * 64
     assert docker_cli_image("solver@sha256:" + "b" * 64) == "solver@sha256:" + "b" * 64
     assert command[command.index("python3") - 1] == "a" * 64
-    work_tmp = next(
-        i for i, arg in enumerate(command) if arg.endswith(":/work-tmp:rw")
-    )
+    work_tmp = next(i for i, arg in enumerate(command) if arg.endswith(":/work-tmp:rw"))
     assert command[work_tmp - 1] == "--volume"
-    assert '"judge_image": "sha256:' + "a" * 64 + '"' in command[
-        command.index("--checkpoint-identity") + 1
-    ]
+    assert (
+        '"judge_image": "sha256:' + "a" * 64 + '"'
+        in command[command.index("--checkpoint-identity") + 1]
+    )
     assert "Judge progress: 49/100" in message
     assert "Judge progress: 48/100" not in message
     assert "docker connection closed" in message
@@ -2309,11 +2312,11 @@ def test_default_judge_parallel_runs_and_cpus():
     mock_task.evaluation.threads = 1
 
     with patch("os.sched_getaffinity", return_value=set(range(12))):
-        assert _default_judge_parallel_runs(mock_task) == 10
+        assert _default_judge_parallel_runs(mock_task) == 12
         assert _default_judge_cpus(10, mock_task) == 10.0
 
     with patch("os.sched_getaffinity", return_value=set(range(4))):
-        assert _default_judge_parallel_runs(mock_task) == 3
+        assert _default_judge_parallel_runs(mock_task) == 4
         assert _default_judge_cpus(3, mock_task) == 8.0
 
     with patch("os.sched_getaffinity", return_value={0}):
@@ -2327,7 +2330,7 @@ def test_cp_sat_uses_one_solver_thread_with_parallel_judge_processes():
     )
     assert task.evaluation.threads == 1
     with patch("os.sched_getaffinity", return_value=set(range(12))):
-        assert _default_judge_parallel_runs(task) == 10
+        assert _default_judge_parallel_runs(task) == 12
 
 
 def test_base_cache_rejects_observations_from_other_thread_protocol(tmp_path: Path):
@@ -2482,12 +2485,22 @@ def test_evaluator_uses_base_cache_when_available(tmp_path: Path):
         ),
         patch("pitbench.evaluator.evaluator.PitBenchAdapter.validate_repository"),
         patch("pitbench.evaluator.evaluator.DockerJudge") as mock_judge_class,
+        patch(
+            "pitbench.evaluator.evaluator._base_cache_path",
+            return_value=base_cache_file,
+        ),
+        patch(
+            "pitbench.evaluator.evaluator._base_measurement_identity", return_value={}
+        ),
         patch("pitbench.evaluator.evaluator.hashlib.sha256") as mock_hash,
     ):
         mock_hash.return_value.hexdigest.return_value = "0" * 64
         mock_judge_instance = mock_judge_class.return_value
         mock_judge_instance.run.return_value = agent_obs
 
+        from pitbench.evaluator.evaluator import _publish_shared_base
+
+        _publish_shared_base(base_cache_file, {}, tmp_path / "producer", base_obs)
         result = PitBenchEvaluator().evaluate(request)
 
         # Ensure DockerJudge only ran with AGENT state
@@ -2585,17 +2598,29 @@ def test_evaluator_saves_base_cache_on_first_run(tmp_path: Path):
         ),
         patch("pitbench.evaluator.evaluator.PitBenchAdapter.validate_repository"),
         patch("pitbench.evaluator.evaluator.DockerJudge") as mock_judge_class,
+        patch(
+            "pitbench.evaluator.evaluator._base_input_digest",
+            return_value="fixed-inputs",
+        ),
+        patch(
+            "pitbench.evaluator.evaluator._base_cache_path",
+            return_value=base_cache_file,
+        ),
         patch("pitbench.evaluator.evaluator.hashlib.sha256") as mock_hash,
     ):
         mock_hash.return_value.hexdigest.return_value = "0" * 64
         mock_judge_instance = mock_judge_class.return_value
-        mock_judge_instance.run.return_value = all_obs
+        mock_judge_instance.run.side_effect = lambda: [
+            row
+            for row in all_obs
+            if row.code_state in mock_judge_class.call_args.kwargs["code_states"]
+        ]
 
         PitBenchEvaluator().evaluate(request)
 
-        # Ensure DockerJudge was asked to run both states
-        _, kwargs = mock_judge_class.call_args
-        assert set(kwargs["code_states"]) == {CodeState.BASE, CodeState.AGENT}
+        assert [
+            call.kwargs["code_states"] for call in mock_judge_class.call_args_list
+        ] == [(CodeState.BASE,), (CodeState.AGENT,)]
 
         # Ensure base cache was saved automatically
         assert base_cache_file.is_file()
@@ -2721,6 +2746,379 @@ def test_directional_performance_runs_one_judge_without_confirmation(
     assert result.summary.performance_confirmation_observation_count == 0
     assert result.artifacts.performance_confirmation_observations is None
     assert not (request.output_dir / "performance-confirmation").exists()
+
+
+def test_shared_base_keeps_raw_failures_and_invalidates_changed_artifacts(tmp_path):
+    from pitbench.evaluator.evaluator import _publish_shared_base, _restore_shared_base
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    raw = source / "base/judge_id/one/stdout.log"
+    raw.parent.mkdir(parents=True)
+    raw.write_text("solver failed; retain this output")
+    row = RunObservation(
+        task_id="cache",
+        code_state=CodeState.BASE,
+        instance_set="judge_id",
+        instance_id="one",
+        solver_seed=7,
+        budget_sec=5,
+        status=RunStatus.CRASHED,
+        valid=False,
+        stdout_path=str(raw),
+    )
+    path = tmp_path / "cache/base.parquet"
+    identity = {"cpu_model": "matching", "threads": 1}
+    _publish_shared_base(path, identity, source, [row])
+    restored = _restore_shared_base(path, identity, target)
+    assert restored[0].status == RunStatus.CRASHED
+    assert Path(restored[0].stdout_path).read_text() == raw.read_text()
+    assert _restore_shared_base(path, {"cpu_model": "different"}, target) is None
+    receipt = json.loads(path.with_suffix(".json").read_text())
+    (Path(receipt["artifacts"]) / "base/judge_id/one/stdout.log").write_text("corrupt")
+    assert _restore_shared_base(path, identity, target) is None
+
+
+def test_base_input_identity_tracks_model_bytes_and_reference_changes(tmp_path):
+    from pitbench.evaluator.evaluator import _base_input_digest
+
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/vroom_v1_15_0.yaml")
+    model = tmp_path / "model.json"
+    original = json.dumps(
+        {
+            "coordinates": [[0, 0], [3, 0], [0, 4]],
+            "demands": [0, 1, 1],
+            "capacity": 2,
+            "distance_metric": "EUC_2D",
+        }
+    )
+    model.write_text(original)
+    config = tmp_path / "panel.yaml"
+    payload = {
+        "instances": [
+            {"id": "one", "uri": "private://model.json", "optimal_or_bks": 12}
+        ]
+    }
+    config.write_text(yaml.safe_dump(payload))
+    task.instance_sets = [
+        InstanceSetSpec(
+            name="agent_dev",
+            kind="agent_dev",
+            size=1,
+            instance_set_config="unused.yaml",
+        ),
+        InstanceSetSpec(
+            name="judge_id",
+            kind="judge_id",
+            size=1,
+            instance_set_config="private://panel.yaml",
+        ),
+    ]
+    first = _base_input_digest(task, tmp_path)
+    model.write_text(original.replace('"capacity": 2', '"capacity": 3'))
+    assert _base_input_digest(task, tmp_path) != first
+    model.write_text(original)
+    assert _base_input_digest(task, tmp_path) == first
+    payload["instances"][0]["optimal_or_bks"] = 13
+    config.write_text(yaml.safe_dump(payload))
+    assert _base_input_digest(task, tmp_path) != first
+
+
+def test_concurrent_candidates_share_one_base_and_keep_agents_parallel(
+    tmp_path, monkeypatch
+):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/vroom_v1_15_0.yaml")
+    task.evaluation.budgets_sec = [5]
+    task.evaluation.primary_budget_sec = 5
+    task.evaluation.solver_seeds = [1]
+    task.evaluation.operational_reliability = False
+    task.instance_sets = [
+        InstanceSetSpec(
+            name="agent_dev",
+            kind="agent_dev",
+            size=1,
+            instance_set_config="unused.yaml",
+        ),
+        InstanceSetSpec(
+            name="judge_id",
+            kind="judge_id",
+            size=1,
+            instance_set_config="private://fixture.yaml",
+        ),
+    ]
+    task_file = tmp_path / "task.yaml"
+    task_file.write_text(yaml.safe_dump(task.model_dump(mode="json")))
+    patch_file = tmp_path / "candidate.patch"
+    patch_file.write_text("")
+    calls, active = [], [0, 0]
+    mutex = threading.Lock()
+    rendezvous = threading.Barrier(3)
+
+    class NativeFixtureJudge(DockerJudge):
+        def run(self):
+            with mutex:
+                calls.append(self.code_states)
+            if self.code_states == (CodeState.AGENT,):
+                with mutex:
+                    active[0] += 1
+                    active[1] = max(active)
+                rendezvous.wait(timeout=5)
+            rows = (
+                ObservationStore.read_jsonl(self.base_observations_path)
+                if self.base_observations_path
+                else []
+            )
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            for state in self.code_states:
+                raw = self.output_dir / state.value / "judge_id/one/stdout.log"
+                raw.parent.mkdir(parents=True)
+                raw.write_text(state.value)
+                rows.append(
+                    RunObservation(
+                        task_id=task.task_id,
+                        code_state=state,
+                        instance_set="judge_id",
+                        instance_set_kind="judge_id",
+                        instance_id="one",
+                        solver_seed=1,
+                        budget_sec=5,
+                        status=RunStatus.COMPLETED,
+                        valid=True,
+                        normalized_gap=0.2 if state == CodeState.BASE else 0.1,
+                        stdout_path=str(raw),
+                    )
+                )
+            grid = ExpectedRunGrid(
+                task_id=task.task_id,
+                runs=[
+                    ExpectedRun(
+                        task_id=task.task_id,
+                        code_state=state,
+                        instance_set="judge_id",
+                        instance_set_kind="judge_id",
+                        instance_id="one",
+                        solver_seed=1,
+                        budget_sec=5,
+                    )
+                    for state in CodeState
+                ],
+            )
+            (self.output_dir / "expected-run-grid.json").write_text(
+                grid.model_dump_json()
+            )
+            ledger = self.output_dir / "judge-observations.jsonl"
+            ObservationStore.write_jsonl(ledger, rows)
+            (self.output_dir / "judge-checkpoint.json").write_text(
+                json.dumps(
+                    {
+                        "identity": self.checkpoint_identity(),
+                        "observation_count": len(rows),
+                        "observations_sha256": hashlib.sha256(
+                            ledger.read_bytes()
+                        ).hexdigest(),
+                        "expected_grid_sha256": hashlib.sha256(
+                            (self.output_dir / "expected-run-grid.json").read_bytes()
+                        ).hexdigest(),
+                    }
+                )
+            )
+            if self.code_states == (CodeState.AGENT,):
+                with mutex:
+                    active[0] -= 1
+            return rows
+
+    monkeypatch.setattr("pitbench.evaluator.evaluator.DockerJudge", NativeFixtureJudge)
+    monkeypatch.setattr(
+        "pitbench.evaluator.evaluator._base_input_digest", lambda *args: "fixed-inputs"
+    )
+    monkeypatch.setattr(PitBenchAdapter, "validate_repository", lambda *args: None)
+
+    def evaluate(index):
+        return PitBenchEvaluator().evaluate(
+            EvaluationRequest(
+                task_id=task.task_id,
+                task_path=tmp_path,
+                candidate_patch_path=patch_file,
+                candidate_patch_sha256=hashlib.sha256(b"").hexdigest(),
+                output_dir=tmp_path / f"run-{index}",
+                agent_name="fixture",
+                evaluator_config={
+                    "task_config_path": str(task_file),
+                    "base_repository": str(tmp_path),
+                    "private_root": str(tmp_path),
+                    "judge_image": "sha256:" + "a" * 64,
+                    "judge_cpus": 2,
+                    "judge_parallel_runs": 2,
+                    "use_base_cache": True,
+                    "base_cache_path": str(tmp_path / "shared/base"),
+                },
+            )
+        )
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        results = list(pool.map(evaluate, range(3)))
+    assert calls.count((CodeState.BASE,)) == 1
+    assert calls.count((CodeState.AGENT,)) == 3
+    assert active[1] == 3
+    assert len({r.summary.base_reuse["observations_sha256"] for r in results}) == 1
+    for index in range(3):
+        output = tmp_path / f"run-{index}"
+        assert (output / "base/judge_id/one/stdout.log").read_text() == "base"
+        assert len(ObservationStore.read(output / "trials.parquet")) == 2
+    cache_file = Path(results[0].summary.base_reuse["cache"])
+    cache_file.rename(cache_file.with_suffix(".offline.parquet"))
+    evaluate(0)
+    assert calls.count((CodeState.BASE,)) == 1
+    assert calls.count((CodeState.AGENT,)) == 3
+
+
+def test_build_cache_preserves_absolute_paths_and_rebuilds_corrupt_products(
+    judge_case, tmp_path
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    judge, _ = judge_case
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "solver.py").write_text("source")
+    calls = tmp_path / "compilations.log"
+    judge.base_repository = source
+    judge.repository = ScriptRepository("pass")
+    judge.build_cache_path = tmp_path / "build-cache"
+    judge.build_cache_context = {"judge_image": "fixed-image"}
+    command = CommandSpec(
+        argv=[
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import os,sys; Path('build').mkdir(); "
+            "Path('build/program').write_text(os.getcwd()); "
+            "f=open(sys.argv[1],'a'); f.write(os.getcwd()+'\\n'); f.close()",
+            str(calls),
+        ]
+    )
+
+    class CachedRepository(ScriptRepository):
+        def build_commands(self, kind):
+            return [command]
+
+    judge.repository = CachedRepository("pass")
+
+    def build(index):
+        return judge._workspace(
+            CodeState.BASE,
+            tmp_path / str(index),
+            BuildKind.PERFORMANCE,
+            commands=[command] if index != 1 else None,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = list(pool.map(build, [1, 2]))
+    assert first == second
+    assert (first / "build/program").read_text() == str(first)
+    assert len(calls.read_text().splitlines()) == 1
+    (first / "__pycache__").mkdir()
+    (first / "__pycache__/runtime.pyc").write_bytes(b"ignored")
+    assert build(3) == first
+    (first / "build/program").write_text("damaged")
+    rebuilt = build(4)
+    assert rebuilt != first and first.is_dir()
+    assert (rebuilt / "build/program").read_text() == str(rebuilt)
+    assert len(calls.read_text().splitlines()) == 2
+    failing = command.model_copy(
+        update={
+            "argv": [
+                *command.argv[:2],
+                command.argv[2] + "; sys.exit(1)",
+                command.argv[3],
+            ]
+        }
+    )
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="build failed"):
+            judge._workspace(
+                CodeState.BASE,
+                tmp_path / "failed",
+                BuildKind.PERFORMANCE,
+                commands=[failing],
+            )
+    assert len(list(judge.build_cache_path.glob("*/ready.json"))) == 1
+    assert len(calls.read_text().splitlines()) == 4
+
+
+def test_docker_resume_requires_matching_launch_identity(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    output.mkdir()
+    task, patch_file = tmp_path / "task.yaml", tmp_path / "candidate.patch"
+    task.write_text("task")
+    patch_file.write_text("")
+    kwargs = dict(
+        image="sha256:" + "a" * 64,
+        task_config_path=task,
+        candidate_patch=patch_file,
+        base_repository=tmp_path,
+        private_root=tmp_path,
+        output_dir=output,
+    )
+    judge = DockerJudge(**kwargs)
+    ledger = output / "judge-observations.jsonl"
+    ledger.write_text("retained partial observation\n")
+    launch = output / "judge-launch.json"
+    launch.write_text(json.dumps({"identity": judge.checkpoint_identity()}))
+    captured = []
+
+    class FailedProcess:
+        stdout = []
+
+        def wait(self):
+            return 1
+
+    monkeypatch.setattr(
+        "pitbench.evaluator.docker_judge.subprocess.Popen",
+        lambda command, **kwargs: captured.append(command) or FailedProcess(),
+    )
+    with pytest.raises(RuntimeError, match="isolated judge failed"):
+        judge.run()
+    assert "--resume-existing-observations" in captured[0]
+    patch_file.write_text("different source")
+    with pytest.raises(RuntimeError, match="different or missing Judge identity"):
+        DockerJudge(**kwargs).run()
+    assert len(captured) == 1
+    assert ledger.read_text() == "retained partial observation\n"
+
+
+@pytest.mark.parametrize("workers", [1, 6, 7, 8])
+def test_longest_budget_scheduler_preserves_all_pairs(
+    judge_case, tmp_path, monkeypatch, workers
+):
+    judge, first = judge_case
+    judge.code_states = tuple(CodeState)
+    judge.parallel_runs = workers
+    judge.repository = ScriptRepository(GOOD)
+    monkeypatch.setattr(judge, "_workspace", lambda *args: tmp_path)
+    cases = [
+        replace(
+            first,
+            instance_id=f"case-{index}",
+            solver_seeds=(0,),
+            budgets_sec=(1, 5, 10),
+        )
+        for index in range(4)
+    ]
+    rows = judge.run(cases)
+    assert len(rows) == 24
+    assert all(row.valid for row in rows)
+    schedule = json.loads((judge.output_dir / "judge-scheduling.json").read_text())
+    assert schedule["workers"] == min(workers, len(os.sched_getaffinity(0)))
+    budgets = [job[-1] for job in schedule["execution_order"]]
+    assert budgets == sorted(budgets, reverse=True)
+    for a, b in zip(
+        schedule["execution_order"][::2], schedule["execution_order"][1::2]
+    ):
+        assert a[:2] == b[:2] and a[3:] == b[3:]
+        assert [a[2], b[2]] == ["base", "agent"]
+    assert schedule["runs_per_sec"] > 0
 
 
 # Tests consolidated from tests/unit/pitbench/test_collection.py

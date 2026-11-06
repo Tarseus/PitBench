@@ -17,7 +17,9 @@ def judge_harness_sha256(package_root: Path) -> str:
     """Fingerprint the Python code mounted into the isolated judge."""
     digest = hashlib.sha256()
     for source_root in (package_root / "pitbench", package_root / "adapters"):
-        for path in sorted(source_root.rglob("*.py")):
+        for path in sorted(
+            p for p in source_root.rglob("*") if p.suffix in {".py", ".cpp", ".java"}
+        ):
             relative = path.relative_to(package_root).as_posix().encode()
             content = path.read_bytes()
             digest.update(len(relative).to_bytes(8, "big"))
@@ -56,6 +58,8 @@ class DockerJudge:
         reliability_only: bool = False,
         instances_per_instance_set: int | None = None,
         solver_seed_limit: int | None = None,
+        base_observations_path: Path | None = None,
+        build_cache_path: Path | None = None,
     ) -> None:
         digest_pinned = re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image)
         local_image_id = re.fullmatch(r"sha256:[0-9a-f]{64}", image)
@@ -71,7 +75,7 @@ class DockerJudge:
         self.private_root = PrivateAssetResolver(private_root).root
         self.candidate_patch = candidate_patch.resolve()
         self.output_dir = output_dir.resolve()
-        self.cpus = cpus
+        self.cpus = float(cpus)
         self.memory = memory
         self.tmpfs_size = tmpfs_size
         self.cpuset_cpus = cpuset_cpus
@@ -85,6 +89,8 @@ class DockerJudge:
         if solver_seed_limit is not None and solver_seed_limit < 1:
             raise ValueError("solver_seed_limit must be positive")
         self.solver_seed_limit = solver_seed_limit
+        self.base_observations_path = base_observations_path
+        self.build_cache_path = build_cache_path.resolve() if build_cache_path else None
         self.package_root = Path(__file__).resolve().parents[2]
         self.harness_sha256 = judge_harness_sha256(self.package_root)
         self.candidate_patch_sha256 = hashlib.sha256(
@@ -95,7 +101,7 @@ class DockerJudge:
         ).hexdigest()
 
     def checkpoint_identity(self) -> dict[str, object]:
-        return {
+        identity = {
             "candidate_patch_sha256": self.candidate_patch_sha256,
             "task_config_sha256": self.task_config_sha256,
             "harness_sha256": self.harness_sha256,
@@ -110,6 +116,11 @@ class DockerJudge:
             "instances_per_instance_set": self.instances_per_instance_set,
             "solver_seed_limit": self.solver_seed_limit,
         }
+        if self.base_observations_path is not None:
+            identity["shared_base_sha256"] = hashlib.sha256(
+                self.base_observations_path.read_bytes()
+            ).hexdigest()
+        return identity
 
     def run(self) -> list[RunObservation]:
         package_root = self.package_root
@@ -123,6 +134,8 @@ class DockerJudge:
             "--rm",
             "--network",
             "none",
+            "--label",
+            f"pitbench.judge_output={self.output_dir}",
             "--read-only",
             "--cpus",
             str(self.cpus),
@@ -178,6 +191,52 @@ class DockerJudge:
         command.extend(
             ["--checkpoint-identity", json.dumps(self.checkpoint_identity())]
         )
+        if self.base_observations_path is not None:
+            command[
+                command.index(self.docker_image) : command.index(self.docker_image)
+            ] = [
+                "--volume",
+                f"{self.base_observations_path.resolve()}:/input/shared-base.jsonl:ro",
+            ]
+            command.extend(["--base-observations", "/input/shared-base.jsonl"])
+        if self.build_cache_path is not None:
+            self.build_cache_path.mkdir(parents=True, exist_ok=True)
+            position = command.index(self.docker_image)
+            command[position:position] = [
+                "--volume",
+                f"{self.build_cache_path}:{self.build_cache_path}:rw",
+                "--env",
+                f"PITBENCH_BUILD_CACHE={self.build_cache_path}",
+                "--env",
+                "PITBENCH_BUILD_CONTEXT="
+                + json.dumps(
+                    {
+                        "judge_image": self.image,
+                        "harness_sha256": self.harness_sha256,
+                        "cpus": self.cpus,
+                        "memory": self.memory,
+                    }
+                ),
+            ]
+        launch_path = self.output_dir / "judge-launch.json"
+        identity = self.checkpoint_identity()
+        if observations.is_file() and observations.stat().st_size:
+            receipt = (
+                launch_path
+                if launch_path.is_file()
+                else self.output_dir / "judge-checkpoint.json"
+            )
+            if (
+                not receipt.is_file()
+                or json.loads(receipt.read_text()).get("identity") != identity
+            ):
+                raise RuntimeError(
+                    "retained observations have a different or missing Judge identity; preserve this output and use a new directory"
+                )
+            command.append("--resume-existing-observations")
+        launch_tmp = launch_path.with_suffix(".json.tmp")
+        launch_tmp.write_text(json.dumps({"identity": identity}, sort_keys=True) + "\n")
+        launch_tmp.replace(launch_path)
         if self.reliability_only:
             command.append("--reliability-only")
         if self.instances_per_instance_set is not None:

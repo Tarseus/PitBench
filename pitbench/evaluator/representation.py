@@ -13,7 +13,7 @@ from pitbench.evaluator.artifacts import write_json
 from pitbench.evaluator.judge import InstanceCase, JudgePlan, LocalProcessJudge
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.evaluator.representations import representation_type
-from pitbench.schema.observation import RunObservation
+from pitbench.schema.observation import CodeState, RunObservation
 from pitbench.schema.task import (
     InstanceSetKind,
     PitBenchTask,
@@ -295,13 +295,22 @@ def result_record(
 
 
 def run_with_representation(
-    judge: LocalProcessJudge, private_root: Path
+    judge: LocalProcessJudge,
+    private_root: Path,
+    *,
+    previous_observations: list[RunObservation] | None = None,
+    completed_runs: set | None = None,
+    save_observation=None,
 ) -> list[RunObservation]:
     """Run the standard grid and configured relabelings in the same judge."""
     task = judge.task
     config = task.evaluation.representation_robustness
     if config is None:
-        return judge.run()
+        return judge.run(
+            completed_runs=completed_runs, save_observation=save_observation
+        )
+    previous_observations = previous_observations or []
+    states = set(judge.code_states) | {row.code_state for row in previous_observations}
 
     output_dir = judge.output_dir / "representation"
     cases, transformations = prepare_cases(
@@ -322,10 +331,10 @@ def run_with_representation(
         "configuration": config.model_dump(mode="json"),
         "budgets_sec": task.evaluation.budgets_sec,
         "threads": task.evaluation.threads,
-        "code_states": [state.value for state in judge.code_states],
+        "code_states": sorted(state.value for state in states),
         "instance_count": len({case.equivalence_parent_id for case in cases}),
         "expected_run_count": len(cases)
-        * len(judge.code_states)
+        * len(states)
         * len(task.evaluation.budgets_sec),
         "completed_run_count": 0,
         "transformations": "transformations.json",
@@ -347,6 +356,8 @@ def run_with_representation(
         with (output_dir / "results.jsonl").open("w") as handle:
 
             def save(observation: RunObservation) -> None:
+                if save_observation is not None:
+                    save_observation(observation)
                 if observation.equivalence_parent_id is None:
                     return
                 record = result_record(
@@ -359,8 +370,25 @@ def run_with_representation(
                 handle.flush()
                 details["completed_run_count"] += 1
 
-            observations = judge.run([*plan.cases, *cases], save_observation=save)
+            for row in previous_observations:
+                if row.equivalence_parent_id is not None:
+                    record = result_record(
+                        row,
+                        transformations[row.instance_id],
+                        output_dir,
+                        runs_dir=judge.output_dir,
+                    )
+                    handle.write(json.dumps(record, allow_nan=False) + "\n")
+                    details["completed_run_count"] += 1
+            handle.flush()
+            observations = judge.run(
+                [*plan.cases, *cases],
+                completed_runs=completed_runs,
+                save_observation=save,
+            )
     write_json(output_dir / "details.json", details)
+    if states != set(CodeState):
+        return observations
     declared_instance_count = next(
         instance_set.size
         for instance_set in task.instance_sets

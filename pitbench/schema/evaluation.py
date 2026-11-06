@@ -56,6 +56,7 @@ class ArtifactRef(BaseModel):
 
 
 class ArtifactManifest(BaseModel):
+    shared_base_receipt: ArtifactRef | None = None
     metric_scenario_campaign: ArtifactRef | None = None
     metric_scenario_confirmation: ArtifactRef | None = None
     candidate_patch: ArtifactRef | None = None
@@ -73,6 +74,7 @@ class ArtifactManifest(BaseModel):
 
 
 class EvaluationSummary(BaseModel):
+    base_reuse: dict | None = None
     observation_count: int = Field(ge=0)
     valid_observation_count: int = Field(ge=0)
     performance_confirmation_observation_count: int = Field(default=0, ge=0)

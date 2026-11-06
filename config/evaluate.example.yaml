@@ -18,10 +18,11 @@ configuration_robustness:
   cpus: null
   search_seed: 20260918
 
-# Evaluation execution options (null uses system auto-detection, e.g. nproc - 2)
+# Evaluation execution options (null fills the allocated CPU slots)
 # judge_parallel_runs: 10
 # judge_cpus: 10.0
-# Reusing measured BASE observations is opt-in; it can create cross-run noise.
+# Ad-hoc runs opt into Base/build caching; the study launcher enables campaign-local
+# caches automatically. Shared Base measurements correlate candidate comparisons.
 # base_cache: true
 
 # Development instances and inspection/benchmark commands are enabled by default.

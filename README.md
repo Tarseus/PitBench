@@ -77,6 +77,8 @@ Unlike general repository-level coding benchmarks, solver optimization must pres
    Heuristic tasks measure paired normalized optimality-gap reductions against best-known solutions; exact tasks measure independently verified optimal coverage and penalized solve time. Each task declares its own budgets and seeds, with instance-cluster bootstrap confidence intervals for paired comparisons.
    A complete paired Base/Agent evaluation supplies the improvement or regression
    classification; independent solution verification remains mandatory. No automatic repeat is run.
+   Study evaluations share hash-bound Base measurements and successful builds,
+   resume interrupted grids, and retain explicit reuse provenance.
 
 4. **Prepared Docker Environments**
    PyVRP native extensions are compiled in prepared, commit-tagged images.

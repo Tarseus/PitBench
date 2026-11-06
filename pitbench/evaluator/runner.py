@@ -8,8 +8,8 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pitbench.evaluator.judge import LocalProcessJudge, _development_seeds
 from pitbench.evaluator.docker_judge import judge_harness_sha256
+from pitbench.evaluator.judge import LocalProcessJudge, _development_seeds
 from pitbench.evaluator.reliability import prepare_boundary_cases
 from pitbench.evaluator.representation import run_with_representation
 from pitbench.evaluator.storage import ObservationStore
@@ -36,6 +36,7 @@ def _resume_observations(
     candidate_patch: Path,
     code_states: tuple[CodeState, ...],
     checkpoint_identity: dict[str, object] | None,
+    allow_shared_base: bool = False,
 ) -> tuple[
     list[RunObservation],
     set[tuple[str, str, CodeState, int, float]],
@@ -82,15 +83,21 @@ def _resume_observations(
         valid_prefix.extend(line)
     completed: set[tuple[str, str, CodeState, int, float]] = set()
     allowed_states = set(code_states)
+    if allow_shared_base:
+        allowed_states.add(CodeState.BASE)
     for observation in observations:
         identity = _run_identity(observation)
         if (
             observation.task_id != task.task_id
             or observation.code_state not in allowed_states
         ):
-            raise ValueError("cannot resume: observation task or code state does not match")
+            raise ValueError(
+                "cannot resume: observation task or code state does not match"
+            )
         if identity not in expected:
-            raise ValueError("cannot resume: observation is outside the expected run grid")
+            raise ValueError(
+                "cannot resume: observation is outside the expected run grid"
+            )
         if identity in completed:
             raise ValueError("cannot resume: duplicate completed run identity")
         completed.add(identity)
@@ -110,7 +117,9 @@ def _resume_observations(
         }:
             raise ValueError("cannot resume: checkpoint code states do not match")
     recovery: dict[str, object] | None = None
-    if corrupt_tail is not None:
+    if corrupt_tail is not None or (
+        raw_checkpoint and not raw_checkpoint.endswith(b"\n")
+    ):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         backup = observations_path.with_name(
             f"{observations_path.stem}.pre-resume-{stamp}.raw"
@@ -132,10 +141,8 @@ def _resume_observations(
         repaired.replace(observations_path)
         recovery = {
             "corrupt_tail_backup": backup.name,
-            "corrupt_tail_bytes": len(corrupt_tail),
-            "original_observations_sha256": hashlib.sha256(
-                raw_checkpoint
-            ).hexdigest(),
+            "corrupt_tail_bytes": len(corrupt_tail or b""),
+            "original_observations_sha256": hashlib.sha256(raw_checkpoint).hexdigest(),
         }
     return observations, completed, recovery
 
@@ -155,6 +162,7 @@ def main() -> None:
     parser.add_argument("--solver-seed-limit", type=int)
     parser.add_argument("--checkpoint-identity")
     parser.add_argument("--resume-existing-observations", action="store_true")
+    parser.add_argument("--base-observations", type=Path)
     parser.add_argument(
         "--code-state",
         action="append",
@@ -163,9 +171,8 @@ def main() -> None:
     args = parser.parse_args()
     measurement_started_at = datetime.now(timezone.utc).isoformat()
     task = PitBenchTask.from_yaml(args.task_config)
-    code_states = (
-        tuple(CodeState(value) for value in (args.code_state or []))
-        or tuple(CodeState)
+    code_states = tuple(CodeState(value) for value in (args.code_state or [])) or tuple(
+        CodeState
     )
     checkpoint_identity = (
         json.loads(args.checkpoint_identity)
@@ -176,17 +183,18 @@ def main() -> None:
     completed_runs: set[tuple[str, str, CodeState, int, float]] = set()
     resume_recovery: dict[str, object] | None = None
     if args.resume_existing_observations:
-        if task.evaluation.representation_robustness is not None:
-            parser.error("resume is not supported for representation robustness runs")
         try:
-            previous_observations, completed_runs, resume_recovery = _resume_observations(
-                observations_path=args.observations,
-                output_dir=args.output_dir,
-                task=task,
-                task_config=args.task_config,
-                candidate_patch=args.candidate_patch,
-                code_states=code_states,
-                checkpoint_identity=checkpoint_identity,
+            previous_observations, completed_runs, resume_recovery = (
+                _resume_observations(
+                    observations_path=args.observations,
+                    output_dir=args.output_dir,
+                    task=task,
+                    task_config=args.task_config,
+                    candidate_patch=args.candidate_patch,
+                    code_states=code_states,
+                    checkpoint_identity=checkpoint_identity,
+                    allow_shared_base=args.base_observations is not None,
+                )
             )
         except (OSError, ValueError) as error:
             parser.error(str(error))
@@ -210,6 +218,17 @@ def main() -> None:
             handle.write(json.dumps(resume_event, sort_keys=True) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
+    elif args.base_observations is not None:
+        previous_observations = ObservationStore.read_jsonl(args.base_observations)
+        if any(
+            row.code_state != CodeState.BASE or row.task_id != task.task_id
+            for row in previous_observations
+        ):
+            parser.error(
+                "shared Base contains a different task or non-Base observations"
+            )
+        completed_runs = {_run_identity(row) for row in previous_observations}
+        ObservationStore.write_jsonl(args.observations, previous_observations)
     boundary_cases = (
         prepare_boundary_cases(
             task,
@@ -249,7 +268,7 @@ def main() -> None:
         solver_seed_limit=args.solver_seed_limit,
         observations_path=args.observations,
     )
-    if args.resume_existing_observations:
+    if previous_observations or args.resume_existing_observations:
         # Resume through the existing raw JSONL checkpoint. The judge's normal
         # initialization truncates this path, so resumed writes use the callback.
         judge.observations_path = None
@@ -276,8 +295,14 @@ def main() -> None:
     elif args.reliability_only:
         observations = judge.run([])
     elif task.evaluation.representation_robustness is not None:
-        observations = run_with_representation(judge, args.private_root)
-    elif args.resume_existing_observations:
+        observations = run_with_representation(
+            judge,
+            args.private_root,
+            previous_observations=previous_observations,
+            completed_runs=completed_runs,
+            save_observation=save_observation,
+        )
+    elif previous_observations or args.resume_existing_observations:
         observations = judge.run(
             completed_runs=completed_runs, save_observation=save_observation
         )

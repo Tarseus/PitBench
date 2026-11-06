@@ -592,7 +592,8 @@ def test_limited_representation_run_retains_records_without_formal_report(
         lambda *args: pytest.fail("limited panel must not compute formal report"),
     )
 
-    def run(cases, *, save_observation):
+    def run(cases, *, save_observation, completed_runs=None):
+        assert not completed_runs
         assert cases == [case]
         for item in observations:
             save_observation(item)

@@ -33,7 +33,7 @@ body{margin:0;background:#fafaf8;color:#242a30;font:14px/1.65 system-ui,sans-ser
 <div class="scroll"><table id="conditions-table"><thead><tr><th>任务／设置</th><th>执行／评测状态</th><th>原生性能结论</th><th>改进量与区间</th><th>CPU／RSS 变化</th><th>Seed／表示 IQR</th><th>跨结构收益保留</th><th>问题与失败原因</th></tr></thead><tbody>
 {% for condition in report.conditions %}
 <tr><td><strong>{{ condition.task_id }}</strong><br>{{ condition.setting }}<br><small>{{ condition.model or '' }}<br>{{ condition.condition_id }}</small></td>
-<td>{{ condition.execution_status }}<br>{{ condition.evaluation_status }}</td>
+<td>{{ condition.execution_status }}<br>{{ condition.evaluation_status }}{% if condition.get('shared_baseline') %}<br><small>共享 Base 测量 · {{ condition.baseline_observations_sha256[:12] }}</small>{% endif %}</td>
 <td>{{ condition.classification or '未取得' }}<br><small>{{ '历史反序复测' if condition.confirmed else '单次配对评测' }}</small></td>
 <td>{% if condition.primary_effect is defined %}{% set e=condition.primary_effect %}{{ e.metric_id }}<br>{{ e.estimate|number }} {{ e.unit }}<br>[{{ e.lower|number }}, {{ e.upper|number }}]<br><small>{{ e.budget_sec }} 秒</small>{% else %}未取得原生主端点{% endif %}</td>
 <td>{% for metric,prefix in [('cpu','CPU'),('memory','RSS')] %}{% set r=condition.get('primary_resources',{}).get(metric) %}{% if r %}{{ prefix }} {{ r.change_percent|number }}%<br><small>{{ r.paired_seed_count }}/{{ r.expected_pairs }} 有效配对</small><br>{% endif %}{% endfor %}</td>
