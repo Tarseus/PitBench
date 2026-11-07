@@ -1969,7 +1969,7 @@ def prepare_generalization_run_views(
             target_runs=target_runs,
         )
         balanced_runs = after
-        if supplemental_seed_count is not None:
+        if supplemental_seed_count is not None and metadata["scientific_panels"]:
             available_seeds = (
                 task.evaluation.seed_robustness.seed_selection.seed_count
                 if task.evaluation.seed_robustness

@@ -98,6 +98,24 @@ def test_task_seed_policy_preserves_deterministic_tasks(tmp_path):
             assert frozen.evaluation.seed_robustness.seed_selection.seed_count == 30
 
 
+def test_supplemental_reduction_does_not_change_native_single_seed_task(tmp_path):
+    from pitbench.research import prepare_generalization_run_views
+
+    original_path = ROOT / "configs/tasks/release_vroom_v1_15_0.yaml"
+    original = PitBenchTask.from_yaml(original_path)
+    task_id = original.task_id
+    views = {"tasks": {task_id: {"evaluator_task_config": str(original_path), "scientific_panels": {}}}, "arms": {"standard": {task_id: {"agent_task_config_path": str(original_path)}}}}
+    source = tmp_path / "source.json"
+    source.write_text(json.dumps(views))
+    result = json.loads(prepare_generalization_run_views(
+        views_path=source, private_root=tmp_path / "private", destination=tmp_path / "reduced",
+        target_runs=100000, supplemental_seed_count=5, supplemental_primary_budget_only=True,
+    ).read_text())
+    task = PitBenchTask.from_yaml(Path(result["tasks"][task_id]["evaluator_task_config"]))
+    assert task.evaluation == original.evaluation
+    assert task.instance_sets == original.instance_sets
+
+
 def test_run_balance_keeps_seeds_budgets_and_all_panel_conditions():
     from pitbench.research import balance_generalization_task
     from pitbench.schema.task import InstanceSetSpec
