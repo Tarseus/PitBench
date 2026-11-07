@@ -31,6 +31,73 @@ def test_model_repeats_use_one_shared_condition_without_abc_interventions():
         GeneralizationStudyPlan.model_validate(value)
 
 
+def test_all_latest_augmentation_plan_is_problem_scoped_and_controlled():
+    value = json.loads((ROOT / "configs/research/latest_high_algorithm_space_v4.json").read_text())
+    plan = GeneralizationStudyPlan.model_validate(value)
+    assert len(plan.task_configs) == len(plan.task_targets) == 8
+    assert plan.agent_attempts_per_condition == 3
+    assert len({a.development_view for a in plan.arms}) == 1
+    assert len({a.instruction for a in plan.arms}) == 1
+    assert sum(a.agent_import_path is not None for a in plan.arms) == 1
+    assert not any(a.require_candidate_hypotheses for a in plan.arms)
+    value["arms"][1]["development_view"] = "different_inputs"
+    with pytest.raises(ValidationError, match="share data"):
+        GeneralizationStudyPlan.model_validate(value)
+
+
+def test_targeted_views_preserve_primary_scoring_and_share_public_inputs(tmp_path):
+    from pitbench.research import prepare_targeted_study_views
+
+    plan = GeneralizationStudyPlan.model_validate_json((ROOT / "configs/research/latest_high_algorithm_space_v4.json").read_text())
+    path = prepare_targeted_study_views(plan=plan, root=ROOT, destination=tmp_path / "views")
+    views = json.loads(path.read_text())
+    for relative in plan.task_configs:
+        original = PitBenchTask.from_yaml(ROOT / relative)
+        row = views["tasks"][original.task_id]
+        task = PitBenchTask.from_yaml(Path(row["evaluator_task_config"]))
+        assert task.release == original.release
+        assert task.evaluation == original.evaluation
+        assert task.instance_sets == original.instance_sets
+        assert task.problem_variant == plan.task_targets[task.task_id].problem_variant
+        assert row["cross_problem_performance_role"] == "separate_transfer_reporting"
+        assert Path(views["arms"]["standard"][task.task_id]["agent_task_config_path"]).read_bytes() == Path(views["arms"]["algorithm_space"][task.task_id]["agent_task_config_path"]).read_bytes()
+
+
+def test_task_seed_policy_preserves_deterministic_tasks(tmp_path):
+    from pitbench.research import (
+        prepare_generalization_seed_views,
+        study_evaluation_matches,
+    )
+
+    value = json.loads((ROOT / "configs/research/latest_high_algorithm_space_v4.json").read_text())
+    selected = {"release_cbc_v2_10_13", "release_vroom_v1_15_0"}
+    value["task_configs"] = [p for p in value["task_configs"] if Path(p).stem in selected]
+    value["task_targets"] = {k: v for k, v in value["task_targets"].items() if k in selected}
+    value["task_evaluation_seed_policies"] = {k: v for k, v in value["task_evaluation_seed_policies"].items() if k in selected}
+    plan = GeneralizationStudyPlan.model_validate(value)
+    views = {"tasks": {}, "arms": {arm.id: {} for arm in plan.arms}}
+    originals = {}
+    for name in plan.task_configs:
+        task = PitBenchTask.from_yaml(ROOT / name)
+        originals[task.task_id] = task
+        views["tasks"][task.task_id] = {"evaluator_task_config": str(ROOT / name)}
+        for arm in plan.arms:
+            views["arms"][arm.id][task.task_id] = {"agent_task_config_path": str(ROOT / name)}
+    source = tmp_path / "source.json"
+    source.write_text(json.dumps(views))
+    result = json.loads(prepare_generalization_seed_views(
+        plan=plan, views_path=source, private_root=tmp_path / "private", destination=tmp_path / "seeds"
+    ).read_text())
+    for task_id in selected:
+        frozen = PitBenchTask.from_yaml(Path(result["tasks"][task_id]["evaluator_task_config"]))
+        assert study_evaluation_matches(originals[task_id], frozen, plan)
+        if task_id == "release_vroom_v1_15_0":
+            assert frozen.evaluation == originals[task_id].evaluation
+            assert frozen.evaluation.solver_seeds == [0]
+        else:
+            assert frozen.evaluation.seed_robustness.seed_selection.seed_count == 30
+
+
 def test_run_balance_keeps_seeds_budgets_and_all_panel_conditions():
     from pitbench.research import balance_generalization_task
     from pitbench.schema.task import InstanceSetSpec

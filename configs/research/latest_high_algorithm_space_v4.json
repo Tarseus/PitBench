@@ -1,0 +1,120 @@
+{
+  "schema_version": "1.0",
+  "study_id": "all_solvers_latest_algorithm_space_v4",
+  "claim_scope": "replicated_study",
+  "release_manifest": "configs/benchmarks/0.0.1.json",
+  "task_configs": [
+    "configs/tasks/release_pyvrp_v0_14_1.yaml",
+    "configs/tasks/release_vroom_v1_15_0.yaml",
+    "configs/tasks/release_highs_v1_15_1.yaml",
+    "configs/tasks/release_choco_v6_0_2.yaml",
+    "configs/tasks/release_gecode_v6_4_0.yaml",
+    "configs/tasks/release_ortools_cp_sat_v9_15.yaml",
+    "configs/tasks/release_scip_v10_1_0.yaml",
+    "configs/tasks/release_cbc_v2_10_13.yaml"
+  ],
+  "model_matrix": "configs/experiments/generalization_high_matrix.yaml",
+  "population_plan": "configs/research/generalization_populations_v2.json",
+  "research_budget": {
+    "track": "standard",
+    "wall_time_sec": 14400,
+    "cpus": 8,
+    "memory_gib": 32,
+    "development_parallel_runs": 4,
+    "checkpoints_sec": [
+      1800,
+      3600,
+      7200,
+      14400
+    ]
+  },
+  "agent_attempts_per_condition": 3,
+  "shared_agent_tools": [
+    "inspect",
+    "workspace",
+    "bench"
+  ],
+  "required_scenario_kinds": [
+    "trajectory",
+    "lifecycle",
+    "scaling",
+    "sequence",
+    "numerical",
+    "replay"
+  ],
+  "arms": [
+    {
+      "id": "standard",
+      "development_view": "complete_visible_task_development",
+      "require_candidate_hypotheses": false,
+      "instruction": "Use the complete visible development inputs to improve the declared target problem. Validate source changes with the shared tools within the original total research budget."
+    },
+    {
+      "id": "algorithm_space",
+      "development_view": "complete_visible_task_development",
+      "require_candidate_hypotheses": false,
+      "instruction": "Use the complete visible development inputs to improve the declared target problem. Validate source changes with the shared tools within the original total research budget.",
+      "agent_import_path": "algorithm_space_agent.integrations.pitbench:AlgorithmSpaceCodexAgent",
+      "agent_provenance": {
+        "distribution": "algorithm-space-agent",
+        "version": "0.1.0",
+        "source_tree_sha256": "1aa560d6ce78fabf887140e976c79315488a5667975d3c42516641e80a6746d3",
+        "wheel_sha256": "ea16795a64f5f00df556b91189b9295b75cbedf4c671b3b1c45e4a2aacbd326a"
+      }
+    }
+  ],
+  "inference_scope": "Eight frozen latest solver releases, each with an explicit target problem and unchanged native primary scoring. Compare ordinary Codex against the exact content-hashed Algorithm-Space adapter on identical visible inputs, model settings and 4h/8-vCPU/32-GiB budgets. Sol/high and Terra/high each get three fresh starts per condition: 96 starts total. Algorithm modelling and coding use the same model session and total budget; no separate planner budget or extra PitBench hypothesis registration. Retain every attempt, failure and missing measurement. Cross-problem performance is separate transfer evidence. Preserve task-native seed protocols, including deterministic VROOM; CBC and SCIP retain the previously agreed 30 hidden seeds. Only implemented source-bound API dimensions are measured; unavailable capabilities are explicitly reported, never fabricated or scored as success. These tasks reuse the declared benchmark holdouts and do not constitute new untouched workload distributions.",
+  "evaluation_run_target": 100000,
+  "supplemental_seed_count": 5,
+  "supplemental_primary_budget_only": true,
+  "evaluation_seed_policy": null,
+  "comparison_mode": "agent_augmentation",
+  "task_evaluation_seed_policies": {
+    "release_cbc_v2_10_13": {
+      "seed_count": 30,
+      "seed_min": 1,
+      "seed_max": 2147483646,
+      "preserve_existing": true
+    },
+    "release_scip_v10_1_0": {
+      "seed_count": 30,
+      "seed_min": 1,
+      "seed_max": 2147483646,
+      "preserve_existing": true
+    }
+  },
+  "task_targets": {
+    "release_pyvrp_v0_14_1": {
+      "problem_variant": "cvrp",
+      "instruction": "Improve the pinned solver on capacitated vehicle routing under the declared solve budgets. The original hidden judge_id panel and its native performance protocol define this task's primary objective. Use all supplied public development inputs for diagnosis and regression checks. Cross-problem performance is reported separately as transfer evidence and is not a requirement that every problem becomes faster. Preserve supported-problem feasibility, objective semantics and truthful solve statuses; do not change tests or hardcode instance identities."
+    },
+    "release_vroom_v1_15_0": {
+      "problem_variant": "cvrp",
+      "instruction": "Improve the pinned solver on capacitated vehicle routing under the declared solve budgets. The original hidden judge_id panel and its native performance protocol define this task's primary objective. Use all supplied public development inputs for diagnosis and regression checks. Cross-problem performance is reported separately as transfer evidence and is not a requirement that every problem becomes faster. Preserve supported-problem feasibility, objective semantics and truthful solve statuses; do not change tests or hardcode instance identities."
+    },
+    "release_highs_v1_15_1": {
+      "problem_variant": "single_machine_scheduling",
+      "instruction": "Improve the pinned solver on single-machine scheduling in the declared MIP formulation under the declared solve budgets. The original hidden judge_id panel and its native performance protocol define this task's primary objective. Use all supplied public development inputs for diagnosis and regression checks. Cross-problem performance is reported separately as transfer evidence and is not a requirement that every problem becomes faster. Preserve supported-problem feasibility, objective semantics and truthful solve statuses; do not change tests or hardcode instance identities."
+    },
+    "release_choco_v6_0_2": {
+      "problem_variant": "bin_packing",
+      "instruction": "Improve the pinned solver on integer bin packing with the declared global constraints under the declared solve budgets. The original hidden judge_id panel and its native performance protocol define this task's primary objective. Use all supplied public development inputs for diagnosis and regression checks. Cross-problem performance is reported separately as transfer evidence and is not a requirement that every problem becomes faster. Preserve supported-problem feasibility, objective semantics and truthful solve statuses; do not change tests or hardcode instance identities."
+    },
+    "release_gecode_v6_4_0": {
+      "problem_variant": "bin_packing",
+      "instruction": "Improve the pinned solver on integer bin packing with the declared binpacking propagator under the declared solve budgets. The original hidden judge_id panel and its native performance protocol define this task's primary objective. Use all supplied public development inputs for diagnosis and regression checks. Cross-problem performance is reported separately as transfer evidence and is not a requirement that every problem becomes faster. Preserve supported-problem feasibility, objective semantics and truthful solve statuses; do not change tests or hardcode instance identities."
+    },
+    "release_ortools_cp_sat_v9_15": {
+      "problem_variant": "job_shop_scheduling",
+      "instruction": "Improve the pinned solver on job-shop scheduling in the declared CP-SAT formulation under the declared solve budgets. The original hidden judge_id panel and its native performance protocol define this task's primary objective. Use all supplied public development inputs for diagnosis and regression checks. Cross-problem performance is reported separately as transfer evidence and is not a requirement that every problem becomes faster. Preserve supported-problem feasibility, objective semantics and truthful solve statuses; do not change tests or hardcode instance identities."
+    },
+    "release_scip_v10_1_0": {
+      "problem_variant": "multidimensional_knapsack",
+      "instruction": "Improve the pinned solver on multidimensional knapsack in the declared MIP formulation under the declared solve budgets. The original hidden judge_id panel and its native performance protocol define this task's primary objective. Use all supplied public development inputs for diagnosis and regression checks. Cross-problem performance is reported separately as transfer evidence and is not a requirement that every problem becomes faster. Preserve supported-problem feasibility, objective semantics and truthful solve statuses; do not change tests or hardcode instance identities."
+    },
+    "release_cbc_v2_10_13": {
+      "problem_variant": "multidimensional_knapsack",
+      "instruction": "Improve the pinned solver on multidimensional knapsack in the declared MIP formulation under the declared solve budgets. The original hidden judge_id panel and its native performance protocol define this task's primary objective. Use all supplied public development inputs for diagnosis and regression checks. Cross-problem performance is reported separately as transfer evidence and is not a requirement that every problem becomes faster. Preserve supported-problem feasibility, objective semantics and truthful solve statuses; do not change tests or hardcode instance identities."
+    }
+  }
+}

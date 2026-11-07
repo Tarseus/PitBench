@@ -671,6 +671,30 @@ def report(task_ids, args, config):
     return result
 
 
+def study_agent_arguments(job):
+    """Select the configured Agent through the existing CLI interface."""
+    custom = job.get("agent_import_path")
+    return ["--agent-import-path", custom] if custom else ["--agent", job["model"]["agent"]]
+
+
+def configure_study_agent(config, job, budget):
+    original = job["model"]["agent"]
+    selected = job.get("agent_import_path") or original
+    config.agents[selected] = {
+        **config.kwargs_for(original),
+        **config.kwargs_for(selected),
+        "timeout_sec": budget.wall_time_sec,
+    }
+
+
+def configure_study_scenarios(config, task_id, views):
+    reference = views["tasks"][task_id].get("metric_scenario_config")
+    if reference:
+        config.metric_scenario_configs[task_id] = Path(reference)
+    else:
+        config.metric_scenario_configs.pop(task_id, None)
+
+
 def evaluate_study_candidate(state, args, cpu_pool):
     """Consume one captured patch through the existing independent evaluator."""
     job = dict(state)
@@ -716,7 +740,7 @@ def evaluate_study_candidate(state, args, cpu_pool):
             candidate_patch_path=patch,
             candidate_patch_sha256=job["audit"]["candidate_patch_sha256"],
             output_dir=patch.parent,
-            agent_name=job["model"]["agent"],
+            agent_name=job.get("agent_import_path") or job["model"]["agent"],
             model_name=job["model"]["model"],
             evaluator_config=configured,
         )
@@ -920,12 +944,8 @@ def retry_unexecuted_condition(args):
     resources.judge_cpuset_cpus = args.cpu_pool
     config.tasks[job["task_id"]] = resources
     config.agent_cpuset_cpus = args.cpu_pool
-    config.metric_scenario_configs[job["task_id"]] = Path(
-        views["tasks"][job["task_id"]]["metric_scenario_config"]
-    )
-    config.agents.setdefault(job["model"]["agent"], {})["timeout_sec"] = (
-        plan.research_budget.wall_time_sec
-    )
+    configure_study_scenarios(config, job["task_id"], views)
+    configure_study_agent(config, job, plan.research_budget)
     attempt = receipt_dir / retry_id
     attempt.mkdir()
     config_path = attempt / "evaluation.local.yaml"
@@ -940,8 +960,7 @@ def retry_unexecuted_condition(args):
         job["task_id"],
         "--config",
         str(config_path),
-        "--agent",
-        job["model"]["agent"],
+        *study_agent_arguments(job),
         "--model",
         job["model"]["model"],
         "--agent-kwarg",
@@ -1019,7 +1038,7 @@ def retry_unexecuted_condition(args):
 
 
 def study_models(args):
-    """Run the frozen three-arm development cohort; queue hidden evaluation separately."""
+    """Run a frozen development cohort; queue hidden evaluation separately."""
     import itertools
     import random
 
@@ -1066,7 +1085,13 @@ def study_models(args):
             raise ValueError(
                 "study changed the frozen source or original primary contract"
             )
-        scenario_file = Path(row["metric_scenario_config"])
+        snapshots[str(task_file)] = hashlib.sha256(task_file.read_bytes()).hexdigest()
+        scenario_reference = row.get("metric_scenario_config")
+        if not scenario_reference:
+            if record.task.metric_scenarios:
+                raise ValueError("declared task scenarios require a frozen runtime configuration")
+            continue
+        scenario_file = Path(scenario_reference)
         scenario = yaml.load(
             scenario_file.read_text(),
             Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader),
@@ -1126,6 +1151,12 @@ def study_models(args):
                         "attempt": attempt,
                     }
                 )
+                if arm.agent_import_path:
+                    jobs[-1]["agent_import_path"] = arm.agent_import_path
+                if arm.agent_provenance:
+                    jobs[-1]["agent_provenance"] = arm.agent_provenance
+                if task_id in plan.task_targets:
+                    jobs[-1]["target_problem"] = plan.task_targets[task_id].problem_variant
     args.output.mkdir(parents=True, exist_ok=True)
     manifest = {
         "kind": "generalization_agent_cohort",
@@ -1215,12 +1246,8 @@ def study_models(args):
             resource.judge_cpuset_cpus = cpu_pool
             config.tasks[job["task_id"]] = resource
             config.agent_cpuset_cpus = cpu_pool
-            config.metric_scenario_configs[job["task_id"]] = Path(
-                views["tasks"][job["task_id"]]["metric_scenario_config"]
-            )
-            config.agents.setdefault(job["model"]["agent"], {})["timeout_sec"] = (
-                plan.research_budget.wall_time_sec
-            )
+            configure_study_scenarios(config, job["task_id"], views)
+            configure_study_agent(config, job, plan.research_budget)
             config_path = condition / "evaluation.local.yaml"
             config_path.write_text(
                 yaml.safe_dump(config.model_dump(mode="json"), sort_keys=False)
@@ -1233,8 +1260,7 @@ def study_models(args):
                 job["task_id"],
                 "--config",
                 str(config_path),
-                "--agent",
-                job["model"]["agent"],
+                *study_agent_arguments(job),
                 "--model",
                 job["model"]["model"],
                 "--agent-kwarg",

@@ -91,6 +91,32 @@ and three fresh independent starts per task/model. The existing high-effort matr
 contains Sol and Terra, giving six starts per solver. Each repeat gets its own
 workspace, run ID and usage record; no best-of-three selection is applied.
 
+`configs/research/latest_high_algorithm_space_v4.json` extends this to all eight
+approved latest releases. Each task now explicitly names its target problem;
+the unchanged native `judge_id` performance contract defines success for that
+target, while cross-problem performance is reported separately. Current targets
+are CVRP (PyVRP/VROOM), single-machine scheduling (HiGHS), bin packing
+(Choco/Gecode), job-shop scheduling (OR-Tools CP-SAT), and multidimensional
+knapsack (SCIP/CBC). This does not rewrite older experiments.
+
+The `agent_augmentation` comparison has two conditions with identical public
+task instructions and data. The ordinary condition uses Codex; the enhanced
+condition uses the external package through the existing `--agent-import-path`
+interface. Algorithm-Space planning and implementation stay in the same coding
+session and four-hour, 8-vCPU, 32-GiB budget. Each model gets three independent
+starts per condition: eight tasks × two models × two conditions × three attempts
+is 96 planned starts. There is no extra planner-model allowance or additional
+PitBench hypothesis-registration intervention.
+
+The supplied `algorithm-space-agent` 0.1.0 source has no Git commit, so its source
+file hashes and wheel hash are frozen in the condition's provenance. The adapter
+remains an external distribution, rather than a solver-specific implementation
+inside PitBench. Each condition receives the same model endpoint and runtime
+options. Task-specific seed policies retain the agreed CBC/SCIP hidden lists;
+other tasks keep their native seed protocols, including deterministic VROOM.
+API scenario dimensions without implemented source-bound adapters remain
+explicitly unavailable; a passing native test does not claim those APIs passed.
+
 The study launcher enables campaign-local Base and build caches under
 `<output>/shared-cache/`. A single Base-only producer measures each complete grid
 (including representation transformations); candidates then run concurrently and

@@ -29,6 +29,106 @@ from pitbench.schema.research import (
 from pitbench.schema.task import InstanceSetKind, PitBenchTask
 
 
+def prepare_targeted_study_views(
+    *,
+    plan: GeneralizationStudyPlan,
+    root: Path,
+    destination: Path,
+    evaluator_task_configs: dict[str, Path] | None = None,
+    development_configs: dict[str, str] | None = None,
+    scenario_configs: dict[str, Path] | None = None,
+) -> Path:
+    """Freeze problem-scoped inputs while sharing each task between Agent conditions."""
+    from pitbench.tasks import TaskCatalog
+
+    root, destination = root.resolve(), destination.resolve()
+    if destination.exists():
+        raise FileExistsError(destination)
+    destination.mkdir(parents=True)
+    evaluator_task_configs = evaluator_task_configs or {}
+    development_configs = development_configs or {}
+    scenario_configs = scenario_configs or {}
+    catalog = TaskCatalog(root)
+    views = {
+        "kind": "problem_scoped_execution_views",
+        "status": "development_frozen_evaluation_gated",
+        "scientific_evaluation_ready": False,
+        "tasks": {},
+        "arms": {arm.id: {} for arm in plan.arms},
+        "input_files_sha256": {},
+    }
+    for relative in plan.task_configs:
+        original_record = catalog.validate_file(_public_asset(root, relative))
+        original = original_record.task
+        task_id = original.task_id
+        source = evaluator_task_configs.get(task_id, original_record.task_config_path)
+        task = catalog.validate_file(source).task.model_copy(deep=True)
+        if not study_evaluation_matches(original, task, plan):
+            raise ValueError("targeted study changed the frozen release or primary evaluation")
+        target = plan.task_targets.get(task_id)
+        if target is not None:
+            task.problem_variant = target.problem_variant
+            if target.formulation_id is not None:
+                task.formulation_id = target.formulation_id
+            task.instruction = target.instruction
+        # Full source validation is retained after adding the task description.
+        task = PitBenchTask.model_validate(task.model_dump())
+        task_path = destination / "evaluator" / (task_id + ".yaml")
+        task_path.parent.mkdir(exist_ok=True)
+        task_path.write_text(yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False))
+        scenario = scenario_configs.get(task_id)
+        if task.metric_scenarios and scenario is None:
+            raise ValueError("declared scenarios need their source-bound runtime configuration")
+        declared = {p.kind for p in task.metric_scenarios}
+        public_panel = next(p for p in task.instance_sets if p.kind == InstanceSetKind.AGENT_DEV)
+        metadata = {
+            "evaluator_task_config": str(task_path),
+            "evaluator_sha256": _sha(task_path),
+            "scientific_panels": {
+                p.name: {"instances": p.size}
+                for p in task.instance_sets
+                if p.name not in {q.name for q in original.instance_sets} and not p.scenario_only
+            },
+            "target_problem": task.problem_variant or task.problem_family.value,
+            "primary_panel": "judge_id",
+            "cross_problem_performance_role": "separate_transfer_reporting",
+            "available_scenario_kinds": sorted(declared),
+            "unavailable_scenario_kinds": sorted(set(plan.required_scenario_kinds) - declared),
+            "development_original_size": public_panel.size,
+        }
+        views["input_files_sha256"][str(source.resolve())] = _sha(source)
+        if scenario is not None:
+            metadata["metric_scenario_config"] = str(scenario.resolve())
+            views["input_files_sha256"][str(scenario.resolve())] = _sha(scenario)
+        for arm in plan.arms:
+            public = task.model_copy(deep=True)
+            if task_id in development_configs:
+                relative_config = development_configs[task_id]
+                development = _public_asset(root, relative_config)
+                payload = yaml.safe_load(development.read_text())
+                panel = next(p for p in public.instance_sets if p.kind == InstanceSetKind.AGENT_DEV)
+                panel.instance_set_config = relative_config
+                panel.instance_set_config_sha256 = _sha(development)
+                panel.size = len(payload["instances"])
+                views["input_files_sha256"][str(development)] = _sha(development)
+            public.instruction += "\n\n" + arm.instruction
+            public_path = destination / "agent" / arm.id / (task_id + ".yaml")
+            public_path.parent.mkdir(parents=True, exist_ok=True)
+            public_path.write_text(yaml.safe_dump(public.model_dump(mode="json"), sort_keys=False))
+            views["arms"][arm.id][task_id] = {
+                "task_config_path": str(task_path),
+                "agent_task_config_path": str(public_path),
+                "candidate_hypotheses_required": arm.require_candidate_hypotheses,
+            }
+            metadata["development_diverse_size"] = next(
+                p.size for p in public.instance_sets if p.kind == InstanceSetKind.AGENT_DEV
+            )
+        views["tasks"][task_id] = metadata
+    path = destination / "task-views.json"
+    _write(path, views)
+    return path
+
+
 def prepare_generalization_study(
     plan: GeneralizationStudyPlan, *, root: Path, destination: Path
 ) -> dict:
@@ -1977,13 +2077,18 @@ def prepare_generalization_seed_views(
     from pitbench.schema.task import SeedRobustnessConfig, SeedSelectionConfig
 
     policy = plan.evaluation_seed_policy
-    if policy is None:
+    if policy is None and not plan.task_evaluation_seed_policies:
         return views_path
     identity = {
         "source_views_sha256": _sha(views_path),
-        "policy": policy.model_dump(mode="json"),
+        "policy": policy.model_dump(mode="json") if policy else None,
         "study_id": plan.study_id,
     }
+    if plan.task_evaluation_seed_policies:
+        identity["task_policies"] = {
+            task_id: value.model_dump(mode="json")
+            for task_id, value in plan.task_evaluation_seed_policies.items()
+        }
     receipt_path = destination / "seed-policy.json"
     result_path = destination / "task-views.json"
     if receipt_path.exists():
@@ -2006,6 +2111,9 @@ def prepare_generalization_seed_views(
     resolver = PrivateAssetResolver(private_root)
     files, counts = {}, {}
     for task_id in selected:
+        policy = plan.task_evaluation_seed_policies.get(task_id, plan.evaluation_seed_policy)
+        if policy is None:
+            continue
         metadata = result["tasks"][task_id]
         task = PitBenchTask.from_yaml(Path(metadata["evaluator_task_config"]))
         current = task.evaluation.seed_robustness
@@ -2109,7 +2217,7 @@ def study_evaluation_matches(
         return False
     if original.evaluation == study.evaluation:
         return True
-    policy = plan.evaluation_seed_policy
+    policy = plan.task_evaluation_seed_policies.get(original.task_id, plan.evaluation_seed_policy)
     current = study.evaluation.seed_robustness
     if policy is None or current is None or study.evaluation.solver_seeds is not None:
         return False

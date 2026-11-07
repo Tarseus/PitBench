@@ -536,7 +536,7 @@ def test_deferred_model_audit_requires_captured_patch_and_model_execution(
 
 @pytest.mark.parametrize(
     "plan_name",
-    ["generalization_latest_high_v2.json", "latest_high_replicates_v3.json"],
+    ["generalization_latest_high_v2.json", "latest_high_replicates_v3.json", "latest_high_algorithm_space_v4.json"],
 )
 def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     tmp_path, monkeypatch, plan_name
@@ -549,6 +549,7 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     plan_path = ROOT / "configs/research" / plan_name
     plan = json.loads(plan_path.read_text())
     plan["evaluation_seed_policy"] = None
+    plan["task_evaluation_seed_policies"] = {}
     plan["evaluation_run_target"] = None
     plan["supplemental_seed_count"] = None
     plan["supplemental_primary_budget_only"] = False
@@ -558,7 +559,8 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     latest = {
         row["task_id"] for row in MANIFEST["task_matrix"] if row["role"] == "latest"
     }
-    assert set(selected) <= latest and len(selected) == 3
+    assert set(selected) <= latest
+    assert len(selected) == (8 if plan.get("comparison_mode") == "agent_augmentation" else 3)
     records = {task: TaskCatalog(ROOT).validate_one(task) for task in selected}
     validated = []
 
@@ -590,6 +592,11 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     private = tmp_path / "private"
     private.mkdir()
     for task_id, record in records.items():
+        if plan.get("comparison_mode") == "agent_augmentation" and task_id == selected[-1]:
+            views["tasks"][task_id] = {"evaluator_task_config": str(record.task_config_path)}
+            for arm in plan["arms"]:
+                views["arms"][arm["id"]][task_id] = {"agent_task_config_path": str(record.task_config_path)}
+            continue
         scenario = tmp_path / (task_id + ".scenario.json")
         model = private / (task_id + ".json")
         model.write_text("frozen model input")
@@ -641,7 +648,7 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     )
     campaign.study_models(args)
     frozen = json.loads((args.output / "cohort.json").read_text())
-    assert len(frozen["jobs"]) == 18
+    assert len(frozen["jobs"]) == len(selected) * len(plan["arms"]) * 2 * plan["agent_attempts_per_condition"]
     assert set(validated) == set(selected)
     assert {row["model"]["label"] for row in frozen["jobs"]} == {
         "sol-high",
@@ -664,6 +671,14 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
                     )
                     == 3
                 )
+    elif plan.get("comparison_mode") == "agent_augmentation":
+        assert len(frozen["jobs"]) == 96
+        for task_id in selected:
+            for model in ("gpt-6.1-sol", "gpt-6.1-terra"):
+                for arm in plan["arms"]:
+                    rows = [j for j in frozen["jobs"] if j["task_id"] == task_id and j["model"]["model"] == model and j["arm"] == arm["id"]]
+                    assert {j["attempt"] for j in rows} == {1, 2, 3}
+                    assert all(j.get("agent_import_path") == arm.get("agent_import_path") for j in rows)
     else:
         assert all(row["attempt"] == 1 for row in frozen["jobs"])
     assert all(
@@ -675,6 +690,19 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     views_path.write_text(json.dumps(views))
     with pytest.raises(ValueError, match="absent from the frozen views"):
         campaign.study_models(args)
+
+
+def test_study_custom_agents_share_options_and_use_existing_import_interface():
+    from pitbench.cli.evaluate_config import EvaluationConfig
+    from pitbench.schema.research import ResearchBudget
+    from scripts import run_benchmark_release as campaign
+
+    job = {"model": {"agent": "codex"}, "agent_import_path": "example:EnhancedAgent"}
+    config = EvaluationConfig(agents={"codex": {"runner_backend": "workspace", "proxy_url": "http://localhost:1"}})
+    campaign.configure_study_agent(config, job, ResearchBudget(wall_time_sec=14400))
+    assert config.agents["example:EnhancedAgent"] == {"runner_backend": "workspace", "proxy_url": "http://localhost:1", "timeout_sec": 14400}
+    assert campaign.study_agent_arguments(job) == ["--agent-import-path", "example:EnhancedAgent"]
+    assert campaign.study_agent_arguments({"model": {"agent": "codex"}}) == ["--agent", "codex"]
 
 
 def test_model_resume_preserves_completed_work_and_archives_infra_attempt(
