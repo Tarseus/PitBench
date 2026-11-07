@@ -42,6 +42,8 @@ RUN chmod -R a+rX /opt/pitbench-jvm
 RUN cd /workspace/repo \
     && python3 /opt/pitbench-jvm/runner.py compile --solver ortools_cp_sat
 
+WORKDIR /workspace/repo
+
 # Resolve and run the upstream Java tests while image builds have network
 # access. Development runs can then use these POMs with Maven's offline mode.
 # Restore the performance build configuration after preparing the test cache.
@@ -59,4 +61,3 @@ RUN python3 /opt/pitbench-jvm/runner.py maven-settings --output /tmp/pitbench-ma
     && rm /tmp/pitbench-maven-settings.xml
 
 ENV PITBENCH_ORTOOLS_CP_SAT_RUNNER="python3 /opt/pitbench-jvm/runner.py run --solver ortools_cp_sat"
-WORKDIR /workspace/repo
