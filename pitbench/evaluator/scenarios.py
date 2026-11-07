@@ -7,6 +7,7 @@ import gc
 import hashlib
 import itertools
 import json
+import math
 import os
 import platform
 import shutil
@@ -25,7 +26,11 @@ from pitbench.evaluator.docker_judge import docker_cli_image, judge_harness_sha2
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.evaluator.representations import representation_type
 from pitbench.evaluator.storage import cache_lock, file_manifest
-from pitbench.metrics.scenario_report import compute_scenario_report, sequence_key
+from pitbench.metrics.scenario_report import (
+    ReportedBoundTrace,
+    compute_scenario_report,
+    sequence_key,
+)
 from pitbench.schema.scenarios import (
     ScenarioCampaign,
     ScenarioEvent,
@@ -819,12 +824,123 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
     return report(output)
 
 
-def report(output: Path) -> dict:
+def load_reported_bound_traces(
+    output: Path,
+    campaign: ScenarioCampaign,
+    *,
+    native_infinity: float | None = None,
+) -> dict[ScenarioRunKey, ReportedBoundTrace]:
+    """Recover native diagnostic bounds, retaining trace hashes and cache provenance."""
+    if native_infinity is not None and (
+        not math.isfinite(native_infinity) or native_infinity <= 0
+    ):
+        raise ValueError("native bound infinity must be finite and positive")
+    protocols = {p.id: p for p in campaign.protocols}
+    traces = {}
+    for run in campaign.runs:
+        p = protocols[run.key.scenario_id]
+        if (
+            p.kind != "trajectory"
+            or "dual_progress_integral" not in p.metrics
+            or run.status != "returned"
+            or len(run.steps) != 1
+        ):
+            continue
+        directory = output / "jobs" / digest(run.key.model_dump(mode="json"))
+        attempts = sorted(directory.glob("attempt-*/result.json"))
+        source = attempts[-1].parent if attempts else None
+        manifest = None
+        if run.measurement_source:
+            receipt = json.loads(Path(run.measurement_source["receipt"]).read_text())
+            saved = ScenarioRun.model_validate(receipt["run"])
+            source = Path(receipt["raw_artifacts"])
+            manifest = receipt["files"]
+        elif attempts:
+            saved = ScenarioRun.model_validate(json.loads(attempts[-1].read_text())["run"])
+        else:
+            continue
+        if (
+            saved.key != run.key
+            or saved.protocol_sha256 != run.protocol_sha256
+            or saved.runtime_identity_sha256 != run.runtime_identity_sha256
+            or [step.instance_sha256 for step in saved.steps]
+            != [step.instance_sha256 for step in run.steps]
+        ):
+            raise ValueError("reported bound trace belongs to another scenario execution")
+        path = source / "native-progress.jsonl"
+        if not path.is_file():
+            continue
+        raw = path.read_bytes()
+        if manifest is not None:
+            fingerprint = hashlib.sha256(
+                str(path.lstat().st_mode & 0o777).encode() + b"\0" + raw
+            ).hexdigest()
+            if manifest.get(path.name) != fingerprint:
+                raise ValueError("shared reported bound trace hash mismatch")
+        events, observed, unavailable = [], 0, 0
+        previous = -1.0
+        for line in raw.splitlines():
+            row = json.loads(line)
+            if row["step"] != 0:
+                raise ValueError("trajectory bound trace contains another model step")
+            timestamp = float(row["time_sec"])
+            if (
+                not math.isfinite(timestamp)
+                or timestamp < previous
+                or timestamp < 0
+                or timestamp > run.steps[0].solve_time_sec
+            ):
+                raise ValueError("reported bound timestamps are outside the measured solve")
+            previous = timestamp
+            if timestamp > p.budget_sec:
+                continue
+            observed += 1
+            value = row.get("dual_bound")
+            if value is None or not math.isfinite(float(value)) or (
+                native_infinity is not None and abs(float(value)) >= native_infinity
+            ):
+                unavailable += 1
+                continue
+            events.append((timestamp, float(value)))
+        traces[run.key] = ReportedBoundTrace(
+            events=events,
+            source_path=str(path.resolve()),
+            source_sha256=hashlib.sha256(raw).hexdigest(),
+            observed_events=observed,
+            unavailable_bound_events=unavailable,
+            native_infinity=native_infinity,
+        )
+    return traces
+
+
+def report(
+    output: Path,
+    *,
+    scaling_time_policy: str = "observed",
+    dual_bound_source: str = "independently_verified",
+    reported_bound_infinity: float | None = None,
+    report_path: Path | None = None,
+) -> dict:
     campaign = ScenarioCampaign.model_validate_json(
         (output / "campaign.json").read_text()
     )
-    result = compute_scenario_report(campaign)
-    write_json(output / "scenario-report.json", result.model_dump(mode="json"))
+    traces = (
+        load_reported_bound_traces(output, campaign, native_infinity=reported_bound_infinity)
+        if dual_bound_source == "solver_reported"
+        else None
+    )
+    result = compute_scenario_report(
+        campaign,
+        scaling_time_policy=scaling_time_policy,
+        dual_bound_source=dual_bound_source,
+        reported_bound_traces=traces,
+    )
+    suffix = "-budget-capped-v1" if scaling_time_policy == "budget_capped_v1" else ""
+    if dual_bound_source == "solver_reported":
+        suffix += "-solver-reported"
+    destination = report_path or output / f"scenario-report{suffix}.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    write_json(destination, result.model_dump(mode="json"))
     return {
         "expected_runs": len(campaign.expected_runs),
         "recorded_runs": len(campaign.runs),
@@ -836,6 +952,9 @@ def report(output: Path) -> dict:
             for run in campaign.runs
         ),
         "metrics": len(result.results),
+        "scaling_time_policy": scaling_time_policy,
+        "dual_bound_source": dual_bound_source,
+        "report": str(destination),
     }
 
 
@@ -1169,6 +1288,19 @@ def main():
         sub.add_argument("--output", type=Path, required=True)
         if action == "run":
             sub.add_argument("--retry-errors", action="store_true")
+        else:
+            sub.add_argument(
+                "--scaling-time-policy",
+                choices=("observed", "budget_capped_v1"),
+                default="observed",
+            )
+            sub.add_argument(
+                "--dual-bound-source",
+                choices=("independently_verified", "solver_reported"),
+                default="independently_verified",
+            )
+            sub.add_argument("--reported-bound-infinity", type=float)
+            sub.add_argument("--report-output", type=Path)
     sub = subs.add_parser("worker")
     sub.add_argument("--job", type=Path, required=True)
     sub = subs.add_parser("probe")
@@ -1195,7 +1327,13 @@ def main():
     elif args.action == "run":
         result = run(args.output, retry_errors=args.retry_errors)
     elif args.action == "report":
-        result = report(args.output)
+        result = report(
+            args.output,
+            scaling_time_policy=args.scaling_time_policy,
+            dual_bound_source=args.dual_bound_source,
+            reported_bound_infinity=args.reported_bound_infinity,
+            report_path=args.report_output,
+        )
     elif args.action == "worker":
         result = worker(args.job)
     else:

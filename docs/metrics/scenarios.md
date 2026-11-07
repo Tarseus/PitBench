@@ -33,7 +33,12 @@ Additional choices are explicit:
 - Replay requires at least two repeats, compared fields and explicit absolute and
   relative tolerances.
 - Numerical stress experiments bind feasible reference assignments, which the
-  evaluator independently checks on each original stress model.
+  evaluator independently checks on each original stress model. A run may contain
+  multiple frozen stress models: every step is checked, `independent_violation`
+  reports the maximum row/bound/integrality residual across the stress sequence,
+  and `numerical_failure_counts` counts failed stress solves. Per-step residuals
+  and the expected number of stress solves remain in the raw metric records.
+  Missing solutions do not become zero residuals.
 - Formal setup, memory, sequence and replay qualification also binds
   `qualification_target_by_model_sha256` for every model step. Measured time or
   memory remains reportable, but a candidate returning worse final solutions
@@ -113,6 +118,30 @@ rounds outward. These bounds remain valid for integer restrictions. A logged MIP
 search bound without a certificate is unavailable. This does not hide independently
 available primal measurements.
 
+For diagnostic comparisons, existing native bound logs can also supply a
+separately labelled **solver-reported** integral:
+
+```bash
+python -m scripts.collect_metric_scenarios report --output /path/to/experiment \
+  --scaling-time-policy budget_capped_v1 --dual-bound-source solver_reported
+```
+
+The same signed integral, frozen reference, scale, time budget and initial
+missing loss are used. Native bound events are read from the retained worker
+trace, including hash-checked shared Base artifacts. The report keeps the trace
+paths and hashes, and labels these values `solver_reported`; they are not
+independently certified bounds. A missing trace remains missing. An explicitly
+recorded absence of a finite bound retains the declared initial loss until a
+finite event appears. Events after the budget do not contribute. If a native API
+uses a finite sentinel for infinity, pass its actual API value using
+`--reported-bound-infinity`; the decoding value is recorded with the trace.
+Use `--report-output /path/to/writable/report.json` when the original Docker
+worker directory is read-only to the reporting user.
+
+The source-labelled reanalysis has a separate design hash and filename suffix
+`-solver-reported`. It does not overwrite the certified report or satisfy a frozen
+qualification requiring independently checked bound certificates.
+
 **Retained memory/growth.** Read current resident pages after the declared reset and
 cleanup operation. Remove exactly the declared warm-up prefix, retain the series,
 and apply its preregistered reduction. OLS growth regresses these bytes on
@@ -126,6 +155,31 @@ flushed and released before sampling; the full history is reconstructed afterwar
 `efficiency(n) = speedup(n) / (n / reference_threads)`.
 Censored or zero target times cannot establish efficiency. Raw curves are
 retained along with their declared scalar reduction.
+
+Existing campaigns can also be rescored with the explicit
+`budget_capped_v1` reporting policy:
+
+```bash
+python -m scripts.collect_metric_scenarios report --output /path/to/experiment \
+  --scaling-time-policy budget_capped_v1
+```
+
+This uses the independently verified target time when the target was reached
+within the frozen budget, and the budget itself otherwise. It never applies the
+PAR2 multiplier to scaling times. The existing thread-ratio formula and curve
+reduction then use these capped times. Each result labels its scoring policy and
+retains observed times, per-thread censoring flags, expected/observed run counts,
+and per-thread target attainment rates. Missing or failed worker records are
+still incomplete; they are not converted into budget misses. A true zero target
+time can supply a mean-time curve but cannot establish a time ratio.
+
+Budget-capped efficiency is a fixed-budget score. If neither thread condition
+reaches the target, their capped times are equal; this does not prove their true
+target times are equal. Interpret efficiency together with the attainment rates.
+The reanalysis has a distinct design hash and is saved to
+`scenario-report-budget-capped-v1.json`; raw campaigns, collection protocol hashes,
+and the default `scenario-report.json` remain intact. A capped reanalysis does
+not replace an earlier frozen observed-time qualification decision.
 
 **Incremental sequences.** Cold and warm modes execute identical model sequences.
 Sum solve times and separately sum in-place update times for the declared scored

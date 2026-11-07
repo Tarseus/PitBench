@@ -31,7 +31,7 @@ from pitbench.schema.observation import (
     RunObservation,
     RunStatus,
 )
-from pitbench.schema.scenarios import SCENARIO_QUALITY_GUARDS
+from pitbench.schema.scenarios import SCENARIO_METRICS, SCENARIO_QUALITY_GUARDS
 from pitbench.schema.task import PerformanceProtocol, PitBenchTask
 
 
@@ -340,6 +340,24 @@ def _metric_decision(
         ):
             result.detail = (
                 "Missing source-bound scenario evidence for this frozen task."
+            )
+            return result
+        if (
+            metric in SCENARIO_METRICS["scaling"]
+            and scenarios.scaling_time_policy != "observed"
+        ):
+            result.detail = (
+                "Budget-capped scaling is a separately labelled reanalysis; "
+                "it cannot replace the frozen observed-time qualification."
+            )
+            return result
+        if (
+            metric == "dual_progress_integral"
+            and scenarios.dual_bound_source != "independently_verified"
+        ):
+            result.detail = (
+                "Solver-reported bound integrals are diagnostic measurements; "
+                "the frozen qualification requires independent bound certificates."
             )
             return result
         matches = [

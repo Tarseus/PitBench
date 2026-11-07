@@ -152,6 +152,45 @@ def test_scenario_primary_uses_one_complete_independently_verified_campaign(tmp_
     assert "repeat" not in result.model_dump()
 
 
+def test_budget_capped_reanalysis_does_not_replace_frozen_scaling_qualification(
+    tmp_path,
+):
+    task, data, rows, grid = fixture(tmp_path, "scaling", "parallel_efficiency")
+    result = compute_objective_qualification(
+        task=task,
+        observations=rows,
+        expected_run_grid=grid,
+        scenario_report=compute_scenario_report(
+            data, scaling_time_policy="budget_capped_v1"
+        ),
+        candidate_sha256=data.candidate_sha256,
+        validity_accepted=True,
+    )
+    assert not result.performance_confirmed
+    assert not result.initial.primary[0].complete
+    assert "reanalysis" in result.initial.primary[0].detail
+
+
+def test_reported_bounds_do_not_become_independently_certified_qualification(tmp_path):
+    from tests.unit.pitbench.test_scenario_metrics import reported_traces
+
+    task, data, rows, grid = fixture(tmp_path, "trajectory", "dual_progress_integral")
+    result = compute_objective_qualification(
+        task=task,
+        observations=rows,
+        expected_run_grid=grid,
+        scenario_report=compute_scenario_report(
+            data,
+            dual_bound_source="solver_reported",
+            reported_bound_traces=reported_traces(data),
+        ),
+        candidate_sha256=data.candidate_sha256,
+        validity_accepted=True,
+    )
+    assert not result.performance_confirmed
+    assert "diagnostic" in result.initial.primary[0].detail
+
+
 @pytest.mark.parametrize("validity", [False, None])
 def test_single_pass_still_requires_independent_validity(tmp_path, validity):
     task, data, rows, grid = fixture(tmp_path)

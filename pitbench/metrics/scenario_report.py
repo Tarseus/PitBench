@@ -10,14 +10,31 @@ import statistics
 import tempfile
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from pitbench.evaluator.representations import representation_type
 from pitbench.metrics.performance_report import BOOTSTRAP_SEED, _cluster_mean_ci
 from pitbench.problem_families.verification import NumericModelFamily
-from pitbench.schema.scenarios import ScenarioCampaign, ScenarioProtocol, ScenarioRun
+from pitbench.schema.scenarios import (
+    ScenarioCampaign,
+    ScenarioProtocol,
+    ScenarioRun,
+    ScenarioRunKey,
+)
+
+ScalingTimePolicy = Literal["observed", "budget_capped_v1"]
+DualBoundSource = Literal["independently_verified", "solver_reported"]
+
+
+class ReportedBoundTrace(BaseModel):
+    events: list[tuple[float, float]]
+    source_path: str
+    source_sha256: str
+    observed_events: int = Field(ge=0)
+    unavailable_bound_events: int = Field(default=0, ge=0)
+    native_infinity: float | None = None
 
 
 def sequence_key(
@@ -48,6 +65,9 @@ class ScenarioMetricResult(BaseModel):
     confidence_level: float | None = None
     expected_runs: int
     observed_runs: int
+    scaling_time_policy: ScalingTimePolicy | None = None
+    dual_bound_source: DualBoundSource | None = None
+    target_attainment: dict[str, dict[str, Any]] = Field(default_factory=dict)
     by_instance: dict[str, dict[str, Any]] = Field(default_factory=dict)
     issues: list[str] = Field(default_factory=list)
 
@@ -61,6 +81,9 @@ class ScenarioReport(BaseModel):
     runtime_identities: dict[str, str]
     hardware_identity: dict
     protocol_hashes: dict[str, str]
+    scaling_time_policy: ScalingTimePolicy = "observed"
+    dual_bound_source: DualBoundSource = "independently_verified"
+    bound_trace_sources: list[dict[str, Any]] = Field(default_factory=list)
     results: list[ScenarioMetricResult]
     invalid_runs: list[dict] = Field(default_factory=list)
     missing_run_count: int
@@ -149,7 +172,7 @@ def _checked_run(
             "the model sequence is not preregistered in the scenario protocol"
         )
     if (
-        protocol.kind in {"trajectory", "scaling", "numerical", "replay", "setup"}
+        protocol.kind in {"trajectory", "scaling", "replay", "setup"}
         and len(run.steps) != 1
     ):
         raise ValueError("this scenario requires one solve per run")
@@ -272,7 +295,12 @@ def _checked_run(
 
 
 def _single_measurements(
-    run: ScenarioRun, p: ScenarioProtocol, checked: list[dict]
+    run: ScenarioRun,
+    p: ScenarioProtocol,
+    checked: list[dict],
+    *,
+    dual_bound_source: DualBoundSource = "independently_verified",
+    reported_bound_trace: ReportedBoundTrace | None = None,
 ) -> dict[str, Any]:
     first = checked[0]
     step = first["step"]
@@ -280,6 +308,9 @@ def _single_measurements(
     values = {}
     censor = p.budget_sec * (2 if p.censoring == "par2" else 1)
     if p.kind == "trajectory":
+        dual = first["dual"]
+        if dual_bound_source == "solver_reported":
+            dual = reported_bound_trace.events if reported_bound_trace else []
         first_time = first["primal"][0][0] if first["primal"] else None
         values["time_to_first_verified_solution_sec"] = {
             "value": first_time if first_time is not None else censor,
@@ -301,16 +332,22 @@ def _single_measurements(
             ),
             (
                 "dual_progress_integral",
-                first["dual"],
+                dual,
                 -1 if p.objective_sense == "minimize" else 1,
             ),
         ):
             if metric not in p.metrics:
                 continue
-            if metric == "dual_progress_integral" and not events:
+            if metric == "dual_progress_integral" and (
+                not events
+                if dual_bound_source == "independently_verified"
+                else reported_bound_trace is None or not reported_bound_trace.observed_events
+            ):
                 values[metric] = {
                     "value": None,
-                    "reason": "no independently evaluated bound certificate is available",
+                    "reason": "no independently evaluated bound certificate is available"
+                    if dual_bound_source == "independently_verified"
+                    else "no solver-reported bound trace is available",
                 }
                 continue
             values[metric] = {
@@ -324,6 +361,8 @@ def _single_measurements(
                 ),
                 "events": events,
             }
+            if metric == "dual_progress_integral":
+                values[metric]["dual_bound_source"] = dual_bound_source
     if p.kind == "lifecycle":
         series = [item["step"].retained_rss_bytes for item in checked][p.warmup_steps :]
         if len(series) < 2:
@@ -355,29 +394,29 @@ def _single_measurements(
             "sample_interval_sec": p.memory_sample_interval_sec,
         }
     if p.kind == "numerical":
-        final = first["final"]
-        residuals = (
-            [
-                final.get(k)
-                for k in (
-                    "max_bound_violation",
-                    "max_row_violation",
-                    "max_integrality_violation",
-                )
-            ]
-            if final
-            else []
-        )
+        residuals = [
+            item["final"].get(name) if item["final"] else None
+            for item in checked
+            for name in (
+                "max_bound_violation",
+                "max_row_violation",
+                "max_integrality_violation",
+            )
+        ]
         values["independent_violation"] = {
             "value": max(residuals)
             if residuals and all(v is not None for v in residuals)
             else None,
-            "residuals": final,
+            "residuals": first["final"] if len(checked) == 1 else None,
+            "residuals_by_step": [item["final"] for item in checked],
         }
         values["numerical_failure_counts"] = {
-            "value": int(
-                first["invalid"] or step.termination in {"solver_error", "infeasible"}
-            )
+            "value": sum(
+                item["invalid"]
+                or item["step"].termination in {"solver_error", "infeasible"}
+                for item in checked
+            ),
+            "expected_solve_count": len(checked),
         }
     if p.kind == "scaling":
         time = _first_passage(
@@ -432,7 +471,18 @@ def _replay_agreement(records, p):
     }
 
 
-def compute_scenario_report(campaign: ScenarioCampaign) -> ScenarioReport:
+def compute_scenario_report(
+    campaign: ScenarioCampaign,
+    *,
+    scaling_time_policy: ScalingTimePolicy = "observed",
+    dual_bound_source: DualBoundSource = "independently_verified",
+    reported_bound_traces: dict[ScenarioRunKey, ReportedBoundTrace] | None = None,
+) -> ScenarioReport:
+    if scaling_time_policy not in {"observed", "budget_capped_v1"}:
+        raise ValueError("unknown scaling time policy")
+    if dual_bound_source not in {"independently_verified", "solver_reported"}:
+        raise ValueError("unknown dual bound source")
+    reported_bound_traces = reported_bound_traces or {}
     indexed = {run.key: run for run in campaign.runs}
     measured, issues, invalid_runs = {}, {}, []
     for p in campaign.protocols:
@@ -450,7 +500,13 @@ def compute_scenario_report(campaign: ScenarioCampaign) -> ScenarioReport:
                 checked = _checked_run(indexed[key], p, models)
                 if any(item["invalid"] for item in checked):
                     invalid_runs.append(key.model_dump(mode="json"))
-                measured[key] = _single_measurements(indexed[key], p, checked)
+                measured[key] = _single_measurements(
+                    indexed[key],
+                    p,
+                    checked,
+                    dual_bound_source=dual_bound_source,
+                    reported_bound_trace=reported_bound_traces.get(key),
+                )
                 measured[key]["__quality_qualified"] = all(
                     item["quality_qualified"] for item in checked
                 )
@@ -486,6 +542,30 @@ def compute_scenario_report(campaign: ScenarioCampaign) -> ScenarioReport:
                     k in measured and measured[k].get("__quality_qualified")
                     for k in keys
                 )
+                if metric == "dual_progress_integral":
+                    result.dual_bound_source = dual_bound_source
+                if p.kind == "scaling":
+                    result.scaling_time_policy = scaling_time_policy
+                    for state in ("base", "agent"):
+                        result.target_attainment[state] = {}
+                        for n in p.thread_counts:
+                            expected = [
+                                k for k in keys if k.code_state == state and k.threads == n
+                            ]
+                            observed = [k for k in expected if k in measured]
+                            reached = sum(
+                                not measured[k]["target_time"]["censored"]
+                                for k in observed
+                            )
+                            result.target_attainment[state][str(n)] = {
+                                "expected_runs": len(expected),
+                                "observed_runs": len(observed),
+                                "reached_runs": reached,
+                                "censored_runs": len(observed) - reached,
+                                "attainment_rate": reached / len(expected)
+                                if expected and len(observed) == len(expected)
+                                else None,
+                            }
                 cells = defaultdict(dict)
                 for key in keys:
                     if key in measured:
@@ -504,32 +584,56 @@ def compute_scenario_report(campaign: ScenarioCampaign) -> ScenarioReport:
                         if p.kind == "sequence" and mode != p.sequence_mode:
                             continue
                         if p.kind == "scaling":
-                            times = {
+                            observed_times = {
                                 n: threads[n]["target_time"]["value"]
                                 for n in p.thread_counts
                             }
-                            if any(
-                                value is None or value <= 0 for value in times.values()
-                            ):
+                            censored = {
+                                n: threads[n]["target_time"]["censored"]
+                                for n in p.thread_counts
+                            }
+                            times = {
+                                n: p.budget_sec
+                                if value is None
+                                and scaling_time_policy == "budget_capped_v1"
+                                else value
+                                for n, value in observed_times.items()
+                            }
+                            if any(value is None for value in times.values()):
                                 raise ValueError(
                                     "parallel efficiency cannot use censored or zero target times"
                                 )
-                            efficiencies = {
-                                n: times[p.reference_threads]
-                                / value
-                                * p.reference_threads
-                                / n
-                                for n, value in times.items()
-                            }
+                            needs_efficiency = (
+                                metric == "parallel_efficiency"
+                                or p.curve_reduction == "mean_efficiency"
+                            )
+                            positive = all(value > 0 for value in times.values())
+                            if needs_efficiency and not positive:
+                                raise ValueError(
+                                    "parallel efficiency requires strictly positive target times"
+                                )
+                            efficiencies = (
+                                {
+                                    n: times[p.reference_threads]
+                                    / value
+                                    * p.reference_threads
+                                    / n
+                                    for n, value in times.items()
+                                }
+                                if positive
+                                else None
+                            )
                             scalar = (
                                 statistics.fmean(efficiencies.values())
-                                if metric == "parallel_efficiency"
-                                or p.curve_reduction == "mean_efficiency"
+                                if needs_efficiency
                                 else statistics.fmean(times.values())
                             )
                             value = {
                                 "value": scalar,
                                 "target_times": times,
+                                "observed_target_times": observed_times,
+                                "censored": censored,
+                                "scaling_time_policy": scaling_time_policy,
                                 "efficiencies": efficiencies,
                             }
                             per_instance[iid][state].append(value)
@@ -639,6 +743,18 @@ def compute_scenario_report(campaign: ScenarioCampaign) -> ScenarioReport:
         "runtime_identities": campaign.runtime_identities,
         "hardware_identity": campaign.hardware_identity,
     }
+    if scaling_time_policy != "observed":
+        design["scaling_time_policy"] = scaling_time_policy
+    trace_sources = []
+    if dual_bound_source == "solver_reported":
+        trace_sources = [
+            {"key": key.model_dump(mode="json"), **trace.model_dump(exclude={"events"})}
+            for key, trace in sorted(
+                reported_bound_traces.items(),
+                key=lambda item: json.dumps(item[0].model_dump(mode="json"), sort_keys=True),
+            )
+        ]
+        design.update(dual_bound_source=dual_bound_source, bound_trace_sources=trace_sources)
     design_hash = hashlib.sha256(
         json.dumps(design, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -650,6 +766,9 @@ def compute_scenario_report(campaign: ScenarioCampaign) -> ScenarioReport:
         runtime_identities=campaign.runtime_identities,
         hardware_identity=campaign.hardware_identity,
         protocol_hashes={p.id: p.digest() for p in campaign.protocols},
+        scaling_time_policy=scaling_time_policy,
+        dual_bound_source=dual_bound_source,
+        bound_trace_sources=trace_sources,
         results=results,
         invalid_runs=invalid_runs,
         missing_run_count=missing,

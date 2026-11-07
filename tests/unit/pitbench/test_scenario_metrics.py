@@ -9,7 +9,11 @@ import pytest
 import yaml
 
 from pitbench.evaluator.representations import LinearModelRepresentation
-from pitbench.metrics.scenario_report import compute_scenario_report, sequence_key
+from pitbench.metrics.scenario_report import (
+    ReportedBoundTrace,
+    compute_scenario_report,
+    sequence_key,
+)
 from pitbench.problem_families.verification import NumericModelFamily
 from pitbench.schema.scenarios import (
     SCENARIO_METRICS,
@@ -186,6 +190,151 @@ def test_missing_bound_certificates_do_not_hide_verified_primal_metrics(tmp_path
     assert values["primal_integral"].complete
 
 
+def reported_traces(data):
+    return {
+        run.key: ReportedBoundTrace(
+            events=[(2 / speed, 0), (4 / speed, 1)],
+            source_path="native-progress.jsonl",
+            source_sha256="d" * 64,
+            observed_events=2,
+        )
+        for run in data.runs
+        for speed in (1 if run.key.code_state == "base" else 2,)
+    }
+
+
+def test_reported_dual_integral_is_computed_without_claiming_certificates(tmp_path):
+    data = campaign(tmp_path, "trajectory")
+    for run in data.runs:
+        for event in run.steps[0].events:
+            event.row_multipliers = None
+    original = compute_scenario_report(data)
+    report = compute_scenario_report(
+        data, dual_bound_source="solver_reported", reported_bound_traces=reported_traces(data)
+    )
+    values = {r.metric_id: r for r in report.results}
+    assert report.complete and not original.complete
+    assert values["dual_progress_integral"].base == 4
+    assert values["dual_progress_integral"].agent == 2
+    assert values["dual_progress_integral"].dual_bound_source == "solver_reported"
+    assert report.design_sha256 != original.design_sha256
+    assert report.protocol_hashes == original.protocol_hashes
+    assert len(report.bound_trace_sources) == len(data.runs)
+
+
+def test_missing_reported_bound_trace_does_not_become_a_zero_integral(tmp_path):
+    data = campaign(tmp_path, "trajectory")
+    traces = reported_traces(data)
+    traces.pop(data.runs[0].key)
+    values = {
+        r.metric_id: r
+        for r in compute_scenario_report(
+            data, dual_bound_source="solver_reported", reported_bound_traces=traces
+        ).results
+    }
+    assert not values["dual_progress_integral"].complete
+    assert values["primal_integral"].complete
+
+
+def test_observed_no_finite_bound_uses_declared_initial_loss(tmp_path):
+    data = campaign(tmp_path, "trajectory")
+    traces = reported_traces(data)
+    for trace in traces.values():
+        trace.events = []
+        trace.observed_events = 1
+        trace.unavailable_bound_events = 1
+        trace.native_infinity = 1e20
+    values = {
+        r.metric_id: r
+        for r in compute_scenario_report(
+            data, dual_bound_source="solver_reported", reported_bound_traces=traces
+        ).results
+    }
+    assert values["dual_progress_integral"].complete
+    assert values["dual_progress_integral"].base == 10
+
+
+def native_trace_files(output, data):
+    from pitbench.evaluator.scenarios import digest
+
+    paths = {}
+    for run in data.runs:
+        directory = output / "jobs" / digest(run.key.model_dump(mode="json")) / "attempt-0000"
+        directory.mkdir(parents=True)
+        (directory / "result.json").write_text(json.dumps({"run": run.model_dump(mode="json")}))
+        path = directory / "native-progress.jsonl"
+        rows = [
+            {"step": 0, "time_sec": 0.1, "dual_bound": -1e20},
+            {"step": 0, "time_sec": 1, "dual_bound": 0},
+            {"step": 0, "time_sec": 2, "dual_bound": 1},
+        ]
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        paths[run.key] = path
+    return paths
+
+
+def test_native_bound_loader_decodes_infinity_and_retains_trace_hashes(tmp_path):
+    from pitbench.evaluator.scenarios import load_reported_bound_traces
+
+    data = campaign(tmp_path, "trajectory")
+    paths = native_trace_files(tmp_path, data)
+    traces = load_reported_bound_traces(tmp_path, data, native_infinity=1e20)
+    for key, trace in traces.items():
+        assert trace.events == [(1, 0), (2, 1)]
+        assert trace.unavailable_bound_events == 1
+        assert trace.source_sha256 == hashlib.sha256(paths[key].read_bytes()).hexdigest()
+
+
+def test_shared_bound_trace_is_checked_against_its_measurement_manifest(tmp_path):
+    from pitbench.evaluator.scenarios import load_reported_bound_traces
+    from pitbench.evaluator.storage import file_manifest
+
+    data = campaign(tmp_path, "trajectory")
+    paths = native_trace_files(tmp_path, data)
+    run = data.runs[0]
+    directory = paths[run.key].parent
+    receipt = tmp_path / "measurement.json"
+    receipt.write_text(json.dumps({
+        "run": run.model_dump(mode="json"),
+        "raw_artifacts": str(directory),
+        "files": file_manifest(directory),
+    }))
+    run.measurement_source = {"receipt": str(receipt)}
+    assert run.key in load_reported_bound_traces(tmp_path, data, native_infinity=1e20)
+    paths[run.key].write_text(paths[run.key].read_text() + "\n")
+    with pytest.raises(ValueError, match="hash mismatch"):
+        load_reported_bound_traces(tmp_path, data, native_infinity=1e20)
+
+
+def test_native_bound_loader_rejects_out_of_interval_timestamps(tmp_path):
+    from pitbench.evaluator.scenarios import load_reported_bound_traces
+
+    data = campaign(tmp_path, "trajectory")
+    paths = native_trace_files(tmp_path, data)
+    paths[data.runs[0].key].write_text(json.dumps({"step": 0, "time_sec": 100, "dual_bound": 1}))
+    with pytest.raises(ValueError, match="outside the measured solve"):
+        load_reported_bound_traces(tmp_path, data)
+
+
+def test_reported_bound_report_can_be_saved_outside_raw_worker_directory(tmp_path):
+    from pitbench.evaluator.scenarios import report
+
+    data = campaign(tmp_path, "trajectory")
+    native_trace_files(tmp_path, data)
+    (tmp_path / "campaign.json").write_text(data.model_dump_json())
+    destination = tmp_path / "analysis/solver-reported.json"
+    summary = report(
+        tmp_path,
+        dual_bound_source="solver_reported",
+        reported_bound_infinity=1e20,
+        report_path=destination,
+    )
+    assert summary["complete"]
+    assert summary["report"] == str(destination)
+    assert json.loads(destination.read_text())["dual_bound_source"] == "solver_reported"
+    assert not (tmp_path / "scenario-report.json").exists()
+
+
 def test_late_incumbents_are_censored_and_missing_penalty_is_explicit(tmp_path):
     data = campaign(
         tmp_path, "trajectory", metrics=["time_to_target_sec"], censoring="par2"
@@ -222,6 +371,107 @@ def test_scaling_divides_speedup_by_thread_ratio(tmp_path):
     assert values["thread_scaling_curve"].agent == 1.5
 
 
+def test_budget_capped_scaling_retains_censoring_and_attainment(tmp_path):
+    data = campaign(tmp_path, "scaling", censoring="par2")
+    hashes = {p.id: p.digest() for p in data.protocols}
+    for run in data.runs:
+        if run.key.threads == 2:
+            step = run.steps[0]
+            step.events = []
+            step.termination = "time_limit"
+            step.final_solution_values = None
+    original = compute_scenario_report(data)
+    assert not original.complete
+    report = compute_scenario_report(data, scaling_time_policy="budget_capped_v1")
+    assert report.complete
+    assert report.design_sha256 != original.design_sha256
+    assert report.protocol_hashes == hashes
+    values = {r.metric_id: r for r in report.results}
+    assert values["parallel_efficiency"].base == pytest.approx(0.6)
+    assert values["parallel_efficiency"].agent == pytest.approx(0.55)
+    assert values["thread_scaling_curve"].base == 7
+    assert values["thread_scaling_curve"].agent == 6
+    item = values["parallel_efficiency"]
+    assert item.scaling_time_policy == "budget_capped_v1"
+    assert item.target_attainment["base"]["2"] == {
+        "expected_runs": 2,
+        "observed_runs": 2,
+        "reached_runs": 0,
+        "censored_runs": 2,
+        "attainment_rate": 0,
+    }
+    record = item.by_instance["a"]["records"]["base"][0]
+    assert record["target_times"][2] == 10
+    assert record["observed_target_times"][2] is None
+    assert record["censored"][2]
+
+
+def test_budget_capped_scaling_retains_late_hits_as_censored(tmp_path):
+    data = campaign(tmp_path, "scaling")
+    for run in data.runs:
+        step = run.steps[0]
+        step.solve_time_sec = 12
+        step.events[-1].time_sec = 11
+    report = compute_scenario_report(data, scaling_time_policy="budget_capped_v1")
+    values = {r.metric_id: r for r in report.results}
+    assert report.complete
+    assert values["thread_scaling_curve"].base == 10
+    assert values["thread_scaling_curve"].agent == 10
+    assert values["parallel_efficiency"].base == pytest.approx(0.75)
+    for item in values.values():
+        # Final quality can pass even when the target was reached after the budget.
+        assert item.quality_qualified
+        assert all(
+            cell["attainment_rate"] == 0
+            for state in item.target_attainment.values()
+            for cell in state.values()
+        )
+
+
+def test_budget_capped_scaling_does_not_fill_missing_runs(tmp_path):
+    data = campaign(tmp_path, "scaling")
+    data.runs.pop()
+    report = compute_scenario_report(data, scaling_time_policy="budget_capped_v1")
+    assert not report.complete
+    assert report.missing_run_count == 1
+    assert report.results[0].target_attainment["agent"]["2"]["attainment_rate"] is None
+
+
+def test_zero_target_times_only_prevent_efficiency_not_mean_time(tmp_path):
+    data = campaign(tmp_path, "scaling")
+    for run in data.runs:
+        for event in run.steps[0].events:
+            event.time_sec = 0
+    values = {
+        r.metric_id: r
+        for r in compute_scenario_report(
+            data, scaling_time_policy="budget_capped_v1"
+        ).results
+    }
+    assert values["thread_scaling_curve"].complete
+    assert values["thread_scaling_curve"].base == 0
+    assert not values["parallel_efficiency"].complete
+
+
+def test_unknown_scaling_time_policy_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="unknown scaling time policy"):
+        compute_scenario_report(campaign(tmp_path, "scaling"), scaling_time_policy="typo")
+
+
+def test_budget_capped_report_is_saved_separately(tmp_path):
+    from pitbench.evaluator.scenarios import report
+
+    data = campaign(tmp_path, "scaling")
+    (tmp_path / "campaign.json").write_text(data.model_dump_json())
+    report(tmp_path)
+    original = (tmp_path / "scenario-report.json").read_bytes()
+    result = report(tmp_path, scaling_time_policy="budget_capped_v1")
+    assert result["scaling_time_policy"] == "budget_capped_v1"
+    assert (tmp_path / "scenario-report.json").read_bytes() == original
+    rescored = json.loads((tmp_path / "scenario-report-budget-capped-v1.json").read_text())
+    assert rescored["scaling_time_policy"] == "budget_capped_v1"
+
+
 def test_same_objective_different_assignments_obeys_declared_replay_fields(tmp_path):
     data = campaign(tmp_path, "replay")
     for run in data.runs:
@@ -239,6 +489,63 @@ def test_invalid_solutions_are_retained_and_never_become_valid_evidence(tmp_path
     values = {r.metric_id: r for r in report.results}
     assert values["independent_violation"].base > 0
     assert values["numerical_failure_counts"].base > 0
+
+
+def test_numerical_stress_checks_every_scaled_model(tmp_path):
+    data = campaign(tmp_path, "numerical")
+    p = data.protocols[0]
+    path = tmp_path / "scaled.lp"
+    path.write_text(
+        "Minimize\n obj: x + y\nSubject To\n"
+        " c: 1000000 x + 1000000 y >= 1000000\n"
+        "Bounds\n 0 <= x <= 2\n 0 <= y <= 2\nEnd\n"
+    )
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    for iid in ("a", "b"):
+        data.model_sequences[sequence_key("judge_id", iid)].append(
+            {"path": str(path), "sha256": sha}
+        )
+        p.model_sequences_sha256["judge_id"][iid].append(sha)
+    for run in data.runs:
+        run.protocol_sha256 = p.digest()
+        run.steps.append(
+            run.steps[0].model_copy(
+                deep=True,
+                update={"instance_path": str(path), "instance_sha256": sha},
+            )
+        )
+    assert compute_scenario_report(data).complete
+
+    data.runs[0].steps[1].final_solution_values = [0.999, 0]
+    report = compute_scenario_report(data)
+    values = {r.metric_id: r for r in report.results}
+    assert len(report.invalid_runs) == 1
+    assert values["independent_violation"].base == pytest.approx(500)
+    assert values["numerical_failure_counts"].base == pytest.approx(0.5)
+    records = values["independent_violation"].by_instance["a"]["records"]["base"]
+    assert len(records[0]["residuals_by_step"]) == 2
+
+
+def test_numerical_failures_count_each_stress_solve_without_fabricating_residuals(
+    tmp_path,
+):
+    data = campaign(tmp_path, "numerical")
+    p = data.protocols[0]
+    for iid in ("a", "b"):
+        sequence = data.model_sequences[sequence_key("judge_id", iid)]
+        sequence.append(dict(sequence[0]))
+        p.model_sequences_sha256["judge_id"][iid].append(sequence[0]["sha256"])
+    for run in data.runs:
+        run.protocol_sha256 = p.digest()
+        run.steps.append(run.steps[0].model_copy(deep=True))
+        for step in run.steps:
+            step.termination = "solver_error"
+            step.events = []
+            step.final_solution_values = None
+    values = {r.metric_id: r for r in compute_scenario_report(data).results}
+    assert values["numerical_failure_counts"].complete
+    assert values["numerical_failure_counts"].base == 2
+    assert not values["independent_violation"].complete
 
 
 @pytest.mark.parametrize(
