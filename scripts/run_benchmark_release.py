@@ -1086,6 +1086,10 @@ def study_models(args):
                 "study changed the frozen source or original primary contract"
             )
         snapshots[str(task_file)] = hashlib.sha256(task_file.read_bytes()).hexdigest()
+        for arm in plan.arms:
+            path = Path(views["arms"][arm.id][task_id]["agent_task_config_path"])
+            TaskCatalog(ROOT).validate_file(path)
+            snapshots[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
         scenario_reference = row.get("metric_scenario_config")
         if not scenario_reference:
             if record.task.metric_scenarios:
@@ -1121,10 +1125,6 @@ def study_models(args):
                         raise ValueError("scenario sequence changed")
                     for path, expected in zip(paths, hashes, strict=True):
                         model_files[path] = expected
-        for arm in plan.arms:
-            path = Path(views["arms"][arm.id][task_id]["agent_task_config_path"])
-            TaskCatalog(ROOT).validate_file(path)
-            snapshots[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
     for path, expected in model_files.items():
         if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
             raise ValueError("frozen scenario model changed")

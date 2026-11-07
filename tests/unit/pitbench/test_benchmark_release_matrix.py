@@ -594,8 +594,11 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     for task_id, record in records.items():
         if plan.get("comparison_mode") == "agent_augmentation" and task_id == selected[-1]:
             views["tasks"][task_id] = {"evaluator_task_config": str(record.task_config_path)}
+            public = tmp_path / "public" / (task_id + ".yaml")
+            public.parent.mkdir(exist_ok=True)
+            public.write_bytes(record.task_config_path.read_bytes())
             for arm in plan["arms"]:
-                views["arms"][arm["id"]][task_id] = {"agent_task_config_path": str(record.task_config_path)}
+                views["arms"][arm["id"]][task_id] = {"agent_task_config_path": str(public)}
             continue
         scenario = tmp_path / (task_id + ".scenario.json")
         model = private / (task_id + ".json")
@@ -673,6 +676,7 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
                 )
     elif plan.get("comparison_mode") == "agent_augmentation":
         assert len(frozen["jobs"]) == 96
+        assert str(tmp_path / "public" / (selected[-1] + ".yaml")) in frozen["input_files_sha256"]
         for task_id in selected:
             for model in ("gpt-6.1-sol", "gpt-6.1-terra"):
                 for arm in plan["arms"]:
