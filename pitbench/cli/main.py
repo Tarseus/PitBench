@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+import yaml
 
 from adapters.pitbench.adapter import PitBenchAdapter
 from adapters.pitbench.git_snapshot import GitSnapshotError
@@ -158,7 +159,20 @@ def _run_configuration_robustness(
         prepare.extend(["--instances-per-panel", str(instances_per_panel)])
     if seeds_per_panel is not None:
         prepare.extend(["--seeds-per-panel", str(seeds_per_panel)])
-    subprocess.run(prepare, cwd=repository_root, check=True)
+    manifest_path = output / "experiment.json"
+    if manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text())
+        identity = {
+            "config_sha256": hashlib.sha256(experiment_config.read_bytes()).hexdigest(),
+            "search_seed": configuration.search_seed,
+            "cpus": cpus,
+            "instances_per_panel": instances_per_panel,
+            "seeds_per_panel": seeds_per_panel,
+        }
+        if any(manifest.get(key) != value for key, value in identity.items()):
+            raise ValueError("configuration experiment identity changed; use a new output directory")
+    else:
+        subprocess.run(prepare, cwd=repository_root, check=True)
     run = [
         uv,
         "run",
@@ -187,6 +201,74 @@ def _run_identity(item: ExpectedRun | RunObservation) -> tuple:
         item.equivalence_parent_id,
         item.test_suite,
     )
+
+
+def _run_captured_configuration(
+    evaluation_config, run_output: Path, workspace: Path, *, smoke_test=False
+) -> Path:
+    """Attach native parameter evidence to every successfully captured trial."""
+    from pitbench.evaluator.collection import write_json
+    from pitbench.evaluator.configuration import (
+        attach_configuration_report,
+        run_candidate_configuration,
+    )
+    from pitbench.harness.evaluation import EvaluationRequest
+
+    output = run_output / evaluation_config.configuration_robustness.output_path
+    manifest = {"searches": []}
+    report = {"searches": [], "failures": []}
+    results = json.loads((run_output / "results.json").read_text())
+    for trial in results["results"]:
+        if not (trial.get("evaluation") or {}).get("completed"):
+            report["failures"].append(
+                f"{trial['task_id']}/{trial['trial_name']}: source evaluation did not complete"
+            )
+            continue
+        task_path = workspace / trial["task_id"]
+        configured = yaml.safe_load((task_path / "task.yaml").read_text())[
+            "evaluator_config"
+        ]
+        trial_output = (
+            run_output / trial["task_id"] / trial["trial_name"] / "evaluation"
+        )
+        patch = trial_output / "candidate.patch"
+        request = EvaluationRequest(
+            task_id=trial["task_id"],
+            task_path=task_path,
+            candidate_patch_path=patch,
+            candidate_patch_sha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
+            output_dir=trial_output,
+            agent_name="captured",
+            evaluator_config=configured,
+        )
+        directory = run_candidate_configuration(
+            request,
+            evaluation_config.configuration_robustness,
+            instances_per_panel=1 if smoke_test else None,
+            seeds_per_panel=2 if smoke_test else None,
+        )
+        item_manifest = json.loads((directory / "experiment.json").read_text())
+        item_report = json.loads((directory / "configuration_report.json").read_text())
+        attach_configuration_report(
+            trial["evaluation"]["payload"], directory, output_root=trial_output
+        )
+        write_json(trial_output / "evaluation-envelope.json", trial["evaluation"])
+        write_json(run_output / "results.json", results)
+        prefix = f"{trial['task_id']}/{trial['trial_name']}/"
+        manifest["searches"].extend(
+            {**s, "id": prefix + s["id"]} for s in item_manifest["searches"]
+        )
+        report["searches"].extend(
+            {**s, "id": prefix + s["id"]} for s in item_report["searches"]
+        )
+        report["failures"].extend(
+            prefix + value for value in _configuration_dry_run_failures(directory)
+        )
+        write_json(output / "experiment.json", manifest)
+        write_json(output / "configuration_report.json", report)
+    write_json(output / "experiment.json", manifest)
+    write_json(output / "configuration_report.json", report)
+    return output
 
 
 def _limited_evaluation_failures(
@@ -286,13 +368,22 @@ def _configuration_dry_run_failures(output_dir: Path) -> list[str]:
     report_statuses = {
         item["id"]: item.get("status") for item in report.get("searches", [])
     }
-    failures = []
+    failures = list(report.get("failures", []))
+    if report.get("coverage") == "unavailable":
+        failures.append(report.get("reason") or "parameter coverage is unavailable")
+    if report.get("invalid_agent_solution_count", 0):
+        failures.append("candidate has invalid solutions under parameter settings")
     for search in manifest.get("searches", []):
         status = report_statuses.get(search["id"])
         if status != "completed":
             failures.append(
                 f"configuration search {search['id']} is {status or 'missing'}"
             )
+    if manifest.get("native_context"):
+        comparisons = report.get("candidate_comparison", {}).get("comparisons", [])
+        expected_budgets = {search["budget_sec"] for search in manifest["searches"]}
+        if {row["budget_sec"] for row in comparisons} != expected_budgets or not all(row.get("complete") for row in comparisons):
+            failures.append("paired Base/Agent parameter comparisons are missing or incomplete")
     return failures
 
 
@@ -996,14 +1087,14 @@ def run_task(
             / effective_config.configuration_robustness.output_path,
         )
         try:
-            _run_configuration_robustness(
-                repository_root,
-                effective_config,
-                resolved_output_path,
-                resolved_run_id,
-                instances_per_panel=1 if smoke_test else None,
-                seeds_per_panel=2 if smoke_test else None,
-            )
+            if effective_config.configuration_robustness.scope == "candidate":
+                _run_captured_configuration(effective_config, resolved_output_path / resolved_run_id, dataset_path, smoke_test=smoke_test)
+            else:
+                _run_configuration_robustness(
+                    repository_root, effective_config, resolved_output_path, resolved_run_id,
+                    instances_per_panel=1 if smoke_test else None,
+                    seeds_per_panel=2 if smoke_test else None,
+                )
         except Exception as error:
             configuration_error = (
                 f"configuration collection failed: {type(error).__name__}: {error}"
@@ -1040,6 +1131,16 @@ def judge_candidate(
             help="SHA256 recorded when the agent candidate was captured",
         ),
     ],
+    configuration_only: Annotated[
+        bool,
+        typer.Option(
+            "--configuration-only",
+            help="Supplement parameter evaluation without another Agent or native solve grid",
+        ),
+    ] = False,
+    configuration_robustness: Annotated[
+        bool, typer.Option("--configuration-robustness/--no-configuration-robustness")
+    ] = True,
     output_dir: Annotated[
         Path | None,
         typer.Option(
@@ -1195,7 +1296,10 @@ def judge_candidate(
         "base_repository": str(cached_repository),
         "private_root": str(resolved_private_root),
         "judge_image": resolved_judge_image,
-        "judge_cpus": judge_cpus,
+        "judge_cpus": judge_cpus
+        or configured_resources.judge_cpus
+        or evaluation_config.judge_cpus,
+        "judge_cpuset_cpus": configured_resources.judge_cpuset_cpus,
         "judge_memory": judge_memory,
         "judge_parallel_runs": judge_parallel_runs
         or configured_resources.judge_parallel_runs
@@ -1203,6 +1307,12 @@ def judge_candidate(
         "reliability_only": reliability_only,
         "use_base_cache": active_base_cache,
         "base_cache_path": str(evaluation_config.paths.base_cache_path),
+        "build_cache_path": str(
+            resolve_repository_path(
+                repository_root, evaluation_config.paths.base_cache_path
+            ).parent
+            / "build"
+        ),
         "_progress_callback": typer.echo,
     }
     if active_base_observations_path is not None:
@@ -1216,18 +1326,57 @@ def judge_candidate(
             )
         )
 
-    envelope = PitBenchEvaluator().envelope(
-        EvaluationRequest(
-            task_id=task_id,
-            task_path=repository_root,
-            candidate_patch_path=patch_path,
-            candidate_patch_sha256=normalized_patch_sha256,
-            output_dir=resolved_output_dir,
-            agent_name="replay",
-            model_name=None,
-            evaluator_config=judge_evaluator_config,
-        )
+    request = EvaluationRequest(
+        task_id=task_id,
+        task_path=repository_root,
+        candidate_patch_path=patch_path,
+        candidate_patch_sha256=normalized_patch_sha256,
+        output_dir=resolved_output_dir,
+        agent_name="replay",
+        model_name=None,
+        evaluator_config=judge_evaluator_config,
     )
+    if configuration_only:
+        from pitbench.evaluator.configuration import run_candidate_configuration
+
+        if (
+            not configuration_robustness
+            or not evaluation_config.configuration_robustness.enabled
+        ):
+            raise typer.BadParameter(
+                "configuration-only requires parameter robustness to be enabled"
+            )
+        directory = run_candidate_configuration(
+            request, evaluation_config.configuration_robustness
+        )
+        failures = _configuration_dry_run_failures(directory)
+        typer.echo(f"Parameter evaluation: {directory}")
+        if failures:
+            for failure in failures:
+                typer.echo(f"FAIL {failure}", err=True)
+            raise typer.Exit(1)
+        return
+    envelope = PitBenchEvaluator().envelope(request)
+    configuration_failures = []
+    if envelope.completed and configuration_robustness and not reliability_only:
+        from pitbench.evaluator.configuration import (
+            attach_configuration_report,
+            run_candidate_configuration,
+        )
+
+        try:
+            directory = run_candidate_configuration(
+                request, evaluation_config.configuration_robustness
+            )
+            if directory is not None:
+                configuration_failures = _configuration_dry_run_failures(directory)
+                attach_configuration_report(
+                    envelope.payload, directory, output_root=resolved_output_dir
+                )
+        except Exception as error:
+            configuration_failures = [
+                f"parameter evaluation: {type(error).__name__}: {error}"
+            ]
     result_path = resolved_output_dir / "evaluation.json"
     result_path.write_text(
         json.dumps(envelope.model_dump(mode="json"), indent=2) + "\n"
@@ -1235,6 +1384,10 @@ def judge_candidate(
     if not envelope.completed:
         typer.echo(f"Judge failed: {envelope.error}", err=True)
         raise typer.Exit(code=1)
+    if configuration_failures:
+        for failure in configuration_failures:
+            typer.echo(f"FAIL {failure}", err=True)
+        raise typer.Exit(1)
 
     summary = envelope.payload["summary"]
     typer.echo(
@@ -1274,7 +1427,7 @@ def dry_run_tasks(
         bool,
         typer.Option(
             "--configuration-robustness/--no-configuration-robustness",
-            help="Run the release-only configuration search on one instance per panel",
+            help="Run configured parameter evaluation on the limited native panel",
         ),
     ] = True,
     config_path: Annotated[
@@ -1347,28 +1500,27 @@ def dry_run_tasks(
             judge_image = resources.judge_image or record.task.repository.judge_image
             if not judge_image:
                 raise ValueError("dry-run requires a pinned judge image")
-            envelope = PitBenchEvaluator().envelope(
-                EvaluationRequest(
-                    task_id=task_id,
-                    task_path=repository_root,
-                    candidate_patch_path=patch_path,
-                    candidate_patch_sha256=empty_patch_sha256,
-                    output_dir=task_output,
-                    agent_name="dry-run",
-                    model_name=None,
-                    evaluator_config={
-                        "task_config_path": str(record.task_config_path),
-                        "base_repository": str(task_workspace / "repo"),
-                        "private_root": str(resolved_private_root),
-                        "judge_image": judge_image,
-                        "judge_cpus": judge_cpus,
-                        "judge_memory": judge_memory,
-                        "judge_parallel_runs": judge_parallel_runs,
-                        "use_base_cache": False,
-                        "instances_per_instance_set": instances_per_instance_set,
-                    },
-                )
+            request = EvaluationRequest(
+                task_id=task_id,
+                task_path=repository_root,
+                candidate_patch_path=patch_path,
+                candidate_patch_sha256=empty_patch_sha256,
+                output_dir=task_output,
+                agent_name="dry-run",
+                model_name=None,
+                evaluator_config={
+                    "task_config_path": str(record.task_config_path),
+                    "base_repository": str(task_workspace / "repo"),
+                    "private_root": str(resolved_private_root),
+                    "judge_image": judge_image,
+                    "judge_cpus": judge_cpus,
+                    "judge_memory": judge_memory,
+                    "judge_parallel_runs": judge_parallel_runs,
+                    "use_base_cache": False,
+                    "instances_per_instance_set": instances_per_instance_set,
+                },
             )
+            envelope = PitBenchEvaluator().envelope(request)
             (task_output / "evaluation.json").write_text(
                 json.dumps(envelope.model_dump(mode="json"), indent=2) + "\n"
             )
@@ -1378,6 +1530,31 @@ def dry_run_tasks(
                     task_output,
                     envelope.payload,
                 )
+                if (
+                    configuration_robustness
+                    and evaluation_config.configuration_robustness.scope == "candidate"
+                ):
+                    from pitbench.evaluator.configuration import (
+                        attach_configuration_report,
+                        run_candidate_configuration,
+                    )
+
+                    directory = run_candidate_configuration(
+                        request,
+                        evaluation_config.configuration_robustness,
+                        instances_per_panel=instances_per_instance_set,
+                    )
+                    if directory is not None:
+                        preflight_failures.extend(
+                            _configuration_dry_run_failures(directory)
+                        )
+                        attach_configuration_report(
+                            envelope.payload, directory, output_root=task_output
+                        )
+                        (task_output / "evaluation.json").write_text(
+                            json.dumps(envelope.model_dump(mode="json"), indent=2)
+                            + "\n"
+                        )
                 if preflight_failures:
                     failures += 1
                     typer.echo(
@@ -1397,7 +1574,10 @@ def dry_run_tasks(
         except Exception as error:
             failures += 1
             typer.echo(f"FAIL {task_id}: {type(error).__name__}: {error}", err=True)
-    if configuration_robustness:
+    if (
+        configuration_robustness
+        and evaluation_config.configuration_robustness.scope == "release"
+    ):
         try:
             configuration_output = _run_configuration_robustness(
                 repository_root,

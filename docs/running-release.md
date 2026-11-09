@@ -94,10 +94,59 @@ verification, and the existing evaluator and reports. Model execution requires
 all sixteen baseline runs to pass, with unchanged task configurations. The model
 matrix runs one attempt per task at `gpt-6.1-sol` with `xhigh` and one with `high`.
 Both settings share one queue, so free slots admit the next independent trial.
-It preserves the configured research budget. The separate global configuration
-search is not repeated inside each source-editing attempt; its historical
-five-solver experiment is outside this sixteen-release native-metric run. This single-attempt run does not
+It preserves the configured research budget. Parameter robustness defaults to
+`configuration_robustness: {enabled: true, scope: candidate}`. Both the regular
+launcher and the deferred measurement queue run it after native source evaluation;
+the study launcher no longer adds an implicit opt-out. An explicit
+`--no-configuration-robustness` or local `enabled: false` remains available.
+This single-attempt run does not
 provide the separately recommended three-attempt comparison.
+
+Candidate parameter evaluation reuses the approved parameter domains and fidelity
+schedule in `configs/experiments/configuration_robustness.yaml`. It freezes the
+declared number of inputs from the current task's primary hidden population and
+its native hidden seeds, independently of the historical collector input files.
+This is a new, explicitly recorded native-source protocol, not a reinterpretation
+of the old parameter-search results. Both sources receive their own bounded
+search, and the union of their selected configurations plus defaults is compared
+on the same independent holdout seeds. No parameter results are sent to the Agent.
+
+The native Judge applies the actual captured patch and uses its existing
+performance build cache and independent verifier. Parameters do not change the
+build recipe, so each source builds once. The HiGHS driver directs its native
+log to each solve's `.solver.log` output; its default `Highs.log` would otherwise
+mutate the cached build tree and force a rebuild at every parameter panel.
+Source/patch, complete input bytes,
+parameters, budget, threads, pinned image, harness code, CPU quota, worker count,
+memory, host boot and SMT profile identify measurement banks. Compatible Base
+measurements are shared across candidates; nested stages and resumed runs execute
+only missing cells. Raw observations have immutable snapshots with hashes and
+reuse receipts. Solver failures are retained; retrying infrastructure errors is
+explicit. Search and independent-retest banks are separate, including for a
+deterministic solver whose protocol uses the same fixed seed in both phases.
+A repository without an approved parameter panel or native parameter
+driver is reported as unavailable, rather than passed or silently disabled.
+
+The standalone release-only collector remains available through `scope: release`
+and `scripts.collect_configuration_results`. It now reuses one container per
+image/environment/CPU, while starting a fresh process for every solver run.
+Temporary paths follow the data-disk output directory. Candidate evaluation
+launches one native Judge per new panel, rather than one Docker container per
+instance and seed. These changes preserve the full default fidelity schedule,
+search count, seed counts and independent retest. Explicit smoke limits reduce
+only the validation run and are recorded in its manifest.
+
+Previously captured patches can receive parameter-only supplementation without
+another Agent or a repeat of the native solve grid. Use a new output directory
+to retain the old campaign unchanged:
+
+```bash
+pitbench judge TASK_ID /data3/path/to/candidate.patch \
+  --expected-patch-sha256 RECORDED_SHA256 \
+  --config /data3/path/to/evaluate.local.yaml \
+  --output-dir /data3/path/to/new-parameter-evaluation \
+  --configuration-only
+```
 
 Per-task status files and command logs remain under the output directory.
 Completed stages are reused. Failed/interrupted stages require `--retry-errors`;

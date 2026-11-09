@@ -22,8 +22,15 @@ import yaml
 from adapters.pitbench.adapter import PitBenchAdapter
 from pitbench.agent_tools import AgentTool
 from pitbench.cli.evaluate_config import EvaluationConfig, EvaluationPaths
-from pitbench.cli.main import _evaluation_metric_failures
+from pitbench.cli.main import (
+    _configuration_dry_run_failures,
+    _evaluation_metric_failures,
+)
 from pitbench.cli.solver_images import build_solver_image
+from pitbench.evaluator.configuration import (
+    attach_configuration_report,
+    run_candidate_configuration,
+)
 from pitbench.evaluator.evaluator import PitBenchEvaluator
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.harness.evaluation import EvaluationRequest
@@ -537,7 +544,6 @@ def models(task_ids, args):
                 "1",
                 "--n-concurrent",
                 "1",
-                "--no-configuration-robustness",
             ]
             with (args.output / f"{run_id}.log").open("a") as log:
                 with launch_lock:
@@ -764,6 +770,19 @@ def evaluate_study_candidate(state, args, cpu_pool):
             if result.completed
             else []
         )
+        if result.completed:
+            settings = EvaluationConfig.from_yaml(args.config).configuration_robustness
+            try:
+                configuration_output = run_candidate_configuration(request, settings)
+                if configuration_output is not None:
+                    gaps.extend("parameter robustness: " + value for value in _configuration_dry_run_failures(configuration_output))
+                    job["configuration_robustness_output"] = str(configuration_output)
+                    attach_configuration_report(result.payload, configuration_output, output_root=patch.parent)
+                    trials[0]["evaluation"] = result.model_dump(mode="json")
+                    write_json(patch.parent / "evaluation-envelope.json", result.model_dump(mode="json"))
+                    write_json(results_path, harness)
+            except Exception as error:
+                gaps.append(f"parameter robustness: {type(error).__name__}: {error}")
         job.update(
             status=("evaluation_incomplete" if gaps else "evaluation_completed")
             if result.completed
@@ -935,7 +954,6 @@ def retry_unexecuted_condition(args):
     config.research_track = None
     config.candidate_hypotheses_required = job["hypotheses_required"]
     config.agent_tools = [AgentTool(tool) for tool in plan.shared_agent_tools]
-    config.configuration_robustness.enabled = False
     resources = config.resources_for(job["task_id"]).model_copy(deep=True)
     arm = views["arms"][job["arm"]][job["task_id"]]
     resources.task_config_path = Path(arm["task_config_path"])
@@ -971,7 +989,6 @@ def retry_unexecuted_condition(args):
         "1",
         "--n-concurrent",
         "1",
-        "--no-configuration-robustness",
         "--defer-evaluation",
     ]
     write_json(
@@ -1237,7 +1254,6 @@ def study_models(args):
             config.research_track = None
             config.candidate_hypotheses_required = job["hypotheses_required"]
             config.agent_tools = [AgentTool(tool) for tool in plan.shared_agent_tools]
-            config.configuration_robustness.enabled = False
             resource = config.resources_for(job["task_id"]).model_copy(deep=True)
             arm = views["arms"][job["arm"]][job["task_id"]]
             resource.task_config_path = Path(arm["task_config_path"])
@@ -1271,7 +1287,6 @@ def study_models(args):
                 "1",
                 "--n-concurrent",
                 "1",
-                "--no-configuration-robustness",
                 "--defer-evaluation",
             ]
             with (condition / "controller.log").open("a") as log:

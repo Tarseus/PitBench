@@ -15,16 +15,474 @@ from pitbench.evaluator.collection import (
 )
 from pitbench.evaluator.configuration import (
     ConfigurationRunner,
+    NativeConfigurationRunner,
     SearchSpaceExhausted,
     SmacSearch,
     _docker_collector_command,
+    _write_native_comparisons,
+    attach_configuration_report,
     materialize_fidelity_stages,
     prepare,
+    prepare_candidate_configuration,
     run_search,
     validate_search,
 )
-from pitbench.metrics.configuration_report import paired_panel, run_feedback
+from pitbench.metrics.configuration_report import (
+    paired_panel,
+    run_feedback,
+    write_configuration_report,
+)
 from pitbench.problem_families.base import VerificationResult
+from pitbench.schema.observation import CodeState, RunObservation, RunStatus
+
+
+def test_parameter_only_cli_never_starts_an_agent_or_native_grid(tmp_path, monkeypatch):
+    import hashlib
+
+    from typer.testing import CliRunner
+
+    from pitbench.cli.evaluate_config import EvaluationConfig
+    from pitbench.cli.main import app
+
+    patch = tmp_path / "candidate.patch"
+    patch.write_text("retained source patch")
+    source = tmp_path / "source"
+    source.mkdir()
+    config = EvaluationConfig()
+    config.tasks["release_highs_v1_15_1"] = config.resources_for(
+        "release_highs_v1_15_1"
+    ).model_copy(update={"judge_image": "sha256:" + "a" * 64})
+    path = tmp_path / "evaluation.local.yaml"
+    path.write_text(config.model_dump_json())
+    monkeypatch.setattr(
+        "adapters.pitbench.adapter.PitBenchAdapter.ensure_source_cache",
+        lambda *a: source,
+    )
+    monkeypatch.setattr(
+        "pitbench.cli.main.PitBenchEvaluator",
+        lambda: pytest.fail("native grid was relaunched"),
+    )
+    calls = []
+
+    def parameters(request, settings):
+        assert settings.enabled
+        calls.append(request)
+        output = request.output_dir / "configuration-robustness"
+        output.mkdir(parents=True)
+        (output / "experiment.json").write_text('{"searches":[{"id":"paired"}]}')
+        (output / "configuration_report.json").write_text(
+            '{"searches":[{"id":"paired","status":"completed"}]}'
+        )
+        return output
+
+    monkeypatch.setattr(
+        "pitbench.evaluator.configuration.run_candidate_configuration", parameters
+    )
+    root = Path(__file__).resolve().parents[3]
+    result = CliRunner().invoke(
+        app,
+        [
+            "judge",
+            "release_highs_v1_15_1",
+            str(patch),
+            "--expected-patch-sha256",
+            hashlib.sha256(patch.read_bytes()).hexdigest(),
+            "--config",
+            str(path),
+            "--root",
+            str(root),
+            "--output-dir",
+            str(tmp_path / "supplement"),
+            "--configuration-only",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert len(calls) == 1 and calls[0].candidate_patch_path == patch
+
+
+def test_collector_container_reuse_keeps_fresh_workers_and_data_disk_tmp(
+    tmp_path, monkeypatch
+):
+    calls = []
+    monkeypatch.setattr(
+        "pitbench.evaluator.configuration.subprocess.run",
+        lambda command, **kw: calls.append(command),
+    )
+    search = {"collector_image": "local:test", "collector_environment": {}}
+    with ConfigurationRunner(tmp_path, [min(os.sched_getaffinity(0))]) as runner:
+        first = runner._worker_command(
+            search, ["worker", "--job", "/a/job.json"], 0, tmp_path / "a"
+        )
+        second = runner._worker_command(
+            search, ["worker", "--job", "/b/job.json"], 0, tmp_path / "b"
+        )
+        assert first[:2] == second[:2] == ["docker", "exec"]
+        assert first[first.index("--env") + 1] != second[second.index("--env") + 1]
+        assert first[-3:] == ["worker", "--job", "/a/job.json"]
+    assert len([c for c in calls if c[:2] == ["docker", "create"]]) == 1
+    create = calls[0]
+    assert f"{tmp_path.resolve()}:{tmp_path.resolve()}:rw" in create
+    assert "--tmpfs" not in create
+    assert calls[-1][:3] == ["docker", "rm", "--force"]
+
+
+def test_native_parameter_cells_reuse_nested_panels_and_isolate_patches(
+    tmp_path, monkeypatch
+):
+    invocations = []
+    fault = {"once": False}
+
+    class Judge:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def run(self):
+            p = json.loads(self.kwargs["configuration_panel"].read_text())
+            saved = [RunObservation.model_validate(r) for r in p["reused_observations"]]
+            done = {(r.instance_id, r.solver_seed) for r in saved}
+            for instance in p["instances"]:
+                for seed in p["seeds"]:
+                    panel, identity = instance["id"].split("/")
+                    if (identity, seed) in done:
+                        continue
+                    if fault["once"] and saved:
+                        from pitbench.evaluator.storage import ObservationStore
+
+                        fault["once"] = False
+                        ObservationStore.write_jsonl(
+                            self.kwargs["output_dir"] / "judge-observations.jsonl",
+                            saved,
+                        )
+                        raise RuntimeError("interrupted panel")
+                    invocations.append(
+                        (instance["id"], seed, self.kwargs["code_states"][0])
+                    )
+                    saved.append(
+                        RunObservation(
+                            task_id="task",
+                            code_state=self.kwargs["code_states"][0],
+                            instance_set=panel,
+                            instance_id=identity,
+                            solver_seed=seed,
+                            budget_sec=p["budget_sec"],
+                            status=RunStatus.COMPLETED,
+                            valid=True,
+                            objective=1,
+                            cpu_time_sec=0.1,
+                            solver_termination="optimal",
+                        )
+                    )
+            return saved
+
+    monkeypatch.setattr("pitbench.evaluator.docker_judge.DockerJudge", Judge)
+    search = {
+        "id": "task/base",
+        "task_configuration": {},
+        "solver": {"patch": "base"},
+        "code_state": "base",
+        "fixed_options": {},
+        "threads": 1,
+        "budget_sec": 1,
+        "instances": [
+            {"id": "judge/a", "sha256": "a"},
+            {"id": "judge/b", "sha256": "b"},
+        ],
+        "native_context": {
+            "judge_image": "image",
+            "build_cache_path": str(tmp_path / "shared/build"),
+            "task_config_path": "task.yaml",
+            "base_repository": "source",
+            "private_root": "private",
+            "candidate_patch": "candidate.patch",
+            "judge_parallel_runs": 1,
+        },
+    }
+    runner = NativeConfigurationRunner(
+        tmp_path / "first", [min(os.sched_getaffinity(0))]
+    )
+    runner.panel(
+        search, "candidate", {"amount": 1}, search["instances"][:1], [1], "screen"
+    )
+    full = runner.panel(
+        search, "candidate", {"amount": 1}, search["instances"], [1, 2], "full"
+    )
+    assert len(full) == len(invocations) == 4
+    other = NativeConfigurationRunner(tmp_path / "other", runner.cpus)
+    other.panel(search, "renamed", {"amount": 1}, search["instances"], [1, 2], "full")
+    assert len(invocations) == 4  # Same Base source is shared across candidates.
+    changed = {**search, "solver": {"patch": "new"}, "code_state": "agent"}
+    other.panel(changed, "renamed", {"amount": 1}, search["instances"], [1, 2], "full")
+    assert len(invocations) == 8
+    assert all(row[2] == CodeState.AGENT for row in invocations[4:])
+    interrupted = {**changed, "solver": {"patch": "interrupted-source"}}
+    before = len(invocations)
+    fault["once"] = True
+    with pytest.raises(RuntimeError, match="interrupted panel"):
+        other.panel(
+            interrupted, "candidate", {"amount": 1}, search["instances"], [1, 2], "full"
+        )
+    other.panel(
+        interrupted, "candidate", {"amount": 1}, search["instances"], [1, 2], "full"
+    )
+    assert len(invocations) - before == 4
+    # Deterministic solvers reuse seed zero on holdout too. A holdout must
+    # still be a fresh measurement, then its paired comparison may reuse it.
+    before = len(invocations)
+    other.panel(
+        search,
+        "retest-default",
+        {"amount": 1},
+        search["instances"],
+        [1, 2],
+        "retest_full",
+    )
+    assert len(invocations) - before == 4
+    other.panel(
+        search,
+        "paired",
+        {"amount": 1},
+        search["instances"],
+        [1, 2],
+        "independent_paired",
+    )
+    assert len(invocations) - before == 4
+    # Changed raw observations cannot be accepted as a cache hit.
+    receipt_path = next(
+        p
+        for p in (tmp_path / "shared/configuration-measurements").glob(
+            "*/identity.json"
+        )
+        if json.loads(p.read_text())["identity"]["solver"]["patch"] == "base"
+        and json.loads(p.read_text())["identity"]["evidence_phase"] == "search"
+    )
+    bank = receipt_path.parent / json.loads(receipt_path.read_text())["snapshot"]
+    bank.write_text(bank.read_text() + "\n")
+    with pytest.raises(ValueError, match="measurements changed"):
+        other.panel(search, "again", {"amount": 1}, search["instances"], [1, 2], "full")
+
+
+def test_native_candidate_preparation_binds_source_and_freezes_holdout(
+    tmp_path, monkeypatch
+):
+    import hashlib
+
+    from pitbench.harness.evaluation import EvaluationRequest
+    from pitbench.schema.task import InstanceSetKind
+
+    root = Path(__file__).resolve().parents[3]
+    monkeypatch.setattr(
+        "adapters.pitbench.adapter.PitBenchAdapter.validate_repository", lambda *a: None
+    )
+    patch = tmp_path / "candidate.patch"
+    patch.write_text("source patch")
+    path = tmp_path / "input.lp"
+    path.write_text("frozen input")
+    case = SimpleNamespace(
+        instance_set=SimpleNamespace(kind=InstanceSetKind.JUDGE_ID, name="judge"),
+        instance_id="a",
+        path=path,
+        anchor=1,
+    )
+    monkeypatch.setattr(
+        "pitbench.evaluator.judge.JudgePlan.from_instance_set_configs",
+        lambda *a, **kw: SimpleNamespace(cases=[case]),
+    )
+    monkeypatch.setattr("pitbench.evaluator.judge._evaluation_seeds", lambda *a: (1, 2))
+    config = tmp_path / "parameters.json"
+    config.write_text(
+        json.dumps(
+            {
+                "searcher_version": "2.4.0",
+                "max_configurations": 1,
+                "instance_count": 1,
+                "solver_seed_count": 2,
+                "watchdog_grace_sec": 60,
+                "panels": [
+                    {
+                        "task_config": "configs/tasks/highs_v1_15_1.yaml",
+                        "collector": "highs",
+                        "feedback": "capped_optimal_time",
+                        "seed_max": 100,
+                        "parameters": {
+                            "presolve": {
+                                "type": "categorical",
+                                "choices": ["choose", "off"],
+                                "default": "choose",
+                            }
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    request = EvaluationRequest(
+        task_id="release_highs_v1_15_1",
+        task_path=tmp_path,
+        candidate_patch_path=patch,
+        candidate_patch_sha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
+        output_dir=tmp_path,
+        agent_name="test",
+        evaluator_config={
+            "task_config_path": str(root / "configs/tasks/release_highs_v1_15_1.yaml"),
+            "private_root": str(tmp_path),
+            "judge_image": "image",
+            "base_repository": str(tmp_path),
+            "_progress_callback": lambda text: None,
+        },
+    )
+    output = tmp_path / "parameter-evaluation"
+    args = dict(cpus=[min(os.sched_getaffinity(0))], search_seed=9)
+    manifest = prepare_candidate_configuration(request, config, output, **args)
+    assert len(manifest["searches"]) == 4  # Two native budgets and two sources.
+    assert {s["code_state"] for s in manifest["searches"]} == {"base", "agent"}
+    holdout = manifest["searches"][0]["retest_seeds"]
+    assert not set(holdout) & {1, 2}
+    assert all(s["retest_seeds"] == holdout for s in manifest["searches"])
+    assert (
+        prepare_candidate_configuration(request, config, output, **args)["searches"]
+        == manifest["searches"]
+    )
+    patch.write_text("different patch")
+    with pytest.raises(ValueError, match="patch changed"):
+        prepare_candidate_configuration(request, config, output, **args)
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        (RunStatus.CRASHED, None),
+        (RunStatus.INFRASTRUCTURE_ERROR, None),
+        (RunStatus.OUT_OF_MEMORY, None),
+        (RunStatus.TIMED_OUT, None),
+        (RunStatus.NO_SOLUTION, 1),
+    ],
+)
+def test_native_failures_are_not_scored_as_solver_budget_censoring(status, expected):
+    observation = RunObservation(
+        task_id="task",
+        code_state=CodeState.AGENT,
+        instance_set="judge",
+        instance_id="a",
+        solver_seed=0,
+        budget_sec=10,
+        status=status,
+        valid=False,
+        solver_termination="time_limit",
+    )
+    value, error = run_feedback(
+        NativeConfigurationRunner.feedback_record(observation),
+        feedback="capped_optimal_time",
+        budget=10,
+        bks=1,
+        objective_sense="minimize",
+    )
+    assert value == expected
+    assert (error is None) == (expected is not None)
+
+
+def test_native_comparison_cross_checks_both_selected_parameters_on_holdout(
+    tmp_path, monkeypatch
+):
+    searches = [
+        {
+            "id": state,
+            "code_state": state,
+            "budget_sec": 10,
+            "instances": [{"id": "a", "bks": 100}],
+            "retest_seeds": [11, 12],
+            "feedback": "normalized_gap",
+            "objective_sense": "minimize",
+            "parameters": {"amount": {"default": 0}},
+        }
+        for state in ("base", "agent")
+    ]
+    for index, search in enumerate(searches, 1):
+        p = tmp_path / search["id"]
+        p.mkdir()
+        (p / "state.json").write_text(
+            json.dumps(
+                {"status": "completed", "selected": {"parameters": {"amount": index}}}
+            )
+        )
+    calls = []
+
+    def panel(self, search, name, parameters, instances, seeds, stage):
+        calls.append((search["code_state"], parameters, seeds))
+        return [
+            record(seed=seed, objective=100 if search["code_state"] == "base" else 90)
+            for seed in seeds
+        ]
+
+    monkeypatch.setattr(NativeConfigurationRunner, "panel", panel)
+    _write_native_comparisons(
+        {"searches": searches, "cpus": [min(os.sched_getaffinity(0))]}, tmp_path
+    )
+    report = json.loads((tmp_path / "candidate-parameter-comparison.json").read_text())
+    assert len(report["comparisons"]) == 3
+    assert {call[1]["amount"] for call in calls} == {0, 1, 2}
+    assert all(call[2] == [11, 12] for call in calls)
+    assert all(
+        row["complete"] and row["mean_degradation"] == pytest.approx(-0.1)
+        for row in report["comparisons"]
+    )
+
+
+def test_invalid_parameter_solution_is_attached_as_a_correctness_failure(tmp_path):
+    from pitbench.cli.main import _configuration_dry_run_failures
+
+    (tmp_path / "experiment.json").write_text('{"searches":[]}')
+    directory = tmp_path / "invalid-agent-solutions"
+    directory.mkdir()
+    (directory / "measured-invalid.json").write_text('{"status":"invalid"}')
+    report = write_configuration_report(tmp_path)
+    assert report["invalid_agent_solution_count"] == 1
+    payload = {
+        "validity": {
+            "checks": [{"code": "patch_apply", "passed": True, "detail": "captured"}],
+            "accepted": True,
+        }
+    }
+    attach_configuration_report(payload, tmp_path, output_root=tmp_path)
+    assert payload["validity"]["accepted"] is False
+    assert payload["validity"]["checks"][-1]["code"] == "solution"
+    assert _configuration_dry_run_failures(tmp_path) == [
+        "candidate has invalid solutions under parameter settings"
+    ]
+
+
+def test_fidelity_smoke_limits_do_not_reduce_the_default_protocol():
+    search = {
+        "search_mode": "multi_fidelity",
+        "search_seed": 1,
+        "max_configurations": 4,
+        "instances": [{"id": "a"}],
+        "solver_seeds": [1, 2],
+        "fidelity_stage_config": [
+            {
+                "name": "screen",
+                "instance_count": 3,
+                "solver_seed_count": 5,
+                "configuration_count": 4,
+            },
+            {
+                "name": "full",
+                "instance_count": 10,
+                "solver_seed_count": 30,
+                "configuration_count": 2,
+            },
+        ],
+    }
+    with pytest.raises(ValueError, match="nested fidelity"):
+        materialize_fidelity_stages(search)
+    stages = materialize_fidelity_stages(
+        {**search, "instances_per_panel": 1, "seeds_per_panel": 2}
+    )
+    assert all(
+        len(stage["instances"]) == 1 and len(stage["solver_seeds"]) == 2
+        for stage in stages
+    )
+    assert [stage["configuration_count"] for stage in stages] == [4, 2]
+
 
 # Tests consolidated from tests/unit/pitbench/test_configuration.py
 

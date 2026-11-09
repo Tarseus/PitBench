@@ -14,6 +14,7 @@ from pitbench.repositories.base import (
 
 
 class PyVRPRepositoryPlugin(RepositoryPlugin):
+    supports_fixed_solver_parameters = True
     scenario_binding_package = "pyvrp"
     scenario_session_plugin = "pitbench.solver_drivers.run:PyVRPScenarioSession"
 
@@ -203,6 +204,7 @@ class PyVRPDebugOptimizedRepositoryPlugin(PyVRPRepositoryPlugin):
 
 
 class VroomRepositoryPlugin(RepositoryPlugin):
+    supports_fixed_solver_parameters = True
     agent_environment = AgentEnvironment(
         image="ubuntu:24.04",
         system_packages=(

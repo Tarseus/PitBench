@@ -574,7 +574,8 @@ def _configuration_robustness_check(
     return _check(
         CheckStatus.PASS,
         "Configuration Robustness",
-        "enabled; release-only collector scheduled after candidate evaluation",
+        "enabled; native candidate parameters scheduled after source evaluation"
+        if configuration.scope == "candidate" else "enabled; release-only parameter search scheduled",
     )
 
 
@@ -582,6 +583,10 @@ def _configuration_collector_checks(
     repository_root: Path, config: EvaluationConfig
 ) -> list[DoctorCheck]:
     if not config.configuration_robustness.enabled:
+        return []
+    if config.configuration_robustness.scope == "candidate":
+        # Candidate runtimes come from the native Judge's pinned source builds,
+        # not the historical globally installed collector images.
         return []
     experiment_path = resolve_repository_path(
         repository_root, config.configuration_robustness.experiment_config

@@ -238,17 +238,9 @@ def _base_input_digest(task: PitBenchTask, private_root: Path) -> str:
         ).hexdigest()
 
 
-def _base_measurement_identity(config, task, parallel_runs, cpus):
+def _measurement_hardware_identity(available):
     from pitbench.evaluator.scenarios import _hardware_identity
 
-    available = sorted(os.sched_getaffinity(0))
-    pool = config.get("judge_cpuset_cpus")
-    if pool:
-        available = [
-            cpu
-            for part in pool.split(",")
-            for cpu in (range(int(part.split("-")[0]), int(part.split("-")[-1]) + 1))
-        ]
     hardware = _hardware_identity(available)
     hardware.pop("cpu_pool")
     hardware["boot_id"] = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
@@ -270,6 +262,19 @@ def _base_measurement_identity(config, task, parallel_runs, cpus):
         )
         for cpu in available
     )
+    return hardware
+
+
+def _base_measurement_identity(config, task, parallel_runs, cpus):
+    available = sorted(os.sched_getaffinity(0))
+    pool = config.get("judge_cpuset_cpus")
+    if pool:
+        available = [
+            cpu
+            for part in pool.split(",")
+            for cpu in (range(int(part.split("-")[0]), int(part.split("-")[-1]) + 1))
+        ]
+    hardware = _measurement_hardware_identity(available)
     return {
         "inputs_sha256": _base_input_digest(task, Path(config["private_root"])),
         "hardware": hardware,

@@ -13,6 +13,7 @@ paths:
 # Configuration Robustness is launched automatically after the candidate run.
 configuration_robustness:
   enabled: true
+  scope: candidate
   experiment_config: configs/experiments/configuration_robustness.yaml
   output_path: configuration-robustness
   cpus: null

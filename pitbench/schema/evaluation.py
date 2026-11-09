@@ -59,6 +59,7 @@ class ArtifactManifest(BaseModel):
     shared_base_receipt: ArtifactRef | None = None
     metric_scenario_campaign: ArtifactRef | None = None
     metric_scenario_confirmation: ArtifactRef | None = None
+    configuration_robustness_details: ArtifactRef | None = None
     candidate_patch: ArtifactRef | None = None
     observations: ArtifactRef | None = None
     expected_run_grid: ArtifactRef | None = None
@@ -88,6 +89,7 @@ class EvaluationSummary(BaseModel):
     behavior_geometry: BehaviorMetricReport | None = None
     metric_scenarios: ScenarioReport | None = None
     metric_scenario_error: str | None = None
+    configuration_robustness: dict | None = None
 
 
 class EvaluationResult(BaseModel):

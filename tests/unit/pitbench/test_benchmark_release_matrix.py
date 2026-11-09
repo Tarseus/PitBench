@@ -50,8 +50,9 @@ def test_default_run_profile_needs_no_environment_variables(tmp_path, monkeypatc
     "completed,gaps",
     [(True, []), (False, []), (True, ["missing scenario observations"])],
 )
+@pytest.mark.parametrize("parameter_enabled", [False, True])
 def test_captured_patch_queue_uses_native_evaluator_without_new_agent(
-    tmp_path, monkeypatch, completed, gaps
+    tmp_path, monkeypatch, completed, gaps, parameter_enabled
 ):
     import hashlib
     from types import SimpleNamespace
@@ -111,8 +112,31 @@ def test_captured_patch_queue_uses_native_evaluator_without_new_agent(
             "candidate_patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
         },
     }
+    from pitbench.cli.evaluate_config import EvaluationConfig
+
+    configuration = EvaluationConfig()
+    configuration.configuration_robustness.enabled = parameter_enabled
+    config_path = tmp_path / "evaluation.local.yaml"
+    config_path.write_text(configuration.model_dump_json())
+    parameter_calls = []
+
+    def parameters(request, settings):
+        if not settings.enabled:
+            return None
+        parameter_calls.append(request)
+        directory = patch.parent / "parameters"
+        campaign.write_json(
+            directory / "experiment.json", {"searches": [{"id": "paired"}]}
+        )
+        campaign.write_json(
+            directory / "configuration_report.json",
+            {"searches": [{"id": "paired", "status": "completed"}]},
+        )
+        return directory
+
+    monkeypatch.setattr(campaign, "run_candidate_configuration", parameters)
     result = campaign.evaluate_study_candidate(
-        state, SimpleNamespace(output=tmp_path), "48-55"
+        state, SimpleNamespace(output=tmp_path, config=config_path), "48-55"
     )
     assert result["status"] == (
         ("evaluation_incomplete" if gaps else "evaluation_completed")
@@ -126,6 +150,14 @@ def test_captured_patch_queue_uses_native_evaluator_without_new_agent(
     saved = json.loads((tmp_path / "runs" / run_id / "results.json").read_text())
     assert saved["results"][0]["evaluation"]["completed"] is completed
     assert patch.read_text() == "captured source patch"
+    assert len(parameter_calls) == int(completed and parameter_enabled)
+    if completed and parameter_enabled:
+        assert (
+            saved["results"][0]["evaluation"]["payload"]["summary"][
+                "configuration_robustness"
+            ]["searches"][0]["status"]
+            == "completed"
+        )
 
 
 @pytest.mark.parametrize("row", MANIFEST["task_matrix"], ids=lambda row: row["task_id"])
@@ -536,7 +568,11 @@ def test_deferred_model_audit_requires_captured_patch_and_model_execution(
 
 @pytest.mark.parametrize(
     "plan_name",
-    ["generalization_latest_high_v2.json", "latest_high_replicates_v3.json", "latest_high_algorithm_space_v4.json"],
+    [
+        "generalization_latest_high_v2.json",
+        "latest_high_replicates_v3.json",
+        "latest_high_algorithm_space_v4.json",
+    ],
 )
 def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     tmp_path, monkeypatch, plan_name
@@ -560,7 +596,9 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
         row["task_id"] for row in MANIFEST["task_matrix"] if row["role"] == "latest"
     }
     assert set(selected) <= latest
-    assert len(selected) == (8 if plan.get("comparison_mode") == "agent_augmentation" else 3)
+    assert len(selected) == (
+        8 if plan.get("comparison_mode") == "agent_augmentation" else 3
+    )
     records = {task: TaskCatalog(ROOT).validate_one(task) for task in selected}
     validated = []
 
@@ -592,13 +630,20 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     private = tmp_path / "private"
     private.mkdir()
     for task_id, record in records.items():
-        if plan.get("comparison_mode") == "agent_augmentation" and task_id == selected[-1]:
-            views["tasks"][task_id] = {"evaluator_task_config": str(record.task_config_path)}
+        if (
+            plan.get("comparison_mode") == "agent_augmentation"
+            and task_id == selected[-1]
+        ):
+            views["tasks"][task_id] = {
+                "evaluator_task_config": str(record.task_config_path)
+            }
             public = tmp_path / "public" / (task_id + ".yaml")
             public.parent.mkdir(exist_ok=True)
             public.write_bytes(record.task_config_path.read_bytes())
             for arm in plan["arms"]:
-                views["arms"][arm["id"]][task_id] = {"agent_task_config_path": str(public)}
+                views["arms"][arm["id"]][task_id] = {
+                    "agent_task_config_path": str(public)
+                }
             continue
         scenario = tmp_path / (task_id + ".scenario.json")
         model = private / (task_id + ".json")
@@ -651,7 +696,10 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     )
     campaign.study_models(args)
     frozen = json.loads((args.output / "cohort.json").read_text())
-    assert len(frozen["jobs"]) == len(selected) * len(plan["arms"]) * 2 * plan["agent_attempts_per_condition"]
+    assert (
+        len(frozen["jobs"])
+        == len(selected) * len(plan["arms"]) * 2 * plan["agent_attempts_per_condition"]
+    )
     assert set(validated) == set(selected)
     assert {row["model"]["label"] for row in frozen["jobs"]} == {
         "sol-high",
@@ -676,13 +724,25 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
                 )
     elif plan.get("comparison_mode") == "agent_augmentation":
         assert len(frozen["jobs"]) == 96
-        assert str(tmp_path / "public" / (selected[-1] + ".yaml")) in frozen["input_files_sha256"]
+        assert (
+            str(tmp_path / "public" / (selected[-1] + ".yaml"))
+            in frozen["input_files_sha256"]
+        )
         for task_id in selected:
             for model in ("gpt-6.1-sol", "gpt-6.1-terra"):
                 for arm in plan["arms"]:
-                    rows = [j for j in frozen["jobs"] if j["task_id"] == task_id and j["model"]["model"] == model and j["arm"] == arm["id"]]
+                    rows = [
+                        j
+                        for j in frozen["jobs"]
+                        if j["task_id"] == task_id
+                        and j["model"]["model"] == model
+                        and j["arm"] == arm["id"]
+                    ]
                     assert {j["attempt"] for j in rows} == {1, 2, 3}
-                    assert all(j.get("agent_import_path") == arm.get("agent_import_path") for j in rows)
+                    assert all(
+                        j.get("agent_import_path") == arm.get("agent_import_path")
+                        for j in rows
+                    )
     else:
         assert all(row["attempt"] == 1 for row in frozen["jobs"])
     assert all(
@@ -702,11 +762,25 @@ def test_study_custom_agents_share_options_and_use_existing_import_interface():
     from scripts import run_benchmark_release as campaign
 
     job = {"model": {"agent": "codex"}, "agent_import_path": "example:EnhancedAgent"}
-    config = EvaluationConfig(agents={"codex": {"runner_backend": "workspace", "proxy_url": "http://localhost:1"}})
+    config = EvaluationConfig(
+        agents={
+            "codex": {"runner_backend": "workspace", "proxy_url": "http://localhost:1"}
+        }
+    )
     campaign.configure_study_agent(config, job, ResearchBudget(wall_time_sec=14400))
-    assert config.agents["example:EnhancedAgent"] == {"runner_backend": "workspace", "proxy_url": "http://localhost:1", "timeout_sec": 14400}
-    assert campaign.study_agent_arguments(job) == ["--agent-import-path", "example:EnhancedAgent"]
-    assert campaign.study_agent_arguments({"model": {"agent": "codex"}}) == ["--agent", "codex"]
+    assert config.agents["example:EnhancedAgent"] == {
+        "runner_backend": "workspace",
+        "proxy_url": "http://localhost:1",
+        "timeout_sec": 14400,
+    }
+    assert campaign.study_agent_arguments(job) == [
+        "--agent-import-path",
+        "example:EnhancedAgent",
+    ]
+    assert campaign.study_agent_arguments({"model": {"agent": "codex"}}) == [
+        "--agent",
+        "codex",
+    ]
 
 
 def test_model_resume_preserves_completed_work_and_archives_infra_attempt(

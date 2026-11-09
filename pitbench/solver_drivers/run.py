@@ -675,6 +675,7 @@ class HighsDriver(SolverDriver):
         args = arguments.parse_args(argv)
         started = time.perf_counter()
         try:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
             fixed_parameters = (
                 json.loads(args.parameters.read_text())
                 if args.parameters is not None
@@ -705,12 +706,24 @@ class HighsDriver(SolverDriver):
                     f"--threads={args.threads}",
                     f"--solution_file={raw_solution}",
                 ]
-                if fixed_parameters is not None:
-                    options_file = Path(temporary) / "fixed_options.txt"
-                    options_file.write_text(
-                        HighsDriver.options_file_content(fixed_parameters)
+                options_file = Path(temporary) / "fixed_options.txt"
+                # HiGHS otherwise appends Highs.log in the shared build tree.
+                # Keep each solve's log with its own results so a solve cannot
+                # mutate the build-cache manifest or another solve's log.
+                log_path = str(args.output.with_suffix(".solver.log").resolve())
+                if any(character in log_path for character in "\r\n\0"):
+                    raise ParameterRejected("invalid HiGHS output log path")
+                options_file.write_text(
+                    HighsDriver.options_file_content(
+                        {
+                            key: value
+                            for key, value in (fixed_parameters or {}).items()
+                            if key != "log_file"
+                        }
                     )
-                    command.append(f"--options_file={options_file}")
+                    + f"log_file = {log_path}\n"
+                )
+                command.append(f"--options_file={options_file}")
                 completed = subprocess.run(
                     command,
                     check=False,

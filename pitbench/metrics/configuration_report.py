@@ -190,6 +190,14 @@ def write_configuration_report(output: Path) -> dict:
     report = {
         "interpretation": "degradation found under the declared search budget; independent retest is reported separately",
         "searches": summaries,
+        "coverage": manifest.get("coverage", "available"),
+        "reason": manifest.get("reason"),
+        "invalid_agent_solution_count": len(
+            list((output / "invalid-agent-solutions").glob("*.json"))
+        ),
     }
+    comparison_path = output / "candidate-parameter-comparison.json"
+    if comparison_path.is_file():
+        report["candidate_comparison"] = json.loads(comparison_path.read_text())
     write_json(output / "configuration_report.json", report)
     return report

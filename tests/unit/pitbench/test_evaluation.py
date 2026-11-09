@@ -2185,6 +2185,75 @@ def test_native_status_and_objective_can_be_read_from_solution_file(
     assert "native diagnostic" in capsys.readouterr().err
 
 
+def test_highs_solve_logs_do_not_invalidate_cached_build_tree(tmp_path, monkeypatch):
+    from pitbench.evaluator.storage import file_manifest
+    from pitbench.solver_drivers.run import HighsDriver
+
+    workspace = tmp_path / "cached-build"
+    workspace.mkdir()
+    (workspace / "source.cpp").write_text("unchanged solver source")
+    before = file_manifest(workspace)
+    results = tmp_path / "results"
+    monkeypatch.chdir(workspace)
+
+    def solve(argv, **kwargs):
+        options = next(
+            (
+                Path(value.split("=", 1)[1])
+                for value in argv
+                if value.startswith("--options_file=")
+            ),
+            None,
+        )
+        log = (
+            next(
+                (
+                    line.split("=", 1)[1].strip()
+                    for line in options.read_text().splitlines()
+                    if line.startswith("log_file")
+                ),
+                "Highs.log",
+            )
+            if options
+            else "Highs.log"
+        )
+        Path(log).write_text("native solver diagnostic")
+        solution = next(
+            value.split("=", 1)[1]
+            for value in argv
+            if value.startswith("--solution_file=")
+        )
+        Path(solution).write_text("Model status\nOptimal\nObjective 5\n")
+        return subprocess.CompletedProcess(
+            argv, 0, "Solving report\n  Status Optimal\n", ""
+        )
+
+    monkeypatch.setattr(subprocess, "run", solve)
+    for label in ("first", "second"):
+        HighsDriver.main(
+            [
+                "--solver",
+                "highs",
+                "--instance",
+                str(tmp_path / "input.lp"),
+                "--output",
+                str(results / f"{label}.json"),
+                "--trajectory",
+                str(results / f"{label}.trajectory.jsonl"),
+                "--seed",
+                "0",
+                "--budget",
+                "5",
+                "--threads",
+                "1",
+            ]
+        )
+        assert (
+            results / f"{label}.solver.log"
+        ).read_text() == "native solver diagnostic"
+    assert file_manifest(workspace) == before
+
+
 @pytest.mark.parametrize(
     ("exit_code", "report"),
     [

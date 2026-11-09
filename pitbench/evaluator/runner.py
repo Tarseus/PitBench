@@ -5,11 +5,12 @@ import hashlib
 import json
 import os
 import shutil
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 from pitbench.evaluator.docker_judge import judge_harness_sha256
-from pitbench.evaluator.judge import LocalProcessJudge, _development_seeds
+from pitbench.evaluator.judge import JudgePlan, LocalProcessJudge, _development_seeds
 from pitbench.evaluator.reliability import prepare_boundary_cases
 from pitbench.evaluator.representation import run_with_representation
 from pitbench.evaluator.storage import ObservationStore
@@ -163,6 +164,7 @@ def main() -> None:
     parser.add_argument("--checkpoint-identity")
     parser.add_argument("--resume-existing-observations", action="store_true")
     parser.add_argument("--base-observations", type=Path)
+    parser.add_argument("--configuration-panel", type=Path)
     parser.add_argument(
         "--code-state",
         action="append",
@@ -171,6 +173,20 @@ def main() -> None:
     args = parser.parse_args()
     measurement_started_at = datetime.now(timezone.utc).isoformat()
     task = PitBenchTask.from_yaml(args.task_config)
+    configuration = (
+        json.loads(args.configuration_panel.read_text())
+        if args.configuration_panel
+        else None
+    )
+    if configuration is not None:
+        if (
+            args.resume_existing_observations
+            or args.base_observations
+            or args.reliability_only
+        ):
+            parser.error("configuration panels use their own retained-cell checkpoint")
+        task = task.model_copy(deep=True)
+        task.evaluation.fixed_solver_parameters = configuration["parameters"]
     code_states = tuple(CodeState(value) for value in (args.code_state or [])) or tuple(
         CodeState
     )
@@ -242,7 +258,8 @@ def main() -> None:
             ),
             solver_seed_limit=args.solver_seed_limit,
         )
-        if task.evaluation.operational_reliability or args.reliability_only
+        if configuration is None
+        and (task.evaluation.operational_reliability or args.reliability_only)
         else []
     )
     if (
@@ -262,12 +279,74 @@ def main() -> None:
         code_states=code_states,
         parallel_runs=args.parallel_runs,
         additional_cases=boundary_cases,
-        evaluation_seeds=_development_seeds(task) if args.reliability_only else None,
+        evaluation_seeds=tuple(configuration["seeds"])
+        if configuration
+        else _development_seeds(task)
+        if args.reliability_only
+        else None,
         family=boundary_cases[0].verifier if args.reliability_only else None,
         instances_per_instance_set=args.instances_per_instance_set,
         solver_seed_limit=args.solver_seed_limit,
         observations_path=args.observations,
+        run_validation_builds=configuration is None,
     )
+    if configuration is not None:
+        from pitbench.evaluator.private_assets import PrivateAssetResolver
+
+        plan = JudgePlan.from_instance_set_configs(
+            task,
+            PrivateAssetResolver(args.private_root),
+            public_root=args.public_root,
+            generated_root=args.output_dir / "configuration-inputs",
+        )
+        requested = {item["id"]: item for item in configuration["instances"]}
+        cases = []
+        for case in plan.cases:
+            key = f"{case.instance_set.name}/{case.instance_id}"
+            if key not in requested:
+                continue
+            if (
+                hashlib.sha256(case.path.read_bytes()).hexdigest()
+                != requested[key]["sha256"]
+            ):
+                raise ValueError(
+                    "configuration input differs from the frozen native panel"
+                )
+            cases.append(
+                replace(
+                    case,
+                    solver_seeds=tuple(configuration["seeds"]),
+                    budgets_sec=(configuration["budget_sec"],),
+                )
+            )
+        if len(cases) != len(requested):
+            raise ValueError(
+                "configuration panel contains unavailable native instances"
+            )
+        previous_observations = [
+            RunObservation.model_validate(row)
+            for row in configuration.get("reused_observations", [])
+        ]
+        expected = {
+            (
+                case.instance_set.name,
+                case.instance_id,
+                state,
+                seed,
+                configuration["budget_sec"],
+            )
+            for case in cases
+            for state in code_states
+            for seed in configuration["seeds"]
+        }
+        completed_runs = {_run_identity(row) for row in previous_observations}
+        if (
+            len(completed_runs) != len(previous_observations)
+            or not completed_runs <= expected
+        ):
+            raise ValueError(
+                "reused configuration observations differ from the requested panel"
+            )
     if previous_observations or args.resume_existing_observations:
         # Resume through the existing raw JSONL checkpoint. The judge's normal
         # initialization truncates this path, so resumed writes use the callback.
@@ -288,7 +367,11 @@ def main() -> None:
         save_observation = save_resumed_observation
     else:
         save_observation = None
-    if args.reliability_only and args.resume_existing_observations:
+    if configuration is not None:
+        observations = judge.run(
+            cases, completed_runs=completed_runs, save_observation=save_observation
+        )
+    elif args.reliability_only and args.resume_existing_observations:
         observations = judge.run(
             [], completed_runs=completed_runs, save_observation=save_observation
         )

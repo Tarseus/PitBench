@@ -60,6 +60,7 @@ class DockerJudge:
         solver_seed_limit: int | None = None,
         base_observations_path: Path | None = None,
         build_cache_path: Path | None = None,
+        configuration_panel: Path | None = None,
     ) -> None:
         digest_pinned = re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image)
         local_image_id = re.fullmatch(r"sha256:[0-9a-f]{64}", image)
@@ -91,6 +92,12 @@ class DockerJudge:
         self.solver_seed_limit = solver_seed_limit
         self.base_observations_path = base_observations_path
         self.build_cache_path = build_cache_path.resolve() if build_cache_path else None
+        self.configuration_panel = configuration_panel
+        self.configuration_panel_sha256 = (
+            hashlib.sha256(configuration_panel.read_bytes()).hexdigest()
+            if configuration_panel
+            else None
+        )
         self.package_root = Path(__file__).resolve().parents[2]
         self.harness_sha256 = judge_harness_sha256(self.package_root)
         self.candidate_patch_sha256 = hashlib.sha256(
@@ -116,6 +123,8 @@ class DockerJudge:
             "instances_per_instance_set": self.instances_per_instance_set,
             "solver_seed_limit": self.solver_seed_limit,
         }
+        if self.configuration_panel is not None:
+            identity["configuration_panel_sha256"] = self.configuration_panel_sha256
         if self.base_observations_path is not None:
             identity["shared_base_sha256"] = hashlib.sha256(
                 self.base_observations_path.read_bytes()
@@ -182,6 +191,13 @@ class DockerJudge:
             "--observations",
             "/output/judge-observations.jsonl",
         ]
+        if self.configuration_panel is not None:
+            position = command.index(self.docker_image)
+            command[position:position] = [
+                "--volume",
+                f"{self.configuration_panel.resolve()}:/input/configuration-panel.json:ro",
+            ]
+            command.extend(["--configuration-panel", "/input/configuration-panel.json"])
         if self.cpuset_cpus is not None:
             command[command.index("--memory") : command.index("--memory")] = [
                 "--cpuset-cpus",
@@ -304,6 +320,11 @@ class DockerJudge:
                 self.candidate_patch_sha256,
             ),
         }
+        if self.configuration_panel is not None:
+            checks["configuration panel"] = (
+                hashlib.sha256(self.configuration_panel.read_bytes()).hexdigest(),
+                self.configuration_panel_sha256,
+            )
         for name, (actual, expected) in checks.items():
             if actual != expected:
                 retained = (

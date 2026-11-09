@@ -207,6 +207,7 @@ def test_configuration_robustness_passes_when_enabled_config_exists(
     experiment.write_text("name: test\n")
     config = EvaluationConfig()
     config.configuration_robustness.experiment_config = experiment
+    config.configuration_robustness.scope = "release"
 
     check = _configuration_robustness_check(tmp_path, config)
 
@@ -226,6 +227,7 @@ def test_configuration_preflight_rejects_stale_collector_before_agent_work(
     )
     config = EvaluationConfig()
     config.configuration_robustness.experiment_config = experiment
+    config.configuration_robustness.scope = "release"
     commands = []
 
     def run(command, **kwargs):

@@ -49,11 +49,12 @@ class SolverImageBuildConfig(BaseModel):
 
 
 class ConfigurationRobustnessConfig(BaseModel):
-    """Default release-only configuration search launched with evaluation."""
+    """Parameter evaluation enabled by default for captured candidates."""
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
+    scope: Literal["candidate", "release"] = "candidate"
     experiment_config: Path = Path("configs/experiments/configuration_robustness.yaml")
     output_path: Path = Path("configuration-robustness")
     cpus: list[int] | None = None
