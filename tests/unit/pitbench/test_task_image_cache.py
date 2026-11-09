@@ -132,3 +132,23 @@ def test_public_output_mount_is_inside_workspace_and_excludes_protected_agent_lo
     assert "${T_BENCH_TASK_AGENT_LOGS_PATH}/development-runs:" + path in client["volumes"]
     assert not any(v.endswith(":/workspace/repo/.pitbench") for v in client["volumes"])
     assert "PITBENCH_RUNS" not in yaml.safe_load(PitBenchAdapter._compose([]))["services"]["client"]["environment"]
+
+
+def test_development_volumes_preserve_image_contents_outside_docker_overlay():
+    import yaml
+
+    from adapters.pitbench.adapter import PitBenchAdapter
+
+    compose = yaml.safe_load(PitBenchAdapter._compose(["bench"]))
+    client = compose["services"]["client"]
+    assert "development-workspace:/workspace/repo" in client["volumes"]
+    assert "development-home:/home/pitbench-agent" in client["volumes"]
+    for name in ("workspace", "home"):
+        volume = compose["volumes"][f"development-{name}"]
+        assert volume["driver_opts"] == {
+            "type": "none", "o": "bind",
+            "device": "${T_BENCH_TASK_DEVELOPMENT_STORAGE_PATH}/" + name,
+        }
+    for target in ("/tmp", "/var/tmp"):
+        assert any(v.endswith(":" + target) for v in client["volumes"])
+    assert client["environment"]["TMPDIR"] == "/tmp"

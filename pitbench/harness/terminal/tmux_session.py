@@ -1,4 +1,5 @@
 import re
+import shlex
 import time
 import uuid
 from pathlib import Path
@@ -23,6 +24,9 @@ class TmuxSession:
     )
     _GET_ASCIINEMA_TIMESTAMP_SCRIPT_HOST_PATH = Path(__file__).parent / (
         "get-asciinema-timestamp.sh"
+    )
+    _ASCIINEMA_CONFIG_HOME = (
+        Path(DockerComposeManager.CONTAINER_AGENT_LOGS_PATH) / ".asciinema"
     )
 
     # Default tmux history limit (lines of scrollback buffer)
@@ -59,12 +63,20 @@ class TmuxSession:
             )
 
         if self._recording_path:
-            result = self._exec_run(["asciinema", "--version"])
+            result = self._exec_run(
+                [
+                    "env",
+                    f"ASCIINEMA_CONFIG_HOME={self._ASCIINEMA_CONFIG_HOME}",
+                    "asciinema",
+                    "--version",
+                ]
+            )
             if result.exit_code != 0:
+                detail = result.output.decode(errors="replace").strip()
                 raise RuntimeError(
-                    "Recording is enabled but asciinema is not "
-                    "installed in the container. "
-                    "Please install asciinema in the container to run Terminal-Bench."
+                    "Recording is enabled but asciinema could not run in the "
+                    f"container (exit {result.exit_code}): "
+                    f"{detail or 'no command output'}"
                 )
 
         self.copy_to_container(
@@ -146,6 +158,8 @@ class TmuxSession:
             self._logger.debug("Starting recording.")
             self.send_keys(
                 keys=[
+                    "ASCIINEMA_CONFIG_HOME="
+                    f"{shlex.quote(str(self._ASCIINEMA_CONFIG_HOME))} "
                     f"asciinema rec --stdin {self._recording_path} --overwrite",
                     "Enter",
                 ],

@@ -29,6 +29,7 @@ class DockerComposeEnvVars(EnvModel):
     test_dir: str | None = None
     task_logs_path: str | None = None
     task_agent_logs_path: str | None = None
+    task_development_storage_path: str | None = None
     agent_model_name: str | None = None
 
 
@@ -94,8 +95,10 @@ class DockerComposeManager:
         self._client_container: Container | None = None
         self._sessions_logs_path = sessions_logs_path
         self._agent_logs_path = agent_logs_path
+        development_storage = None
         if agent_logs_path is not None:
             (agent_logs_path / "development-runs").mkdir(parents=True, exist_ok=True)
+            development_storage = self.prepare_development_storage(agent_logs_path)
         self._cpuset_cpus = cpuset_cpus
         self._nested_sandbox = nested_sandbox
         self._compose_override_path: Path | None = None
@@ -122,6 +125,9 @@ class DockerComposeManager:
                 if self._agent_logs_path is not None
                 else None
             ),
+            task_development_storage_path=(
+                str(development_storage) if development_storage is not None else None
+            ),
             agent_model_name=agent_model_name,
         ).to_env_dict(include_os_env=True)
         self.env["T_BENCH_AGENT_UID"] = str(agent_uid)
@@ -142,6 +148,18 @@ class DockerComposeManager:
         for key, value in benchmark_tuning_vars.items():
             if key not in self.env:
                 self.env[key] = value
+
+    @staticmethod
+    def prepare_development_storage(agent_logs_path: Path) -> Path:
+        # Keep source/build trees outside agent-logs: the trace collector ingests
+        # that directory as tool output, not as a second repository snapshot.
+        root = agent_logs_path.resolve().parent / "development-storage"
+        for name in ("workspace", "home", "tmp", "var-tmp"):
+            path = root / name
+            path.mkdir(parents=True, exist_ok=True)
+            if name in {"tmp", "var-tmp"}:
+                path.chmod(0o1777)
+        return root
 
     def get_docker_compose_command(self, command: list[str]) -> list[str]:
         prefix = [

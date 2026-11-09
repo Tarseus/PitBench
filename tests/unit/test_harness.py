@@ -20,11 +20,56 @@ from pitbench.harness.harness.harness import Harness
 from pitbench.harness.harness.models import BenchmarkResults, TrialResults
 from pitbench.harness.harness.run_artifacts import RunArtifactStore
 from pitbench.harness.terminal.docker_compose_manager import DockerComposeManager
+from pitbench.harness.terminal.tmux_session import TmuxSession
 from pitbench.harness.utils.progress import AgentActivity, TaskProgressDisplay
 
 # Tests consolidated from tests/unit/harness/test_progress.py
 
 """Tests for TaskProgressDisplay and summary progress functionality."""
+
+
+def test_recording_uses_writable_config_for_probe_and_session(monkeypatch):
+    container = MagicMock()
+    container.exec_run.return_value = SimpleNamespace(exit_code=0, output=b"ok")
+    monkeypatch.setattr(TmuxSession, "copy_to_container", MagicMock())
+    session = TmuxSession("agent", container, user="pitbench-agent")
+    assert container.exec_run.call_args.args[0] == [
+        "env", "ASCIINEMA_CONFIG_HOME=/agent-logs/.asciinema",
+        "asciinema", "--version",
+    ]
+    assert container.exec_run.call_args.kwargs["user"] == "pitbench-agent"
+    session.send_keys = MagicMock()
+    session.start()
+    recording = session.send_keys.call_args_list[0].kwargs["keys"][0]
+    assert recording.startswith("ASCIINEMA_CONFIG_HOME=/agent-logs/.asciinema ")
+    assert "asciinema rec" in recording
+
+
+def test_recording_failure_keeps_real_disk_error(monkeypatch):
+    container = MagicMock()
+    container.exec_run.side_effect = [
+        SimpleNamespace(exit_code=0, output=b"tmux 3.4"),
+        SimpleNamespace(exit_code=1, output=b"OSError: No space left on device"),
+    ]
+    with pytest.raises(RuntimeError, match="exit 1.*No space left on device"):
+        TmuxSession("agent", container)
+    container.put_archive.assert_not_called()
+
+
+def test_development_storage_resolves_log_symlinks_and_keeps_tmp_writable(tmp_path):
+    physical = tmp_path / "data" / "trial"
+    physical.mkdir(parents=True)
+    alias = tmp_path / "alias"
+    alias.symlink_to(physical, target_is_directory=True)
+    storage = DockerComposeManager.prepare_development_storage(alias / "agent-logs")
+    assert storage == physical / "development-storage"
+    assert (storage / "workspace").is_dir()
+    assert (storage / "home").is_dir()
+    assert (storage / "tmp").stat().st_mode & 0o7777 == 0o1777
+    assert (storage / "var-tmp").stat().st_mode & 0o7777 == 0o1777
+    (storage / "workspace" / "retained").write_text("candidate")
+    DockerComposeManager.prepare_development_storage(alias / "agent-logs")
+    assert (storage / "workspace" / "retained").read_text() == "candidate"
 
 
 def test_nested_sandbox_override_avoids_duplicate_security_options(tmp_path: Path):

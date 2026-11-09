@@ -14,6 +14,7 @@ from pitbench.cli.doctor import (
     _agent_runtime_check,
     _configuration_collector_checks,
     _configuration_robustness_check,
+    _docker_storage_check,
     _judge_environment_check,
     _pinned_source_check,
     _reliability_plan_check,
@@ -136,6 +137,23 @@ def test_agent_runtime_reports_missing_asciinema() -> None:
 
     assert check.status is CheckStatus.FAIL
     assert "asciinema" in check.detail
+
+
+def test_agent_runtime_reports_recorder_startup_failure():
+    client = SimpleNamespace(containers=SimpleNamespace(run=Mock(
+        side_effect=RuntimeError("OSError: No space left on device")
+    )))
+    check = _agent_runtime_check("pitbench-agent:test", client)
+    assert check.status is CheckStatus.FAIL
+    assert "No space left on device" in check.detail
+
+
+@pytest.mark.parametrize("free_gib,status", [(2, CheckStatus.FAIL), (15, CheckStatus.WARN), (40, CheckStatus.PASS)])
+def test_docker_storage_checks_daemon_filesystem(free_gib, status):
+    with patch("pitbench.cli.doctor.shutil.disk_usage", return_value=SimpleNamespace(free=free_gib * 1024**3)) as usage:
+        check = _docker_storage_check({"DockerRootDir": "/docker-on-system-disk"})
+    usage.assert_called_once_with("/docker-on-system-disk")
+    assert check.status is status
 
 
 @pytest.mark.parametrize(

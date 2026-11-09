@@ -28,6 +28,39 @@ Explicit custom paths in the local evaluation config are preserved. The local
 workspace index is documented in `gushengda/README.md`; campaign inputs use their
 organized paths directly.
 
+Agent development storage follows the trial's run directory. The generated
+Compose configuration uses local bind-backed volumes for `/workspace/repo` and
+`/home/pitbench-agent`. Docker populates these from the task image on first use,
+preserving prepared build artifacts, source permissions and user ownership.
+The backing directories live at `<trial>/development-storage/{workspace,home}`;
+`/tmp` and `/var/tmp` bind to sibling `tmp` and `var-tmp` directories. They remain
+after container cleanup. Public tool output stays in `agent-logs/development-runs`,
+and the trace collector does not ingest the entire backing repository as logs.
+Docker image-only snapshots exclude mounted volumes; retain development storage
+alongside the captured candidate patch and traces when restoring a trial.
+
+For the g49 experiments, keep the checkout, configured run/workspace/cache paths
+and campaign output physically under `/data3`, and set host temporary directories
+before launching Python:
+
+```bash
+export TMPDIR=/data3/tmp/$USER
+export TMP=$TMPDIR TEMP=$TMPDIR
+mkdir -p "$TMPDIR"
+```
+
+Container caches and temporary files then use the run's data-disk mounts too.
+Terminal recording explicitly uses `/agent-logs/.asciinema`, so recorder config
+does not depend on an image's default HOME. Recorder startup failures preserve
+the actual exit code and error output instead of claiming the tool is absent.
+
+Docker image layers and build-time `RUN` commands still use the daemon's
+`DockerRootDir`; changing the campaign directory cannot relocate them. Doctor
+checks that filesystem separately using the existing 10/20-GiB space thresholds,
+and invokes the terminal tools rather than only looking up their executables.
+Moving the daemon storage requires host administration and coordination with
+other containers. Bind-backed development storage does not restart that daemon.
+
 ```bash
 python -m scripts.run_benchmark_release \
   --manifest configs/benchmarks/0.0.1.json \

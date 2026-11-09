@@ -837,10 +837,32 @@ USER pitbench-agent
     volumes:
       - ${{T_BENCH_TASK_LOGS_PATH}}:${{T_BENCH_CONTAINER_LOGS_PATH}}
       - ${{T_BENCH_TASK_AGENT_LOGS_PATH}}:${{T_BENCH_CONTAINER_AGENT_LOGS_PATH}}
+      - development-workspace:/workspace/repo
+      - development-home:/home/pitbench-agent
+      - ${{T_BENCH_TASK_DEVELOPMENT_STORAGE_PATH}}/tmp:/tmp
+      - ${{T_BENCH_TASK_DEVELOPMENT_STORAGE_PATH}}/var-tmp:/var/tmp
 {runs_volume}    environment:
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
 {runs_environment}      PYTHONHASHSEED: "0"
       TZ: "UTC"
+      TMPDIR: "/tmp"
+      TMP: "/tmp"
+      TEMP: "/tmp"
+      XDG_CACHE_HOME: "/home/pitbench-agent/.cache"
+      XDG_CONFIG_HOME: "/home/pitbench-agent/.config"
+volumes:
+  development-workspace:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${{T_BENCH_TASK_DEVELOPMENT_STORAGE_PATH}}/workspace
+  development-home:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${{T_BENCH_TASK_DEVELOPMENT_STORAGE_PATH}}/home
 """

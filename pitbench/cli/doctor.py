@@ -669,7 +669,9 @@ def _agent_runtime_check(reference: str, client: object) -> DoctorCheck:
             reference,
             [
                 "-lc",
-                "command -v tmux; command -v asciinema",
+                "command -v tmux && command -v asciinema && tmux -V && "
+                "ASCIINEMA_CONFIG_HOME=/tmp/pitbench-doctor-asciinema "
+                "asciinema --version",
             ],
             entrypoint=["/bin/sh"],
             network_disabled=True,
@@ -699,7 +701,7 @@ def _agent_runtime_check(reference: str, client: object) -> DoctorCheck:
         return _check(
             CheckStatus.PASS,
             "agent runtime",
-            "tmux and asciinema are available",
+            "tmux and asciinema execute successfully",
         )
     except Exception as error:
         return _check(
@@ -864,6 +866,33 @@ def _docker_check(
         client,
         info,
         _check(CheckStatus.PASS, "Docker API", f"server {version} answered ping"),
+    )
+
+
+def _docker_storage_check(info: dict) -> DoctorCheck:
+    root = info.get("DockerRootDir")
+    try:
+        if not isinstance(root, str) or not root:
+            raise ValueError("Docker did not report DockerRootDir")
+        disk = shutil.disk_usage(root).free
+    except (OSError, ValueError) as error:
+        return _check(
+            CheckStatus.WARN,
+            "Docker storage",
+            f"cannot inspect the daemon filesystem: {error}",
+            "Check free space on DockerRootDir on the daemon host.",
+        )
+    status = (
+        CheckStatus.FAIL if disk < 10 * _GIB
+        else CheckStatus.WARN if disk < 20 * _GIB
+        else CheckStatus.PASS
+    )
+    return _check(
+        status,
+        "Docker storage",
+        f"{root}: {_format_gib(disk)} free; image layers use this filesystem",
+        "Free daemon storage or move DockerRootDir before building images."
+        if status is not CheckStatus.PASS else None,
     )
 
 
@@ -1454,6 +1483,8 @@ def run_doctor(
     checks.extend(_configuration_collector_checks(root, context.config))
     client, docker_info, docker_result = _docker_check(client_factory)
     checks.append(docker_result)
+    if client is not None:
+        checks.append(_docker_storage_check(docker_info))
     image_checks, ghcr_references, _ = _image_checks(context, client)
     checks.extend(image_checks)
     checks.extend(_registry_and_proxy_checks(client, docker_info, ghcr_references))
@@ -1481,8 +1512,10 @@ def evaluation_checks(
     catalog = TaskCatalog(repository_root)
     source_cache: dict[str, DoctorCheck] = {}
     runtime_cache: dict[str, DoctorCheck] = {}
-    client, _, docker_check = _docker_check(client_factory)
+    client, docker_info, docker_check = _docker_check(client_factory)
     checks.append(docker_check)
+    if client is not None:
+        checks.append(_docker_storage_check(docker_info))
     try:
         for task_id in task_ids:
             try:
