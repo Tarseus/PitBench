@@ -290,6 +290,8 @@ def failure_reason(error: Exception) -> str | None:
         return "timed_out"
     if isinstance(error, MemoryError):
         return "out_of_memory"
+    if isinstance(error, ParameterRejected):
+        return "parameter_rejected"
     return None
 
 

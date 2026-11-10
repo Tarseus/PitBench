@@ -13,6 +13,7 @@ import math
 import os
 import re
 import subprocess
+import tempfile
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -33,17 +34,23 @@ from pitbench.problem_families.public_verification import (
     check_bin_packing,
     check_cvrp,
     check_graph_coloring,
+    check_resource_constrained_project_schedule,
+    check_routing_variant,
     edge_cost,
 )
 from pitbench.problem_families.verification import (
     CPFamily,
     CVRPFamily,
     MIPFamily,
+    VerificationResult,
     _check_balanced_subset_sum_solution,
     _check_job_shop_start_times,
     _check_multidimensional_knapsack_solution,
     _check_scheduling_solution,
+    _mip_weighted_tardiness_source_check,
+    _mps_metadata_payload,
     _public_multidimensional_knapsack_model,
+    _read_mps_numeric_model,
     _public_scheduling_processing_times,
 )
 
@@ -89,7 +96,7 @@ def generated_reference_instances(manifest_path: Path) -> list[dict]:
 
 
 def verify_reference_file(instance: Path, solution: Path, kind: str) -> dict:
-    if kind == "euclidean_cvrp":
+    if kind in {"euclidean_cvrp", "heterogeneous_fleet_vrp", "multi_depot_vrp", "open_vrp"}:
         checked = CVRPFamily().verify(instance, solution)
     elif kind in {"bin_packing", "graph_coloring", "balanced_subset_sum"}:
         checked = CPFamily().verify(instance, solution)
@@ -98,9 +105,13 @@ def verify_reference_file(instance: Path, solution: Path, kind: str) -> dict:
             json.loads(solution.read_text())["start_times"],
             _job_shop_operations(instance),
         )
+    elif kind == "resource_constrained_project_scheduling":
+        checked = check_resource_constrained_project_schedule(
+            json.loads(instance.read_text()), json.loads(solution.read_text())
+        )
     else:
         checked = MIPFamily().verify(instance, solution)
-    return checked.model_dump()
+    return checked.model_dump() if hasattr(checked, "model_dump") else checked
 
 
 @dataclass
@@ -402,6 +413,126 @@ def _job_shop(jobs: list[list[list[int]]], budget: SearchBudget) -> ReferenceRes
     )
 
 
+def _weighted_tardiness_schedule_reference(path: Path) -> ReferenceResult:
+    from pitbench.problem_families.verification import _mps_metadata_payload
+
+    data = _mps_metadata_payload(path, "PITBENCH_SCHEDULING_DATA")
+    if data is None:
+        raise ValueError("weighted-tardiness MPS has no original scheduling data")
+    processing = data["processing_times"]
+    releases = data["release_dates"]
+    dues = data["due_dates"]
+    weights = data["weights"]
+    setup = data["setup_times"]
+    count = len(processing)
+    order = sorted(
+        range(count),
+        key=lambda job: (
+            dues[job],
+            processing[job] / weights[job],
+            job,
+        ),
+    )
+    starts = [0] * count
+    finish, previous = 0, None
+    for job in order:
+        ready = releases[job] if previous is None else finish + setup[previous][job]
+        starts[job] = max(releases[job], ready)
+        finish = starts[job] + processing[job]
+        previous = job
+    tardiness = [
+        max(0, starts[job] + processing[job] - dues[job])
+        for job in range(count)
+    ]
+    values = {f"s{job}": starts[job] for job in range(count)}
+    values.update({f"t{job}": tardiness[job] for job in range(count)})
+    values.update(
+        {
+            f"y{first}_{second}": int(starts[first] < starts[second])
+            for first in range(count)
+            for second in range(first + 1, count)
+        }
+    )
+    objective = sum(
+        weight * late for weight, late in zip(weights, tardiness, strict=True)
+    )
+    return ReferenceResult(
+        {"values": values, "objective": objective},
+        False,
+        {"kind": "deadline_order_feasible_schedule", "order": order},
+        "feasible_reference",
+    )
+
+
+def _constructive_mps_reference(
+    path: Path, config: dict[str, Any], index: int
+) -> ReferenceResult:
+    """Construct a feasible MPS witness when no analytic proof is available."""
+    model = _read_mps_numeric_model(path)
+    if model is None:
+        raise ValueError("constructive MPS reference cannot parse input")
+    kind = config["kind"]
+    values = dict.fromkeys(model["columns"], 0)
+    if kind == "multidimensional_knapsack_mps":
+        pass  # The empty selection is source-feasible.
+    elif kind == "random_set_covering_mip":
+        values = dict.fromkeys(model["columns"], 1)
+    elif kind == "facility_location_mip":
+        facilities = sorted(
+            int(name[1:]) for name in model["columns"] if name.startswith("y")
+        )
+        customers = sorted(
+            {
+                int(name.rsplit("_", 1)[1])
+                for name in model["columns"]
+                if name.startswith("x") and "_" in name
+            }
+        )
+        remaining = {}
+        for facility in facilities:
+            row = model["coefficients"].get(f"c{facility}", {})
+            remaining[facility] = int(-row[f"y{facility}"])
+            values[f"y{facility}"] = 1
+        for customer in customers:
+            demand = int(model["row_lower"][f"d{customer}"])
+            for facility in facilities:
+                amount = min(demand, remaining[facility])
+                if amount:
+                    values[f"x{facility}_{customer}"] = amount
+                    remaining[facility] -= amount
+                    demand -= amount
+                if demand == 0:
+                    break
+            if demand:
+                raise ValueError("facility-location witness cannot satisfy demand")
+    elif kind == "graph_coloring_mip":
+        from pitbench.instances.generate import graph_coloring_data
+
+        graph, planted, _ = graph_coloring_data(config, index)
+        source = _mps_metadata_payload(path, "PITBENCH_GRAPH_DATA")
+        if (
+            source is None
+            or graph["vertex_count"] != source["vertex_count"]
+            or graph["edge_endpoints"] != source["edge_endpoints"]
+        ):
+            raise ValueError("graph-coloring source graph differs from MPS metadata")
+        for vertex, color in enumerate(planted):
+            values[f"x{vertex}_{color}"] = 1
+            values[f"y{color}"] = 1
+    else:
+        raise ValueError(f"no constructive MPS witness for {kind}")
+    objective = sum(
+        coefficient * values[column]
+        for column, coefficient in model["cost"].items()
+    )
+    return ReferenceResult(
+        {"values": values, "objective": objective},
+        False,
+        {"kind": f"constructive_{kind}_feasible_witness"},
+        "feasible_reference",
+    )
+
+
 def _cvrp(
     instance: dict,
     budget: SearchBudget,
@@ -450,6 +581,19 @@ def _cvrp(
             False,
             {"kind": "time_window_feasibility_witness"},
             "variant_witness_only",
+        )
+    if "num_vehicles" in instance:
+        solution = {"routes": capacity_partition_routes(instance)}
+        checked = check_cvrp(instance, solution)
+        if not checked["feasible"]:
+            raise ValueError(
+                "native reference cannot construct a witness within the vehicle limit"
+            )
+        return ReferenceResult(
+            solution,
+            False,
+            {"kind": "capacity_partition_with_vehicle_limit"},
+            "feasible_reference_only",
         )
     solution = {"routes": [[i] for i in range(1, n + 1)]}
     if n > max_customers:
@@ -645,6 +789,33 @@ def solve_reference(
             instance, budget, max_exact_customers, max_exact_time_window_customers
         )
         checked = check_cvrp(instance, result.solution)
+    elif kind in {"heterogeneous_fleet_vrp", "multi_depot_vrp", "open_vrp"}:
+        instance = json.loads(path.read_text())
+        capacities = [vehicle["capacity"] for vehicle in instance["vehicle_types"]]
+        type_id = len(capacities) - 1 if kind == "heterogeneous_fleet_vrp" else 0
+        capacity = capacities[type_id]
+        routes, current, load = [], [], 0
+        for node in instance["customers"]:
+            demand = instance["demands"][node]
+            if current and load + demand > capacity:
+                routes.append(current)
+                current, load = [], 0
+            current.append(node)
+            load += demand
+        if current:
+            routes.append(current)
+        depot_count = len(instance["depots"])
+        type_ids = (
+            [route % depot_count for route in range(len(routes))]
+            if kind == "multi_depot_vrp"
+            else [type_id] * len(routes)
+        )
+        result = ReferenceResult(
+            {"routes": routes, "vehicle_type_ids": type_ids},
+            False,
+            {"kind": "sequential_capacity_partition"},
+        )
+        checked = check_routing_variant(instance, result.solution)
     elif kind == "bin_packing":
         instance = json.loads(path.read_text())
         result = _bin_packing(instance, budget)
@@ -666,6 +837,23 @@ def solve_reference(
         checked = _check_job_shop_start_times(
             result.solution["start_times"], jobs
         ).model_dump()
+    elif kind == "resource_constrained_project_scheduling":
+        instance = json.loads(path.read_text())
+        starts = [0] * len(instance["activities"])
+        elapsed = 0
+        # Generated precedence arcs are acyclic and ordered by activity id.
+        for activity in range(len(starts)):
+            starts[activity] = elapsed
+            elapsed += instance["activities"][activity]["duration"]
+        result = ReferenceResult(
+            {"start_times": starts},
+            False,
+            {"kind": "serial_feasible_schedule"},
+        )
+        checked = check_resource_constrained_project_schedule(
+            instance, result.solution
+        )
+        checked = VerificationResult.model_validate(checked).model_dump()
     elif kind == "single_machine_scheduling_mip":
         processing = _public_scheduling_processing_times(path)
         if processing is None:
@@ -688,6 +876,23 @@ def solve_reference(
             {"kind": "shortest_processing_time", "order": order},
         )
         checked = _check_scheduling_solution(result.solution, processing).model_dump()
+    elif kind == "single_machine_weighted_tardiness_mip":
+        result = _weighted_tardiness_schedule_reference(path)
+        numeric = MIPFamily._verify_numeric_model_solution(path, result.solution)
+        checked = _mip_weighted_tardiness_source_check(
+            path, result.solution, numeric
+        ).model_dump()
+    elif kind in {
+        "multidimensional_knapsack_mps",
+        "random_set_covering_mip",
+        "facility_location_mip",
+        "graph_coloring_mip",
+    }:
+        result = _constructive_mps_reference(path, config, index)
+        with tempfile.TemporaryDirectory(prefix="pitbench-mps-reference-") as tmp:
+            candidate = Path(tmp) / "candidate.solution.json"
+            candidate.write_text(json.dumps(result.solution))
+            checked = MIPFamily().verify(path, candidate).model_dump()
     elif kind == "balanced_subset_sum":
         instance = json.loads(path.read_text())
         generated, selected, basis = balanced_subset_sum_data(config, index)
@@ -1065,6 +1270,137 @@ def _solve_native_mip_reference(path, backend, seconds, seed, threads, directory
     )
 
 
+def _solve_highs_docker_reference(
+    path: Path,
+    backend: dict,
+    seconds: float,
+    seed: int,
+    threads: int,
+    directory: Path,
+    cpus: list[int],
+    warm: dict | None = None,
+) -> ReferenceResult:
+    """Run the pinned Highs image when host highspy ABI differs from the image."""
+    temporary = directory / "tmp"
+    temporary.mkdir(exist_ok=True)
+    options_path = directory / "highs.options"
+    options_path.write_text(
+        "mip_rel_gap = 0\nmip_abs_gap = 0\nlog_file = /output/solver.log\n"
+    )
+    warm_path = None
+    if warm is not None:
+        warm_path = directory / "warm.solution"
+        raw = warm.get("raw_solution")
+        if raw is None:
+            values = warm.get("values")
+            model = _read_mps_numeric_model(path)
+            if (
+                not isinstance(values, dict)
+                or model is None
+                or set(values) != set(model["columns"])
+            ):
+                raise ValueError("Highs MIP warm start has no complete MPS assignment")
+            lines = [
+                "Model status",
+                "Time limit reached",
+                "",
+                "# Primal solution values",
+                "Feasible",
+                f"Objective {warm['objective']}",
+                f"# Columns {len(model['columns'])}",
+                *(f"{name} {values[name]}" for name in model["columns"]),
+                "None",
+                "",
+                "# Basis",
+                "None",
+            ]
+            raw = "\n".join(lines) + "\n"
+        warm_path.write_text(raw)
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--read-only",
+        "--cpus",
+        str(threads),
+        "--cpuset-cpus",
+        ",".join(map(str, cpus)),
+        "--memory",
+        backend.get("memory", "4g"),
+        "--pids-limit",
+        "512",
+        "--volume",
+        f"{path.resolve()}:/input/model.mps:ro",
+        "--volume",
+        f"{options_path.resolve()}:/input/highs.options:ro",
+        "--volume",
+        f"{directory.resolve()}:/output:rw",
+        "--volume",
+        f"{temporary.resolve()}:/tmp:rw",
+        "--env",
+        "TMPDIR=/tmp",
+        backend["image"],
+        "/workspace/repo/build/bin/highs",
+        "--model_file",
+        "/input/model.mps",
+        "--time_limit",
+        str(seconds),
+        "--threads",
+        str(threads),
+        "--random_seed",
+        str(seed),
+        "--options_file",
+        "/input/highs.options",
+        "--solution_file",
+        "/output/native.solution",
+    ]
+    if warm_path is not None:
+        command.extend(["--read_solution_file", "/output/warm.solution"])
+    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    (directory / "container.stdout.log").write_text(completed.stdout)
+    (directory / "container.stderr.log").write_text(completed.stderr)
+    if completed.returncode:
+        raise RuntimeError(
+            completed.stderr.strip() or "Highs reference container failed"
+        )
+    solution_path = directory / "native.solution"
+    raw_solution = solution_path.read_text() if solution_path.is_file() else None
+    status_match = re.search(r"^\s*Status\s+(.+)$", completed.stdout, re.MULTILINE)
+    dual_match = re.search(r"^\s*Dual bound\s+(-?[0-9.eE+]+)", completed.stdout, re.MULTILINE)
+    nodes_match = re.search(r"^\s*Nodes\s+([0-9]+)", completed.stdout, re.MULTILINE)
+    solver_status = status_match.group(1).strip() if status_match else "unknown"
+    objective_match = (
+        re.search(r"^Objective\s+(-?[0-9.eE+]+)$", raw_solution, re.MULTILINE)
+        if raw_solution
+        else None
+    )
+    has_solution = objective_match is not None
+    solution = (
+        {
+            "raw_solution": raw_solution,
+            "objective": float(objective_match.group(1)),
+        }
+        if has_solution
+        else None
+    )
+    basis = {
+        "kind": "highs_mip_search",
+        "solver_status": solver_status,
+        "dual_bound": float(dual_match.group(1)) if dual_match else None,
+        "solver_time_sec": seconds,
+        "nodes": int(nodes_match.group(1)) if nodes_match else None,
+        "image": backend["image"],
+    }
+    return ReferenceResult(
+        solution,
+        solver_status.lower() == "optimal",
+        basis,
+        solver_status,
+    )
+
+
 def _solve_mip_backend(
     path: Path,
     kind: str,
@@ -1205,11 +1541,78 @@ def _solve_cp_backend(
     directory: Path,
     emit,
     warm: dict | None,
-) -> ReferenceResult:
+    *,
+    build_only: bool = False,
+) -> ReferenceResult | dict:
     from ortools.sat.python import cp_model
 
     model = cp_model.CpModel()
-    if kind == "job_shop_scheduling":
+    if kind == "bin_packing":
+        instance = json.loads(path.read_text())
+        weights = instance["weights"]
+        capacity = int(instance["capacity"])
+        if not weights or any(type(weight) is not int or not 0 < weight <= capacity for weight in weights):
+            raise ValueError("invalid bin-packing weights or capacity")
+        total = sum(weights)
+        lower_bound = math.ceil(total / capacity)
+        order = sorted(range(len(weights)), key=lambda index: (-weights[index], index))
+        initial_bins: list[list[int]] = []
+        initial_loads: list[int] = []
+        for item in order:
+            choices = [
+                index
+                for index, load in enumerate(initial_loads)
+                if load + weights[item] <= capacity
+            ]
+            if choices:
+                bin_index = min(choices, key=lambda index: (capacity - initial_loads[index], index))
+                initial_bins[bin_index].append(item)
+                initial_loads[bin_index] += weights[item]
+            else:
+                initial_bins.append([item])
+                initial_loads.append(weights[item])
+        emit({"bins": initial_bins})
+        bin_count = len(initial_bins)
+        assignments = [
+            [model.new_bool_var(f"item_{item}_bin_{bin_index}") for bin_index in range(bin_count)]
+            for item in range(len(weights))
+        ]
+        used = [model.new_bool_var(f"used_{bin_index}") for bin_index in range(bin_count)]
+        for item in range(len(weights)):
+            model.add_exactly_one(assignments[item])
+        for bin_index in range(bin_count):
+            model.add(
+                sum(weights[item] * assignments[item][bin_index] for item in range(len(weights)))
+                <= capacity * used[bin_index]
+            )
+            model.add(
+                sum(assignments[item][bin_index] for item in range(len(weights)))
+                >= used[bin_index]
+            )
+            if bin_index:
+                model.add(used[bin_index - 1] >= used[bin_index])
+        objective = model.new_int_var(lower_bound, bin_count, "bin_count")
+        model.add(objective == sum(used))
+
+        def decode(value):
+            return {
+                "bins": [
+                    [item for item in range(len(weights)) if value(assignments[item][bin_index])]
+                    for bin_index in range(bin_count)
+                    if value(used[bin_index])
+                ]
+            }
+
+        if warm:
+            warm_bins = warm.get("bins", [])
+            bin_of = {item: bin_index for bin_index, items in enumerate(warm_bins) for item in items}
+            if len(bin_of) == len(weights):
+                for item, bin_index in bin_of.items():
+                    if bin_index < bin_count:
+                        model.add_hint(assignments[item][bin_index], 1)
+                for bin_index in range(min(len(warm_bins), bin_count)):
+                    model.add_hint(used[bin_index], 1)
+    elif kind == "job_shop_scheduling":
         jobs = _job_shop_operations(path)
         horizon = sum(d for job in jobs for _, d in job)
         starts, ends, machines = [], [], {}
@@ -1233,6 +1636,57 @@ def _solve_cp_backend(
 
         def decode(value):
             return {"start_times": [value(v) for v in starts]}
+
+        if warm:
+            for variable, value in zip(starts, warm["start_times"], strict=True):
+                model.add_hint(variable, value)
+    elif kind == "resource_constrained_project_scheduling":
+        instance = json.loads(path.read_text())
+        activities = instance["activities"]
+        horizon = sum(int(activity["duration"]) for activity in activities)
+        starts, by_resource = [], [
+            ([], []) for _ in instance["resource_capacities"]
+        ]
+        serial_starts, elapsed = [], 0
+        for activity in activities:
+            serial_starts.append(elapsed)
+            elapsed += int(activity["duration"])
+        emit({"start_times": serial_starts})
+        for index, activity in enumerate(activities):
+            start = model.new_int_var(0, horizon, f"start_{index}")
+            end = model.new_int_var(0, horizon, f"end_{index}")
+            interval = model.new_interval_var(
+                start, int(activity["duration"]), end, f"activity_{index}"
+            )
+            starts.append(start)
+            for resource, demand in enumerate(activity["resource_demands"]):
+                if demand:
+                    by_resource[resource][0].append(interval)
+                    by_resource[resource][1].append(demand)
+        for predecessor, successor in instance["precedence_arcs"]:
+            model.add(
+                starts[successor]
+                >= starts[predecessor]
+                + int(activities[predecessor]["duration"])
+            )
+        for resource, (resource_intervals, demands) in enumerate(by_resource):
+            if resource_intervals:
+                model.add_cumulative(
+                    resource_intervals,
+                    demands,
+                    instance["resource_capacities"][resource],
+                )
+        objective = model.new_int_var(0, horizon, "makespan")
+        model.add_max_equality(
+            objective,
+            [
+                starts[index] + int(activity["duration"])
+                for index, activity in enumerate(activities)
+            ],
+        )
+
+        def decode(value):
+            return {"start_times": [value(variable) for variable in starts]}
 
         if warm:
             for variable, value in zip(starts, warm["start_times"], strict=True):
@@ -1305,6 +1759,8 @@ def _solve_cp_backend(
         raise ValueError(f"CP-SAT reference backend does not support {kind}")
     model.minimize(objective)
     model.export_to_file(str(directory / "model.pbtxt"))
+    if build_only:
+        return {"model": model, "decode": decode}
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = seconds
     solver.parameters.num_search_workers = threads
@@ -1320,15 +1776,22 @@ def _solve_cp_backend(
             emit(decode(self.value))
 
     status = solver.solve(model, Incumbents())
-    if status == cp_model.UNKNOWN and (directory / "incumbent.json").exists():
-        incumbent = json.loads((directory / "incumbent.json").read_text())
+    if status == cp_model.UNKNOWN:
+        incumbent_path = directory / "incumbent.json"
+        incumbent = (
+            json.loads(incumbent_path.read_text())
+            if incumbent_path.exists()
+            else None
+        )
         return ReferenceResult(
-            json.loads(Path(incumbent["solution"]).read_text()),
+            json.loads(Path(incumbent["solution"]).read_text())
+            if incumbent
+            else None,
             False,
             {
                 "kind": "cp_sat_search",
                 "solver_status": "UNKNOWN",
-                "solver_has_incumbent": False,
+                "solver_has_incumbent": bool(incumbent),
                 "dual_bound": solver.best_objective_bound,
                 "threads": threads,
             },
@@ -1364,6 +1827,63 @@ def _solve_pyvrp_backend(
     from pyvrp.stop import MaxRuntime
 
     from pitbench.solver_drivers.run import PyVRPDriver
+
+    if instance.get("problem_kind") in {
+        "heterogeneous_fleet_vrp",
+        "multi_depot_vrp",
+        "open_vrp",
+    }:
+        model, customer_nodes = PyVRPDriver._routing_variant_model(pyvrp, instance)
+        result = model.solve(
+            MaxRuntime(seconds),
+            seed=seed,
+            display=False,
+        )
+        if not result.best.is_feasible():
+            return ReferenceResult(
+                None,
+                False,
+                {
+                    "kind": "pyvrp_routing_variant_search",
+                    "solver_runtime_sec": result.runtime,
+                    "iterations": result.num_iterations,
+                },
+                "time_limit",
+            )
+        routes, vehicle_type_ids = [], []
+        for route in result.best.routes():
+            routes.append(
+                [
+                    customer_nodes[int(activity.idx)]
+                    for activity in route
+                    if activity.is_client()
+                ]
+            )
+            vehicle_type = getattr(route, "vehicle_type")
+            vehicle_type_ids.append(
+                int(vehicle_type() if callable(vehicle_type) else vehicle_type)
+            )
+        solution = {"routes": routes, "vehicle_type_ids": vehicle_type_ids}
+        emit(
+            solution,
+            False,
+            {
+                "kind": "pyvrp_routing_variant_search",
+                "solver_runtime_sec": result.runtime,
+                "iterations": result.num_iterations,
+            },
+            "incumbent",
+        )
+        return ReferenceResult(
+            solution,
+            False,
+            {
+                "kind": "pyvrp_routing_variant_search",
+                "solver_runtime_sec": result.runtime,
+                "iterations": result.num_iterations,
+            },
+            "time_limit",
+        )
 
     vrp = directory / "input.vrp"
     PyVRPDriver._vrplib(instance, vrp)
@@ -1530,6 +2050,17 @@ def run_reference_worker(job_path: Path) -> dict:
         elif implementation == "native_mip_cli":
             result = _solve_native_mip_reference(
                 path, job["backend"], seconds, seed, len(cpus), directory
+            )
+        elif implementation == "highs_docker":
+            result = _solve_highs_docker_reference(
+                path,
+                job["backend"],
+                seconds,
+                seed,
+                len(cpus),
+                directory,
+                cpus,
+                warm,
             )
         elif implementation in {"scip", "highs"}:
             result = _solve_mip_backend(

@@ -169,6 +169,65 @@ class PyVRPDriver(SolverDriver):
         path.write_text("\n".join(lines) + "\n")
 
     @staticmethod
+    def _routing_variant_model(pyvrp, instance: dict):
+        """Build heterogeneous, multi-depot, or open routing data from normalized nodes."""
+        from pyvrp import Location, Model
+        from pitbench.problem_families.public_verification import edge_cost
+
+        model = Model()
+        locations = [
+            model.add_location(float(x), float(y), name=f"node_{index}")
+            for index, (x, y) in enumerate(instance["coordinates"])
+        ]
+        depots = {
+            depot: model.add_depot(locations[depot], name=f"depot_{depot}")
+            for depot in instance["depots"]
+        }
+        clients = [
+            model.add_client(
+                locations[node],
+                delivery=int(instance["demands"][node]),
+                name=f"client_{node}",
+            )
+            for node in instance["customers"]
+        ]
+        for vehicle in instance["vehicle_types"]:
+            start = depots[vehicle["start_depot"]]
+            end = (
+                depots[vehicle["end_depot"]]
+                if vehicle.get("end_depot") is not None
+                else None
+            )
+            model.add_vehicle_type(
+                num_available=int(vehicle["count"]),
+                capacity=[int(vehicle["capacity"])],
+                start_depot=start,
+                end_depot=end,
+                fixed_cost=int(vehicle.get("fixed_cost", 0)),
+                name=f"vehicle_type_{vehicle['id']}",
+            )
+        metric = instance.get("distance_metric", "EUC_2D")
+        for first, source in enumerate(locations):
+            for second, destination in enumerate(locations):
+                if first == second:
+                    continue
+                distance = round(
+                    edge_cost(
+                        instance["coordinates"],
+                        first,
+                        second,
+                        metric,
+                    )
+                )
+                model.add_edge(
+                    source,
+                    destination,
+                    distance=int(distance),
+                    duration=int(distance),
+                )
+        return model, [int(node) for node in instance["customers"]]
+
+    @staticmethod
     def round_euc_2d(values):
         """TSPLIB nearest-integer semantics, including exact half distances."""
         import numpy as np
@@ -185,6 +244,8 @@ class PyVRPDriver(SolverDriver):
         args.trajectory.parent.mkdir(parents=True, exist_ok=True)
         args.trajectory.write_text("")
         try:
+            from pitbench.problem_families.verification import CVRPFamily
+
             try:
                 import tomli  # noqa: F401
             except ModuleNotFoundError:
@@ -210,8 +271,25 @@ class PyVRPDriver(SolverDriver):
                 )
             with tempfile.TemporaryDirectory(prefix="pitbench-pyvrp-") as temporary:
                 vrp = Path(temporary) / "instance.vrp"
-                PyVRPDriver._vrplib(instance, vrp)
-                if model is None:
+                variant = instance.get("problem_kind") in {
+                    "heterogeneous_fleet_vrp",
+                    "multi_depot_vrp",
+                    "open_vrp",
+                }
+                variant_clients = None
+                if variant:
+                    native_model, variant_clients = (
+                        PyVRPDriver._routing_variant_model(pyvrp, instance)
+                    )
+                    result = native_model.solve(
+                        stop=MaxRuntime(args.budget),
+                        seed=args.seed,
+                        display=False,
+                        **options,
+                    )
+                else:
+                    PyVRPDriver._vrplib(instance, vrp)
+                if not variant and model is None:
                     from pyvrp.cli import solve as classic_solve
 
                     result = classic_solve(
@@ -224,7 +302,7 @@ class PyVRPDriver(SolverDriver):
                         stats_dir=temporary,
                         sol_dir=None,
                     )
-                else:
+                elif not variant:
                     data = pyvrp.read(vrp, round_func=PyVRPDriver.round_euc_2d)
                     solve = getattr(pyvrp, "solve", None)
                     direct_solve = callable(solve)
@@ -265,9 +343,36 @@ class PyVRPDriver(SolverDriver):
             solver_routes = (
                 routes_method() if callable(routes_method) else result.best.get_routes()
             )
-            routes = [PyVRPDriver._route_visits(route) for route in solver_routes]
+            if variant:
+                routes = [
+                    [
+                        variant_clients[int(activity.idx)]
+                        for activity in route
+                        if activity.is_client()
+                    ]
+                    for route in solver_routes
+                ]
+                vehicle_type_ids = []
+                for route in solver_routes:
+                    vehicle_type = getattr(route, "vehicle_type")
+                    vehicle_type_ids.append(
+                        int(vehicle_type() if callable(vehicle_type) else vehicle_type)
+                    )
+                solution = {
+                    "routes": routes,
+                    "vehicle_type_ids": vehicle_type_ids,
+                }
+            else:
+                routes = [PyVRPDriver._route_visits(route) for route in solver_routes]
+                solution = {"routes": routes}
             objective = float(result.cost())
-            write_solution(args.output, {"routes": routes})
+            solution_path = write_solution(args.output, solution)
+            checked = CVRPFamily().verify(args.instance, solution_path)
+            if not checked.feasible or checked.objective is None:
+                raise ValueError(
+                    f"PyVRP returned an invalid route: {checked.detail}"
+                )
+            objective = float(checked.objective)
             elapsed = 0.0
             incumbent = float("inf")
             for runtime, feasible, best_cost in PyVRPDriver._statistics_rows(
@@ -342,9 +447,27 @@ class VroomDriver(SolverDriver):
         ]
 
     @staticmethod
+    def _custom_matrices(matrix: list[list[int]]) -> dict:
+        return {
+            "matrices": {
+                "car": {
+                    "durations": matrix,
+                    "distances": matrix,
+                }
+            }
+        }
+
+    @staticmethod
     def _request(instance: dict) -> dict:
         from pitbench.problem_families.public_verification import edge_cost
 
+        if instance.get("problem_kind") in {
+            "heterogeneous_fleet_vrp",
+            "multi_depot_vrp",
+            "open_vrp",
+        }:
+            request, _ = VroomDriver._routing_variant_request(instance)
+            return request
         coordinates = instance["coordinates"]
         metric = instance.get("distance_metric")
         scale = 1 if metric == "EUC_2D" else 1000
@@ -357,24 +480,93 @@ class VroomDriver(SolverDriver):
         ]
         total = sum(instance["demands"])
         capacity = int(instance["capacity"])
-        vehicles = max(1, math.ceil(total / capacity) + 1)
+        vehicles = int(
+            instance.get("num_vehicles", max(1, math.ceil(total / capacity) + 1))
+        )
+        depot = int(instance.get("depot", 0))
+        jobs = []
+        for index, demand in enumerate(instance["demands"]):
+            if index == depot:
+                continue
+            job = {
+                "id": index,
+                "location_index": index,
+                "amount": [int(demand)],
+            }
+            if "service_times" in instance:
+                job["service"] = int(round(instance["service_times"][index]))
+            if "time_windows" in instance:
+                job["time_windows"] = [
+                    [int(round(value)) for value in instance["time_windows"][index]]
+                ]
+            jobs.append(job)
+        vehicles_data = []
+        for index in range(vehicles):
+            vehicle = {
+                "id": index,
+                "profile": "car",
+                "start_index": depot,
+                "end_index": depot,
+                "capacity": [capacity],
+            }
+            if "time_windows" in instance:
+                vehicle["time_window"] = [
+                    int(round(value)) for value in instance["time_windows"][depot]
+                ]
+            vehicles_data.append(vehicle)
         return {
-            "matrix": matrix,
-            "jobs": [
-                {"id": index, "location_index": index, "amount": [int(demand)]}
-                for index, demand in enumerate(instance["demands"])
-                if index != int(instance.get("depot", 0))
-            ],
-            "vehicles": [
-                {
-                    "id": index,
-                    "start_index": int(instance.get("depot", 0)),
-                    "end_index": int(instance.get("depot", 0)),
-                    "capacity": [capacity],
-                }
-                for index in range(vehicles)
-            ],
+            **VroomDriver._custom_matrices(matrix),
+            "jobs": jobs,
+            "vehicles": vehicles_data,
         }
+
+    @staticmethod
+    def _routing_variant_request(instance: dict) -> tuple[dict, dict[int, int]]:
+        from pitbench.problem_families.public_verification import edge_cost
+
+        coordinates = instance["coordinates"]
+        metric = instance.get("distance_metric", "EUC_2D")
+        scale = 1 if metric == "EUC_2D" else 1000
+        matrix = [
+            [
+                round(edge_cost(coordinates, first, second, metric) * scale)
+                for second in range(len(coordinates))
+            ]
+            for first in range(len(coordinates))
+        ]
+        jobs = [
+            {
+                "id": int(node),
+                "location_index": int(node),
+                "amount": [int(instance["demands"][node])],
+            }
+            for node in instance["customers"]
+        ]
+        vehicles, type_by_vehicle = [], {}
+        vehicle_id = 0
+        for type_id, vehicle_type in enumerate(instance["vehicle_types"]):
+            for _ in range(int(vehicle_type["count"])):
+                vehicle = {
+                    "id": vehicle_id,
+                    "profile": "car",
+                    "start_index": int(vehicle_type["start_depot"]),
+                    "capacity": [int(vehicle_type["capacity"])],
+                    "costs": {
+                        "fixed": int(vehicle_type.get("fixed_cost", 0)),
+                        "per_km": 1,
+                        "per_hour": 0,
+                    },
+                }
+                if vehicle_type.get("end_depot") is not None:
+                    vehicle["end_index"] = int(vehicle_type["end_depot"])
+                vehicles.append(vehicle)
+                type_by_vehicle[vehicle_id] = type_id
+                vehicle_id += 1
+        return {
+            **VroomDriver._custom_matrices(matrix),
+            "jobs": jobs,
+            "vehicles": vehicles,
+        }, type_by_vehicle
 
     @staticmethod
     def main(argv: list[str] | None = None) -> None:
@@ -458,8 +650,34 @@ class VroomDriver(SolverDriver):
             response = json.loads(response_text)
             if response.get("code", 0) != 0:
                 raise RuntimeError(str(response.get("error") or "vroom failed"))
-            routes = VroomDriver._route_jobs(response)
-            solution_path = write_solution(args.output, {"routes": routes})
+            instance_data = json.loads(args.instance.read_text())
+            if instance_data.get("problem_kind") in {
+                "heterogeneous_fleet_vrp",
+                "multi_depot_vrp",
+                "open_vrp",
+            }:
+                _, type_by_vehicle = VroomDriver._routing_variant_request(instance_data)
+                routes, vehicle_type_ids = [], []
+                for route in response.get("routes", []):
+                    customers = [
+                        int(step["id"] if "id" in step else step["job"])
+                        for step in route.get("steps", [])
+                        if step.get("type") == "job"
+                    ]
+                    if not customers:
+                        continue
+                    vehicle = int(route.get("vehicle", route.get("vehicle_id")))
+                    if vehicle not in type_by_vehicle:
+                        raise ValueError("VROOM returned an unknown vehicle identifier")
+                    routes.append(customers)
+                    vehicle_type_ids.append(type_by_vehicle[vehicle])
+                solution = {
+                    "routes": routes,
+                    "vehicle_type_ids": vehicle_type_ids,
+                }
+            else:
+                solution = {"routes": VroomDriver._route_jobs(response)}
+            solution_path = write_solution(args.output, solution)
             checked = CVRPFamily().verify(args.instance, solution_path)
             if not checked.feasible or checked.objective is None:
                 raise ValueError(f"VROOM returned an invalid route: {checked.detail}")
@@ -767,6 +985,14 @@ class HighsDriver(SolverDriver):
                     if raw_solution.exists()
                     else ""
                 )
+                exported_columns = re.search(
+                    r"(?m)^#?\s*Columns(?:\s+\d+)?\s*$", raw
+                )
+                if raw_solution.exists():
+                    # Retain evidence even when a time limit prevents exporting
+                    # a qualified incumbent. A finite log bound alone is not a
+                    # verified feasible reference solution.
+                    args.output.with_suffix(".native.sol").write_text(raw)
             print(completed.stdout, end="")
             print(completed.stderr, end="", file=sys.stderr)
             log = completed.stdout + "\n" + completed.stderr
@@ -810,13 +1036,13 @@ class HighsDriver(SolverDriver):
                 raise RuntimeError(
                     f"HiGHS process exit {completed.returncode}: {completed.stderr.strip()}"
                 )
-            # Exact Performance accepts only a solver-optimal result as a
-            # candidate solution. A time-limited MIP solve can write a fractional
-            # relaxation with a finite primal bound; it is an ordinary unsolved
-            # run, not a candidate for Qualification verification.
+            # Preserve any exported primal for the independent original-model
+            # verifier. Budget-truncated quality can score feasible incumbents
+            # even when the solver stopped before proving optimality; bounds
+            # without an exported assignment are not candidate solutions.
             has_solution = (
                 objective is not None
-                and solver_termination == SolverTermination.OPTIMAL
+                and exported_columns is not None
             )
             if has_solution:
                 write_solution(
@@ -880,11 +1106,44 @@ class NativeMipCliDriver(SolverDriver):
     def _command(cls, args: argparse.Namespace, solution: Path) -> list[str]:
         if args.threads != 1:
             raise ValueError("native MIP tasks require one solver thread")
+        parameters = getattr(args, "parameter_values", {})
+        parameter_commands = []
+        for name, value in sorted(parameters.items()):
+            if cls.dialect == "cbc" and name.lower() == "threads":
+                if value != 1:
+                    raise ParameterRejected("native MIP tasks require one solver thread")
+                continue
+            if (
+                not isinstance(name, str)
+                or re.fullmatch(r"[A-Za-z][A-Za-z0-9_/]*", name) is None
+            ):
+                raise ParameterRejected(f"invalid MIP parameter name: {name!r}")
+            if type(value) not in {str, int, float, bool} or (
+                isinstance(value, float) and not math.isfinite(value)
+            ):
+                raise ParameterRejected(f"invalid MIP parameter value: {name}")
+            if isinstance(value, bool):
+                rendered = (
+                    ("TRUE" if value else "FALSE")
+                    if cls.dialect == "scip"
+                    else ("on" if value else "off")
+                )
+            else:
+                rendered = str(value)
+            if re.fullmatch(r"[A-Za-z0-9_.+-]+", rendered) is None:
+                raise ParameterRejected(f"unsupported MIP parameter value: {name}")
+            if cls.dialect == "scip":
+                parameter_commands.extend(
+                    ["-c", f"set {name.replace('/', ' ')} {rendered}"]
+                )
+            else:
+                parameter_commands.extend(["-" + name, rendered])
         if cls.dialect == "scip":
             return [
                 args.solver,
                 "-c",
                 f"read {args.instance}",
+                *parameter_commands,
                 "-c",
                 f"set limits time {args.budget}",
                 "-c",
@@ -901,10 +1160,11 @@ class NativeMipCliDriver(SolverDriver):
         return [
             args.solver,
             str(args.instance),
+            *parameter_commands,
             "-seconds",
             str(args.budget),
-            "-threads",
-            str(args.threads),
+            # The declared native CBC recipe is serial. Its CLI has no
+            # threads option unless CBC was built with parallel support.
             "-randomSeed",
             str(args.seed),
             "-solve",
@@ -1013,9 +1273,21 @@ class NativeMipCliDriver(SolverDriver):
     def main(cls, argv: list[str] | None = None) -> None:
         from pitbench.problem_families.verification import expected_mip_variable_names
 
-        args = parser(solver=True).parse_args(argv)
+        arguments = parser(solver=True)
+        arguments.add_argument("--parameters", type=Path)
+        args = arguments.parse_args(argv)
         started = time.perf_counter()
         try:
+            args.parameter_values = (
+                json.loads(args.parameters.read_text()) if args.parameters else {}
+            )
+            if not isinstance(args.parameter_values, dict):
+                raise ParameterRejected("MIP parameters must be a mapping")
+            if args.parameters:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.with_suffix(".parameters.json").write_text(
+                    json.dumps(args.parameter_values, sort_keys=True, indent=2) + "\n"
+                )
             names = expected_mip_variable_names(args.instance)
             with tempfile.TemporaryDirectory(prefix="pitbench-native-mip-") as root:
                 solution_path = Path(root) / "solution.sol"
@@ -1038,6 +1310,16 @@ class NativeMipCliDriver(SolverDriver):
             if completed.returncode:
                 raise RuntimeError(f"{cls.dialect} process exit {completed.returncode}")
             log = completed.stdout + "\n" + completed.stderr
+            if args.parameter_values:
+                rejected = (
+                    r"invalid command|command <[^>]+> not available|parameter <[^>]+> unknown|wrong value .* for parameter|invalid parameter name"
+                    if cls.dialect == "scip"
+                    else r"No match for|Multiple matches for|String of .* is illegal"
+                )
+                if re.search(rejected, log, re.IGNORECASE):
+                    raise ParameterRejected(
+                        "solver rejected the declared MIP parameters; see retained stdout/stderr"
+                    )
             status = cls._status(log)
             lower_status = status.lower()
             termination = (

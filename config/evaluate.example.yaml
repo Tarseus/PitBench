@@ -14,7 +14,7 @@ paths:
 configuration_robustness:
   enabled: true
   scope: candidate
-  experiment_config: configs/experiments/configuration_robustness.yaml
+  experiment_config: configs/research/configuration_robustness_native_v2.yaml
   output_path: configuration-robustness
   cpus: null
   search_seed: 20260918

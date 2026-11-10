@@ -2311,6 +2311,7 @@ def test_highs_time_limit_does_not_export_fractional_relaxation(
     assert result["has_solution"] is False
     assert result["valid"] is False
     assert not output.with_suffix(".solution.json").exists()
+    assert output.with_suffix(".native.sol").read_text() == raw
 
 
 @pytest.mark.parametrize(

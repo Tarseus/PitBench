@@ -549,7 +549,9 @@ def _pinned_source_check(
 
 
 def _configuration_robustness_check(
-    repository_root: Path, config: EvaluationConfig
+    repository_root: Path,
+    config: EvaluationConfig,
+    task: PitBenchTask | None = None,
 ) -> DoctorCheck:
     configuration = config.configuration_robustness
     if not configuration.enabled:
@@ -571,11 +573,38 @@ def _configuration_robustness_check(
             f"experiment config does not exist: {experiment_config}",
             "Restore the configured experiment file, then rerun doctor.",
         )
+    if configuration.scope == "candidate" and task is not None:
+        from pitbench.evaluator.configuration import (
+            configuration_panel,
+            read_data,
+            validate_parameter_domains,
+        )
+
+        try:
+            panel = configuration_panel(
+                read_data(experiment_config), task, repository_root=repository_root
+            )
+            repository = RepositoryPluginRegistry.load(task.repository.plugin)
+            if panel is None or not repository.supports_fixed_solver_parameters:
+                return _check(
+                    CheckStatus.WARN,
+                    "Configuration Robustness",
+                    "unavailable: no approved parameter panel or native parameter driver for this task",
+                    "Define the parameter panel and driver before claiming full parameter coverage.",
+                )
+            validate_parameter_domains(panel["parameters"])
+        except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as error:
+            return _check(
+                CheckStatus.FAIL,
+                "Configuration Robustness",
+                f"invalid parameter panel: {error}",
+            )
     return _check(
         CheckStatus.PASS,
         "Configuration Robustness",
         "enabled; native candidate parameters scheduled after source evaluation"
-        if configuration.scope == "candidate" else "enabled; release-only parameter search scheduled",
+        if configuration.scope == "candidate"
+        else "enabled; release-only parameter search scheduled",
     )
 
 
@@ -584,16 +613,16 @@ def _configuration_collector_checks(
 ) -> list[DoctorCheck]:
     if not config.configuration_robustness.enabled:
         return []
-    if config.configuration_robustness.scope == "candidate":
-        # Candidate runtimes come from the native Judge's pinned source builds,
-        # not the historical globally installed collector images.
-        return []
     experiment_path = resolve_repository_path(
         repository_root, config.configuration_robustness.experiment_config
     )
     if not experiment_path.is_file():
         return []
-    from pitbench.evaluator.configuration import probe_collector, read_data
+    from pitbench.evaluator.configuration import (
+        probe_collector,
+        read_data,
+        validate_parameter_domains,
+    )
 
     try:
         experiment = read_data(experiment_path)
@@ -603,6 +632,12 @@ def _configuration_collector_checks(
         collector_images = experiment.get("collector_images") or {}
         if not isinstance(collector_images, dict):
             raise ValueError("collector_images must be a mapping")
+        if config.configuration_robustness.scope == "candidate":
+            for panel in panels:
+                validate_parameter_domains(panel["parameters"])
+            # Native runtimes are checked by the source Judge; old installed
+            # collector versions do not establish candidate runtime readiness.
+            return []
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as error:
         return [
             _check(
@@ -614,6 +649,8 @@ def _configuration_collector_checks(
 
     checks = []
     for panel in panels:
+        if panel.get("native_only"):
+            continue
         panel_name = (
             panel.get("collector", "unknown") if isinstance(panel, dict) else "unknown"
         )
@@ -1483,7 +1520,7 @@ def run_doctor(
     checks.append(_seed_protocol_check(context))
     checks.append(_reliability_plan_check(context))
     checks.append(_pinned_source_check(context, {}))
-    checks.append(_configuration_robustness_check(root, context.config))
+    checks.append(_configuration_robustness_check(root, context.config, context.task.task if context.task else None))
     checks.extend(_metric_scenario_checks(context))
     checks.extend(_configuration_collector_checks(root, context.config))
     client, docker_info, docker_result = _docker_check(client_factory)
@@ -1578,7 +1615,7 @@ def evaluation_checks(
                     f"representation transformations={'enabled' if protocol.representation_robustness else 'disabled'}",
                 )
             )
-            task_checks.append(_configuration_robustness_check(repository_root, config))
+            task_checks.append(_configuration_robustness_check(repository_root, config, record.task))
             task_checks.extend(_metric_scenario_checks(context))
             checks.extend(
                 DoctorCheck(

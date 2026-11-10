@@ -28,6 +28,10 @@ def _choice(values: list[int], index: int) -> int:
     return values[index % len(values)]
 
 
+def _choice_value(value: Any, index: int) -> Any:
+    return _choice(value, index) if isinstance(value, (list, tuple)) else value
+
+
 def _instance_seed(config: dict[str, Any], index: int) -> int:
     selected_seeds = config.get("selected_instance_seeds")
     if selected_seeds is not None:
@@ -298,18 +302,30 @@ def _cvrp(config: dict[str, Any], index: int, destination: Path) -> None:
         demand_seed=seeds["demand_seed"] + index,
         capacity_ratio=config.get("capacity_ratio"),
         capacity=config.get("capacity"),
-        coordinate_distribution=config.get("coordinate_distribution", "uniform"),
+        coordinate_distribution=_choice_value(
+            config.get("coordinate_distribution", "uniform"), index
+        ),
         cluster_count=int(config.get("cluster_count", 4)),
-        cluster_spread=float(config.get("cluster_spread", 9.0)),
-        uniform_fraction=float(config.get("uniform_fraction", 0.5)),
-        depot_mode=config.get("depot_mode", "center"),
-        demand_distribution=config.get("demand_distribution", "uniform_integer"),
+        cluster_spread=float(_choice_value(config.get("cluster_spread", 9.0), index)),
+        uniform_fraction=float(_choice_value(config.get("uniform_fraction", 0.5), index)),
+        depot_mode=_choice_value(config.get("depot_mode", "center"), index),
+        demand_distribution=_choice_value(
+            config.get("demand_distribution", "uniform_integer"), index
+        ),
         demand_parameters=config.get("demand_parameters"),
         distance_metric=config.get("distance_metric"),
     )
+    if "fleet_size_multiple" in config:
+        fleet_size_multiple = float(_choice_value(config["fleet_size_multiple"], index))
+        if not math.isfinite(fleet_size_multiple) or fleet_size_multiple < 1:
+            raise ValueError("fleet_size_multiple must be finite and at least one")
+        minimum_routes = len(capacity_partition_routes(instance))
+        instance["num_vehicles"] = max(
+            minimum_routes, math.ceil(minimum_routes * fleet_size_multiple)
+        )
     if "time_window_slack" in config:
-        slack = float(config["time_window_slack"])
-        service = float(config.get("service_time", 0))
+        slack = float(_choice_value(config["time_window_slack"], index))
+        service = float(_choice_value(config.get("service_time", 0), index))
         if (
             not math.isfinite(slack)
             or slack < 0
@@ -354,9 +370,175 @@ def _cvrp(config: dict[str, Any], index: int, destination: Path) -> None:
         instance.update(
             time_windows=windows,
             service_times=[0] + [service] * (len(windows) - 1),
-            num_vehicles=len(routes),
+            num_vehicles=instance.get("num_vehicles", len(routes)),
         )
     destination.write_text(json.dumps(instance, indent=2))
+
+
+def _routing_variant_instance(config: dict[str, Any], index: int) -> dict[str, Any]:
+    kind = config["kind"]
+    customer_count = int(_choice(config["customers"], index))
+    randomness = config.get("randomness", {})
+    if "instance_seed" in randomness or "selected_instance_seeds" in config:
+        seed = _instance_seed(config, index)
+    else:
+        coordinate_seed = int(randomness.get("coordinate_seed", 0))
+        demand_seed = int(randomness.get("demand_seed", 0))
+        seed = int.from_bytes(
+            hashlib.sha256(
+                f"routing-variant:{coordinate_seed}:{demand_seed}:{index}".encode()
+            ).digest()[:8],
+            "big",
+        )
+    base = make_euclidean_cvrp_instance(
+        name=f"{kind}_{index:04d}",
+        customers=customer_count,
+        coordinate_seed=seed,
+        demand_seed=seed ^ 0x5A17,
+        capacity=int(config.get("capacity", 50)),
+        coordinate_distribution=_choice_value(
+            config.get("coordinate_distribution", "uniform"), index
+        ),
+        cluster_count=int(config.get("cluster_count", 4)),
+        cluster_spread=float(config.get("cluster_spread", 9.0)),
+        uniform_fraction=float(config.get("uniform_fraction", 0.5)),
+        depot_mode="center",
+        demand_distribution=_choice_value(
+            config.get("demand_distribution", "uniform_integer"), index
+        ),
+        demand_parameters=config.get("demand_parameters"),
+        distance_metric=config.get("distance_metric", "EUC_2D"),
+    )
+    capacity = base["capacity"]
+    client_demands = base["demands"][1:]
+
+    def pack_customer_demands(vehicle_capacity: int) -> list[list[int]]:
+        routes, current, load = [], [], 0
+        for customer, demand in enumerate(client_demands):
+            if current and load + demand > vehicle_capacity:
+                routes.append(current)
+                current, load = [], 0
+            current.append(customer)
+            load += demand
+        if current:
+            routes.append(current)
+        return routes
+
+    if kind == "heterogeneous_fleet_vrp":
+        type_count = int(_choice_value(config.get("vehicle_type_count", 2), index))
+        if type_count not in {2, 3}:
+            raise ValueError("heterogeneous fleet requires two or three vehicle types")
+        if "vehicle_types" in config and "vehicle_type_count" not in config:
+            specifications = [
+                (int(vehicle["capacity"]), int(vehicle.get("fixed_cost", 0)))
+                for vehicle in config["vehicle_types"]
+            ]
+            type_count = len(specifications)
+            if type_count not in {2, 3}:
+                raise ValueError("vehicle_types must declare two or three types")
+        else:
+            specifications = [(40, 0), (80, 20), (120, 35)][:type_count]
+        route_count = max(1, math.ceil(sum(client_demands) / specifications[-1][0]))
+        witness_route_count = len(pack_customer_demands(specifications[-1][0]))
+        vehicle_types = [
+            {
+                "id": type_id,
+                "capacity": type_capacity,
+                "fixed_cost": fixed_cost,
+                "count": max(
+                    witness_route_count,
+                    math.ceil(witness_route_count * 1.5),
+                ),
+                "start_depot": 0,
+                "end_depot": 0,
+            }
+            for type_id, (type_capacity, fixed_cost) in enumerate(specifications)
+        ]
+        depots, coordinates = [0], base["coordinates"]
+        demands = base["demands"]
+        structure = f"{type_count}_vehicle_types"
+    elif kind == "multi_depot_vrp":
+        depot_count = int(_choice_value(config.get("depots", 2), index))
+        balance = _choice_value(
+            config.get("customer_depot_balance", "balanced"), index
+        )
+        if depot_count not in {2, 4} or balance not in {"balanced", "imbalanced"}:
+            raise ValueError("invalid multi-depot structure")
+        rng = random.Random(f"multi-depot-coordinates:{seed}")
+        depot_coordinates = [
+            [15.0, 15.0],
+            [85.0, 85.0],
+            [15.0, 85.0],
+            [85.0, 15.0],
+        ][:depot_count]
+        client_coordinates = []
+        for client in range(customer_count):
+            depot_id = (
+                0
+                if balance == "imbalanced" and client < round(customer_count * 0.7)
+                else client % depot_count
+            )
+            center_x, center_y = depot_coordinates[depot_id]
+            client_coordinates.append(
+                [
+                    min(100.0, max(0.0, rng.gauss(center_x, 10.0))),
+                    min(100.0, max(0.0, rng.gauss(center_y, 10.0))),
+                ]
+            )
+        coordinates = [*depot_coordinates, *client_coordinates]
+        depots = list(range(depot_count))
+        demands = [0] * depot_count + client_demands
+        route_count = len(pack_customer_demands(capacity))
+        vehicle_types = [
+            {
+                "id": depot,
+                "capacity": capacity,
+                "fixed_cost": 0,
+                "count": route_count,
+                "start_depot": depot,
+                "end_depot": depot,
+            }
+            for depot in depots
+        ]
+        structure = balance
+    else:
+        if kind != "open_vrp":
+            raise ValueError(f"unsupported routing variant: {kind}")
+        multiple = float(_choice_value(config.get("fleet_size_multiple", 1.25), index))
+        if not math.isfinite(multiple) or multiple < 1:
+            raise ValueError("open-route fleet size multiple must be at least one")
+        route_count = len(pack_customer_demands(capacity))
+        vehicle_types = [
+            {
+                "id": 0,
+                "capacity": capacity,
+                "fixed_cost": 0,
+                "count": max(route_count, math.ceil(route_count * multiple)),
+                "start_depot": 0,
+                "end_depot": None,
+            }
+        ]
+        depots, coordinates, demands = [0], base["coordinates"], base["demands"]
+        structure = _choice_value(
+            config.get("coordinate_distribution", "uniform"), index
+        )
+    return {
+        "name": f"{kind}_{index:04d}",
+        "problem_kind": kind,
+        "coordinates": coordinates,
+        "demands": demands,
+        "depots": depots,
+        "customers": list(range(len(depots), len(coordinates))),
+        "vehicle_types": vehicle_types,
+        "distance_metric": config.get("distance_metric", "EUC_2D"),
+        "generation_structure": structure,
+    }
+
+
+def _routing_variant(config: dict[str, Any], index: int, destination: Path) -> None:
+    instance = _routing_variant_instance(config, index)
+    instance["name"] = destination.stem
+    destination.write_text(json.dumps(instance, indent=2) + "\n")
 
 
 def capacity_partition_routes(instance):
@@ -413,8 +595,8 @@ def _bin_packing(config: dict[str, Any], index: int, destination: Path) -> None:
                 item_count=item_count,
                 capacity=capacity,
                 instance_seed=_instance_seed(config, index),
-                weight_distribution=config.get(
-                    "weight_distribution", "uniform_integer"
+                weight_distribution=_choice_value(
+                    config.get("weight_distribution", "uniform_integer"), index
                 ),
                 weight_parameters=config.get("weight_parameters"),
             ),
@@ -490,6 +672,113 @@ def _scheduling_lp(config: dict[str, Any], index: int, destination: Path) -> Non
     destination.write_text("\n".join(lines) + "\n")
 
 
+def _single_machine_weighted_tardiness_mps(
+    config: dict[str, Any], index: int, destination: Path
+) -> None:
+    """Pairwise-disjunctive single-machine weighted tardiness with setups."""
+    rng = random.Random(_instance_seed(config, index))
+    count = int(_choice(config["jobs"], index))
+    processing_parameters = config.get(
+        "processing_parameters", {"low": 1, "high": 99}
+    )
+    low, high = processing_parameters.get("low", 1), processing_parameters.get(
+        "high", 99
+    )
+    if count < 2 or type(low) is not int or type(high) is not int or not 1 <= low <= high:
+        raise ValueError("invalid weighted-tardiness dimensions or processing range")
+    processing = _integer_samples(
+        rng,
+        count,
+        config.get("processing_distribution", "uniform_integer"),
+        processing_parameters,
+        high,
+    )
+    total = sum(processing)
+    release_ratio = float(_choice_value(config["release_span_ratio"], index))
+    due_tightness = float(_choice_value(config["due_date_tightness"], index))
+    setup_ratio = float(_choice_value(config["setup_ratio"], index))
+    if any(
+        not math.isfinite(value) or value < 0
+        for value in (release_ratio, due_tightness, setup_ratio)
+    ):
+        raise ValueError("weighted-tardiness factors must be finite and nonnegative")
+    release_max = round(total * release_ratio)
+    releases = [rng.randint(0, release_max) for _ in range(count)]
+    mean_processing = max(1, round(total / count))
+    due_dates = [
+        releases[j]
+        + processing[j]
+        + round(mean_processing * due_tightness)
+        for j in range(count)
+    ]
+    weights = [rng.randint(1, 10) for _ in range(count)]
+    setup_max = round(mean_processing * setup_ratio)
+    setup = [
+        [0 if i == j else rng.randint(0, setup_max) for j in range(count)]
+        for i in range(count)
+    ]
+    horizon = release_max + sum(processing) + count * setup_max + 1
+    big_m = 2 * horizon
+    starts = [f"s{j}" for j in range(count)]
+    tardiness = [f"t{j}" for j in range(count)]
+    precedence = [f"y{i}_{j}" for i in range(count) for j in range(i + 1, count)]
+    columns = [*starts, *tardiness, *precedence]
+    rows = []
+    coefficients = {}
+    for j in range(count):
+        row = f"r{j}"
+        rows.append((row, "G", releases[j]))
+        coefficients[row] = {starts[j]: 1}
+        row = f"d{j}"
+        rows.append((row, "L", due_dates[j] - processing[j]))
+        coefficients[row] = {starts[j]: 1, tardiness[j]: -1}
+    for i in range(count):
+        for j in range(i + 1, count):
+            order = f"y{i}_{j}"
+            first, second = f"a{i}_{j}", f"b{i}_{j}"
+            rows.extend(
+                [
+                    (first, "L", big_m - processing[i] - setup[i][j]),
+                    (second, "L", -processing[j] - setup[j][i]),
+                ]
+            )
+            coefficients[first] = {
+                starts[i]: 1,
+                starts[j]: -1,
+                order: big_m,
+            }
+            coefficients[second] = {
+                starts[j]: 1,
+                starts[i]: -1,
+                order: -big_m,
+            }
+    costs = {tardiness[j]: weights[j] for j in range(count)}
+    upper = {**dict.fromkeys(starts, horizon), **dict.fromkeys(tardiness, horizon)}
+    upper.update(dict.fromkeys(precedence, 1))
+    _write_sparse_mps(
+        destination,
+        columns,
+        rows,
+        coefficients,
+        costs,
+        set(columns),
+        upper,
+        comments=(
+            f"PITBENCH_FORMULATION single_machine_weighted_tardiness jobs={count}",
+            *_mps_metadata_comments(
+                "PITBENCH_SCHEDULING_DATA",
+                {
+                    "processing_times": processing,
+                    "release_dates": releases,
+                    "due_dates": due_dates,
+                    "weights": weights,
+                    "setup_times": setup,
+                },
+            ),
+        ),
+    )
+
+
 def multidimensional_knapsack_data(
     config: dict[str, Any], index: int
 ) -> tuple[list[list[int]], list[int], list[int]]:
@@ -511,7 +800,9 @@ def multidimensional_knapsack_data(
         )
         for _ in range(dimensions)
     ]
-    correlation = config.get("dimension_correlation", "independent")
+    correlation = _choice_value(
+        config.get("dimension_correlation", "independent"), index
+    )
     if correlation == "shared":
         weights = [weights[0].copy() for _ in range(dimensions)]
     elif correlation != "independent":
@@ -540,7 +831,7 @@ def multidimensional_knapsack_data(
     if mode == "planted":
         capacities = [sum(row[item] for item in selected) for row in weights]
     elif mode == "ratio":
-        ratio = config.get("capacity_ratio", 0.5)
+        ratio = _choice_value(config.get("capacity_ratio", 0.5), index)
         if not 0 < ratio < 1:
             raise ValueError("knapsack capacity_ratio must be in (0, 1)")
         capacities = [max(1, int(sum(row) * ratio)) for row in weights]
@@ -553,7 +844,7 @@ def multidimensional_knapsack_data(
 def multidimensional_knapsack_profits(config, index, weights):
     """An independent seed stream keeps coefficient/profit factors separable."""
     totals = [sum(column) for column in zip(*weights, strict=True)]
-    mode = config.get("profit_mode", "sum_weights")
+    mode = _choice_value(config.get("profit_mode", "sum_weights"), index)
     if mode == "sum_weights":
         return totals
     if mode == "weighted_sum":
@@ -900,14 +1191,21 @@ def set_covering_data(config: dict[str, Any], index: int):
     return groups, planted, rows
 
 
-def _write_sparse_mps(destination, columns, rows, coefficients, costs, integer, upper):
+def _write_sparse_mps(
+    destination, columns, rows, coefficients, costs, integer, upper, comments=()
+):
     """Write linear models with standard MPS fields and explicit variable domains."""
     by_column = {name: [] for name in columns}
     for row, terms in coefficients.items():
         for name, value in terms.items():
             if value:
                 by_column[name].append((row, value))
-    lines = [f"NAME          {destination.stem}", "ROWS", " N  OBJ"]
+    lines = [
+        f"NAME          {destination.stem}",
+        *(f"* {comment}" for comment in comments),
+        "ROWS",
+        " N  OBJ",
+    ]
     lines.extend(f" {sense}  {name}" for name, sense, _ in rows)
     lines.append("COLUMNS")
     for name in columns:
@@ -928,6 +1226,18 @@ def _write_sparse_mps(destination, columns, rows, coefficients, costs, integer, 
             lines.append(f" UP {'BND1':<8}  {name:<8}  {upper[name]:>12g}")
     lines.append("ENDATA")
     destination.write_text("\n".join(lines) + "\n")
+
+
+def _mps_metadata_comments(prefix: str, payload: dict[str, Any]) -> tuple[str, ...]:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    width = 180
+    chunks = [
+        encoded[offset : offset + width] for offset in range(0, len(encoded), width)
+    ]
+    return tuple(
+        f"{prefix} {index + 1}/{len(chunks)} {chunk}"
+        for index, chunk in enumerate(chunks)
+    )
 
 
 def _knapsack_mps(config, index, destination):
@@ -953,7 +1263,7 @@ def _random_set_covering_mps(config, index, destination):
     rng = random.Random(_instance_seed(config, index))
     size = int(_choice(config["variables"], index))
     count = int(_choice(config["rows"], index))
-    density = float(config["row_density"])
+    density = float(_choice_value(config["row_density"], index))
     if size < 2 or count < 1 or not 0 < density <= 1:
         raise ValueError("invalid random covering dimensions or density")
     columns = [f"x{i}" for i in range(size)]
@@ -970,6 +1280,65 @@ def _random_set_covering_mps(config, index, destination):
         costs,
         set(columns),
         dict.fromkeys(columns, 1),
+    )
+
+
+def _graph_coloring_mps(config: dict[str, Any], index: int, destination: Path) -> None:
+    instance, _, _ = graph_coloring_data(config, index)
+    vertex_count = instance["vertex_count"]
+    edges = list(
+        zip(
+            instance["edge_endpoints"][::2],
+            instance["edge_endpoints"][1::2],
+            strict=True,
+        )
+    )
+    color_count = int(_choice(config.get("colors", [4]), index))
+    columns = [
+        *(f"x{vertex}_{color}" for vertex in range(vertex_count) for color in range(color_count)),
+        *(f"y{color}" for color in range(color_count)),
+    ]
+    rows = []
+    coefficients = {}
+    for vertex in range(vertex_count):
+        row = f"v{vertex}"
+        rows.append((row, "E", 1))
+        coefficients[row] = {
+            f"x{vertex}_{color}": 1 for color in range(color_count)
+        }
+    for edge_index, (first, second) in enumerate(edges):
+        for color in range(color_count):
+            row = f"e{edge_index}_{color}"
+            rows.append((row, "L", 1))
+            coefficients[row] = {
+                f"x{first}_{color}": 1,
+                f"x{second}_{color}": 1,
+            }
+    for vertex in range(vertex_count):
+        for color in range(color_count):
+            row = f"l{vertex}_{color}"
+            rows.append((row, "L", 0))
+            coefficients[row] = {
+                f"x{vertex}_{color}": 1,
+                f"y{color}": -1,
+            }
+    for color in range(color_count - 1):
+        row = f"s{color}"
+        rows.append((row, "G", 0))
+        coefficients[row] = {f"y{color}": 1, f"y{color + 1}": -1}
+    _write_sparse_mps(
+        destination,
+        columns,
+        rows,
+        coefficients,
+        {f"y{color}": 1 for color in range(color_count)},
+        set(columns),
+        dict.fromkeys(columns, 1),
+        comments=(
+            f"PITBENCH_FORMULATION graph_coloring_mip vertices={vertex_count} "
+            f"colors={color_count} edges={len(edges)}",
+            *_mps_metadata_comments("PITBENCH_GRAPH_DATA", instance),
+        ),
     )
 
 
@@ -1006,7 +1375,7 @@ def _facility_location_mps(config, index, destination):
     rng = random.Random(_instance_seed(config, index))
     facilities = int(_choice(config["facilities"], index))
     customers = int(_choice(config["customers"], index))
-    ratio = float(config.get("capacity_ratio", 1.5))
+    ratio = float(_choice_value(config.get("capacity_ratio", 1.5), index))
     if facilities < 2 or customers < 2 or ratio < 1:
         raise ValueError("invalid facility-location settings")
     demand = [rng.randint(1, 10) for _ in range(customers)]
@@ -1168,10 +1537,10 @@ def graph_coloring_data(
     """Relabel a graph with a theorem-backed chromatic lower bound."""
 
     rng = random.Random(_instance_seed(config, index))
-    model = config.get("graph_model", "mycielski")
+    model = _choice_value(config.get("graph_model", "mycielski"), index)
     if model in {"erdos_renyi", "planted_partition"}:
         vertices = _choice(config["vertex_counts"], index)
-        probability = float(config["edge_probability"])
+        probability = float(_choice_value(config["edge_probability"], index))
         if vertices < 2 or not 0 <= probability <= 1:
             raise ValueError("invalid random graph dimensions or density")
         if model == "planted_partition":
@@ -1254,11 +1623,17 @@ def balanced_subset_sum_instance(config: dict[str, Any], index: int) -> dict[str
     """Generate data without allocating a reachability proof over its weight sum."""
     rng = random.Random(_instance_seed(config, index))
     item_count = int(_choice(config["item_counts"], index))
-    maximum = int(config["max_weight"])
+    maximum = int(_choice_value(config["max_weight"], index))
     step = int(config.get("weight_step", 1))
     if item_count < 2 or maximum < 1 or step < 1 or maximum // step < 1:
         raise ValueError("invalid balanced subset-sum generator dimensions")
-    cardinality = int(config.get("cardinality", item_count // 2))
+    if "cardinality_fraction" in config:
+        fraction = float(_choice_value(config["cardinality_fraction"], index))
+        if not 0 < fraction < 1:
+            raise ValueError("balanced subset-sum cardinality fraction must be in (0, 1)")
+        cardinality = max(1, min(item_count - 1, round(item_count * fraction)))
+    else:
+        cardinality = int(config.get("cardinality", item_count // 2))
     if not 0 < cardinality < item_count:
         raise ValueError("invalid balanced subset-sum cardinality")
     domain_mode = _choice(config.get("domain_modes", ["bounded"]), index)
@@ -1359,7 +1734,7 @@ def job_shop_data(config: dict[str, Any], index: int) -> list[list[list[int]]]:
     seed = _instance_seed(config, index)
     order_rng = random.Random(f"job-shop-order:{seed}")
     duration_rng = random.Random(seed)
-    mode = config.get("machine_order", "random_per_job")
+    mode = _choice_value(config.get("machine_order", "random_per_job"), index)
     if mode not in {"random_per_job", "shared"}:
         raise ValueError("unsupported job-shop machine_order")
     shared = list(range(machines))
@@ -1397,22 +1772,125 @@ def _job_shop(config: dict[str, Any], index: int, destination: Path) -> None:
     )
 
 
+def resource_constrained_project_instance(
+    config: dict[str, Any], index: int
+) -> dict[str, Any]:
+    """Generate a feasible non-preemptive renewable-resource project network."""
+    rng = random.Random(_instance_seed(config, index))
+    count = int(_choice(config["activities"], index))
+    resources = int(_choice(config["renewable_resources"], index))
+    density = float(_choice_value(config["precedence_density"], index))
+    tightness = float(_choice_value(config["resource_tightness"], index))
+    low, high = config.get("duration_range", [1, 20])
+    shape = _choice_value(
+        config.get("precedence_shape", ["random_topological_dag"]), index
+    )
+    if (
+        count < 2
+        or resources < 1
+        or not 0 <= density <= 1
+        or not 0 < tightness <= 1
+        or type(low) is not int
+        or type(high) is not int
+        or not 1 <= low <= high
+        or shape not in {"layered_dag", "random_topological_dag"}
+    ):
+        raise ValueError("invalid RCPSP generation parameters")
+
+    durations = [rng.randint(low, high) for _ in range(count)]
+    demands = [
+        [rng.randint(1, 4) for _ in range(resources)] for _ in range(count)
+    ]
+    if shape == "layered_dag":
+        layer_count = max(2, min(count, int(math.sqrt(count))))
+        layer = [min(layer_count - 1, i * layer_count // count) for i in range(count)]
+        arcs = {
+            (i, j)
+            for i in range(count)
+            for j in range(i + 1, count)
+            if layer[i] < layer[j]
+            and (
+                layer[j] == layer[i] + 1
+                or rng.random() < density
+            )
+        }
+    else:
+        arcs = {
+            (i, j)
+            for i in range(count)
+            for j in range(i + 1, count)
+            if rng.random() < density
+        }
+    # Give every non-source activity at least one predecessor while keeping a DAG.
+    predecessors = {j for _, j in arcs}
+    for j in range(1, count):
+        if j not in predecessors:
+            arcs.add((j - 1, j))
+
+    capacities = []
+    for resource in range(resources):
+        maximum = max(row[resource] for row in demands)
+        average = sum(row[resource] for row in demands) / count
+        capacities.append(max(maximum, math.ceil(average * math.sqrt(count) * tightness)))
+    ordered_arcs = [list(arc) for arc in sorted(arcs)]
+    return {
+        "name": f"rcpsp_{index:04d}",
+        "problem_kind": "resource_constrained_project_scheduling",
+        "activity_count": count,
+        "resource_count": resources,
+        "activities": [
+            {
+                "id": i,
+                "duration": durations[i],
+                "resource_demands": demands[i],
+            }
+            for i in range(count)
+        ],
+        "precedence_arcs": ordered_arcs,
+        "durations": durations,
+        "resource_demands_flat": [value for row in demands for value in row],
+        "precedence_endpoints": [value for arc in ordered_arcs for value in arc],
+        "resource_capacities": capacities,
+        "generation_structure": shape,
+    }
+
+
+def _resource_constrained_project_scheduling(
+    config: dict[str, Any], index: int, destination: Path
+) -> None:
+    instance = resource_constrained_project_instance(config, index)
+    instance["name"] = destination.stem
+    destination.write_text(json.dumps(instance, indent=2) + "\n")
+
+
 _GENERATORS = {
     "euclidean_cvrp": ("json", _cvrp),
+    "heterogeneous_fleet_vrp": ("json", _routing_variant),
+    "multi_depot_vrp": ("json", _routing_variant),
+    "open_vrp": ("json", _routing_variant),
     "bin_packing": ("json", _bin_packing),
     "repeated_constants_cumulative": ("json", _ortools),
     "single_machine_scheduling_mip": ("lp", _scheduling_lp),
+    "single_machine_weighted_tardiness_mip": (
+        "mps",
+        _single_machine_weighted_tardiness_mps,
+    ),
     "multidimensional_knapsack_mip": ("lp", _multidimensional_knapsack_lp),
     "binary_clique_cover_mip": ("mps", _binary_clique_cover_mps),
     "set_covering_mip": ("mps", _set_covering_mps),
     "multidimensional_knapsack_mps": ("mps", _knapsack_mps),
     "random_set_covering_mip": ("mps", _random_set_covering_mps),
+    "graph_coloring_mip": ("mps", _graph_coloring_mps),
     "independent_set_mip": ("mps", _independent_set_mps),
     "facility_location_mip": ("mps", _facility_location_mps),
     "fixed_charge_flow_mip": ("mps", _fixed_charge_flow_mps),
     "graph_coloring": ("json", _graph_coloring),
     "balanced_subset_sum": ("json", _balanced_subset_sum),
     "job_shop_scheduling": ("txt", _job_shop),
+    "resource_constrained_project_scheduling": (
+        "json",
+        _resource_constrained_project_scheduling,
+    ),
 }
 
 
@@ -1427,7 +1905,7 @@ def _cvrp_instance_features(path: Path) -> dict[str, Any]:
     ]
     witness = (
         capacity_partition_routes(instance)
-        if "time_windows" in instance
+        if "time_windows" in instance or "num_vehicles" in instance
         else [[i] for i in customers]
     )
     checked = check_cvrp(instance, {"routes": witness})
@@ -1458,7 +1936,7 @@ def _cvrp_instance_features(path: Path) -> dict[str, Any]:
         "demand_depot_distance_correlation": correlation,
         "distance_metric": instance.get("distance_metric", "EXACT_2D"),
         "feasibility_witness": "capacity_partition_in_customer_order"
-        if "time_windows" in instance
+        if "time_windows" in instance or "num_vehicles" in instance
         else "one_customer_per_route",
         "feasibility_witness_objective": checked["objective"],
     }
@@ -1476,13 +1954,25 @@ def _cvrp_instance_features(path: Path) -> dict[str, Any]:
 
 def _knapsack_instance_features(path):
     from pitbench.problem_families.verification import (
+        _read_mps_numeric_model,
         _public_multidimensional_knapsack_model,
     )
 
     model = _public_multidimensional_knapsack_model(path)
-    if model is None:
-        raise ValueError("generated knapsack failed independent model parsing")
-    weights, capacities, profits = model
+    if model is not None:
+        weights, capacities, profits = model
+    else:
+        sparse = _read_mps_numeric_model(path)
+        if sparse is None:
+            raise ValueError("generated knapsack failed independent model parsing")
+        rows = sparse["rows"]
+        columns = sparse["columns"]
+        weights = [
+            [sparse["coefficients"].get(row, {}).get(column, 0) for column in columns]
+            for row in rows
+        ]
+        capacities = [sparse["row_upper"][row] for row in rows]
+        profits = [-sparse["cost"][column] for column in columns]
     totals = [sum(column) for column in zip(*weights, strict=True)]
     nonzeros = sum(value != 0 for row in weights for value in row)
     return {
@@ -1559,14 +2049,156 @@ def linear_model_features(path: Path) -> dict:
     }
 
 
+def _structured_instance_features(path: Path) -> dict[str, Any]:
+    """Extract scale and structure observations from normalized JSON inputs."""
+    instance = json.loads(path.read_text())
+    kind = instance.get("problem_kind")
+    if kind == "graph_coloring":
+        vertices = int(instance["vertex_count"])
+        edges = len(instance["edge_endpoints"]) // 2
+        return {
+            "vertices": vertices,
+            "edges": edges,
+            "edge_density": 2 * edges / max(1, vertices * (vertices - 1)),
+        }
+    if kind == "balanced_subset_sum":
+        weights = instance["weights"]
+        return {
+            "items": len(weights),
+            "total_weight": sum(weights),
+            "max_weight": max(weights),
+            "cardinality": int(instance["cardinality"]),
+        }
+    if kind == "resource_constrained_project_scheduling":
+        activities = instance["activities"]
+        return {
+            "activities": len(activities),
+            "renewable_resources": len(instance["resource_capacities"]),
+            "precedence_arcs": len(instance["precedence_arcs"]),
+            "total_duration": sum(int(row["duration"]) for row in activities),
+        }
+    if "weights" in instance and "capacity" in instance:
+        weights = instance["weights"]
+        return {
+            "items": len(weights),
+            "capacity": int(instance["capacity"]),
+            "total_weight": sum(weights),
+            "weight_min": min(weights),
+            "weight_max": max(weights),
+        }
+    raise ValueError(f"unknown generated JSON instance structure: {path}")
+
+
+def _job_shop_instance_features(path: Path) -> dict[str, Any]:
+    lines = path.read_text().splitlines()
+    if not lines:
+        raise ValueError(f"empty job-shop instance: {path}")
+    jobs, machines = map(int, lines[0].split())
+    operations = [list(map(int, line.split())) for line in lines[1:]]
+    if len(operations) != jobs or any(len(row) != 2 * machines for row in operations):
+        raise ValueError(f"malformed job-shop instance: {path}")
+    durations = [row[index] for row in operations for index in range(1, len(row), 2)]
+    return {
+        "jobs": jobs,
+        "machines": machines,
+        "operations": jobs * machines,
+        "processing_time_min": min(durations),
+        "processing_time_max": max(durations),
+    }
+
+
+def _routing_variant_instance_features(path: Path) -> dict[str, Any]:
+    from pitbench.problem_families.public_verification import check_routing_variant
+
+    instance = json.loads(path.read_text())
+    capacities = [vehicle["capacity"] for vehicle in instance["vehicle_types"]]
+    if instance["problem_kind"] == "heterogeneous_fleet_vrp":
+        type_id = len(capacities) - 1
+    else:
+        type_id = 0
+    capacity = capacities[type_id]
+    routes, current, load = [], [], 0
+    for node in instance["customers"]:
+        demand = instance["demands"][node]
+        if current and load + demand > capacity:
+            routes.append(current)
+            current, load = [], 0
+        current.append(node)
+        load += demand
+    if current:
+        routes.append(current)
+    depot_count = len(instance["depots"])
+    type_ids = (
+        [route % depot_count for route in range(len(routes))]
+        if instance["problem_kind"] == "multi_depot_vrp"
+        else [type_id] * len(routes)
+    )
+    witness = {"routes": routes, "vehicle_type_ids": type_ids}
+    checked = check_routing_variant(instance, witness)
+    if not checked["feasible"]:
+        raise ValueError(f"generated routing variant is infeasible: {checked['detail']}")
+    return {
+        "customers": len(instance["customers"]),
+        "depots": len(instance["depots"]),
+        "vehicle_types": len(instance["vehicle_types"]),
+        "route_count_capacity_lower_bound": math.ceil(
+            sum(instance["demands"][node] for node in instance["customers"])
+            / max(capacities)
+        ),
+        "generation_structure": instance["generation_structure"],
+        "feasibility_witness": "sequential_capacity_partition",
+        "feasibility_witness_objective": checked["objective"],
+    }
+
+
+def _knapsack_model_features(path: Path) -> dict[str, Any]:
+    return {**linear_model_features(path), **_knapsack_instance_features(path)}
+
+
+def _set_covering_model_features(path: Path) -> dict[str, Any]:
+    return {**linear_model_features(path), **_set_covering_instance_features(path)}
+
+
+def _graph_coloring_mip_features(path: Path) -> dict[str, Any]:
+    from pitbench.problem_families.verification import _mps_metadata_payload
+
+    metadata = _mps_metadata_payload(path, "PITBENCH_GRAPH_DATA")
+    if metadata is None:
+        raise ValueError("graph-coloring MPS is missing its source graph metadata")
+    return {
+        **linear_model_features(path),
+        "vertices": metadata["vertex_count"],
+        "edges": len(metadata["edge_endpoints"]) // 2,
+    }
+
+
+def _weighted_tardiness_mip_features(path: Path) -> dict[str, Any]:
+    from pitbench.problem_families.verification import _mps_metadata_payload
+
+    metadata = _mps_metadata_payload(path, "PITBENCH_SCHEDULING_DATA")
+    if metadata is None:
+        raise ValueError("weighted-tardiness MPS is missing source scheduling data")
+    return {**linear_model_features(path), "jobs": len(metadata["processing_times"])}
+
+
 _INSTANCE_FEATURES = {
     "euclidean_cvrp": _cvrp_instance_features,
+    "heterogeneous_fleet_vrp": _routing_variant_instance_features,
+    "multi_depot_vrp": _routing_variant_instance_features,
+    "open_vrp": _routing_variant_instance_features,
     "multidimensional_knapsack_mip": _knapsack_instance_features,
     "set_covering_mip": _set_covering_instance_features,
+    "bin_packing": _structured_instance_features,
+    "graph_coloring": _structured_instance_features,
+    "balanced_subset_sum": _structured_instance_features,
+    "resource_constrained_project_scheduling": _structured_instance_features,
+    "job_shop_scheduling": _job_shop_instance_features,
+    "multidimensional_knapsack_mps": _knapsack_model_features,
+    "random_set_covering_mip": _set_covering_model_features,
+    "graph_coloring_mip": _graph_coloring_mip_features,
+    "single_machine_weighted_tardiness_mip": _weighted_tardiness_mip_features,
     **dict.fromkeys(
         (
-            "multidimensional_knapsack_mps",
-            "random_set_covering_mip",
             "independent_set_mip",
             "facility_location_mip",
             "fixed_charge_flow_mip",

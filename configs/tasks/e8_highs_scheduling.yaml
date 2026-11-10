@@ -1,0 +1,139 @@
+schema_version: '3.0'
+task_id: e8_highs_scheduling
+release:
+  repository: ERGO-Code/HiGHS
+  version: 1.15.1
+  tag: v1.15.1
+  base_commit: 04024d701f79feb8e2f18bc3df0dffc04ef05088
+  tree_sha: fe3b6d8835077dcf71c501521d8cd26738bbb5a3
+  released_at: '2026-07-02T11:25:02Z'
+  url: https://github.com/ERGO-Code/HiGHS/releases/tag/v1.15.1
+task_type: exact_solver
+problem_family: mip
+problem_variant: scheduling
+formulation_id: mip_scheduling_highs
+optimization_scope: scheduling source-level solve efficiency
+optimization_profile: null
+metric_scenarios: []
+research_budget: null
+instruction: Improve the pinned highs 1.15.1 solver on scheduling under the declared
+  solve budgets. Use all supplied visible development inputs for diagnosis and regression
+  checks. Preserve feasibility, objective semantics, truthful solver statuses, and
+  the inherited seed, thread, and budget protocol. Report cross-target effects separately.
+repository:
+  clone_url: https://github.com/ERGO-Code/HiGHS.git
+  plugin: pitbench.repositories.plugins:HighsRepositoryPlugin
+  editable_paths:
+  - highs
+  - build
+  agent_image: pitbench-highs:04024d701f79
+  judge_image: null
+oracle:
+  kind: best_known_solution
+  source: private://bootstrap/oracles/e8_highs_scheduling.yaml
+  source_sha256: 31c074e6ead5f82d87f14a8235942ddb75ae297355168775ae08aa576130fb27
+  objective_sense: minimize
+evaluation:
+  performance_protocol: budget_truncated_quality
+  budgets_sec:
+  - 10.0
+  - 30.0
+  primary_budget_sec: 30.0
+  fixed_solver_parameters: null
+  solver_seeds: null
+  seed_robustness:
+    development_seeds:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    evaluation_seeds_file: private://seed_robustness/release_highs_v1_15_1.yaml
+    evaluation_seeds_file_sha256: 38bcef470adfc5c384a3a789357e8d4fc643dea537b26d86e88df5d75cb1fca8
+    seed_selection:
+      seed_min: 0
+      seed_max: 2147483647
+      seed_count: 30
+  representation_robustness: null
+  controlled_transfer: null
+  operational_reliability: false
+  threads: 1
+  exact_time_basis: cpu_time
+  verifier: exact_target
+  validation_test_patch: null
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: .pitbench-runs/eight-solver-populations-v4/public-instance-sets/e8_highs_scheduling/instances.yaml
+  instance_set_config_sha256: c91a9a84a6d98e257f147b4f6feb4169a43bd33e46a5ca6963cd5d358fe2a4df
+  size: 5
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://bootstrap/e8_highs_scheduling/judge_id.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_scale
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_highs_scheduling/unseen_scale.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_structure
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_highs_scheduling/unseen_structure.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_joint
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_highs_scheduling/unseen_joint.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false

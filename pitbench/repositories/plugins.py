@@ -316,6 +316,7 @@ class HighsRepositoryPlugin(RepositoryPlugin):
 
 
 class ScipRepositoryPlugin(RepositoryPlugin):
+    supports_fixed_solver_parameters = True
     scenario_session_plugin = "pitbench.solver_drivers.run:ScipScenarioSession"
 
     def scenario_build_commands(self, *, adapter_source, source_commit):
@@ -446,6 +447,7 @@ class ScipRepositoryPlugin(RepositoryPlugin):
 
 
 class CbcRepositoryPlugin(RepositoryPlugin):
+    supports_fixed_solver_parameters = True
     scenario_session_plugin = "pitbench.solver_drivers.run:CbcScenarioSession"
 
     def scenario_build_commands(self, *, adapter_source, source_commit):
@@ -581,6 +583,7 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
 
 
 class OrToolsRepositoryPlugin(RepositoryPlugin):
+    supports_fixed_solver_parameters = True
     agent_environment = AgentEnvironment(
         image="maven:3.9-eclipse-temurin-17",
         system_packages="build-essential cmake ninja-build swig",
@@ -673,6 +676,8 @@ class GecodeRepositoryPlugin(RepositoryPlugin):
         prebuild="",
     )
     name = "gecode"
+    # The native adapter uses fixed branch selectors and takes no random seed.
+    deterministic = True
     driver_name = "gecode_exact"
     driver_python = "python3"
     agent_python = "python3"

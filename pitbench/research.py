@@ -568,12 +568,14 @@ def audit_population_design(
     }
     exposed = []
     for entry in inventory[requirements["development_role"]]:
-        family = spec["families"][entry["family"]]["problem_family"]
+        family_spec = spec["families"][entry["family"]]
+        family = family_spec["problem_family"]
         exposed.append(
             {
                 "source": "diverse_development",
                 "family": entry["family"],
                 "problem_family": family,
+                "scale_group": family_spec.get("scale_group", family),
                 "features": entry["features"],
                 "sha256": entry["sha256"],
             }
@@ -607,6 +609,7 @@ def audit_population_design(
                     {
                         "source": task_relative,
                         "problem_family": family,
+                        "scale_group": family,
                         "features": features,
                         "sha256": _sha(path),
                     }
@@ -615,7 +618,7 @@ def audit_population_design(
         family: max(
             row["features"][feature]
             for row in exposed
-            if row["problem_family"] == family
+            if row.get("scale_group", row["problem_family"]) == family
         )
         for family, feature in requirements["scale_feature_by_problem_family"].items()
     }
@@ -630,7 +633,8 @@ def audit_population_design(
     gaps, measured = [], []
     for (role, condition_id), entries in cells.items():
         condition = conditions[condition_id]
-        family = spec["families"][condition["family"]]["problem_family"]
+        family_spec = spec["families"][condition["family"]]
+        family = family_spec.get("scale_group", family_spec["problem_family"])
         feature = requirements["scale_feature_by_problem_family"][family]
         values = [row["features"][feature] for row in entries]
         claim = condition["claim"]
@@ -789,7 +793,12 @@ def analyze_population_difficulty(
                 relative_gap_to_reference=gap,
                 quality_target_hit=gap <= protocol["routing_target_relative_gap"],
             )
-            if expected["generator"]["kind"] == "euclidean_cvrp":
+            if expected["generator"]["kind"] in {
+                "euclidean_cvrp",
+                "heterogeneous_fleet_vrp",
+                "multi_depot_vrp",
+                "open_vrp",
+            }:
                 cell.update(
                     relative_gap_to_reference=gap,
                     target_hit=gap <= protocol["routing_target_relative_gap"],
@@ -984,6 +993,26 @@ def _construct_generalization_populations(
                         raise ValueError(
                             f"requested distribution feature was not realized: {name}:{feature}"
                         )
+                for feature, allowed in definition["condition"].get(
+                    "expected_feature_values", {}
+                ).items():
+                    if entry["features"].get(feature) not in allowed:
+                        raise ValueError(
+                            f"observed feature is outside declared levels: {name}:{feature}"
+                        )
+                for feature, bounds in definition["condition"].get(
+                    "expected_feature_ranges", {}
+                ).items():
+                    observed = entry["features"].get(feature)
+                    if (
+                        not isinstance(bounds, list)
+                        or len(bounds) != 2
+                        or not isinstance(observed, (int, float))
+                        or not bounds[0] <= observed <= bounds[1]
+                    ):
+                        raise ValueError(
+                            f"observed feature is outside declared range: {name}:{feature}"
+                        )
                 inventories[role].append(
                     {
                         "id": f"{name}__{entry['id']}",
@@ -1037,10 +1066,8 @@ def prepare_population_references(
 
     from pitbench.evaluator.private_assets import PrivateAssetResolver
     from pitbench.instances.generate import (
-        capacity_partition_routes,
         prepare_trusted_optimum_oracle,
     )
-    from pitbench.problem_families.public_verification import check_cvrp
 
     resolver = PrivateAssetResolver(private_root)
     destination = resolver.destination_path(destination)
@@ -1059,6 +1086,7 @@ def prepare_population_references(
         "panels": {},
         "status": "running",
         "headroom_status": "not_measured",
+        "reference_search_required": [],
     }
     try:
         for role, inventory in construction["splits"].items():
@@ -1071,6 +1099,75 @@ def prepare_population_references(
                 name = f"{role}__{condition}"
                 folder = destination / name
                 folder.mkdir()
+                generator_kind = entries[0]["generator"]["kind"]
+                constructive_mps_kinds = {
+                    "multidimensional_knapsack_mps",
+                    "random_set_covering_mip",
+                    "facility_location_mip",
+                    "graph_coloring_mip",
+                    "single_machine_weighted_tardiness_mip",
+                }
+                if generator_kind in constructive_mps_kinds:
+                    from pitbench.solver_drivers.reference import solve_reference
+
+                    for entry in entries:
+                        input_path = Path(entry["path"])
+                        reference, checked = solve_reference(
+                            input_path,
+                            entry["generator"],
+                            entry["replicate_index"],
+                            seconds=0.1,
+                        )
+                        if not checked["feasible"]:
+                            raise ValueError(
+                                "constructive MPS reference failed source validation "
+                                f"for {entry['id']}: {checked.get('detail')}"
+                            )
+                        solution_path = (
+                            folder / f"{entry['replicate_index']:04d}.solution.json"
+                        )
+                        _write(solution_path, reference.solution)
+                        result["records"][entry["id"]] = {
+                            "target_kind": "feasible_reference",
+                            "objective": checked["objective"],
+                            "solution": str(solution_path.resolve()),
+                            "solution_sha256": _sha(solution_path),
+                            "instance_sha256": entry["sha256"],
+                            "proven_optimal": False,
+                            "optimality_basis": reference.basis,
+                        }
+                    result["panels"][name] = {
+                        "status": "verified_feasibility_only",
+                        "instances": len(entries),
+                    }
+                    _write(destination / "references.json", result)
+                    continue
+                analytic_mip_kinds = {
+                    "single_machine_scheduling_mip",
+                    "set_covering_mip",
+                    "binary_clique_cover_mip",
+                    "multidimensional_knapsack_mip",
+                    "graph_coloring",
+                    "balanced_subset_sum",
+                    "bin_packing",
+                }
+                if (
+                    Path(entries[0]["path"]).suffix in {".lp", ".mps"}
+                    and generator_kind not in analytic_mip_kinds
+                ):
+                    for entry in entries:
+                        result["records"][entry["id"]] = {
+                            "target_kind": "reference_search_required",
+                            "objective": None,
+                            "instance_sha256": entry["sha256"],
+                        }
+                        result["reference_search_required"].append(entry["id"])
+                    result["panels"][name] = {
+                        "status": "reference_search_required",
+                        "instances": len(entries),
+                    }
+                    _write(destination / "references.json", result)
+                    continue
                 if Path(entries[0]["path"]).suffix in {".lp", ".mps"}:
                     config = folder / "generator.yaml"
                     config.write_text(
@@ -1109,30 +1206,45 @@ def prepare_population_references(
                         "sha256": _sha(oracle_path),
                     }
                 else:
+                    from pitbench.solver_drivers.reference import solve_reference
+
                     for entry in entries:
-                        model = json.loads(Path(entry["path"]).read_text())
-                        solution = {"routes": capacity_partition_routes(model)}
-                        checked = check_cvrp(model, solution)
+                        input_path = Path(entry["path"])
+                        reference, checked = solve_reference(
+                            input_path,
+                            entry["generator"],
+                            entry["replicate_index"],
+                            seconds=0.1,
+                        )
+                        solution = reference.solution
                         if not checked["feasible"]:
                             raise ValueError(
-                                "routing reference does not verify on the original model"
+                                "feasible reference does not verify on the original model "
+                                f"for {entry['id']}: {checked['detail']}"
                             )
                         path = folder / f"{entry['replicate_index']:04d}.solution.json"
                         _write(path, solution)
                         result["records"][entry["id"]] = {
-                            "target_kind": "feasible_reference",
+                            "target_kind": "computed_optimum"
+                            if reference.proven
+                            else "feasible_reference",
                             "objective": checked["objective"],
                             "solution": str(path),
                             "solution_sha256": _sha(path),
                             "instance_sha256": entry["sha256"],
-                            "proven_optimal": False,
+                            "proven_optimal": reference.proven,
+                            "optimality_basis": reference.basis,
                         }
                     result["panels"][name] = {
-                        "status": "verified_feasibility_only",
+                        "status": "verified_reference_witnesses",
                         "instances": len(entries),
                     }
                 _write(destination / "references.json", result)
-        result["status"] = "references_verified_headroom_pending"
+        result["status"] = (
+            "reference_search_pending"
+            if result["reference_search_required"]
+            else "references_verified_headroom_pending"
+        )
         _write(destination / "references.json", result)
     except Exception as error:
         result.update(status="failed", error=f"{type(error).__name__}: {error}")
@@ -1151,11 +1263,11 @@ def import_population_references(
     """Import searched BKS/optima with original-model checks and bound provenance."""
     from pitbench.evaluator.private_assets import PrivateAssetResolver
     from pitbench.problem_families.verification import (
-        CVRPFamily,
-        MIPFamily,
         TrustedOptimumFamily,
         TrustedOptimumRecord,
+        VerificationResult,
     )
+    from pitbench.solver_drivers.reference import verify_reference_file
 
     resolver = PrivateAssetResolver(private_root)
     destination = resolver.destination_path(destination)
@@ -1199,7 +1311,11 @@ def import_population_references(
             }
             continue
         if (
-            not row.get("locally_verified")
+            not (
+                row.get("locally_verified")
+                or row.get("verified_feasible")
+                or (row.get("verification") or {}).get("feasible")
+            )
             or row["instance_sha256"] != entry["sha256"]
             or _sha(path) != entry["sha256"]
         ):
@@ -1209,24 +1325,61 @@ def import_population_references(
         source_solution = Path(row["solution"])
         if _sha(source_solution) != row["solution_sha256"]:
             raise ValueError("reference solution changed after collection")
-        family = MIPFamily() if path.suffix == ".mps" else CVRPFamily()
-        checked = family.verify(path, source_solution)
+        checked = VerificationResult.model_validate(
+            verify_reference_file(path, source_solution, entry["generator"]["kind"])
+        )
         if not checked.feasible or checked.objective != row["objective"]:
             raise ValueError("searched reference fails original-model revalidation")
-        target = destination / (identity + ".solution.json")
-        shutil.copy2(source_solution, target)
+        solution_target = destination / (identity + ".solution.json")
+        shutil.copy2(source_solution, solution_target)
         if path.suffix != ".mps":
-            result["records"][identity] = {
+            target = {
                 "target_kind": "computed_optimum"
                 if row["proven_optimal"]
                 else "feasible_reference",
                 "objective": checked.objective,
-                "solution": str(target),
-                "solution_sha256": _sha(target),
+                "solution": str(solution_target),
+                "solution_sha256": _sha(solution_target),
                 "instance_sha256": entry["sha256"],
                 "proven_optimal": bool(row["proven_optimal"]),
                 "search_provenance": row,
             }
+            cp_problem_kinds = {
+                "bin_packing": "bin_packing",
+                "graph_coloring": "graph_coloring",
+                "job_shop_scheduling": "job_shop_scheduling",
+                "resource_constrained_project_scheduling": "resource_constrained_project_scheduling",
+                "balanced_subset_sum": "balanced_subset_sum",
+            }
+            problem_kind = cp_problem_kinds.get(entry["generator"]["kind"])
+            if problem_kind is not None:
+                target["record"] = TrustedOptimumRecord(
+                    instance_set=entry["condition_id"],
+                    instance_id=identity,
+                    instance_sha256=entry["sha256"],
+                    target_kind="best_found",
+                    problem_kind=problem_kind,
+                    objective_sense="minimize",
+                    optimal_objective=checked.objective,
+                    reference_solution_uri=(
+                        "private://"
+                        + solution_target.relative_to(resolver.root).as_posix()
+                    ),
+                    reference_solution_sha256=_sha(solution_target),
+                    optimality_basis={
+                        "kind": "feasible_search_reference",
+                        "search_provenance": row,
+                    },
+                    generation_provenance={
+                        "generator": entry["generator"],
+                        "replicate_index": entry["replicate_index"],
+                        "source_group": entry["source_group"],
+                    },
+                    verification_provenance=(
+                        "pitbench.problem_families.verification:TrustedOptimumFamily"
+                    ),
+                ).model_dump(mode="json")
+            result["records"][identity] = target
             continue
         basis = row.get("optimality_basis", {})
         proven = bool(
@@ -1261,8 +1414,8 @@ def import_population_references(
             objective_sense="minimize",
             optimal_objective=checked.objective,
             reference_solution_uri="private://"
-            + target.relative_to(resolver.root).as_posix(),
-            reference_solution_sha256=_sha(target),
+            + solution_target.relative_to(resolver.root).as_posix(),
+            reference_solution_sha256=_sha(solution_target),
             optimality_basis=proof,
             generation_provenance={
                 "generator": entry["generator"],
@@ -1271,7 +1424,9 @@ def import_population_references(
             },
             verification_provenance="pitbench.problem_families.verification:TrustedOptimumFamily",
         )
-        if TrustedOptimumFamily(record, target)._check_oracle(path) is not None:
+        if TrustedOptimumFamily(
+            record, solution_target
+        )._check_oracle(path) is not None:
             raise ValueError(
                 "imported target failed reference/oracle consistency checks"
             )
@@ -1577,7 +1732,7 @@ def materialize_generalization_views(
         TrustedOptimumOracle,
         TrustedOptimumRecord,
     )
-    from pitbench.schema.task import InstanceSetSpec
+    from pitbench.schema.task import InstanceSetSpec, PerformanceProtocol
     from pitbench.tasks import TaskCatalog
 
     root, private_root, destination = (
@@ -1631,9 +1786,49 @@ def materialize_generalization_views(
         original = PitBenchTask.from_yaml(root / task_relative)
         task = original.model_copy(deep=True)
         exact = task.task_type.value == "exact_solver"
+        target_generators = {
+            "multidimensional_knapsack": {"multidimensional_knapsack_mps"},
+            "set_covering": {"random_set_covering_mip"},
+            "facility_location": {"facility_location_mip"},
+            "scheduling": {"single_machine_weighted_tardiness_mip"},
+            "single_machine_scheduling": {
+                "single_machine_weighted_tardiness_mip"
+            },
+            "bin_packing": {"bin_packing"},
+            "graph_coloring": {"graph_coloring", "graph_coloring_mip"},
+            "job_shop_scheduling": {"job_shop_scheduling"},
+            "resource_constrained_project_scheduling": {
+                "resource_constrained_project_scheduling"
+            },
+            "balanced_subset_sum": {"balanced_subset_sum"},
+            "cvrp": {"euclidean_cvrp"},
+            "vrptw": {"euclidean_cvrp"},
+            "heterogeneous_fleet_vrp": {"heterogeneous_fleet_vrp"},
+            "multi_depot_vrp": {"multi_depot_vrp"},
+            "open_vrp": {"open_vrp"},
+        }
+        expected_generators = target_generators.get(task.problem_variant or "")
+        if expected_generators is None:
+            raise ValueError(
+                f"study task {task.task_id} has no population mapping for "
+                f"problem variant {task.problem_variant!r}"
+            )
+        # The study owns its hidden populations. Keep only the public
+        # development panel from the source task before adding v4 panels.
+        task.instance_sets = [
+            panel
+            for panel in task.instance_sets
+            if panel.kind == InstanceSetKind.AGENT_DEV or panel.scenario_only
+        ]
 
         def relevant(entry):
-            return (Path(entry["path"]).suffix in {".lp", ".mps"}) == exact
+            if entry["generator"]["kind"] not in expected_generators:
+                return False
+            if task.problem_variant in {"cvrp", "vrptw"}:
+                return entry["condition_id"].startswith(task.problem_variant + "_")
+            if task.problem_family.value == "mip":
+                return Path(entry["path"]).suffix in {".lp", ".mps"}
+            return exact or Path(entry["path"]).suffix not in {".lp", ".mps"}
 
         metadata = {}
         oracle_records = []
@@ -1691,23 +1886,31 @@ def materialize_generalization_views(
                         sort_keys=False,
                     )
                 )
+                panel_kind = (
+                    InstanceSetKind.JUDGE_ID
+                    if role == "unseen_id"
+                    else InstanceSetKind.JUDGE_SHIFT
+                )
+                panel_protocol = (
+                    "heuristic_fixed_budget"
+                    if exact
+                    and task.evaluation.performance_protocol
+                    != PerformanceProtocol.BUDGET_TRUNCATED_QUALITY
+                    and any(
+                        targets[entry["id"]]["target_kind"] == "best_found"
+                        for entry in entries
+                    )
+                    else None
+                )
                 task.instance_sets.append(
                     InstanceSetSpec(
                         name=panel_name,
-                        kind=InstanceSetKind.JUDGE_SHIFT,
+                        kind=panel_kind,
                         instance_set_config="private://"
                         + config_path.relative_to(private_root).as_posix(),
                         instance_set_config_sha256=_sha(config_path),
                         size=len(rows),
-                        performance_protocol=(
-                            "heuristic_fixed_budget"
-                            if exact
-                            and any(
-                                targets[entry["id"]]["target_kind"] == "best_found"
-                                for entry in entries
-                            )
-                            else None
-                        ),
+                        performance_protocol=panel_protocol,
                     )
                 )
                 if difficulty is not None:
@@ -1764,20 +1967,21 @@ def materialize_generalization_views(
             (public_folder / "original/instance_set_config.yaml").read_text()
         )
         public_rows = []
-        for item in index["instances"]:
-            data = public_folder / "original" / item["path"]
-            solution = public_folder / "original" / item["bks_solution_file"]
-            public_rows.append(
-                {
-                    "id": item["id"],
-                    "instance_file": data.relative_to(public_folder).as_posix(),
-                    "instance_file_sha256": _sha(data),
-                    "bks": item["bks"],
-                    "bks_solution_file": solution.relative_to(public_folder).as_posix(),
-                    "bks_solution_file_sha256": _sha(solution),
-                    "proven_optimal": item.get("proven_optimal"),
-                }
-            )
+        if plan.comparison_mode != "agent_augmentation":
+            for item in index["instances"]:
+                data = public_folder / "original" / item["path"]
+                solution = public_folder / "original" / item["bks_solution_file"]
+                public_rows.append(
+                    {
+                        "id": item["id"],
+                        "instance_file": data.relative_to(public_folder).as_posix(),
+                        "instance_file_sha256": _sha(data),
+                        "bks": item["bks"],
+                        "bks_solution_file": solution.relative_to(public_folder).as_posix(),
+                        "bks_solution_file_sha256": _sha(solution),
+                        "proven_optimal": item.get("proven_optimal"),
+                    }
+                )
         for entry in inventories[development_roles[0]]:
             if not relevant(entry):
                 continue
@@ -1838,7 +2042,7 @@ def materialize_generalization_views(
         for arm in plan.arms:
             view = task.model_copy(deep=True)
             view.instruction = original.instruction + "\n\n" + arm.instruction
-            if arm.id != "original":
+            if plan.comparison_mode == "agent_augmentation" or arm.id != "original":
                 view.instance_sets = [
                     diverse if item.kind == InstanceSetKind.AGENT_DEV else item
                     for item in view.instance_sets

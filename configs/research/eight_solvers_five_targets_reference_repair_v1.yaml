@@ -1,0 +1,556 @@
+{
+  "schema_version": "1.0",
+  "design_id": "eight_solvers_five_targets_reference_repair_v1",
+  "status": "running",
+  "physical_cores": 32,
+  "cpus": [
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63
+  ],
+  "schedule_seed": 20261111,
+  "watchdog_grace_sec": 120,
+  "seeds": [
+    0
+  ],
+  "manifests": [
+    "/data3/gushengda/pitbench-runs/family-expansion-v1/populations-v4/population-construction.json"
+  ],
+  "prior_references": [
+    "/data3/gushengda/PitBench-family-expansion-20261109/private-reference-artifacts/initial-anchor-prior-v2.json",
+    "/data3/gushengda/pitbench-runs/family-expansion-v1/reference-campaign-v3/bks.json"
+  ],
+  "backends": [
+    {
+      "name": "highs_docker",
+      "driver": "highs_docker",
+      "image": "sha256:810ae162704bc1d04bd21bd5c62bfc54d4687976b074147c8f5ea02157edd581",
+      "memory": "4g",
+      "threads": 1,
+      "kinds": [
+        "multidimensional_knapsack_mps",
+        "random_set_covering_mip",
+        "facility_location_mip",
+        "graph_coloring_mip",
+        "single_machine_weighted_tardiness_mip"
+      ]
+    },
+    {
+      "name": "cp_sat",
+      "driver": "cp_sat",
+      "package": "ortools",
+      "package_version": "9.15.6755",
+      "threads": 1,
+      "kinds": [
+        "graph_coloring",
+        "job_shop_scheduling",
+        "resource_constrained_project_scheduling",
+        "balanced_subset_sum"
+      ]
+    },
+    {
+      "name": "pyvrp",
+      "driver": "pyvrp",
+      "package": "pyvrp",
+      "package_version": "0.14.1",
+      "threads": 1,
+      "checkpoint_sec": 60,
+      "kinds": [
+        "euclidean_cvrp",
+        "heterogeneous_fleet_vrp",
+        "multi_depot_vrp",
+        "open_vrp"
+      ]
+    }
+  ],
+  "phases": [
+    {
+      "name": "mip-schedule-cal-0p1",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "condition_ids": [
+        "mip_scheduling_visible",
+        "mip_scheduling_scale",
+        "mip_scheduling_structure",
+        "mip_scheduling_joint",
+        "mip_scheduling_cal_jobs",
+        "mip_scheduling_cal_release_span_ratio",
+        "mip_scheduling_cal_due_date_tightness"
+      ],
+      "seconds": 0.1,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "highs_docker"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "pyvrp-variant-cal-0p1",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "condition_ids": [
+        "heterogeneous_fleet_vrp_visible",
+        "heterogeneous_fleet_vrp_scale",
+        "heterogeneous_fleet_vrp_structure",
+        "heterogeneous_fleet_vrp_joint",
+        "heterogeneous_fleet_vrp_cal_customers",
+        "heterogeneous_fleet_vrp_cal_vehicle_type_count",
+        "multi_depot_vrp_visible",
+        "multi_depot_vrp_scale",
+        "multi_depot_vrp_structure",
+        "multi_depot_vrp_joint",
+        "multi_depot_vrp_cal_customers",
+        "multi_depot_vrp_cal_depots",
+        "open_vrp_visible",
+        "open_vrp_scale",
+        "open_vrp_structure",
+        "open_vrp_joint",
+        "open_vrp_cal_customers",
+        "open_vrp_cal_coordinate_distribution",
+        "open_vrp_cal_fleet_size_multiple"
+      ],
+      "seconds": 0.1,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "pyvrp"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "mip-schedule-cal-1",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "condition_ids": [
+        "mip_scheduling_visible",
+        "mip_scheduling_scale",
+        "mip_scheduling_structure",
+        "mip_scheduling_joint",
+        "mip_scheduling_cal_jobs",
+        "mip_scheduling_cal_release_span_ratio",
+        "mip_scheduling_cal_due_date_tightness"
+      ],
+      "seconds": 1,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "highs_docker"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "pyvrp-variant-cal-1",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "condition_ids": [
+        "heterogeneous_fleet_vrp_visible",
+        "heterogeneous_fleet_vrp_scale",
+        "heterogeneous_fleet_vrp_structure",
+        "heterogeneous_fleet_vrp_joint",
+        "heterogeneous_fleet_vrp_cal_customers",
+        "heterogeneous_fleet_vrp_cal_vehicle_type_count",
+        "multi_depot_vrp_visible",
+        "multi_depot_vrp_scale",
+        "multi_depot_vrp_structure",
+        "multi_depot_vrp_joint",
+        "multi_depot_vrp_cal_customers",
+        "multi_depot_vrp_cal_depots",
+        "open_vrp_visible",
+        "open_vrp_scale",
+        "open_vrp_structure",
+        "open_vrp_joint",
+        "open_vrp_cal_customers",
+        "open_vrp_cal_coordinate_distribution",
+        "open_vrp_cal_fleet_size_multiple"
+      ],
+      "seconds": 1,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "pyvrp"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "mip-schedule-cal-5",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "condition_ids": [
+        "mip_scheduling_visible",
+        "mip_scheduling_scale",
+        "mip_scheduling_structure",
+        "mip_scheduling_joint",
+        "mip_scheduling_cal_jobs",
+        "mip_scheduling_cal_release_span_ratio",
+        "mip_scheduling_cal_due_date_tightness"
+      ],
+      "seconds": 5,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "highs_docker"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "pyvrp-variant-cal-5",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "condition_ids": [
+        "heterogeneous_fleet_vrp_visible",
+        "heterogeneous_fleet_vrp_scale",
+        "heterogeneous_fleet_vrp_structure",
+        "heterogeneous_fleet_vrp_joint",
+        "heterogeneous_fleet_vrp_cal_customers",
+        "heterogeneous_fleet_vrp_cal_vehicle_type_count",
+        "multi_depot_vrp_visible",
+        "multi_depot_vrp_scale",
+        "multi_depot_vrp_structure",
+        "multi_depot_vrp_joint",
+        "multi_depot_vrp_cal_customers",
+        "multi_depot_vrp_cal_depots",
+        "open_vrp_visible",
+        "open_vrp_scale",
+        "open_vrp_structure",
+        "open_vrp_joint",
+        "open_vrp_cal_customers",
+        "open_vrp_cal_coordinate_distribution",
+        "open_vrp_cal_fleet_size_multiple"
+      ],
+      "seconds": 5,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "pyvrp"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "mip-schedule-cal-20",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "condition_ids": [
+        "mip_scheduling_visible",
+        "mip_scheduling_scale",
+        "mip_scheduling_structure",
+        "mip_scheduling_joint",
+        "mip_scheduling_cal_jobs",
+        "mip_scheduling_cal_release_span_ratio",
+        "mip_scheduling_cal_due_date_tightness"
+      ],
+      "seconds": 20,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "highs_docker"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "pyvrp-variant-cal-20",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "condition_ids": [
+        "heterogeneous_fleet_vrp_visible",
+        "heterogeneous_fleet_vrp_scale",
+        "heterogeneous_fleet_vrp_structure",
+        "heterogeneous_fleet_vrp_joint",
+        "heterogeneous_fleet_vrp_cal_customers",
+        "heterogeneous_fleet_vrp_cal_vehicle_type_count",
+        "multi_depot_vrp_visible",
+        "multi_depot_vrp_scale",
+        "multi_depot_vrp_structure",
+        "multi_depot_vrp_joint",
+        "multi_depot_vrp_cal_customers",
+        "multi_depot_vrp_cal_depots",
+        "open_vrp_visible",
+        "open_vrp_scale",
+        "open_vrp_structure",
+        "open_vrp_joint",
+        "open_vrp_cal_customers",
+        "open_vrp_cal_coordinate_distribution",
+        "open_vrp_cal_fleet_size_multiple"
+      ],
+      "seconds": 20,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "pyvrp"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "mip-schedule-cal-60",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "condition_ids": [
+        "mip_scheduling_visible",
+        "mip_scheduling_scale",
+        "mip_scheduling_structure",
+        "mip_scheduling_joint",
+        "mip_scheduling_cal_jobs",
+        "mip_scheduling_cal_release_span_ratio",
+        "mip_scheduling_cal_due_date_tightness"
+      ],
+      "seconds": 60,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "highs_docker"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "pyvrp-variant-cal-60",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "condition_ids": [
+        "heterogeneous_fleet_vrp_visible",
+        "heterogeneous_fleet_vrp_scale",
+        "heterogeneous_fleet_vrp_structure",
+        "heterogeneous_fleet_vrp_joint",
+        "heterogeneous_fleet_vrp_cal_customers",
+        "heterogeneous_fleet_vrp_cal_vehicle_type_count",
+        "multi_depot_vrp_visible",
+        "multi_depot_vrp_scale",
+        "multi_depot_vrp_structure",
+        "multi_depot_vrp_joint",
+        "multi_depot_vrp_cal_customers",
+        "multi_depot_vrp_cal_depots",
+        "open_vrp_visible",
+        "open_vrp_scale",
+        "open_vrp_structure",
+        "open_vrp_joint",
+        "open_vrp_cal_customers",
+        "open_vrp_cal_coordinate_distribution",
+        "open_vrp_cal_fleet_size_multiple"
+      ],
+      "seconds": 60,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "pyvrp"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "jssp-unknown-repair-0p1",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "condition_ids": [
+        "job_shop_scheduling_visible",
+        "job_shop_scheduling_scale",
+        "job_shop_scheduling_structure",
+        "job_shop_scheduling_joint",
+        "job_shop_scheduling_cal_jobs",
+        "job_shop_scheduling_cal_machines",
+        "job_shop_scheduling_cal_machine_order"
+      ],
+      "seconds": 0.1,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "cp_sat"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "mip-schedule-reference-300",
+      "purpose": "reference",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id",
+        "unseen_scale",
+        "unseen_structure",
+        "unseen_joint"
+      ],
+      "condition_ids": [
+        "mip_scheduling_visible",
+        "mip_scheduling_scale",
+        "mip_scheduling_structure",
+        "mip_scheduling_joint",
+        "mip_scheduling_cal_jobs",
+        "mip_scheduling_cal_release_span_ratio",
+        "mip_scheduling_cal_due_date_tightness"
+      ],
+      "seconds": 300,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "highs_docker"
+      ],
+      "skip_if_proven": true,
+      "use_warm_start": true
+    },
+    {
+      "name": "jssp-reference-300",
+      "purpose": "reference",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id",
+        "unseen_scale",
+        "unseen_structure",
+        "unseen_joint"
+      ],
+      "condition_ids": [
+        "job_shop_scheduling_visible",
+        "job_shop_scheduling_scale",
+        "job_shop_scheduling_structure",
+        "job_shop_scheduling_joint",
+        "job_shop_scheduling_cal_jobs",
+        "job_shop_scheduling_cal_machines",
+        "job_shop_scheduling_cal_machine_order"
+      ],
+      "seconds": 300,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "cp_sat"
+      ],
+      "skip_if_proven": true,
+      "use_warm_start": true
+    },
+    {
+      "name": "pyvrp-variant-reference-300",
+      "purpose": "reference",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id",
+        "unseen_scale",
+        "unseen_structure",
+        "unseen_joint"
+      ],
+      "condition_ids": [
+        "heterogeneous_fleet_vrp_visible",
+        "heterogeneous_fleet_vrp_scale",
+        "heterogeneous_fleet_vrp_structure",
+        "heterogeneous_fleet_vrp_joint",
+        "heterogeneous_fleet_vrp_cal_customers",
+        "heterogeneous_fleet_vrp_cal_vehicle_type_count",
+        "multi_depot_vrp_visible",
+        "multi_depot_vrp_scale",
+        "multi_depot_vrp_structure",
+        "multi_depot_vrp_joint",
+        "multi_depot_vrp_cal_customers",
+        "multi_depot_vrp_cal_depots",
+        "open_vrp_visible",
+        "open_vrp_scale",
+        "open_vrp_structure",
+        "open_vrp_joint",
+        "open_vrp_cal_customers",
+        "open_vrp_cal_coordinate_distribution",
+        "open_vrp_cal_fleet_size_multiple"
+      ],
+      "seconds": 300,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "pyvrp"
+      ],
+      "skip_if_proven": true,
+      "use_warm_start": true
+    }
+  ],
+  "protocol_source": "configs/research/generalization_difficulty_v2.yaml",
+  "protocol_budget_grid_sec": [
+    0.1,
+    1,
+    5,
+    20,
+    60
+  ],
+  "calibration_split": "replicates 0-4 discovery, 5-9 disjoint qualification",
+  "final_reference_budget_sec": 300,
+  "task_execution_budget_policy": "Each of 40 task rows keeps the source task evaluation budgets, primary budget and one-thread setting; these are separate from reference-search budgets.",
+  "new_agent_starts": 0,
+  "correction_from_previous_design": "MIP scheduling setup fixed at zero to restore standard weighted-tardiness semantics; per-task scale profile is 30/60/120 jobs; old campaign-v2 results remain archived and MIP-scheduling rows are rejected by v2 input hash.",
+  "repair_scope": {
+    "MIP scheduler": "revalidate normalised tardiness/start/order assignments using corrected original objective; reuse hash-matched BKS from campaign-v3 and v2 anchors",
+    "JSSP": "record 0.1-second UNKNOWN as time_limit/no-solution, not solver_error",
+    "routing variants": "search improved references for heterogeneous, multi-depot and open routes with PyVRP 0.14.1"
+  },
+  "execution_note": "Runs on disjoint g49 CPUs 32-63 while reference-campaign-v3 uses 96-127; previous campaign outputs remain immutable.",
+  "population_manifest": "/data3/gushengda/pitbench-runs/family-expansion-v1/populations-v4/population-construction.json",
+  "previous_campaign_to_preserve": "/data3/gushengda/pitbench-runs/family-expansion-v1/reference-campaign-v3",
+  "output": "/data3/gushengda/pitbench-runs/family-expansion-v1/reference-repair-v1"
+}

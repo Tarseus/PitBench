@@ -1,0 +1,979 @@
+{
+  "schema_version": "1.0",
+  "design_id": "eight_solvers_five_targets_design_v2",
+  "status": "instance_design_and_population_complete_references_verified_solver_qualification_pending",
+  "parent_inventory": "configs/research/eight_solvers_five_targets_v2.json",
+  "purpose": "Selected shared target structures and parameter bands for all 40 solver-target tasks. Eligibility for formal use requires generation, semantic verification, reference searches and baseline qualification.",
+  "selection_principles": [
+    "Use the same target distribution for solvers sharing a target family.",
+    "Separate scale, structure, and joint-shift slices; do not use seed changes as a substitute for structural variation.",
+    "Keep visible development, calibration, and hidden evaluation instances disjoint by named seed namespace and content hash.",
+    "Choose final bands and budgets using only calibration instances, independent solution verification, and measured baseline headroom.",
+    "Retain easy correctness cases and hard censored cases; do not select or discard instances using Agent outcomes."
+  ],
+  "common_population_plan": {
+    "roles": {
+      "protocol_calibration": {
+        "visibility": "judge",
+        "count_per_structure_cell": 10,
+        "seed_namespace": 2026110901
+      },
+      "agent_development": {
+        "visibility": "agent",
+        "count_per_task": 5,
+        "seed_namespace": 2026110902
+      },
+      "unseen_id": {
+        "visibility": "judge",
+        "count_per_structure_cell": 30,
+        "seed_namespace": 2026110903
+      },
+      "unseen_scale": {
+        "visibility": "judge",
+        "count_per_structure_cell": 30,
+        "seed_namespace": 2026110904
+      },
+      "unseen_structure": {
+        "visibility": "judge",
+        "count_per_structure_cell": 30,
+        "seed_namespace": 2026110905
+      },
+      "unseen_joint": {
+        "visibility": "judge",
+        "count_per_structure_cell": 30,
+        "seed_namespace": 2026110906
+      }
+    },
+    "seed_policy": "Use independent, named seed namespaces per role and target family; freeze generated input hashes before Agent development.",
+    "calibration_policy": "Use discovery cases to choose reference search and task budget; use disjoint qualification cases once. Do not tune on hidden outcomes.",
+    "reference_policy": "Prefer independently checkable optima; otherwise record an independently verified BKS and verified bounds with provenance. Never label solver agreement alone as an optimality certificate.",
+    "scale_rule": "The largest hidden scale should be at least twice the largest visible development size when supported by the adapter and resource budget."
+  },
+  "target_designs": {
+    "multidimensional_knapsack": {
+      "solvers": [
+        "cbc",
+        "scip",
+        "highs"
+      ],
+      "structure": "Binary item selection with multiple capacity rows; independent item profits, with a separate correlated-profit stratum only if the generator records and validates the correlation.",
+      "candidate_parameters": {
+        "items": [
+          80,
+          160,
+          320
+        ],
+        "dimensions": [
+          3,
+          5,
+          8
+        ],
+        "capacity_ratio": [
+          0.35,
+          0.5,
+          0.7
+        ],
+        "profit_mode": [
+          "independent",
+          "weakly_correlated",
+          "inverse_correlated"
+        ]
+      },
+      "primary_shift_axes": [
+        "item count",
+        "number of capacity dimensions",
+        "capacity tightness",
+        "profit-weight correlation"
+      ],
+      "reference_and_semantics": "Record original item vectors and independently check capacity feasibility and objective. Use exact DP only for a deliberately small subset; otherwise require proof-backed optimum or label BKS.",
+      "readiness": "generator and MPS feature checks implemented; calibration references and solver headroom pending",
+      "selected_parameter_ranges": {
+        "items": [
+          80,
+          160,
+          320
+        ],
+        "dimensions": [
+          3,
+          5,
+          8
+        ],
+        "capacity_ratio": [
+          0.35,
+          0.5,
+          0.7
+        ],
+        "profit_mode": [
+          "independent",
+          "weakly_correlated",
+          "inverse_correlated"
+        ]
+      },
+      "generator_kind": "multidimensional_knapsack_mps",
+      "qualification_gate": "generator and MPS feature checks implemented; calibration references and solver headroom pending"
+    },
+    "set_covering": {
+      "solvers": [
+        "cbc",
+        "scip",
+        "highs"
+      ],
+      "structure": "Binary minimum-cost covering with guaranteed row coverage, no planted optimal answer, and row/column degree diagnostics.",
+      "candidate_parameters": {
+        "variables": [
+          120,
+          250,
+          500
+        ],
+        "rows": [
+          80,
+          160,
+          320
+        ],
+        "row_density": [
+          0.05,
+          0.1,
+          0.2
+        ]
+      },
+      "primary_shift_axes": [
+        "variables and rows",
+        "matrix density",
+        "cost distribution",
+        "degree skew"
+      ],
+      "reference_and_semantics": "Independently validate coverage and cost on the source set system. Avoid claiming optimality from MIP status unless a trusted reference or proof criterion passes.",
+      "readiness": "random covering generator and exact matrix feature checks implemented; reference search pending",
+      "selected_parameter_ranges": {
+        "variables": [
+          120,
+          250,
+          500
+        ],
+        "rows": [
+          80,
+          160,
+          320
+        ],
+        "row_density": [
+          0.05,
+          0.1,
+          0.2
+        ]
+      },
+      "generator_kind": "random_set_covering_mip",
+      "qualification_gate": "random covering generator and exact matrix feature checks implemented; reference search pending"
+    },
+    "facility_location": {
+      "solvers": [
+        "cbc",
+        "scip",
+        "highs"
+      ],
+      "structure": "Capacitated facility opening plus customer assignment, with fixed opening costs and transportation costs drawn independently; demand must be feasible under total capacity.",
+      "candidate_parameters": {
+        "facilities": [
+          10,
+          20,
+          40
+        ],
+        "customers": [
+          50,
+          120,
+          240
+        ],
+        "capacity_ratio": [
+          1.05,
+          1.25,
+          1.6
+        ]
+      },
+      "primary_shift_axes": [
+        "facility/customer scale",
+        "capacity slack",
+        "fixed-cost dominance",
+        "geographic clustering if coordinates are introduced"
+      ],
+      "reference_and_semantics": "Retain the generated source data and independently verify assignment, facility capacities, opening charges, and total objective.",
+      "readiness": "generator and sparse MPS independent check implemented; reference search pending",
+      "selected_parameter_ranges": {
+        "facilities": [
+          10,
+          20,
+          40
+        ],
+        "customers": [
+          50,
+          120,
+          240
+        ],
+        "capacity_ratio": [
+          1.05,
+          1.25,
+          1.6
+        ]
+      },
+      "generator_kind": "facility_location_mip",
+      "qualification_gate": "generator and sparse MPS independent check implemented; reference search pending"
+    },
+    "graph_coloring_mip": {
+      "solvers": [
+        "cbc",
+        "scip",
+        "highs"
+      ],
+      "structure": "Planted-colorable random graphs with vertex count and density controlled independently; the colorability witness is retained as an upper bound.",
+      "candidate_parameters": {
+        "planted_partition_vertices": [
+          80,
+          160,
+          320
+        ],
+        "planted_colors": [
+          3,
+          4,
+          5
+        ],
+        "planted_edge_probability": [
+          0.02,
+          0.05,
+          0.1
+        ]
+      },
+      "primary_shift_axes": [
+        "vertex count",
+        "edge density at fixed planted color count"
+      ],
+      "reference_and_semantics": "A planted coloring proves feasibility only. Optimal color count needs a valid lower-bound proof or separately verified reference. Add a shared graph-to-MPS formulation and original-graph verifier path before including this MIP target.",
+      "readiness": "graph-to-MPS formulation, source graph metadata, and independent graph/MPS checks implemented; reference search pending",
+      "selected_parameter_ranges": {
+        "planted_partition_vertices": [
+          80,
+          160,
+          320
+        ],
+        "planted_colors": [
+          3,
+          4,
+          5
+        ],
+        "planted_edge_probability": [
+          0.02,
+          0.05,
+          0.1
+        ]
+      },
+      "generator_kind": "graph_coloring_mip",
+      "qualification_gate": "graph-to-MPS formulation, source graph metadata, and independent graph/MPS checks implemented; reference search pending"
+    },
+    "mip_scheduling": {
+      "solvers": [
+        "cbc",
+        "scip",
+        "highs"
+      ],
+      "structure": "Single-machine total weighted tardiness with release dates and due dates; structure shift tightens due dates while holding scale and release-date span fixed. The old SPT total-completion model remains a correctness-only panel.",
+      "candidate_parameters": {
+        "jobs": [
+          30,
+          60,
+          120
+        ],
+        "release_span_over_total_processing": [
+          0.0,
+          0.5,
+          1.0
+        ],
+        "due_date_tightness": [
+          0.5,
+          1.0,
+          1.5
+        ]
+      },
+      "primary_shift_axes": [
+        "job count",
+        "release-date dispersion",
+        "due-date tightness"
+      ],
+      "reference_and_semantics": "The existing sum-start-time model is SPT-solvable and unsuitable as the only optimization target. Add a common MIP model and independent schedule verifier; verify objective terms in original scheduling data.",
+      "readiness": "no-setup single-machine weighted-tardiness MPS, original schedule verifier, and feasible reference witness implemented; reference search pending",
+      "selected_parameter_ranges": {
+        "jobs": [
+          30,
+          60,
+          120
+        ],
+        "release_span_over_total_processing": [
+          0.0,
+          0.5,
+          1.0
+        ],
+        "due_date_tightness": [
+          0.5,
+          1.0,
+          1.5
+        ]
+      },
+      "generator_kind": "single_machine_weighted_tardiness_mip",
+      "qualification_gate": "no-setup single-machine weighted-tardiness MPS, original schedule verifier, and feasible reference witness implemented; reference search pending"
+    },
+    "bin_packing": {
+      "solvers": [
+        "choco",
+        "gecode",
+        "ortools_cp_sat"
+      ],
+      "structure": "One-dimensional integer bin packing; mix uniform, triplet-hard, and bimodal item sizes with fixed capacity and explicitly recorded size-class ratios.",
+      "candidate_parameters": {
+        "capacity": 150,
+        "items": [
+          120,
+          300,
+          600
+        ],
+        "structures": [
+          "uniform_1_150",
+          "falkenauer_20_100",
+          "bimodal_30_45_75_90"
+        ]
+      },
+      "primary_shift_axes": [
+        "item count",
+        "size distribution",
+        "fraction of near-half-capacity items"
+      ],
+      "reference_and_semantics": "Independent packing feasibility check; use proof-backed bin counts on small instances and retain verified BKS on larger instances.",
+      "readiness": "generator, verifier and bounded branch-and-bound reference backend available; solver-specific headroom pending",
+      "selected_parameter_ranges": {
+        "capacity": 150,
+        "items": [
+          120,
+          300,
+          600
+        ],
+        "structures": [
+          "uniform_1_150",
+          "falkenauer_20_100",
+          "bimodal_30_45_75_90"
+        ]
+      },
+      "generator_kind": "bin_packing",
+      "qualification_gate": "generator, verifier and bounded branch-and-bound reference backend available; solver-specific headroom pending"
+    },
+    "graph_coloring_cp": {
+      "solvers": [
+        "choco",
+        "gecode",
+        "ortools_cp_sat"
+      ],
+      "structure": "Planted-colorable random graphs with vertex count and density controlled independently; the colorability witness is retained as an upper bound.",
+      "candidate_parameters": {
+        "planted_partition_vertices": [
+          80,
+          160,
+          320
+        ],
+        "planted_colors": [
+          3,
+          4,
+          5
+        ],
+        "planted_edge_probability": [
+          0.02,
+          0.05,
+          0.1
+        ]
+      },
+      "primary_shift_axes": [
+        "vertex count",
+        "edge density at fixed planted color count"
+      ],
+      "reference_and_semantics": "Verify every coloring against original edges. A planted coloring is a feasible reference, not an optimum certificate; preserve certified chromatic numbers only for valid theorem-backed cells.",
+      "readiness": "generator and original-graph verifier implemented; CP-SAT reference backend available",
+      "selected_parameter_ranges": {
+        "planted_partition_vertices": [
+          80,
+          160,
+          320
+        ],
+        "planted_colors": [
+          3,
+          4,
+          5
+        ],
+        "planted_edge_probability": [
+          0.02,
+          0.05,
+          0.1
+        ]
+      },
+      "generator_kind": "graph_coloring",
+      "qualification_gate": "generator and original-graph verifier implemented; CP-SAT reference backend available"
+    },
+    "job_shop_scheduling": {
+      "solvers": [
+        "choco",
+        "gecode",
+        "ortools_cp_sat"
+      ],
+      "structure": "Classical job shop with random machine order per job; keep shared-order flow-shop cases as a separate structure control, not pooled into the primary result.",
+      "candidate_parameters": {
+        "jobs_machines": [
+          [
+            10,
+            5
+          ],
+          [
+            20,
+            10
+          ],
+          [
+            40,
+            10
+          ],
+          [
+            40,
+            15
+          ]
+        ],
+        "duration_range": [
+          1,
+          99
+        ],
+        "machine_order": [
+          "random_per_job",
+          "shared_flowshop"
+        ]
+      },
+      "primary_shift_axes": [
+        "job count",
+        "machine count",
+        "routing structure",
+        "processing-time spread"
+      ],
+      "reference_and_semantics": "Check operation precedence and machine non-overlap independently. Use known published instances only with source/identity hashes; otherwise independently verified BKS and lower bound.",
+      "readiness": "generator and schedule verifier implemented; CP-SAT reference backend available",
+      "selected_parameter_ranges": {
+        "jobs_machines": [
+          [
+            10,
+            5
+          ],
+          [
+            20,
+            10
+          ],
+          [
+            40,
+            10
+          ],
+          [
+            40,
+            15
+          ]
+        ],
+        "duration_range": [
+          1,
+          99
+        ],
+        "machine_order": [
+          "random_per_job",
+          "shared_flowshop"
+        ]
+      },
+      "generator_kind": "job_shop_scheduling",
+      "qualification_gate": "generator and schedule verifier implemented; CP-SAT reference backend available"
+    },
+    "resource_constrained_project_scheduling": {
+      "solvers": [
+        "choco",
+        "gecode",
+        "ortools_cp_sat"
+      ],
+      "structure": "Precedence DAG with renewable resources, non-preemptive activities, and makespan objective; include both generated layered DAGs and random topological-order DAGs as distinct cells.",
+      "candidate_parameters": {
+        "activities": [
+          30,
+          60,
+          120
+        ],
+        "renewable_resources": [
+          3,
+          5,
+          8
+        ],
+        "precedence_shapes": [
+          "layered_dag",
+          "random_topological_dag"
+        ],
+        "precedence_density": [
+          0.05,
+          0.1,
+          0.2
+        ],
+        "resource_tightness": [
+          0.7,
+          0.85,
+          0.95
+        ],
+        "duration_range": [
+          1,
+          20
+        ]
+      },
+      "primary_shift_axes": [
+        "activity count",
+        "DAG shape",
+        "resource tightness",
+        "resource count"
+      ],
+      "reference_and_semantics": "Build a shared RCPSP representation/generator and independently verify precedence, renewable-resource capacity at every time point, and makespan. Keep a reproducible feasible serial schedule; prove optima only where independently available.",
+      "readiness": "generator, normalized schema, verifier and CP-SAT reference backend implemented; Choco/Gecode/CP-SAT task-driver qualification pending",
+      "selected_parameter_ranges": {
+        "activities": [
+          30,
+          60,
+          120
+        ],
+        "renewable_resources": [
+          3,
+          5,
+          8
+        ],
+        "precedence_shapes": [
+          "layered_dag",
+          "random_topological_dag"
+        ],
+        "precedence_density": [
+          0.05,
+          0.1,
+          0.2
+        ],
+        "resource_tightness": [
+          0.7,
+          0.85,
+          0.95
+        ],
+        "duration_range": [
+          1,
+          20
+        ]
+      },
+      "generator_kind": "resource_constrained_project_scheduling",
+      "qualification_gate": "generator, normalized schema, verifier and CP-SAT reference backend implemented; Choco/Gecode/CP-SAT task-driver qualification pending"
+    },
+    "balanced_subset_sum": {
+      "solvers": [
+        "choco",
+        "gecode",
+        "ortools_cp_sat"
+      ],
+      "structure": "Choose exactly k items whose sum is closest to a target; include bounded uniform and repeated-value/near-duplicate structures, with target offset expressed relative to reachable total.",
+      "candidate_parameters": {
+        "items": [
+          80,
+          160,
+          320
+        ],
+        "max_weight": [
+          100
+        ],
+        "cardinality_fraction": [
+          0.25,
+          0.5,
+          0.75
+        ],
+        "target_offset_fraction": [
+          -0.05,
+          0.0,
+          0.05
+        ],
+        "weight_structures": [
+          "uniform",
+          "repeated_values"
+        ],
+        "weight_structure": [
+          "uniform",
+          "repeated_values"
+        ]
+      },
+      "primary_shift_axes": [
+        "item count",
+        "weight sum range",
+        "cardinality",
+        "value multiplicity"
+      ],
+      "reference_and_semantics": "Use the existing exact fixed-cardinality DP reference where its measured cost is acceptable; independently verify selected cardinality, objective distance, and tie-break rule.",
+      "readiness": "fixed-cardinality generator, exact DP reference and verifier implemented; bounded DP cost qualification pending",
+      "selected_parameter_ranges": {
+        "items": [
+          80,
+          160,
+          320
+        ],
+        "max_weight": [
+          100
+        ],
+        "cardinality_fraction": [
+          0.25,
+          0.5,
+          0.75
+        ],
+        "target_offset_fraction": [
+          -0.05,
+          0.0,
+          0.05
+        ],
+        "weight_structures": [
+          "uniform",
+          "repeated_values"
+        ]
+      },
+      "generator_kind": "balanced_subset_sum",
+      "qualification_gate": "fixed-cardinality generator, exact DP reference and verifier implemented; bounded DP cost qualification pending"
+    },
+    "cvrp": {
+      "solvers": [
+        "pyvrp",
+        "vroom"
+      ],
+      "structure": "Single-depot closed Euclidean CVRP; uniform, clustered, and mixed coordinates; demand/capacity ratio controlled by generation rather than seed alone.",
+      "candidate_parameters": {
+        "customers": [
+          50,
+          150,
+          300
+        ],
+        "coordinate_distribution": [
+          "uniform",
+          "clustered",
+          "mixed"
+        ],
+        "demand_distribution": [
+          "uniform_integer",
+          "depot_correlated"
+        ],
+        "vehicle_capacity": 50,
+        "fleet_size_multiple": [
+          1.0,
+          1.25,
+          1.5
+        ]
+      },
+      "primary_shift_axes": [
+        "customer count",
+        "spatial structure",
+        "demand structure",
+        "capacity slack"
+      ],
+      "reference_and_semantics": "Use a common integer EUC_2D distance rule and independent capacity/route-cost verification. Keep BKS provenance and any unproven bound explicit.",
+      "readiness": "explicit fleet-size multiple and vehicle-limit verification implemented; solver Base/reference qualification pending",
+      "selected_parameter_ranges": {
+        "customers": [
+          50,
+          150,
+          300
+        ],
+        "coordinate_distribution": [
+          "uniform",
+          "clustered",
+          "mixed"
+        ],
+        "demand_distribution": [
+          "uniform_integer",
+          "depot_correlated"
+        ],
+        "vehicle_capacity": 50,
+        "fleet_size_multiple": [
+          1.0,
+          1.25,
+          1.5
+        ]
+      },
+      "generator_kind": "euclidean_cvrp",
+      "qualification_gate": "explicit fleet-size multiple and vehicle-limit verification implemented; solver Base/reference qualification pending"
+    },
+    "vrptw": {
+      "solvers": [
+        "pyvrp",
+        "vroom"
+      ],
+      "structure": "Single-depot closed VRP with integral time windows and service times; generate wide, medium, and tight windows as separate cells, including spatially correlated and uncorrelated windows.",
+      "candidate_parameters": {
+        "customers": [
+          50,
+          150,
+          300
+        ],
+        "time_window_slack": [
+          20,
+          100,
+          500
+        ],
+        "service_time": [
+          5,
+          10
+        ],
+        "coordinate_distribution": [
+          "uniform",
+          "mixed"
+        ]
+      },
+      "primary_shift_axes": [
+        "customer count",
+        "window tightness",
+        "window/coordinate correlation"
+      ],
+      "reference_and_semantics": "Independently verify capacity, arrival/service timing, waiting, and depot horizon. Keep infeasible generation diagnostics; do not silently regenerate until feasible.",
+      "readiness": "integer-window generator and verifier implemented; VROOM solver path qualification pending",
+      "selected_parameter_ranges": {
+        "customers": [
+          50,
+          150,
+          300
+        ],
+        "time_window_slack": [
+          20,
+          100,
+          500
+        ],
+        "service_time": [
+          5,
+          10
+        ],
+        "coordinate_distribution": [
+          "uniform",
+          "mixed"
+        ]
+      },
+      "generator_kind": "euclidean_cvrp",
+      "qualification_gate": "integer-window generator and verifier implemented; VROOM solver path qualification pending"
+    },
+    "heterogeneous_fleet_vrp": {
+      "solvers": [
+        "pyvrp",
+        "vroom"
+      ],
+      "structure": "Single-depot closed routing; compare 2 vehicle types (capacities 40/80, fixed costs 0/20) with 3 types (30/60/100, fixed costs 0/10/30). Customer demand must make type choice relevant.",
+      "candidate_parameters": {
+        "customers": [
+          50,
+          150,
+          300
+        ],
+        "vehicle_type_count": [
+          2,
+          3
+        ],
+        "vehicle_type_specifications": [
+          [
+            {
+              "capacity": 40,
+              "fixed_cost": 0
+            },
+            {
+              "capacity": 80,
+              "fixed_cost": 20
+            }
+          ],
+          [
+            {
+              "capacity": 30,
+              "fixed_cost": 0
+            },
+            {
+              "capacity": 60,
+              "fixed_cost": 10
+            },
+            {
+              "capacity": 100,
+              "fixed_cost": 30
+            }
+          ]
+        ]
+      },
+      "primary_shift_axes": [
+        "customer count",
+        "fleet heterogeneity",
+        "capacity/fixed-cost tradeoff"
+      ],
+      "reference_and_semantics": "Record vehicle type per route and verify type-specific capacity, availability, fixed cost, and route cost. Current common route solution format does not preserve all this evidence.",
+      "readiness": "normalized generator, vehicle-type verifier and PyVRP 0.14.1 smoke solve passed; VROOM path qualification pending",
+      "selected_parameter_ranges": {
+        "customers": [
+          50,
+          150,
+          300
+        ],
+        "vehicle_type_count": [
+          2,
+          3
+        ],
+        "vehicle_type_specifications": [
+          [
+            {
+              "capacity": 40,
+              "fixed_cost": 0
+            },
+            {
+              "capacity": 80,
+              "fixed_cost": 20
+            }
+          ],
+          [
+            {
+              "capacity": 30,
+              "fixed_cost": 0
+            },
+            {
+              "capacity": 60,
+              "fixed_cost": 10
+            },
+            {
+              "capacity": 100,
+              "fixed_cost": 30
+            }
+          ]
+        ]
+      },
+      "generator_kind": "heterogeneous_fleet_vrp",
+      "qualification_gate": "normalized generator, vehicle-type verifier and PyVRP 0.14.1 smoke solve passed; VROOM path qualification pending"
+    },
+    "multi_depot_vrp": {
+      "solvers": [
+        "pyvrp",
+        "vroom"
+      ],
+      "structure": "Closed routes with 2 or 4 depots and explicit vehicle-to-depot eligibility; customer geography is either depot-balanced or deliberately imbalanced.",
+      "candidate_parameters": {
+        "customers": [
+          50,
+          150,
+          300
+        ],
+        "depots": [
+          2,
+          4
+        ],
+        "customer_depot_balance": [
+          "balanced",
+          "imbalanced"
+        ]
+      },
+      "primary_shift_axes": [
+        "customer count",
+        "depot count",
+        "depot balance"
+      ],
+      "reference_and_semantics": "Verify route starts/ends at the assigned depot, each customer exactly once, capacity, and objective. The current normalized instance and solution schemas are single-depot and need extension.",
+      "readiness": "normalized generator/depot verifier and PyVRP 0.14.1 smoke solve passed; VROOM path qualification pending",
+      "selected_parameter_ranges": {
+        "customers": [
+          50,
+          150,
+          300
+        ],
+        "depots": [
+          2,
+          4
+        ],
+        "customer_depot_balance": [
+          "balanced",
+          "imbalanced"
+        ]
+      },
+      "generator_kind": "multi_depot_vrp",
+      "qualification_gate": "normalized generator/depot verifier and PyVRP 0.14.1 smoke solve passed; VROOM path qualification pending"
+    },
+    "open_vrp": {
+      "solvers": [
+        "pyvrp",
+        "vroom"
+      ],
+      "structure": "Single-depot-start routes with no return-to-depot cost; keep vehicle end semantics explicit and distinct from a closed CVRP with a zero-cost final edge.",
+      "candidate_parameters": {
+        "customers": [
+          50,
+          150,
+          300
+        ],
+        "coordinate_distribution": [
+          "uniform",
+          "clustered",
+          "mixed"
+        ],
+        "vehicle_capacity": 50,
+        "fleet_size_multiple": [
+          1.0,
+          1.25,
+          1.5
+        ]
+      },
+      "primary_shift_axes": [
+        "customer count",
+        "spatial structure",
+        "capacity slack",
+        "open-end semantics"
+      ],
+      "reference_and_semantics": "Verify that routes start at the depot, cover each customer exactly once, obey capacity, and omit the return leg. Current verifier assumes closed routes.",
+      "readiness": "normalized open-end generator/verifier and PyVRP 0.14.1 smoke solve passed; VROOM path qualification pending",
+      "selected_parameter_ranges": {
+        "customers": [
+          50,
+          150,
+          300
+        ],
+        "coordinate_distribution": [
+          "uniform",
+          "clustered",
+          "mixed"
+        ],
+        "vehicle_capacity": 50,
+        "fleet_size_multiple": [
+          1.0,
+          1.25,
+          1.5
+        ]
+      },
+      "generator_kind": "open_vrp",
+      "qualification_gate": "normalized open-end generator/verifier and PyVRP 0.14.1 smoke solve passed; VROOM path qualification pending"
+    }
+  },
+  "execution_gate": [
+    "Confirm each target's generator parameters are consumed and observed features match their declared values.",
+    "Generate a small calibration-only sample for each structure cell and audit feasibility, uniqueness, hashes, and semantic invariants.",
+    "Measure reference search and Base headroom on calibration discovery cases; retain every failure and censored result.",
+    "Promote a cell to Agent development only after its adapter, independent verifier, and reference level are recorded.",
+    "Do not start the full Agent matrix while any selected target lacks these gates."
+  ],
+  "population_construction_receipt": "/data3/gushengda/pitbench-runs/family-expansion-v1/populations-v4/population-construction.json",
+  "population_design_audit": "/data3/gushengda/pitbench-runs/family-expansion-v1/populations-v4/design-audit.json",
+  "construction_receipt": "/data3/gushengda/pitbench-runs/family-expansion-v1/populations-v4/population-construction.json",
+  "design_audit": "/data3/gushengda/pitbench-runs/family-expansion-v1/populations-v4/design-audit.json",
+  "reference_campaigns": {
+    "main": {
+      "config": "configs/research/eight_solvers_five_targets_reference_v2.yaml",
+      "output": "/data3/gushengda/pitbench-runs/family-expansion-v1/reference-campaign-v3",
+      "state": "completed_with_88_solver_errors_preserved; 2935 references available"
+    },
+    "targeted_repair": {
+      "config": "configs/research/eight_solvers_five_targets_reference_repair_v1.yaml",
+      "output": "/data3/gushengda/pitbench-runs/family-expansion-v1/reference-repair-v1",
+      "state": "completed; zero solver errors; 2819 instance references"
+    }
+  },
+  "reference_import_output": "/data3/gushengda/PitBench-family-expansion-20261109/private-reference-artifacts/populations-v4-reference-import-final-v3/references.json",
+  "reference_import_receipt": {
+    "status": "references_verified",
+    "records": 2935,
+    "missing": 0,
+    "target_kinds": {
+      "trusted_optimum": 603,
+      "best_found": 382,
+      "computed_optimum": 756,
+      "feasible_reference": 1194
+    },
+    "optimality_note": "MIP solver primal/dual provenance is retained; the external branch-and-bound proof is not independently replayed.",
+    "output": "/data3/gushengda/PitBench-family-expansion-20261109/private-reference-artifacts/populations-v4-reference-import-final-v3/references.json"
+  }
+}

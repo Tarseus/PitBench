@@ -24,6 +24,7 @@ from pitbench.problem_families.public_verification import (
     check_bin_packing,
     check_cvrp,
     check_graph_coloring,
+    check_resource_constrained_project_schedule,
     edge_cost,
     format_multidimensional_knapsack_lp,
 )
@@ -136,6 +137,7 @@ class TrustedOptimumRecord(BaseModel):
         "binary_clique_cover_fme",
         "graph_coloring",
         "balanced_subset_sum",
+        "resource_constrained_project_scheduling",
         "linear_mip",
     ]
     objective_sense: Literal["minimize", "maximize"]
@@ -666,6 +668,242 @@ def _read_mps_numeric_model(instance_path: Path) -> dict | None:
     }
 
 
+def _mps_metadata_payload(instance_path: Path, marker: str) -> dict | None:
+    prefix = f"* {marker} "
+    parts = []
+    count = None
+    for line in instance_path.read_text().splitlines():
+        if not line.startswith(prefix):
+            continue
+        sequence, separator, payload = line[len(prefix) :].partition(" ")
+        index_text, slash, count_text = sequence.partition("/")
+        if not separator or not slash:
+            raise ValueError(f"invalid {marker} MPS metadata")
+        index, current_count = int(index_text), int(count_text)
+        if count is None:
+            count = current_count
+        if current_count != count or index != len(parts) + 1:
+            raise ValueError(f"nonsequential {marker} MPS metadata")
+        parts.append(payload)
+    if count is None:
+        return None
+    if len(parts) != count:
+        raise ValueError(f"incomplete {marker} MPS metadata")
+    payload = json.loads("".join(parts))
+    if not isinstance(payload, dict):
+        raise ValueError(f"invalid {marker} MPS metadata payload")
+    return payload
+
+
+def _mip_graph_coloring_source_check(
+    instance_path: Path, solution: dict, result: VerificationResult
+) -> VerificationResult:
+    from pitbench.problem_families.public_verification import check_graph_coloring
+
+    graph = _mps_metadata_payload(instance_path, "PITBENCH_GRAPH_DATA")
+    if graph is None:
+        return result
+    model = _read_mps_numeric_model(instance_path)
+    if model is None:
+        return VerificationResult(feasible=False, detail="invalid graph-coloring MPS")
+    vertex_count = graph.get("vertex_count")
+    endpoints = graph.get("edge_endpoints")
+    if (
+        type(vertex_count) is not int
+        or vertex_count < 2
+        or not isinstance(endpoints, list)
+        or len(endpoints) % 2
+        or any(type(value) is not int for value in endpoints)
+    ):
+        return VerificationResult(feasible=False, detail="invalid graph metadata")
+    formulation = next(
+        (
+            line
+            for line in instance_path.read_text().splitlines()
+            if line.startswith("* PITBENCH_FORMULATION graph_coloring_mip ")
+        ),
+        None,
+    )
+    if formulation is None:
+        return VerificationResult(
+            feasible=False, detail="graph-coloring MPS formulation marker is missing"
+        )
+    color_count = int(formulation.split("colors=", 1)[1].split()[0])
+    expected_columns = {
+        *(f"x{vertex}_{color}" for vertex in range(vertex_count) for color in range(color_count)),
+        *(f"y{color}" for color in range(color_count)),
+    }
+    edges = list(zip(endpoints[::2], endpoints[1::2], strict=True))
+    expected_rows = {
+        *(f"v{vertex}" for vertex in range(vertex_count)),
+        *(f"e{edge}_{color}" for edge in range(len(edges)) for color in range(color_count)),
+        *(f"l{vertex}_{color}" for vertex in range(vertex_count) for color in range(color_count)),
+        *(f"s{color}" for color in range(color_count - 1)),
+    }
+    if set(model["columns"]) != expected_columns or set(model["rows"]) != expected_rows:
+        return VerificationResult(
+            feasible=False, detail="graph-coloring MPS structure differs from source graph"
+        )
+    expected_costs = {f"y{color}": 1 for color in range(color_count)}
+    if model["cost"] != {
+        column: expected_costs.get(column, 0) for column in model["columns"]
+    }:
+        return VerificationResult(
+            feasible=False, detail="graph-coloring MPS objective differs from source model"
+        )
+
+    def matches_row(name: str, sense: str, rhs: float, terms: dict[str, float]) -> bool:
+        expected_lower = rhs if sense in {"E", "G"} else -math.inf
+        expected_upper = rhs if sense in {"E", "L"} else math.inf
+        actual_terms = model["coefficients"].get(name, {})
+        return (
+            math.isclose(model["row_lower"][name], expected_lower)
+            and math.isclose(model["row_upper"][name], expected_upper)
+            and actual_terms == terms
+        )
+
+    for vertex in range(vertex_count):
+        if not matches_row(
+            f"v{vertex}",
+            "E",
+            1,
+            {f"x{vertex}_{color}": 1 for color in range(color_count)},
+        ):
+            return VerificationResult(
+                feasible=False, detail="graph-coloring assignment row is malformed"
+            )
+        for color in range(color_count):
+            if not matches_row(
+                f"l{vertex}_{color}",
+                "L",
+                0,
+                {f"x{vertex}_{color}": 1, f"y{color}": -1},
+            ):
+                return VerificationResult(
+                    feasible=False, detail="graph-coloring color-use row is malformed"
+                )
+    for edge_index, (first, second) in enumerate(edges):
+        for color in range(color_count):
+            if not matches_row(
+                f"e{edge_index}_{color}",
+                "L",
+                1,
+                {f"x{first}_{color}": 1, f"x{second}_{color}": 1},
+            ):
+                return VerificationResult(
+                    feasible=False, detail="graph edge is absent from MIP formulation"
+                )
+    for color in range(color_count - 1):
+        if not matches_row(
+            f"s{color}",
+            "G",
+            0,
+            {f"y{color}": 1, f"y{color + 1}": -1},
+        ):
+            return VerificationResult(
+                feasible=False, detail="graph-coloring symmetry row is malformed"
+            )
+    values, _ = _parse_mip_primal_solution(solution, model["columns"])
+    colors = []
+    for vertex in range(vertex_count):
+        selected = [
+            color
+            for color in range(color_count)
+            if values[f"x{vertex}_{color}"] == 1
+        ]
+        if len(selected) != 1:
+            return VerificationResult(
+                feasible=False, detail=f"vertex {vertex} has no unique selected color"
+            )
+        colors.append(selected[0])
+    checked = check_graph_coloring(graph, {"colors": colors})
+    if (
+        not checked["feasible"]
+        or checked["objective"] != result.objective
+        or sum(values[f"y{color}"] for color in range(color_count))
+        != checked["objective"]
+    ):
+        return VerificationResult(
+            feasible=False, detail="MIP assignment fails original graph coloring semantics"
+        )
+    return VerificationResult(
+        feasible=True,
+        objective=checked["objective"],
+        detail="independent graph coloring semantics and MPS assignment verified",
+    )
+
+
+def _mip_weighted_tardiness_source_check(
+    instance_path: Path, solution: dict, result: VerificationResult
+) -> VerificationResult:
+    data = _mps_metadata_payload(instance_path, "PITBENCH_SCHEDULING_DATA")
+    if data is None:
+        return result
+    processing = data.get("processing_times")
+    releases = data.get("release_dates")
+    dues = data.get("due_dates")
+    weights = data.get("weights")
+    setups = data.get("setup_times")
+    count = len(processing) if isinstance(processing, list) else 0
+    if (
+        count < 2
+        or any(
+            not isinstance(values, list) or len(values) != count
+            for values in (releases, dues, weights)
+        )
+        or not isinstance(setups, list)
+        or len(setups) != count
+        or any(not isinstance(row, list) or len(row) != count for row in setups)
+    ):
+        return VerificationResult(feasible=False, detail="invalid scheduling metadata")
+    values, _ = _parse_mip_primal_solution(solution)
+    # The generic MPS verifier already checks integrality within its frozen
+    # tolerance. Round near-integral solver output before exact source checks.
+    start_times = [round(float(values[f"s{job}"])) for job in range(count)]
+    tardiness = [round(float(values[f"t{job}"])) for job in range(count)]
+    for job, start in enumerate(start_times):
+        if start < releases[job]:
+            return VerificationResult(
+                feasible=False, detail=f"job {job} violates its release date"
+            )
+        actual = max(0, start + processing[job] - dues[job])
+        if tardiness[job] < actual:
+            return VerificationResult(
+                feasible=False, detail=f"job {job} tardiness variable understates lateness"
+            )
+    for first in range(count):
+        for second in range(first + 1, count):
+            before = round(float(values[f"y{first}_{second}"]))
+            if before == 1:
+                valid = (
+                    start_times[second]
+                    >= start_times[first]
+                    + processing[first]
+                    + setups[first][second]
+                )
+            else:
+                valid = (
+                    start_times[first]
+                    >= start_times[second]
+                    + processing[second]
+                    + setups[second][first]
+                )
+            if not valid:
+                return VerificationResult(
+                    feasible=False,
+                    detail=f"sequence-dependent setup violated for {first},{second}",
+                )
+    objective = sum(
+        weight * max(0, start + processing[job] - dues[job])
+        for job, (weight, start) in enumerate(zip(weights, start_times, strict=True))
+    )
+    return VerificationResult(
+        feasible=True,
+        objective=float(objective),
+        detail="independent weighted-tardiness schedule and source objective verified",
+    )
+
+
 def _check_bin_packing_solution(
     solution: dict,
     *,
@@ -983,6 +1221,86 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
             infrastructure_error=True,
         )
 
+    def _check_best_found_solution(
+        self, instance_path: Path, solution: dict
+    ) -> VerificationResult:
+        """Check a BKS witness against source semantics without claiming optimality."""
+        kind = self.record.problem_kind
+        if kind == "linear_mip":
+            checked = MIPFamily._verify_numeric_model_solution(instance_path, solution)
+            if checked.feasible and _mps_metadata_payload(
+                instance_path, "PITBENCH_SCHEDULING_DATA"
+            ) is not None:
+                return _mip_weighted_tardiness_source_check(
+                    instance_path, solution, checked
+                )
+            if checked.feasible and _mps_metadata_payload(
+                instance_path, "PITBENCH_GRAPH_DATA"
+            ) is not None:
+                return _mip_graph_coloring_source_check(
+                    instance_path, solution, checked
+                )
+            return checked
+
+        if kind == "job_shop_scheduling":
+            try:
+                lines = instance_path.read_text().splitlines()
+                job_count, machine_count = map(int, lines[0].split())
+                rows = [list(map(int, line.split())) for line in lines[1:]]
+                if (
+                    len(rows) != job_count
+                    or any(len(row) != 2 * machine_count for row in rows)
+                ):
+                    raise ValueError("job-shop operation dimensions do not match")
+                jobs = [
+                    [
+                        (row[index], row[index + 1])
+                        for index in range(0, len(row), 2)
+                    ]
+                    for row in rows
+                ]
+                start_times = solution.get("start_times")
+                if not isinstance(start_times, list):
+                    raise ValueError("job-shop BKS has no operation start times")
+                return _check_job_shop_start_times(start_times, jobs)
+            except (OSError, IndexError, TypeError, ValueError) as error:
+                return VerificationResult(
+                    feasible=False, detail=f"invalid job-shop BKS: {error}"
+                )
+
+        try:
+            instance = json.loads(instance_path.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            return VerificationResult(feasible=False, detail=f"invalid instance: {error}")
+
+        if kind == "bin_packing":
+            return _check_bin_packing_solution(
+                solution,
+                weights=instance.get("weights", []),
+                capacity=instance.get("capacity"),
+            )
+        if kind == "graph_coloring":
+            return VerificationResult.model_validate(
+                check_graph_coloring(instance, solution)
+            )
+        if kind == "balanced_subset_sum":
+            return _check_balanced_subset_sum_solution(instance, solution)
+        if kind == "resource_constrained_project_scheduling":
+            return VerificationResult.model_validate(
+                check_resource_constrained_project_schedule(instance, solution)
+            )
+        if kind == "single_machine_scheduling":
+            processing = instance.get("processing_times")
+            if not isinstance(processing, list):
+                return VerificationResult(
+                    feasible=False, detail="single-machine BKS lacks processing times"
+                )
+            return _check_scheduling_solution(solution, processing)
+        return VerificationResult(
+            feasible=False,
+            detail=f"best-found references are unsupported for {kind}",
+        )
+
     def _check_oracle(self, instance_path: Path) -> VerificationResult | None:
         if self.record.objective_sense != "minimize":
             return self._oracle_error("unsupported trusted optimum objective sense")
@@ -1022,13 +1340,41 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
             return self._oracle_error(f"invalid reference solution: {error}")
         if not isinstance(reference_solution, dict):
             return self._oracle_error("trusted optimum reference is not an object")
+        if self.record.target_kind == "best_found":
+            checked = self._check_best_found_solution(instance_path, reference_solution)
+            if (
+                not checked.feasible
+                or checked.objective is None
+                or not math.isclose(
+                    float(checked.objective),
+                    float(self.record.optimal_objective),
+                    rel_tol=0,
+                    abs_tol=1e-6,
+                )
+            ):
+                return self._oracle_error(
+                    "best-found reference fails original-problem feasibility/objective checks"
+                )
+            return None
         if self.record.problem_kind == "linear_mip":
             checked = MIPFamily._verify_numeric_model_solution(
                 instance_path, reference_solution
             )
+            if checked.feasible and _mps_metadata_payload(
+                instance_path, "PITBENCH_SCHEDULING_DATA"
+            ) is not None:
+                checked = _mip_weighted_tardiness_source_check(
+                    instance_path, reference_solution, checked
+                )
             if (
                 not checked.feasible
-                or checked.objective != self.record.optimal_objective
+                or checked.objective is None
+                or not math.isclose(
+                    checked.objective,
+                    float(self.record.optimal_objective),
+                    rel_tol=0,
+                    abs_tol=1e-6,
+                )
             ):
                 return self._oracle_error(
                     "linear reference fails original-model feasibility/objective checks"
@@ -1082,6 +1428,43 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
                 or expected_objective != self.record.optimal_objective
             ):
                 return self._oracle_error("invalid scheduling reference optimum")
+            return None
+
+        if (
+            self.record.problem_kind
+            == "resource_constrained_project_scheduling"
+        ):
+            try:
+                instance = json.loads(instance_path.read_text())
+                checked = check_resource_constrained_project_schedule(
+                    instance, reference_solution
+                )
+            except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+                return self._oracle_error(f"invalid RCPSP reference: {error}")
+            if (
+                not checked.get("feasible")
+                or checked.get("objective") != self.record.optimal_objective
+            ):
+                return self._oracle_error("RCPSP reference violates original model")
+            if self.record.target_kind == "best_found":
+                if basis.get("kind") not in {
+                    "feasible_search_reference",
+                    "serial_feasible_schedule",
+                    "cp_sat_search",
+                }:
+                    return self._oracle_error("invalid feasible RCPSP reference basis")
+                return None
+            if (
+                basis.get("kind") != "cp_sat_search"
+                or basis.get("solver_status") != "OPTIMAL"
+                or not math.isclose(
+                    float(basis.get("dual_bound", math.nan)),
+                    float(self.record.optimal_objective),
+                    rel_tol=0,
+                    abs_tol=1e-6,
+                )
+            ):
+                return self._oracle_error("RCPSP optimum lacks matching CP-SAT bound")
             return None
 
         if self.record.problem_kind == "job_shop_scheduling":
@@ -1607,11 +1990,28 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
             return VerificationResult(
                 feasible=False, detail=f"invalid solution: {error}"
             )
+        if self.record.target_kind == "best_found":
+            return self._check_best_found_solution(instance_path, solution)
         if self.record.problem_kind == "single_machine_scheduling":
             return _check_scheduling_solution(
                 solution,
                 self.record.optimality_basis["processing_times"],
             )
+        if (
+            self.record.problem_kind
+            == "resource_constrained_project_scheduling"
+        ):
+            try:
+                return VerificationResult.model_validate(
+                    check_resource_constrained_project_schedule(
+                        json.loads(instance_path.read_text()), solution
+                    )
+                )
+            except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+                return VerificationResult(
+                    feasible=False,
+                    detail=f"invalid RCPSP solution input: {error}",
+                )
         if self.record.problem_kind == "job_shop_scheduling":
             return _check_job_shop_solution(solution, self.record.optimality_basis)
         if self.record.problem_kind == "multidimensional_knapsack":
@@ -1732,7 +2132,27 @@ class MIPFamily(ExternalVerifierFamily):
                 return VerificationResult(
                     feasible=False, detail="invalid MIP solution container"
                 )
-            return self._verify_numeric_model_solution(instance_path, solution)
+            result = self._verify_numeric_model_solution(instance_path, solution)
+            if not result.feasible:
+                return result
+            try:
+                graph = _mps_metadata_payload(instance_path, "PITBENCH_GRAPH_DATA")
+                if graph is not None:
+                    return _mip_graph_coloring_source_check(
+                        instance_path, solution, result
+                    )
+                scheduling = _mps_metadata_payload(
+                    instance_path, "PITBENCH_SCHEDULING_DATA"
+                )
+                if scheduling is not None:
+                    return _mip_weighted_tardiness_source_check(
+                        instance_path, solution, result
+                    )
+            except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+                return VerificationResult(
+                    feasible=False, detail=f"invalid MIP family metadata: {error}"
+                )
+            return result
         processing_times = _public_scheduling_processing_times(instance_path)
         if processing_times is not None:
             try:
@@ -1961,6 +2381,13 @@ class CPFamily(ExternalVerifierFamily):
                 )
             if instance.get("problem_kind") == "balanced_subset_sum":
                 return _check_balanced_subset_sum_solution(instance, solution)
+            if (
+                instance.get("problem_kind")
+                == "resource_constrained_project_scheduling"
+            ):
+                return VerificationResult.model_validate(
+                    check_resource_constrained_project_schedule(instance, solution)
+                )
             weights = instance["weights"]
             capacity = instance["capacity"]
         except (

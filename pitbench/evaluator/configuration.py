@@ -229,6 +229,22 @@ class SearchSpaceExhausted(Exception):
     """All distinct configurations in a finite configured space were evaluated."""
 
 
+def configuration_panel(configuration, task, *, repository_root=ROOT):
+    from pitbench.schema.task import PitBenchTask
+
+    panels = [
+        panel
+        for panel in configuration["panels"]
+        if PitBenchTask.from_yaml(
+            repository_root / panel["task_config"]
+        ).release.repository
+        == task.release.repository
+    ]
+    if len(panels) > 1:
+        raise ValueError("multiple parameter panels match the task repository")
+    return panels[0] if panels else None
+
+
 def prepare_candidate_configuration(
     request,
     config_path: Path,
@@ -293,15 +309,8 @@ def prepare_candidate_configuration(
                 "candidate configuration identity changed; use a new output directory"
             )
         return saved
-    panels = [
-        p
-        for p in configuration["panels"]
-        if PitBenchTask.from_yaml(ROOT / p["task_config"]).release.repository
-        == task.release.repository
-    ]
+    panel = configuration_panel(configuration, task)
     repository = RepositoryPluginRegistry.load(task.repository.plugin)
-    if len(panels) > 1:
-        raise ValueError("multiple parameter panels match the task repository")
     manifest = {
         "identity": identity,
         "searches": [],
@@ -310,17 +319,20 @@ def prepare_candidate_configuration(
         "coverage": "available",
         "candidate_patch_sha256": patch_hash,
     }
-    if not panels or not repository.supports_fixed_solver_parameters:
+    if panel is None or not repository.supports_fixed_solver_parameters:
         manifest.update(
             coverage="unavailable",
             reason="no approved parameter panel or native parameter driver for this repository",
         )
         write_json(manifest_path, manifest)
         return manifest
-    panel = panels[0]
     resolver = PrivateAssetResolver(Path(context["private_root"]))
     seeds = list(_evaluation_seeds(task, resolver))
-    seed_count = panel.get("solver_seed_count", configuration["solver_seed_count"])
+    seed_count = (
+        len(seeds)
+        if panel.get("native_only")
+        else panel.get("solver_seed_count", configuration["solver_seed_count"])
+    )
     if len(seeds) != seed_count:
         raise ValueError(
             "native seed count differs from the declared configuration protocol"
@@ -353,7 +365,7 @@ def prepare_candidate_configuration(
     retest = list(seeds) if repository.deterministic else []
     generator = random.SystemRandom()
     while len(retest) < len(seeds):
-        seed = generator.randrange(panel["seed_max"] + 1)
+        seed = generator.randrange(panel.get("seed_min", 0), panel["seed_max"] + 1)
         if seed not in seeds and seed not in retest:
             retest.append(seed)
     context.update(
@@ -408,6 +420,19 @@ def prepare_candidate_configuration(
                 "instances_per_panel": instances_per_panel,
                 "seeds_per_panel": seeds_per_panel,
             }
+            if panel.get("native_only") and search["fidelity_stage_config"]:
+                search["fidelity_stage_config"] = [
+                    {
+                        **stage,
+                        "name": "full"
+                        if index == len(search["fidelity_stage_config"]) - 1
+                        else f"screen_{index + 1}",
+                        "solver_seed_count": min(
+                            stage["solver_seed_count"], len(seeds)
+                        ),
+                    }
+                    for index, stage in enumerate(search["fidelity_stage_config"])
+                ]
             search["fidelity_stages"] = materialize_fidelity_stages(search)
             validate_search(search)
             manifest["searches"].append(search)
@@ -903,6 +928,8 @@ def prepare(
     output.mkdir(parents=True, exist_ok=True)
     searches = []
     for panel in config["panels"]:
+        if panel.get("native_only"):
+            continue
         task = PitBenchTask.from_yaml(ROOT / panel["task_config"]).model_dump(
             mode="json"
         )
@@ -1044,7 +1071,13 @@ def validate_search(search: dict) -> None:
             for item in search["instances"]
         ):
             raise ValueError("quality feedback requires finite nonzero BKS references")
-    for name, domain in search["parameters"].items():
+    validate_parameter_domains(search["parameters"])
+
+
+def validate_parameter_domains(parameters):
+    if not isinstance(parameters, dict):
+        raise ValueError("parameters must be a mapping")
+    for name, domain in parameters.items():
         if domain["type"] == "categorical":
             if domain["default"] not in domain["choices"]:
                 raise ValueError(f"default outside parameter domain: {name}")

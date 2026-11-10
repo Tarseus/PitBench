@@ -1,0 +1,3296 @@
+{
+  "schema_version": "1.0",
+  "design_id": "eight_solvers_five_targets_generation_v1",
+  "status": "selected_design_pending_generator_and_solver_qualification",
+  "source_inventory": "configs/research/eight_solvers_five_targets_v1.json",
+  "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+  "description": "Shared target populations for 40 solver-target tasks; task-specific views bind these populations without changing the frozen source task seeds or Agent budget.",
+  "roles": {
+    "protocol_calibration": {
+      "visibility": "judge",
+      "count": 10,
+      "seed_namespace": 2026110901
+    },
+    "diverse_development_v2": {
+      "visibility": "agent",
+      "count": 5,
+      "seed_namespace": 2026110902
+    },
+    "unseen_id": {
+      "visibility": "judge",
+      "count": 30,
+      "seed_namespace": 2026110903
+    },
+    "unseen_scale": {
+      "visibility": "judge",
+      "count": 30,
+      "seed_namespace": 2026110904
+    },
+    "unseen_structure": {
+      "visibility": "judge",
+      "count": 30,
+      "seed_namespace": 2026110905
+    },
+    "unseen_joint": {
+      "visibility": "judge",
+      "count": 30,
+      "seed_namespace": 2026110906
+    }
+  },
+  "families": {
+    "multidimensional_knapsack_base": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "multidimensional_knapsack_mps",
+        "items": [
+          160
+        ],
+        "dimensions": [
+          5
+        ],
+        "weight_max": 100,
+        "capacity_mode": "ratio",
+        "capacity_ratio": 0.5,
+        "profit_mode": "independent",
+        "profit_max": 100,
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "multidimensional_knapsack"
+    },
+    "multidimensional_knapsack_shifted_structure": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "multidimensional_knapsack_mps",
+        "items": [
+          160
+        ],
+        "dimensions": [
+          5
+        ],
+        "weight_max": 100,
+        "capacity_mode": "ratio",
+        "capacity_ratio": 0.5,
+        "profit_mode": "weakly_correlated",
+        "profit_max": 100,
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "multidimensional_knapsack"
+    },
+    "set_covering_base": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "random_set_covering_mip",
+        "variables": [
+          250
+        ],
+        "rows": [
+          160
+        ],
+        "row_density": 0.1,
+        "cost_max": 100,
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "set_covering"
+    },
+    "set_covering_shifted_structure": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "random_set_covering_mip",
+        "variables": [
+          250
+        ],
+        "rows": [
+          160
+        ],
+        "row_density": 0.2,
+        "cost_max": 100,
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "set_covering"
+    },
+    "facility_location_base": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "facility_location_mip",
+        "facilities": [
+          20
+        ],
+        "customers": [
+          120
+        ],
+        "capacity_ratio": 1.25,
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "facility_location"
+    },
+    "facility_location_shifted_structure": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "facility_location_mip",
+        "facilities": [
+          20
+        ],
+        "customers": [
+          120
+        ],
+        "capacity_ratio": 1.05,
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "facility_location"
+    },
+    "graph_coloring_mip_base": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "graph_coloring_mip",
+        "vertex_counts": [
+          160
+        ],
+        "graph_model": "planted_partition",
+        "colors": [
+          4
+        ],
+        "edge_probability": 0.05,
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "graph_coloring_mip"
+    },
+    "graph_coloring_mip_shifted_structure": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "graph_coloring_mip",
+        "vertex_counts": [
+          160
+        ],
+        "graph_model": "planted_partition",
+        "colors": [
+          4
+        ],
+        "edge_probability": 0.1,
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "graph_coloring_mip"
+    },
+    "mip_scheduling_base": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "single_machine_weighted_tardiness_mip",
+        "jobs": [
+          60
+        ],
+        "processing_distribution": "uniform_integer",
+        "processing_parameters": {
+          "low": 1,
+          "high": 99
+        },
+        "release_span_ratio": 0.5,
+        "due_date_tightness": 1.0,
+        "setup_ratio": 0.15,
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "mip_scheduling"
+    },
+    "mip_scheduling_shifted_structure": {
+      "problem_family": "mip",
+      "generator": {
+        "kind": "single_machine_weighted_tardiness_mip",
+        "jobs": [
+          60
+        ],
+        "processing_distribution": "uniform_integer",
+        "processing_parameters": {
+          "low": 1,
+          "high": 99
+        },
+        "release_span_ratio": 1.0,
+        "due_date_tightness": 1.0,
+        "setup_ratio": 0.4,
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "mip_scheduling"
+    },
+    "bin_packing_base": {
+      "problem_family": "cp",
+      "generator": {
+        "kind": "bin_packing",
+        "items": [
+          300
+        ],
+        "capacity": 150,
+        "weight_distribution": "uniform_integer",
+        "weight_parameters": {
+          "low": 1,
+          "high": 150
+        },
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "bin_packing"
+    },
+    "bin_packing_shifted_structure": {
+      "problem_family": "cp",
+      "generator": {
+        "kind": "bin_packing",
+        "items": [
+          300
+        ],
+        "capacity": 150,
+        "weight_distribution": "bimodal",
+        "weight_parameters": {
+          "low": [
+            30,
+            45
+          ],
+          "high": [
+            75,
+            90
+          ],
+          "high_probability": 0.5
+        },
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "bin_packing"
+    },
+    "graph_coloring_cp_base": {
+      "problem_family": "cp",
+      "generator": {
+        "kind": "graph_coloring",
+        "vertex_counts": [
+          160
+        ],
+        "graph_model": "planted_partition",
+        "colors": [
+          4
+        ],
+        "edge_probability": 0.05,
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "graph_coloring_cp"
+    },
+    "graph_coloring_cp_shifted_structure": {
+      "problem_family": "cp",
+      "generator": {
+        "kind": "graph_coloring",
+        "vertex_counts": [
+          160
+        ],
+        "graph_model": "planted_partition",
+        "colors": [
+          4
+        ],
+        "edge_probability": 0.1,
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "graph_coloring_cp"
+    },
+    "job_shop_scheduling_base": {
+      "problem_family": "cp",
+      "generator": {
+        "kind": "job_shop_scheduling",
+        "jobs": [
+          20
+        ],
+        "machines": [
+          10
+        ],
+        "machine_order": "random_per_job",
+        "processing_distribution": "uniform_integer",
+        "processing_parameters": {
+          "low": 1,
+          "high": 99
+        },
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "job_shop_scheduling"
+    },
+    "job_shop_scheduling_shifted_structure": {
+      "problem_family": "cp",
+      "generator": {
+        "kind": "job_shop_scheduling",
+        "jobs": [
+          20
+        ],
+        "machines": [
+          10
+        ],
+        "machine_order": "shared",
+        "processing_distribution": "uniform_integer",
+        "processing_parameters": {
+          "low": 1,
+          "high": 99
+        },
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "job_shop_scheduling"
+    },
+    "resource_constrained_project_scheduling_base": {
+      "problem_family": "cp",
+      "generator": {
+        "kind": "resource_constrained_project_scheduling",
+        "activities": [
+          60
+        ],
+        "renewable_resources": [
+          5
+        ],
+        "precedence_shape": "random_topological_dag",
+        "precedence_density": 0.1,
+        "resource_tightness": 0.85,
+        "duration_range": [
+          1,
+          20
+        ],
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "resource_constrained_project_scheduling"
+    },
+    "resource_constrained_project_scheduling_shifted_structure": {
+      "problem_family": "cp",
+      "generator": {
+        "kind": "resource_constrained_project_scheduling",
+        "activities": [
+          60
+        ],
+        "renewable_resources": [
+          5
+        ],
+        "precedence_shape": "layered_dag",
+        "precedence_density": 0.1,
+        "resource_tightness": 0.85,
+        "duration_range": [
+          1,
+          20
+        ],
+        "randomness": {
+          "instance_seed": 0
+        }
+      },
+      "scale_group": "resource_constrained_project_scheduling"
+    },
+    "balanced_subset_sum_base": {
+      "problem_family": "cp",
+      "generator": {
+        "kind": "balanced_subset_sum",
+        "item_counts": [
+          160
+        ],
+        "max_weight": 100,
+        "target_offsets": [
+          0
+        ],
+        "weight_distribution": "uniform_integer",
+        "domain_modes": [
+          "bounded"
+        ],
+        "randomness": {
+          "instance_seed": 0
+        },
+        "cardinality_fraction": 0.5
+      },
+      "scale_group": "balanced_subset_sum"
+    },
+    "balanced_subset_sum_shifted_structure": {
+      "problem_family": "cp",
+      "generator": {
+        "kind": "balanced_subset_sum",
+        "item_counts": [
+          160
+        ],
+        "max_weight": 100,
+        "target_offsets": [
+          0
+        ],
+        "weight_distribution": "discrete",
+        "domain_modes": [
+          "bounded"
+        ],
+        "randomness": {
+          "instance_seed": 0
+        },
+        "weight_parameters": {
+          "values": [
+            25,
+            50,
+            75,
+            100
+          ],
+          "weights": [
+            1,
+            1,
+            1,
+            1
+          ]
+        },
+        "cardinality_fraction": 0.5
+      },
+      "scale_group": "balanced_subset_sum"
+    },
+    "cvrp_base": {
+      "problem_family": "cvrp",
+      "generator": {
+        "kind": "euclidean_cvrp",
+        "customers": [
+          150
+        ],
+        "capacity": 50,
+        "fleet_size_multiple": 1.25,
+        "distance_metric": "EUC_2D",
+        "coordinate_distribution": "uniform",
+        "depot_mode": "center",
+        "demand_distribution": "uniform_integer",
+        "randomness": {
+          "coordinate_seed": 0,
+          "demand_seed": 1
+        }
+      },
+      "scale_group": "cvrp"
+    },
+    "cvrp_shifted_structure": {
+      "problem_family": "cvrp",
+      "generator": {
+        "kind": "euclidean_cvrp",
+        "customers": [
+          150
+        ],
+        "capacity": 50,
+        "fleet_size_multiple": 1.25,
+        "distance_metric": "EUC_2D",
+        "coordinate_distribution": "clustered",
+        "depot_mode": "center",
+        "demand_distribution": "uniform_integer",
+        "randomness": {
+          "coordinate_seed": 0,
+          "demand_seed": 1
+        },
+        "cluster_count": 8,
+        "cluster_spread": 4.0
+      },
+      "scale_group": "cvrp"
+    },
+    "vrptw_base": {
+      "problem_family": "cvrp",
+      "generator": {
+        "kind": "euclidean_cvrp",
+        "customers": [
+          150
+        ],
+        "capacity": 50,
+        "fleet_size_multiple": 1.25,
+        "distance_metric": "EUC_2D",
+        "coordinate_distribution": "mixed",
+        "cluster_count": 8,
+        "cluster_spread": 4.0,
+        "uniform_fraction": 0.5,
+        "depot_mode": "center",
+        "demand_distribution": "uniform_integer",
+        "time_window_slack": 100,
+        "service_time": 5,
+        "randomness": {
+          "coordinate_seed": 0,
+          "demand_seed": 1
+        }
+      },
+      "scale_group": "vrptw"
+    },
+    "vrptw_shifted_structure": {
+      "problem_family": "cvrp",
+      "generator": {
+        "kind": "euclidean_cvrp",
+        "customers": [
+          150
+        ],
+        "capacity": 50,
+        "fleet_size_multiple": 1.25,
+        "distance_metric": "EUC_2D",
+        "coordinate_distribution": "mixed",
+        "cluster_count": 8,
+        "cluster_spread": 4.0,
+        "uniform_fraction": 0.5,
+        "depot_mode": "center",
+        "demand_distribution": "uniform_integer",
+        "time_window_slack": 20,
+        "service_time": 5,
+        "randomness": {
+          "coordinate_seed": 0,
+          "demand_seed": 1
+        }
+      },
+      "scale_group": "vrptw"
+    },
+    "heterogeneous_fleet_vrp_base": {
+      "problem_family": "cvrp",
+      "generator": {
+        "kind": "heterogeneous_fleet_vrp",
+        "customers": [
+          150
+        ],
+        "depots": 1,
+        "vehicle_types": [
+          {
+            "capacity": 40,
+            "fixed_cost": 0
+          },
+          {
+            "capacity": 80,
+            "fixed_cost": 20
+          }
+        ],
+        "coordinate_distribution": "uniform",
+        "distance_metric": "EUC_2D",
+        "randomness": {
+          "coordinate_seed": 0,
+          "demand_seed": 1
+        }
+      },
+      "scale_group": "heterogeneous_fleet_vrp"
+    },
+    "heterogeneous_fleet_vrp_shifted_structure": {
+      "problem_family": "cvrp",
+      "generator": {
+        "kind": "heterogeneous_fleet_vrp",
+        "customers": [
+          150
+        ],
+        "depots": 1,
+        "vehicle_types": [
+          {
+            "capacity": 30,
+            "fixed_cost": 0
+          },
+          {
+            "capacity": 60,
+            "fixed_cost": 10
+          },
+          {
+            "capacity": 100,
+            "fixed_cost": 30
+          }
+        ],
+        "coordinate_distribution": "uniform",
+        "distance_metric": "EUC_2D",
+        "randomness": {
+          "coordinate_seed": 0,
+          "demand_seed": 1
+        }
+      },
+      "scale_group": "heterogeneous_fleet_vrp"
+    },
+    "multi_depot_vrp_base": {
+      "problem_family": "cvrp",
+      "generator": {
+        "kind": "multi_depot_vrp",
+        "customers": [
+          150
+        ],
+        "depots": 2,
+        "customer_depot_balance": "balanced",
+        "capacity": 50,
+        "distance_metric": "EUC_2D",
+        "randomness": {
+          "coordinate_seed": 0,
+          "demand_seed": 1
+        }
+      },
+      "scale_group": "multi_depot_vrp"
+    },
+    "multi_depot_vrp_shifted_structure": {
+      "problem_family": "cvrp",
+      "generator": {
+        "kind": "multi_depot_vrp",
+        "customers": [
+          150
+        ],
+        "depots": 2,
+        "customer_depot_balance": "imbalanced",
+        "capacity": 50,
+        "distance_metric": "EUC_2D",
+        "randomness": {
+          "coordinate_seed": 0,
+          "demand_seed": 1
+        }
+      },
+      "scale_group": "multi_depot_vrp"
+    },
+    "open_vrp_base": {
+      "problem_family": "cvrp",
+      "generator": {
+        "kind": "open_vrp",
+        "customers": [
+          150
+        ],
+        "capacity": 50,
+        "fleet_size_multiple": 1.25,
+        "coordinate_distribution": "uniform",
+        "distance_metric": "EUC_2D",
+        "randomness": {
+          "coordinate_seed": 0,
+          "demand_seed": 1
+        }
+      },
+      "scale_group": "open_vrp"
+    },
+    "open_vrp_shifted_structure": {
+      "problem_family": "cvrp",
+      "generator": {
+        "kind": "open_vrp",
+        "customers": [
+          150
+        ],
+        "capacity": 50,
+        "fleet_size_multiple": 1.25,
+        "coordinate_distribution": "clustered",
+        "distance_metric": "EUC_2D",
+        "randomness": {
+          "coordinate_seed": 0,
+          "demand_seed": 1
+        },
+        "cluster_count": 8,
+        "cluster_spread": 4.0
+      },
+      "scale_group": "open_vrp"
+    }
+  },
+  "conditions": [
+    {
+      "id": "multidimensional_knapsack_visible",
+      "family": "multidimensional_knapsack_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "variables": 160,
+        "constraints": 5
+      }
+    },
+    {
+      "id": "multidimensional_knapsack_scale",
+      "family": "multidimensional_knapsack_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "items": [
+          320
+        ]
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "variables": 320,
+        "constraints": 5
+      }
+    },
+    {
+      "id": "multidimensional_knapsack_structure",
+      "family": "multidimensional_knapsack_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "variables": 160,
+        "constraints": 5
+      }
+    },
+    {
+      "id": "multidimensional_knapsack_joint",
+      "family": "multidimensional_knapsack_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "items": [
+          320
+        ]
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "variables": 320,
+        "constraints": 5
+      }
+    },
+    {
+      "id": "set_covering_visible",
+      "family": "set_covering_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "variables": 250,
+        "constraints": 160
+      }
+    },
+    {
+      "id": "set_covering_scale",
+      "family": "set_covering_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "variables": [
+          500
+        ],
+        "rows": [
+          320
+        ]
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "variables": 500,
+        "constraints": 320
+      }
+    },
+    {
+      "id": "set_covering_structure",
+      "family": "set_covering_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "variables": 250,
+        "constraints": 160
+      }
+    },
+    {
+      "id": "set_covering_joint",
+      "family": "set_covering_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "variables": [
+          500
+        ],
+        "rows": [
+          320
+        ]
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "variables": 500,
+        "constraints": 320
+      }
+    },
+    {
+      "id": "facility_location_visible",
+      "family": "facility_location_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "variables": 2420,
+        "constraints": 140
+      }
+    },
+    {
+      "id": "facility_location_scale",
+      "family": "facility_location_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "facilities": [
+          40
+        ],
+        "customers": [
+          240
+        ]
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "variables": 9640,
+        "constraints": 280
+      }
+    },
+    {
+      "id": "facility_location_structure",
+      "family": "facility_location_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "variables": 2420,
+        "constraints": 140
+      }
+    },
+    {
+      "id": "facility_location_joint",
+      "family": "facility_location_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "facilities": [
+          40
+        ],
+        "customers": [
+          240
+        ]
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "variables": 9640,
+        "constraints": 280
+      }
+    },
+    {
+      "id": "graph_coloring_mip_visible",
+      "family": "graph_coloring_mip_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "variables": 644,
+        "vertices": 160
+      }
+    },
+    {
+      "id": "graph_coloring_mip_scale",
+      "family": "graph_coloring_mip_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "vertex_counts": [
+          320
+        ]
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "variables": 1284,
+        "vertices": 320
+      }
+    },
+    {
+      "id": "graph_coloring_mip_structure",
+      "family": "graph_coloring_mip_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "variables": 644,
+        "vertices": 160
+      }
+    },
+    {
+      "id": "graph_coloring_mip_joint",
+      "family": "graph_coloring_mip_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "vertex_counts": [
+          320
+        ]
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "variables": 1284,
+        "vertices": 320
+      }
+    },
+    {
+      "id": "mip_scheduling_visible",
+      "family": "mip_scheduling_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "variables": 1890,
+        "jobs": 60
+      }
+    },
+    {
+      "id": "mip_scheduling_scale",
+      "family": "mip_scheduling_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "jobs": [
+          120
+        ]
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "variables": 7380,
+        "jobs": 120
+      }
+    },
+    {
+      "id": "mip_scheduling_structure",
+      "family": "mip_scheduling_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "variables": 1890,
+        "jobs": 60
+      }
+    },
+    {
+      "id": "mip_scheduling_joint",
+      "family": "mip_scheduling_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "jobs": [
+          120
+        ]
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "variables": 7380,
+        "jobs": 120
+      }
+    },
+    {
+      "id": "bin_packing_visible",
+      "family": "bin_packing_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "items": 300
+      }
+    },
+    {
+      "id": "bin_packing_scale",
+      "family": "bin_packing_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "items": [
+          600
+        ]
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "items": 600
+      }
+    },
+    {
+      "id": "bin_packing_structure",
+      "family": "bin_packing_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "items": 300
+      }
+    },
+    {
+      "id": "bin_packing_joint",
+      "family": "bin_packing_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "items": [
+          600
+        ]
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "items": 600
+      }
+    },
+    {
+      "id": "graph_coloring_cp_visible",
+      "family": "graph_coloring_cp_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "vertices": 160
+      }
+    },
+    {
+      "id": "graph_coloring_cp_scale",
+      "family": "graph_coloring_cp_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "vertex_counts": [
+          320
+        ]
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "vertices": 320
+      }
+    },
+    {
+      "id": "graph_coloring_cp_structure",
+      "family": "graph_coloring_cp_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "vertices": 160
+      }
+    },
+    {
+      "id": "graph_coloring_cp_joint",
+      "family": "graph_coloring_cp_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "vertex_counts": [
+          320
+        ]
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "vertices": 320
+      }
+    },
+    {
+      "id": "job_shop_scheduling_visible",
+      "family": "job_shop_scheduling_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "jobs": 20,
+        "machines": 10
+      }
+    },
+    {
+      "id": "job_shop_scheduling_scale",
+      "family": "job_shop_scheduling_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "jobs": [
+          40
+        ],
+        "machines": [
+          15
+        ]
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "jobs": 40,
+        "machines": 15
+      }
+    },
+    {
+      "id": "job_shop_scheduling_structure",
+      "family": "job_shop_scheduling_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "jobs": 20,
+        "machines": 10
+      }
+    },
+    {
+      "id": "job_shop_scheduling_joint",
+      "family": "job_shop_scheduling_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "jobs": [
+          40
+        ],
+        "machines": [
+          15
+        ]
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "jobs": 40,
+        "machines": 15
+      }
+    },
+    {
+      "id": "resource_constrained_project_scheduling_visible",
+      "family": "resource_constrained_project_scheduling_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "activities": 60
+      }
+    },
+    {
+      "id": "resource_constrained_project_scheduling_scale",
+      "family": "resource_constrained_project_scheduling_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "activities": [
+          120
+        ],
+        "renewable_resources": [
+          8
+        ]
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "activities": 120
+      }
+    },
+    {
+      "id": "resource_constrained_project_scheduling_structure",
+      "family": "resource_constrained_project_scheduling_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "activities": 60
+      }
+    },
+    {
+      "id": "resource_constrained_project_scheduling_joint",
+      "family": "resource_constrained_project_scheduling_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "activities": [
+          120
+        ],
+        "renewable_resources": [
+          8
+        ]
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "activities": 120
+      }
+    },
+    {
+      "id": "balanced_subset_sum_visible",
+      "family": "balanced_subset_sum_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "items": 160,
+        "cardinality": 80
+      }
+    },
+    {
+      "id": "balanced_subset_sum_scale",
+      "family": "balanced_subset_sum_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "item_counts": [
+          320
+        ],
+        "cardinality": 160
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "items": 320,
+        "cardinality": 160
+      }
+    },
+    {
+      "id": "balanced_subset_sum_structure",
+      "family": "balanced_subset_sum_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "items": 160,
+        "cardinality": 80
+      }
+    },
+    {
+      "id": "balanced_subset_sum_joint",
+      "family": "balanced_subset_sum_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "item_counts": [
+          320
+        ],
+        "cardinality": 160
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "items": 320,
+        "cardinality": 160
+      }
+    },
+    {
+      "id": "cvrp_visible",
+      "family": "cvrp_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "customers": 150
+      }
+    },
+    {
+      "id": "cvrp_scale",
+      "family": "cvrp_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "customers": [
+          300
+        ]
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "customers": 300
+      }
+    },
+    {
+      "id": "cvrp_structure",
+      "family": "cvrp_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "customers": 150
+      }
+    },
+    {
+      "id": "cvrp_joint",
+      "family": "cvrp_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "customers": [
+          300
+        ]
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "customers": 300
+      }
+    },
+    {
+      "id": "vrptw_visible",
+      "family": "vrptw_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "customers": 150
+      }
+    },
+    {
+      "id": "vrptw_scale",
+      "family": "vrptw_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "customers": [
+          300
+        ]
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "customers": 300
+      }
+    },
+    {
+      "id": "vrptw_structure",
+      "family": "vrptw_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "customers": 150
+      }
+    },
+    {
+      "id": "vrptw_joint",
+      "family": "vrptw_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "customers": [
+          300
+        ]
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "customers": 300
+      }
+    },
+    {
+      "id": "heterogeneous_fleet_vrp_visible",
+      "family": "heterogeneous_fleet_vrp_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "customers": 150
+      }
+    },
+    {
+      "id": "heterogeneous_fleet_vrp_scale",
+      "family": "heterogeneous_fleet_vrp_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "customers": [
+          300
+        ]
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "customers": 300
+      }
+    },
+    {
+      "id": "heterogeneous_fleet_vrp_structure",
+      "family": "heterogeneous_fleet_vrp_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "customers": 150
+      }
+    },
+    {
+      "id": "heterogeneous_fleet_vrp_joint",
+      "family": "heterogeneous_fleet_vrp_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "customers": [
+          300
+        ]
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "customers": 300
+      }
+    },
+    {
+      "id": "multi_depot_vrp_visible",
+      "family": "multi_depot_vrp_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "customers": 150
+      }
+    },
+    {
+      "id": "multi_depot_vrp_scale",
+      "family": "multi_depot_vrp_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "customers": [
+          300
+        ],
+        "depots": 4
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "customers": 300
+      }
+    },
+    {
+      "id": "multi_depot_vrp_structure",
+      "family": "multi_depot_vrp_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "customers": 150
+      }
+    },
+    {
+      "id": "multi_depot_vrp_joint",
+      "family": "multi_depot_vrp_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "customers": [
+          300
+        ],
+        "depots": 4
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "customers": 300
+      }
+    },
+    {
+      "id": "open_vrp_visible",
+      "family": "open_vrp_base",
+      "roles": [
+        "protocol_calibration",
+        "diverse_development_v2",
+        "unseen_id"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "cell": "visible_structure_and_scale"
+      },
+      "expected_features": {
+        "customers": 150
+      }
+    },
+    {
+      "id": "open_vrp_scale",
+      "family": "open_vrp_base",
+      "roles": [
+        "protocol_calibration",
+        "unseen_scale"
+      ],
+      "overrides": {
+        "customers": [
+          300
+        ]
+      },
+      "claim": "scale",
+      "axes": {
+        "cell": "scale_only"
+      },
+      "expected_features": {
+        "customers": 300
+      }
+    },
+    {
+      "id": "open_vrp_structure",
+      "family": "open_vrp_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_structure"
+      ],
+      "overrides": {},
+      "claim": "structure",
+      "axes": {
+        "cell": "structure_only"
+      },
+      "expected_features": {
+        "customers": 150
+      }
+    },
+    {
+      "id": "open_vrp_joint",
+      "family": "open_vrp_shifted_structure",
+      "roles": [
+        "protocol_calibration",
+        "unseen_joint"
+      ],
+      "overrides": {
+        "customers": [
+          300
+        ]
+      },
+      "claim": "joint",
+      "axes": {
+        "cell": "joint_scale_and_structure"
+      },
+      "expected_features": {
+        "customers": 300
+      }
+    },
+    {
+      "id": "multidimensional_knapsack_cal_items",
+      "family": "multidimensional_knapsack_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "items": [
+          80,
+          160,
+          320
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "items"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "variables": [
+          80,
+          160,
+          320
+        ]
+      }
+    },
+    {
+      "id": "multidimensional_knapsack_cal_dimensions",
+      "family": "multidimensional_knapsack_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "dimensions": [
+          3,
+          5,
+          8
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "dimensions"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "multidimensional_knapsack_cal_capacity_ratio",
+      "family": "multidimensional_knapsack_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "capacity_ratio": [
+          0.35,
+          0.5,
+          0.7
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "capacity_ratio"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "multidimensional_knapsack_cal_profit_mode",
+      "family": "multidimensional_knapsack_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "profit_mode": [
+          "independent",
+          "weakly_correlated",
+          "inverse_correlated"
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "profit_mode"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "set_covering_cal_variables",
+      "family": "set_covering_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "variables": [
+          120,
+          250,
+          500
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "variables"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "variables": [
+          120,
+          250,
+          500
+        ]
+      }
+    },
+    {
+      "id": "set_covering_cal_rows",
+      "family": "set_covering_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "rows": [
+          80,
+          160,
+          320
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "rows"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "set_covering_cal_row_density",
+      "family": "set_covering_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "row_density": [
+          0.05,
+          0.1,
+          0.2
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "row_density"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "facility_location_cal_facilities",
+      "family": "facility_location_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "facilities": [
+          10,
+          20,
+          40
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "facilities"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "variables": [
+          1210,
+          2420,
+          4840
+        ]
+      }
+    },
+    {
+      "id": "facility_location_cal_customers",
+      "family": "facility_location_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "customers": [
+          50,
+          120,
+          240
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "customers"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "variables": [
+          1020,
+          2420,
+          4820
+        ]
+      }
+    },
+    {
+      "id": "facility_location_cal_capacity_ratio",
+      "family": "facility_location_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "capacity_ratio": [
+          1.05,
+          1.25,
+          1.6
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "capacity_ratio"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "graph_coloring_mip_cal_vertex_counts",
+      "family": "graph_coloring_mip_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "vertex_counts": [
+          80,
+          160,
+          320
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "vertex_counts"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "variables": [
+          324,
+          644,
+          1284
+        ],
+        "vertices": [
+          80,
+          160,
+          320
+        ]
+      }
+    },
+    {
+      "id": "graph_coloring_mip_cal_colors",
+      "family": "graph_coloring_mip_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "colors": [
+          3,
+          4,
+          5
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "colors"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "graph_coloring_mip_cal_edge_probability",
+      "family": "graph_coloring_mip_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "edge_probability": [
+          0.02,
+          0.05,
+          0.1
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "edge_probability"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_scheduling_cal_jobs",
+      "family": "mip_scheduling_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "jobs": [
+          30,
+          60,
+          120
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "jobs"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "variables": [
+          495,
+          1890,
+          7380
+        ],
+        "jobs": [
+          30,
+          60,
+          120
+        ]
+      }
+    },
+    {
+      "id": "mip_scheduling_cal_release_span_ratio",
+      "family": "mip_scheduling_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "release_span_ratio": [
+          0.0,
+          0.5,
+          1.0
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "release_span_ratio"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_scheduling_cal_due_date_tightness",
+      "family": "mip_scheduling_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "due_date_tightness": [
+          0.5,
+          1.0,
+          1.5
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "due_date_tightness"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "mip_scheduling_cal_setup_ratio",
+      "family": "mip_scheduling_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "setup_ratio": [
+          0.0,
+          0.15,
+          0.4
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "setup_ratio"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "bin_packing_cal_items",
+      "family": "bin_packing_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "items": [
+          120,
+          300,
+          600
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "items"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "items": [
+          120,
+          300,
+          600
+        ]
+      }
+    },
+    {
+      "id": "graph_coloring_cp_cal_vertex_counts",
+      "family": "graph_coloring_cp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "vertex_counts": [
+          80,
+          160,
+          320
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "vertex_counts"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "vertices": [
+          80,
+          160,
+          320
+        ]
+      }
+    },
+    {
+      "id": "graph_coloring_cp_cal_colors",
+      "family": "graph_coloring_cp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "colors": [
+          3,
+          4,
+          5
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "colors"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "graph_coloring_cp_cal_edge_probability",
+      "family": "graph_coloring_cp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "edge_probability": [
+          0.02,
+          0.05,
+          0.1
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "edge_probability"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "job_shop_scheduling_cal_jobs",
+      "family": "job_shop_scheduling_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "jobs": [
+          10,
+          20,
+          40
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "jobs"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "jobs": [
+          10,
+          20,
+          40
+        ]
+      }
+    },
+    {
+      "id": "job_shop_scheduling_cal_machines",
+      "family": "job_shop_scheduling_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "machines": [
+          5,
+          10,
+          15
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "machines"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "machines": [
+          5,
+          10,
+          15
+        ]
+      }
+    },
+    {
+      "id": "job_shop_scheduling_cal_machine_order",
+      "family": "job_shop_scheduling_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "machine_order": [
+          "random_per_job",
+          "shared"
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "machine_order"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "resource_constrained_project_scheduling_cal_activities",
+      "family": "resource_constrained_project_scheduling_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "activities": [
+          30,
+          60,
+          120
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "activities"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "activities": [
+          30,
+          60,
+          120
+        ]
+      }
+    },
+    {
+      "id": "resource_constrained_project_scheduling_cal_renewable_resources",
+      "family": "resource_constrained_project_scheduling_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "renewable_resources": [
+          3,
+          5,
+          8
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "renewable_resources"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "renewable_resources": [
+          3,
+          5,
+          8
+        ]
+      }
+    },
+    {
+      "id": "resource_constrained_project_scheduling_cal_precedence_density",
+      "family": "resource_constrained_project_scheduling_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "precedence_density": [
+          0.05,
+          0.1,
+          0.2
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "precedence_density"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "resource_constrained_project_scheduling_cal_resource_tightness",
+      "family": "resource_constrained_project_scheduling_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "resource_tightness": [
+          0.7,
+          0.85,
+          0.95
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "resource_tightness"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "resource_constrained_project_scheduling_cal_precedence_shape",
+      "family": "resource_constrained_project_scheduling_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "precedence_shape": [
+          "layered_dag",
+          "random_topological_dag"
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "precedence_shape"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "balanced_subset_sum_cal_item_counts",
+      "family": "balanced_subset_sum_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "item_counts": [
+          80,
+          160,
+          320
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "item_counts"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "items": [
+          80,
+          160,
+          320
+        ]
+      }
+    },
+    {
+      "id": "balanced_subset_sum_cal_max_weight",
+      "family": "balanced_subset_sum_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {},
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "max_weight"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "balanced_subset_sum_cal_target_offsets",
+      "family": "balanced_subset_sum_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "target_offsets": [
+          -100,
+          0,
+          100
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "target_offsets"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_cal_customers",
+      "family": "cvrp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "customers": [
+          50,
+          150,
+          300
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "customers"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "customers": [
+          50,
+          150,
+          300
+        ]
+      }
+    },
+    {
+      "id": "cvrp_cal_coordinate_distribution",
+      "family": "cvrp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "coordinate_distribution": [
+          "uniform",
+          "clustered",
+          "mixed"
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "coordinate_distribution"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_cal_demand_distribution",
+      "family": "cvrp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "demand_distribution": [
+          "uniform_integer",
+          "depot_correlated"
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "demand_distribution"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "cvrp_cal_fleet_size_multiple",
+      "family": "cvrp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "fleet_size_multiple": [
+          1.0,
+          1.25,
+          1.5
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "fleet_size_multiple"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "vrptw_cal_customers",
+      "family": "vrptw_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "customers": [
+          50,
+          150,
+          300
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "customers"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "customers": [
+          50,
+          150,
+          300
+        ]
+      }
+    },
+    {
+      "id": "vrptw_cal_time_window_slack",
+      "family": "vrptw_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "time_window_slack": [
+          20,
+          100,
+          500
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "time_window_slack"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "vrptw_cal_service_time",
+      "family": "vrptw_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "service_time": [
+          5,
+          10
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "service_time"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "heterogeneous_fleet_vrp_cal_customers",
+      "family": "heterogeneous_fleet_vrp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "customers": [
+          50,
+          150,
+          300
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "customers"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "customers": [
+          50,
+          150,
+          300
+        ]
+      }
+    },
+    {
+      "id": "heterogeneous_fleet_vrp_cal_vehicle_type_count",
+      "family": "heterogeneous_fleet_vrp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "vehicle_type_count": [
+          2,
+          3
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "vehicle_type_count"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "multi_depot_vrp_cal_customers",
+      "family": "multi_depot_vrp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "customers": [
+          50,
+          150,
+          300
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "customers"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "customers": [
+          50,
+          150,
+          300
+        ]
+      }
+    },
+    {
+      "id": "multi_depot_vrp_cal_depots",
+      "family": "multi_depot_vrp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "depots": [
+          2,
+          4
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "depots"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "open_vrp_cal_customers",
+      "family": "open_vrp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "customers": [
+          50,
+          150,
+          300
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "customers"
+      },
+      "expected_features": {},
+      "expected_feature_values": {
+        "customers": [
+          50,
+          150,
+          300
+        ]
+      }
+    },
+    {
+      "id": "open_vrp_cal_coordinate_distribution",
+      "family": "open_vrp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "coordinate_distribution": [
+          "uniform",
+          "clustered",
+          "mixed"
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "coordinate_distribution"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "open_vrp_cal_fleet_size_multiple",
+      "family": "open_vrp_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "fleet_size_multiple": [
+          1.0,
+          1.25,
+          1.5
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "fleet_size_multiple"
+      },
+      "expected_features": {}
+    },
+    {
+      "id": "balanced_subset_sum_cal_cardinality_fraction",
+      "family": "balanced_subset_sum_base",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "overrides": {
+        "cardinality_fraction": [
+          0.25,
+          0.5,
+          0.75
+        ]
+      },
+      "claim": "id",
+      "axes": {
+        "calibration_axis": "cardinality_fraction"
+      },
+      "expected_feature_values": {
+        "cardinality": [
+          40,
+          80,
+          120
+        ]
+      }
+    }
+  ],
+  "audit": {
+    "development_role": "diverse_development_v2",
+    "include_original_development_tasks": [],
+    "scale_feature_by_problem_family": {
+      "multidimensional_knapsack": "variables",
+      "set_covering": "variables",
+      "facility_location": "variables",
+      "graph_coloring_mip": "vertices",
+      "mip_scheduling": "jobs",
+      "bin_packing": "items",
+      "graph_coloring_cp": "vertices",
+      "job_shop_scheduling": "jobs",
+      "resource_constrained_project_scheduling": "activities",
+      "balanced_subset_sum": "items",
+      "cvrp": "customers",
+      "vrptw": "customers",
+      "heterogeneous_fleet_vrp": "customers",
+      "multi_depot_vrp": "customers",
+      "open_vrp": "customers"
+    },
+    "minimum_scale_extrapolation_ratio": 2.0
+  },
+  "reference_protocol": {
+    "protocol": "configs/research/generalization_difficulty_v2.yaml",
+    "budget_grid_sec": [
+      0.1,
+      1,
+      5,
+      20,
+      60
+    ],
+    "discovery_replicates": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "qualification_replicates": [
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "threads": 1,
+    "reference_search_resources": "Use existing reference-calibration host pools; concurrency does not change single-solve budget."
+  },
+  "tasks": [
+    {
+      "task_key": "pyvrp__cvrp",
+      "solver": "pyvrp",
+      "target_design_id": "cvrp",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_pyvrp_v0_14_1.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "pyvrp__vrptw",
+      "solver": "pyvrp",
+      "target_design_id": "vrptw",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_pyvrp_v0_14_1.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "pyvrp__heterogeneous_fleet_vrp",
+      "solver": "pyvrp",
+      "target_design_id": "heterogeneous_fleet_vrp",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_pyvrp_v0_14_1.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "pyvrp__multi_depot_vrp",
+      "solver": "pyvrp",
+      "target_design_id": "multi_depot_vrp",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_pyvrp_v0_14_1.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "pyvrp__open_vrp",
+      "solver": "pyvrp",
+      "target_design_id": "open_vrp",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_pyvrp_v0_14_1.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "vroom__cvrp",
+      "solver": "vroom",
+      "target_design_id": "cvrp",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_vroom_v1_15_0.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "vroom__vrptw",
+      "solver": "vroom",
+      "target_design_id": "vrptw",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_vroom_v1_15_0.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "vroom__heterogeneous_fleet_vrp",
+      "solver": "vroom",
+      "target_design_id": "heterogeneous_fleet_vrp",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_vroom_v1_15_0.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "vroom__multi_depot_vrp",
+      "solver": "vroom",
+      "target_design_id": "multi_depot_vrp",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_vroom_v1_15_0.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "vroom__open_vrp",
+      "solver": "vroom",
+      "target_design_id": "open_vrp",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_vroom_v1_15_0.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "highs__multidimensional_knapsack",
+      "solver": "highs",
+      "target_design_id": "multidimensional_knapsack",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_highs_v1_15_1.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "highs__set_covering",
+      "solver": "highs",
+      "target_design_id": "set_covering",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_highs_v1_15_1.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "highs__facility_location",
+      "solver": "highs",
+      "target_design_id": "facility_location",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_highs_v1_15_1.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "highs__graph_coloring",
+      "solver": "highs",
+      "target_design_id": "graph_coloring_mip",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_highs_v1_15_1.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "highs__scheduling",
+      "solver": "highs",
+      "target_design_id": "mip_scheduling",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_highs_v1_15_1.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "choco__bin_packing",
+      "solver": "choco",
+      "target_design_id": "bin_packing",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_choco_v6_0_2.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "choco__graph_coloring",
+      "solver": "choco",
+      "target_design_id": "graph_coloring_cp",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_choco_v6_0_2.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "choco__job_shop_scheduling",
+      "solver": "choco",
+      "target_design_id": "job_shop_scheduling",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_choco_v6_0_2.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "choco__resource_constrained_project_scheduling",
+      "solver": "choco",
+      "target_design_id": "resource_constrained_project_scheduling",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_choco_v6_0_2.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "choco__balanced_subset_sum",
+      "solver": "choco",
+      "target_design_id": "balanced_subset_sum",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_choco_v6_0_2.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "gecode__bin_packing",
+      "solver": "gecode",
+      "target_design_id": "bin_packing",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_gecode_v6_4_0.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "gecode__graph_coloring",
+      "solver": "gecode",
+      "target_design_id": "graph_coloring_cp",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_gecode_v6_4_0.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "gecode__job_shop_scheduling",
+      "solver": "gecode",
+      "target_design_id": "job_shop_scheduling",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_gecode_v6_4_0.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "gecode__resource_constrained_project_scheduling",
+      "solver": "gecode",
+      "target_design_id": "resource_constrained_project_scheduling",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_gecode_v6_4_0.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "gecode__balanced_subset_sum",
+      "solver": "gecode",
+      "target_design_id": "balanced_subset_sum",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_gecode_v6_4_0.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "ortools_cp_sat__bin_packing",
+      "solver": "ortools_cp_sat",
+      "target_design_id": "bin_packing",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_ortools_cp_sat_v9_15.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "ortools_cp_sat__graph_coloring",
+      "solver": "ortools_cp_sat",
+      "target_design_id": "graph_coloring_cp",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_ortools_cp_sat_v9_15.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "ortools_cp_sat__job_shop_scheduling",
+      "solver": "ortools_cp_sat",
+      "target_design_id": "job_shop_scheduling",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_ortools_cp_sat_v9_15.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "ortools_cp_sat__resource_constrained_project_scheduling",
+      "solver": "ortools_cp_sat",
+      "target_design_id": "resource_constrained_project_scheduling",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_ortools_cp_sat_v9_15.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "ortools_cp_sat__balanced_subset_sum",
+      "solver": "ortools_cp_sat",
+      "target_design_id": "balanced_subset_sum",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_ortools_cp_sat_v9_15.yaml",
+      "evaluation_seed_policy": "inherit source task protocol"
+    },
+    {
+      "task_key": "scip__multidimensional_knapsack",
+      "solver": "scip",
+      "target_design_id": "multidimensional_knapsack",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_scip_v10_1_0.yaml",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      }
+    },
+    {
+      "task_key": "scip__set_covering",
+      "solver": "scip",
+      "target_design_id": "set_covering",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_scip_v10_1_0.yaml",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      }
+    },
+    {
+      "task_key": "scip__facility_location",
+      "solver": "scip",
+      "target_design_id": "facility_location",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_scip_v10_1_0.yaml",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      }
+    },
+    {
+      "task_key": "scip__graph_coloring",
+      "solver": "scip",
+      "target_design_id": "graph_coloring_mip",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_scip_v10_1_0.yaml",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      }
+    },
+    {
+      "task_key": "scip__scheduling",
+      "solver": "scip",
+      "target_design_id": "mip_scheduling",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_scip_v10_1_0.yaml",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      }
+    },
+    {
+      "task_key": "cbc__multidimensional_knapsack",
+      "solver": "cbc",
+      "target_design_id": "multidimensional_knapsack",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_cbc_v2_10_13.yaml",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      }
+    },
+    {
+      "task_key": "cbc__set_covering",
+      "solver": "cbc",
+      "target_design_id": "set_covering",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_cbc_v2_10_13.yaml",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      }
+    },
+    {
+      "task_key": "cbc__facility_location",
+      "solver": "cbc",
+      "target_design_id": "facility_location",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_cbc_v2_10_13.yaml",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      }
+    },
+    {
+      "task_key": "cbc__graph_coloring",
+      "solver": "cbc",
+      "target_design_id": "graph_coloring_mip",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_cbc_v2_10_13.yaml",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      }
+    },
+    {
+      "task_key": "cbc__scheduling",
+      "solver": "cbc",
+      "target_design_id": "mip_scheduling",
+      "shared_population": true,
+      "source_task_config": "configs/tasks/release_cbc_v2_10_13.yaml",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      }
+    }
+  ],
+  "research_budget": {
+    "wall_time_sec": 14400,
+    "cpus": 8,
+    "memory_gib": 32,
+    "development_parallel_runs": 4,
+    "checkpoints_sec": [
+      1800,
+      3600,
+      7200,
+      14400
+    ],
+    "source": "configs/research/generalization_latest_high_v2.json"
+  },
+  "task_budget_policy": "Each task row in the 40-task inventory records source solver budgets, primary budget and thread count; those remain solver-specific and are not replaced by reference-search budgets.",
+  "agent_execution_authorized": false
+}

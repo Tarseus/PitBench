@@ -140,17 +140,25 @@ def test_agent_runtime_reports_missing_asciinema() -> None:
 
 
 def test_agent_runtime_reports_recorder_startup_failure():
-    client = SimpleNamespace(containers=SimpleNamespace(run=Mock(
-        side_effect=RuntimeError("OSError: No space left on device")
-    )))
+    client = SimpleNamespace(
+        containers=SimpleNamespace(
+            run=Mock(side_effect=RuntimeError("OSError: No space left on device"))
+        )
+    )
     check = _agent_runtime_check("pitbench-agent:test", client)
     assert check.status is CheckStatus.FAIL
     assert "No space left on device" in check.detail
 
 
-@pytest.mark.parametrize("free_gib,status", [(2, CheckStatus.FAIL), (15, CheckStatus.WARN), (40, CheckStatus.PASS)])
+@pytest.mark.parametrize(
+    "free_gib,status",
+    [(2, CheckStatus.FAIL), (15, CheckStatus.WARN), (40, CheckStatus.PASS)],
+)
 def test_docker_storage_checks_daemon_filesystem(free_gib, status):
-    with patch("pitbench.cli.doctor.shutil.disk_usage", return_value=SimpleNamespace(free=free_gib * 1024**3)) as usage:
+    with patch(
+        "pitbench.cli.doctor.shutil.disk_usage",
+        return_value=SimpleNamespace(free=free_gib * 1024**3),
+    ) as usage:
         check = _docker_storage_check({"DockerRootDir": "/docker-on-system-disk"})
     usage.assert_called_once_with("/docker-on-system-disk")
     assert check.status is status
@@ -212,6 +220,66 @@ def test_configuration_robustness_passes_when_enabled_config_exists(
     check = _configuration_robustness_check(tmp_path, config)
 
     assert check.status is CheckStatus.PASS
+
+
+@pytest.mark.parametrize(
+    "task_id,expected",
+    [
+        ("release_highs_v1_15_1", CheckStatus.PASS),
+        ("release_cbc_v2_10_13", CheckStatus.WARN),
+        ("release_scip_v10_1_0", CheckStatus.WARN),
+        ("release_gecode_v6_4_0", CheckStatus.WARN),
+    ],
+)
+def test_native_parameter_preflight_reports_real_coverage(task_id, expected):
+    from pitbench.tasks import TaskCatalog
+
+    root = Path(__file__).resolve().parents[3]
+    task = TaskCatalog(root).validate_one(task_id).task
+    config = EvaluationConfig()
+    config.configuration_robustness.experiment_config = Path(
+        "configs/experiments/configuration_robustness.yaml"
+    )
+    check = _configuration_robustness_check(root, config, task)
+    assert check.status is expected
+    if expected is CheckStatus.WARN:
+        assert "unavailable" in check.detail
+
+
+def test_default_native_parameter_panels_cover_all_eight_latest_tasks():
+    import json
+
+    from pitbench.tasks import TaskCatalog
+
+    root = Path(__file__).resolve().parents[3]
+    plan = json.loads(
+        (root / "configs/research/latest_high_algorithm_space_v4.json").read_text()
+    )
+    config = EvaluationConfig()
+    for task_path in plan["task_configs"]:
+        task = TaskCatalog(root).validate_file(root / task_path).task
+        assert (
+            _configuration_robustness_check(root, config, task).status
+            is CheckStatus.PASS
+        )
+
+
+def test_native_parameter_preflight_rejects_bad_domains_without_legacy_probes(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "parameters.yaml"
+    path.write_text(
+        "panels:\n  - parameters:\n      effort: {type: real, bounds: [1, 0], default: 0.5}\n"
+    )
+    config = EvaluationConfig()
+    config.configuration_robustness.experiment_config = path
+    monkeypatch.setattr(
+        "pitbench.evaluator.configuration.probe_collector",
+        lambda *a, **kw: pytest.fail("historical collector was probed"),
+    )
+    checks = _configuration_collector_checks(tmp_path, config)
+    assert len(checks) == 1 and checks[0].status is CheckStatus.FAIL
+    assert "invalid parameter domain" in checks[0].detail
 
 
 def test_configuration_preflight_rejects_stale_collector_before_agent_work(
@@ -311,19 +379,32 @@ def test_reliability_plan_check_reports_materialized_cases(
     assert "2 boundary cases" in check.detail
 
 
-def test_preflight_validates_configured_evaluator_and_agent_views(tmp_path, monkeypatch):
+def test_preflight_validates_configured_evaluator_and_agent_views(
+    tmp_path, monkeypatch
+):
     import yaml
 
     from pitbench.cli.doctor import _load_context
 
     config_path = tmp_path / "evaluate.yaml"
-    config_path.write_text(yaml.safe_dump({"tasks": {"task": {
-        "task_config_path": "evaluator.yaml", "agent_task_config_path": "agent.yaml",
-    }}}))
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "tasks": {
+                    "task": {
+                        "task_config_path": "evaluator.yaml",
+                        "agent_task_config_path": "agent.yaml",
+                    }
+                }
+            }
+        )
+    )
     calls = []
 
     class Catalog:
-        def __init__(self, root): pass
+        def __init__(self, root):
+            pass
+
         def validate_file(self, path):
             calls.append(path.name)
             if path.name == "agent.yaml":
@@ -333,13 +414,20 @@ def test_preflight_validates_configured_evaluator_and_agent_views(tmp_path, monk
     monkeypatch.setattr("pitbench.cli.doctor.TaskCatalog", Catalog)
     context, checks = _load_context(tmp_path, config_path, "task")
     assert calls == ["evaluator.yaml", "agent.yaml"]
-    assert any(c.status is CheckStatus.FAIL and "public development inputs" in c.detail for c in checks)
+    assert any(
+        c.status is CheckStatus.FAIL and "public development inputs" in c.detail
+        for c in checks
+    )
 
 
 def test_doctor_rejects_judge_without_declared_scenario_dependencies(tmp_path):
     context = doctor_context(tmp_path)
-    context.task.task.repository.plugin = "pitbench.repositories.plugins:PyVRPRepositoryPlugin"
-    context.task.task.metric_scenarios = [SimpleNamespace(representation="row_column_permutation")]
+    context.task.task.repository.plugin = (
+        "pitbench.repositories.plugins:PyVRPRepositoryPlugin"
+    )
+    context.task.task.metric_scenarios = [
+        SimpleNamespace(representation="row_column_permutation")
+    ]
     run = Mock(side_effect=RuntimeError("No module named 'numpy'"))
     client = SimpleNamespace(containers=SimpleNamespace(run=run))
     result = _judge_environment_check(context, "immutable-image", client)

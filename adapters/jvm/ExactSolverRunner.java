@@ -18,6 +18,7 @@ import org.chocosolver.solver.constraints.Constraint;
 import org.chocosolver.solver.constraints.ternary.PropXplusYeqZ;
 import org.chocosolver.solver.search.strategy.Search;
 import org.chocosolver.solver.variables.IntVar;
+import org.chocosolver.solver.variables.Task;
 
 public final class ExactSolverRunner {
     private ExactSolverRunner() {}
@@ -65,6 +66,17 @@ public final class ExactSolverRunner {
             values[index] = Integer.parseInt(fields[index].trim());
         }
         return values;
+    }
+
+    private static String jsonIntArray(int[] values) {
+        StringBuilder result = new StringBuilder("[");
+        for (int index = 0; index < values.length; index++) {
+            if (index > 0) {
+                result.append(',');
+            }
+            result.append(values[index]);
+        }
+        return result.append(']').toString();
     }
 
     private static String stringField(String input, String name, String defaultValue) {
@@ -316,6 +328,233 @@ public final class ExactSolverRunner {
         );
     }
 
+    private static int[] jobShopIntegers(String instance) {
+        String trimmed = instance.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("job-shop instance is empty");
+        }
+        String[] tokens = trimmed.split("\\s+");
+        int[] values = new int[tokens.length];
+        for (int index = 0; index < tokens.length; index++) {
+            values[index] = Integer.parseInt(tokens[index]);
+        }
+        return values;
+    }
+
+    private static void selectStarts(Solver solver, IntVar[] starts, String strategy) {
+        switch (strategy) {
+            case "input_order_lb":
+                solver.setSearch(Search.inputOrderLBSearch(starts));
+                break;
+            case "min_dom_lb":
+                solver.setSearch(Search.minDomLBSearch(starts));
+                break;
+            case "dom_over_wdeg":
+                solver.setSearch(Search.domOverWDegSearch(starts));
+                break;
+            case "activity_based":
+                solver.setSearch(Search.activityBasedSearch(starts));
+                break;
+            default:
+                throw new IllegalArgumentException("unsupported search_strategy: " + strategy);
+        }
+    }
+
+    private static void printScheduleResult(
+        Solver solver,
+        long cpuStart,
+        long cpuEnd,
+        Solution solution,
+        IntVar objective,
+        IntVar[] starts,
+        String searchStrategy
+    ) {
+        boolean hasSolution = solution != null;
+        boolean timedOut = solver.isStopCriterionMet();
+        String termination = hasSolution && !timedOut
+            ? "optimal" : timedOut ? "time_limit" : "other";
+        String solverStatus = hasSolution && !timedOut
+            ? "Optimal" : timedOut ? "Time limit" : "No solution";
+        String cpuTime = cpuStart >= 0 && cpuEnd >= cpuStart
+            ? Double.toString((cpuEnd - cpuStart) / 1_000_000_000.0) : "null";
+        int[] startTimes = new int[starts.length];
+        if (hasSolution) {
+            for (int index = 0; index < starts.length; index++) {
+                startTimes[index] = solution.getIntVal(starts[index]);
+            }
+        }
+        String solutionJson = hasSolution
+            ? "{\"start_times\":" + jsonIntArray(startTimes) + "}"
+            : "{}";
+        String objectiveJson = hasSolution
+            ? Integer.toString(solution.getIntVal(objective)) : "null";
+        System.out.println(
+            "{\"valid\":" + hasSolution
+                + ",\"has_solution\":" + hasSolution
+                + ",\"objective\":" + objectiveJson
+                + ",\"solver_status\":\"" + solverStatus + "\""
+                + ",\"solver_termination\":\"" + termination + "\""
+                + ",\"solver_runtime_sec\":" + solver.getTimeCount()
+                + ",\"cpu_time_sec\":" + cpuTime
+                + ",\"nodes\":" + solver.getNodeCount()
+                + ",\"effective_parameters\":{\"search_strategy\":\""
+                + searchStrategy + "\"}"
+                + ",\"solution\":" + solutionJson + "}"
+        );
+    }
+
+    private static void runJobShop(
+        String instance,
+        long solverSeed,
+        double budgetSec,
+        String searchStrategy
+    ) {
+        int[] input = jobShopIntegers(instance);
+        if (input.length < 2 || input[0] <= 0 || input[1] <= 0) {
+            throw new IllegalArgumentException("invalid job-shop header");
+        }
+        int jobCount = input[0];
+        int machineCount = input[1];
+        int operationCount = jobCount * machineCount;
+        if (input.length != 2 + 2 * operationCount) {
+            throw new IllegalArgumentException("job-shop operation count does not match header");
+        }
+        int[][] operationByMachine = new int[machineCount][jobCount];
+        int[] machineCounts = new int[machineCount];
+        IntVar[] starts = new IntVar[operationCount];
+        IntVar[] ends = new IntVar[operationCount];
+        int[] machines = new int[operationCount];
+        int[] durations = new int[operationCount];
+        int horizon = 0;
+        int cursor = 2;
+        for (int job = 0; job < jobCount; job++) {
+            for (int operation = 0; operation < machineCount; operation++) {
+                int index = job * machineCount + operation;
+                int machine = input[cursor++];
+                int duration = input[cursor++];
+                if (machine < 0 || machine >= machineCount || duration <= 0) {
+                    throw new IllegalArgumentException("invalid job-shop operation");
+                }
+                machines[index] = machine;
+                durations[index] = duration;
+                operationByMachine[machine][machineCounts[machine]++] = index;
+                horizon += duration;
+            }
+        }
+
+        Model model = new Model("PitBench job-shop scheduling");
+        for (int index = 0; index < operationCount; index++) {
+            starts[index] = model.intVar("start_" + index, 0, horizon, true);
+            ends[index] = model.intVar("end_" + index, 0, horizon, true);
+            model.arithm(ends[index], "=", starts[index], "+", durations[index]).post();
+        }
+        for (int job = 0; job < jobCount; job++) {
+            for (int operation = 1; operation < machineCount; operation++) {
+                int previous = job * machineCount + operation - 1;
+                int current = job * machineCount + operation;
+                model.arithm(starts[current], ">=", ends[previous]).post();
+            }
+        }
+        for (int machine = 0; machine < machineCount; machine++) {
+            for (int first = 0; first < machineCounts[machine]; first++) {
+                for (int second = first + 1; second < machineCounts[machine]; second++) {
+                    int left = operationByMachine[machine][first];
+                    int right = operationByMachine[machine][second];
+                    model.or(
+                        model.arithm(ends[left], "<=", starts[right]),
+                        model.arithm(ends[right], "<=", starts[left])
+                    ).post();
+                }
+            }
+        }
+        IntVar makespan = model.intVar("makespan", 0, horizon, true);
+        model.max(makespan, ends).post();
+        setSolverSeed(model, solverSeed);
+        Solver solver = model.getSolver();
+        selectStarts(solver, starts, searchStrategy);
+        solver.limitTime((long) Math.ceil(budgetSec * 1000.0));
+        long cpuStart = processCpuTime();
+        Solution solution = solver.findOptimalSolution(makespan, false);
+        long cpuEnd = processCpuTime();
+        printScheduleResult(
+            solver, cpuStart, cpuEnd, solution, makespan, starts, searchStrategy
+        );
+    }
+
+    private static void runRcpsp(
+        String instance,
+        long solverSeed,
+        double budgetSec,
+        String searchStrategy
+    ) {
+        int activityCount = integerField(instance, "activity_count");
+        int resourceCount = integerField(instance, "resource_count");
+        int[] durations = integerArray(instance, "durations");
+        int[] demands = integerArray(instance, "resource_demands_flat");
+        int[] capacities = integerArray(instance, "resource_capacities");
+        int[] precedence = integerArray(instance, "precedence_endpoints");
+        if (activityCount < 2 || resourceCount < 1
+            || durations.length != activityCount
+            || demands.length != activityCount * resourceCount
+            || capacities.length != resourceCount || precedence.length % 2 != 0) {
+            throw new IllegalArgumentException("invalid flattened RCPSP data");
+        }
+        int horizon = 0;
+        for (int duration : durations) {
+            if (duration <= 0) throw new IllegalArgumentException("invalid activity duration");
+            horizon += duration;
+        }
+        Model model = new Model("PitBench renewable-resource project scheduling");
+        IntVar[] starts = model.intVarArray("start", activityCount, 0, horizon, true);
+        IntVar[] ends = new IntVar[activityCount];
+        for (int activity = 0; activity < activityCount; activity++) {
+            ends[activity] = model.intVar("end_" + activity, 0, horizon, true);
+            model.arithm(ends[activity], "=", starts[activity], "+", durations[activity]).post();
+        }
+        for (int index = 0; index < precedence.length; index += 2) {
+            int predecessor = precedence[index];
+            int successor = precedence[index + 1];
+            if (predecessor < 0 || predecessor >= activityCount
+                || successor < 0 || successor >= activityCount) {
+                throw new IllegalArgumentException("RCPSP precedence endpoint outside activity range");
+            }
+            model.arithm(starts[successor], ">=", ends[predecessor]).post();
+        }
+        for (int resource = 0; resource < resourceCount; resource++) {
+            List<Task> resourceTasks = new ArrayList<>();
+            List<IntVar> resourceHeights = new ArrayList<>();
+            for (int activity = 0; activity < activityCount; activity++) {
+                int demand = demands[activity * resourceCount + resource];
+                if (demand < 0 || demand > capacities[resource]) {
+                    throw new IllegalArgumentException("RCPSP demand exceeds resource capacity");
+                }
+                if (demand > 0) {
+                    resourceTasks.add(
+                        new Task(starts[activity], durations[activity], ends[activity])
+                    );
+                    resourceHeights.add(model.intVar("d_" + resource + "_" + activity, demand));
+                }
+            }
+            model.cumulative(
+                resourceTasks.toArray(new Task[0]),
+                resourceHeights.toArray(new IntVar[0]),
+                model.intVar("capacity_" + resource, capacities[resource])
+            ).post();
+        }
+        IntVar makespan = model.intVar("makespan", 0, horizon, true);
+        model.max(makespan, ends).post();
+        setSolverSeed(model, solverSeed);
+        Solver solver = model.getSolver();
+        selectStarts(solver, starts, searchStrategy);
+        solver.limitTime((long) Math.ceil(budgetSec * 1000.0));
+        long cpuStart = processCpuTime();
+        Solution solution = solver.findOptimalSolution(makespan, false);
+        long cpuEnd = processCpuTime();
+        printScheduleResult(
+            solver, cpuStart, cpuEnd, solution, makespan, starts, searchStrategy
+        );
+    }
+
     public static void main(String[] args) throws IOException {
         if (args.length < 4 || args.length > 5) {
             throw new IllegalArgumentException(
@@ -332,8 +571,16 @@ public final class ExactSolverRunner {
         String parameters = args.length == 5 ? args[4] : "{}";
         String searchStrategy = stringField(parameters, "search_strategy", "input_order_lb");
         String instance = Files.readString(instancePath);
+        if (instancePath.getFileName().toString().endsWith(".txt")) {
+            runJobShop(instance, solverSeed, budgetSec, searchStrategy);
+            return;
+        }
         if (stringField(instance, "problem_kind", "bin_packing").equals("balanced_subset_sum")) {
             runBalancedSubsetSum(instance, solverSeed, budgetSec, searchStrategy);
+            return;
+        }
+        if (stringField(instance, "problem_kind", "bin_packing").equals("resource_constrained_project_scheduling")) {
+            runRcpsp(instance, solverSeed, budgetSec, searchStrategy);
             return;
         }
         if (stringField(instance, "problem_kind", "bin_packing").equals("graph_coloring")) {

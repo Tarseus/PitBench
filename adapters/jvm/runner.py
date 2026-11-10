@@ -8,6 +8,7 @@ import random
 import re
 import subprocess
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -91,6 +92,15 @@ def _ortools_classpath(repository: Path, output: Path) -> str:
             str(_maven_artifact("net", "java", "dev", "jna", "jna-platform")),
         ]
     )
+
+
+def _ortools_java_command(repository: Path, output: Path) -> list[str]:
+    return [
+        "java",
+        f"-Djava.library.path={repository / 'build' / 'lib'}",
+        "-cp",
+        _ortools_classpath(repository, output),
+    ]
 
 
 def _prepare_ortools_java_tests(repository: Path) -> None:
@@ -998,37 +1008,72 @@ def run_ortools_cp_sat(repository: Path) -> None:
     if request.get("threads") != 1:
         raise ValueError("CP-SAT runner requires one solver thread")
     output = _adapter_output(repository, "ortools_cp_sat")
-    native_library_path = repository / "build" / "lib"
-    completed = subprocess.run(
-        [
-            "java",
-            f"-Djava.library.path={native_library_path}",
-            "-cp",
-            _ortools_classpath(repository, output),
-            "org.pitbench.adapters.OrToolsCpSatRunner",
-            str(request["instance_path"]),
-            str(request["solver_seed"]),
-            str(request["budget_sec"]),
-            str(request["threads"]),
-            *(
-                [json.dumps(request["parameters"], separators=(",", ":"))]
-                if request.get("parameters") is not None
-                else []
-            ),
-        ],
-        cwd=repository,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.stderr:
-        print(completed.stderr, end="", file=sys.stderr)
-    if completed.returncode:
-        raise RuntimeError(
-            completed.stderr.strip()
-            or f"OR-Tools CP-SAT runner exited with {completed.returncode}"
+    instance_path = Path(request["instance_path"])
+    decode = None
+    with tempfile.TemporaryDirectory(prefix="pitbench-ortools-cpsat-") as temp:
+        solver_input = instance_path
+        if instance_path.suffix.lower() in {".json", ".txt"}:
+            from pitbench.solver_drivers.reference import _solve_cp_backend
+
+            if instance_path.suffix.lower() == ".txt":
+                problem_kind = "job_shop_scheduling"
+            else:
+                problem_kind = json.loads(instance_path.read_text()).get(
+                    "problem_kind", "bin_packing"
+                )
+            built = _solve_cp_backend(
+                instance_path,
+                problem_kind,
+                float(request["budget_sec"]),
+                int(request["solver_seed"]),
+                int(request["threads"]),
+                Path(temp),
+                lambda *_args, **_kwargs: None,
+                None,
+                build_only=True,
+            )
+            solver_input = Path(temp) / "model.pb"
+            model = built["model"]
+            if not model.export_to_file(str(solver_input)):
+                raise RuntimeError("OR-Tools failed to export the CP-SAT model")
+            decode = built["decode"]
+        completed = subprocess.run(
+            [
+                *_ortools_java_command(repository, output),
+                "org.pitbench.adapters.OrToolsCpSatRunner",
+                str(solver_input),
+                str(request["solver_seed"]),
+                str(request["budget_sec"]),
+                str(request["threads"]),
+                *(
+                    [json.dumps(request["parameters"], separators=(",", ":"))]
+                    if request.get("parameters") is not None
+                    else []
+                ),
+            ],
+            cwd=repository,
+            check=False,
+            capture_output=True,
+            text=True,
         )
-    response = json.loads(completed.stdout)
+        if completed.stderr:
+            print(completed.stderr, end="", file=sys.stderr)
+        if completed.returncode:
+            raise RuntimeError(
+                completed.stderr.strip()
+                or f"OR-Tools CP-SAT runner exited with {completed.returncode}"
+            )
+        response = json.loads(completed.stdout)
+        if decode is not None and response.get("has_solution"):
+            values = response["solution"].get("values")
+
+            def value(variable):
+                index = getattr(variable, "index", None)
+                if index is None:
+                    index = variable.Index()
+                return int(values[index])
+
+            response["solution"] = decode(value)
     print(json.dumps(response, allow_nan=False))
 
 
@@ -1040,9 +1085,7 @@ def prepare_ortools_cp_sat_job_shop(
     adapter_output = _adapter_output(repository, "ortools_cp_sat")
     completed = subprocess.run(
         [
-            "java",
-            "-cp",
-            _ortools_classpath(repository, adapter_output),
+            *_ortools_java_command(repository, adapter_output),
             "org.pitbench.adapters.OrToolsCpSatRunner",
             "prepare-jssp",
             str(instance),
@@ -1084,9 +1127,7 @@ def prove_bin_packing(repository: Path, instance_path: Path, budget_sec: float) 
     adapter_output = _adapter_output(repository, "ortools_cp_sat")
     completed = subprocess.run(
         [
-            "java",
-            "-cp",
-            _ortools_classpath(repository, adapter_output),
+            *_ortools_java_command(repository, adapter_output),
             "org.pitbench.adapters.OrToolsCpSatRunner",
             "prove-bin-packing",
             str(capacity),
@@ -1160,9 +1201,7 @@ def prepare_job_shop_relabelings(
     output_dir.mkdir(parents=True, exist_ok=True)
     adapter_output = _adapter_output(repository, "ortools_cp_sat")
     command = [
-        "java",
-        "-cp",
-        _ortools_classpath(repository, adapter_output),
+        *_ortools_java_command(repository, adapter_output),
         "org.pitbench.adapters.OrToolsCpSatRunner",
     ]
     generator = random.Random(generation_seed)

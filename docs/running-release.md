@@ -102,14 +102,31 @@ the study launcher no longer adds an implicit opt-out. An explicit
 This single-attempt run does not
 provide the separately recommended three-attempt comparison.
 
-Candidate parameter evaluation reuses the approved parameter domains and fidelity
-schedule in `configs/experiments/configuration_robustness.yaml`. It freezes the
+Candidate parameter evaluation defaults to the eight-repository panel in
+`configs/research/configuration_robustness_native_v2.yaml`. The original five
+parameter domains and fidelity declarations are retained unchanged. New native-only
+panels cover CBC's presolve/cut/heuristic switches, SCIP's official default/off/fast/
+aggressive presets, and Gecode's existing propagation levels. CBC and SCIP now
+accept parameter files through the same native driver interface; budget and seed
+controls are applied after these settings, and rejected options remain failures.
+SCIP presets use its `emphasis` submenu; unavailable commands are errors even when
+SCIP exits with code zero. The native CBC build is serial, so its driver does not
+send the unsupported `-threads` option and continues to require one solver thread.
+The approved release-only five-repository experiment remains unchanged in
+`configs/experiments/configuration_robustness.yaml`.
+
+Parameter evaluation freezes the
 declared number of inputs from the current task's primary hidden population and
 its native hidden seeds, independently of the historical collector input files.
 This is a new, explicitly recorded native-source protocol, not a reinterpretation
 of the old parameter-search results. Both sources receive their own bounded
 search, and the union of their selected configurations plus defaults is compared
 on the same independent holdout seeds. No parameter results are sent to the Agent.
+The three new panels keep their task's frozen native seed list, including existing
+CBC/SCIP study views with 30 seeds. For a smaller native list, fidelity stages stop
+at that list instead of inventing additional seeds. The Gecode native adapter has
+fixed branch selectors and no stochastic seed input; its existing seed labels are
+retained, and independent repeated measurements remain separate from search data.
 
 The native Judge applies the actual captured patch and uses its existing
 performance build cache and independent verifier. Parameters do not change the
@@ -127,8 +144,8 @@ deterministic solver whose protocol uses the same fixed seed in both phases.
 A repository without an approved parameter panel or native parameter
 driver is reported as unavailable, rather than passed or silently disabled.
 
-The standalone release-only collector remains available through `scope: release`
-and `scripts.collect_configuration_results`. It now reuses one container per
+The standalone release-only collector remains available through `scope: release`,
+the original experiment config and `scripts.collect_configuration_results`. It now reuses one container per
 image/environment/CPU, while starting a fresh process for every solver run.
 Temporary paths follow the data-disk output directory. Candidate evaluation
 launches one native Judge per new panel, rather than one Docker container per
@@ -147,6 +164,12 @@ pitbench judge TASK_ID /data3/path/to/candidate.patch \
   --output-dir /data3/path/to/new-parameter-evaluation \
   --configuration-only
 ```
+
+For a complete retained cohort, `scripts.run_benchmark_release --phase
+study-parameters --source-cohort ORIGINAL_COHORT --output NEW_OUTPUT` uses the
+same per-candidate evaluator with disjoint `--evaluation-cpu-pools`. It records
+every source condition, including missing candidates, and never starts an Agent
+or rewrites the original cohort.
 
 Per-task status files and command logs remain under the output directory.
 Completed stages are reused. Failed/interrupted stages require `--retry-errors`;

@@ -228,7 +228,10 @@ def _base_input_digest(task: PitBenchTask, private_root: Path) -> str:
         oracle = (
             checksum(resolver.resolve(task.oracle.source, task.oracle.source_sha256))
             if task.evaluation.performance_protocol
-            == PerformanceProtocol.EXACT_VERIFIED_SOLVE
+            in {
+                PerformanceProtocol.EXACT_VERIFIED_SOLVE,
+                PerformanceProtocol.BUDGET_TRUNCATED_QUALITY,
+            }
             else None
         )
         return hashlib.sha256(

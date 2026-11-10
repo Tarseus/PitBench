@@ -13,7 +13,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 RUN python3 -m pip install --break-system-packages --no-cache-dir \
     --index-url "$PYPI_INDEX_URL" \
-    pydantic==2.13.5 pyyaml==6.0.3
+    pydantic==2.13.5 pyyaml==6.0.3 ortools==9.15.6755
 RUN test -n "$BASE_COMMIT" \
     && git init --quiet /workspace/repo \
     && git -C /workspace/repo remote add origin "$SOURCE_REPOSITORY" \

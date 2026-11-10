@@ -1,0 +1,106 @@
+schema_version: '3.0'
+task_id: e8_vroom_open_vrp
+release:
+  repository: VROOM-Project/vroom
+  version: 1.15.0
+  tag: v1.15.0
+  base_commit: 43dd7d0b8b560431eb555bf335cf4797eb7343c4
+  tree_sha: cf39d27fd6cf7dfb12fe6ae5665a736ba159195d
+  released_at: '2026-03-12T13:35:16Z'
+  url: https://github.com/VROOM-Project/vroom/releases/tag/v1.15.0
+task_type: heuristic_solver
+problem_family: cvrp
+problem_variant: open_vrp
+formulation_id: open_vrp_vroom
+optimization_scope: open_vrp source-level solve efficiency
+optimization_profile: null
+metric_scenarios: []
+research_budget: null
+instruction: Improve the pinned vroom 1.15.0 solver on open_vrp under the declared
+  solve budgets. Use all supplied visible development inputs for diagnosis and regression
+  checks. Preserve feasibility, objective semantics, truthful solver statuses, and
+  the inherited seed, thread, and budget protocol. Report cross-target effects separately.
+repository:
+  clone_url: https://github.com/VROOM-Project/vroom.git
+  plugin: pitbench.repositories.plugins:VroomRepositoryPlugin
+  editable_paths:
+  - src
+  - include
+  - bin
+  - obj
+  agent_image: pitbench-vroom:43dd7d0b8b56
+  judge_image: null
+oracle:
+  kind: best_known_solution
+  source: private://private-reference-artifacts/populations-v4-reference-import-local-v2/references.json
+  source_sha256: 50e6468f40bf8ef3838c33c602894dbec10e30e67795c8f7fbef5c1ee529eb4b
+  objective_sense: minimize
+evaluation:
+  performance_protocol: heuristic_fixed_budget
+  budgets_sec:
+  - 1.0
+  - 5.0
+  - 10.0
+  primary_budget_sec: 10.0
+  fixed_solver_parameters: null
+  solver_seeds:
+  - 0
+  seed_robustness: null
+  representation_robustness: null
+  controlled_transfer: null
+  operational_reliability: false
+  threads: 1
+  exact_time_basis: cpu_time
+  verifier: cvrp_independent
+  validation_test_patch: null
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: .pitbench-runs/eight-solver-populations-v4/public-instance-sets/e8_vroom_open_vrp/instances.yaml
+  instance_set_config_sha256: a16518a35c24909f78e70d54f560d77ecc4b640e373c60e5dd04c7cf54f1bfce
+  size: 5
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://bootstrap/e8_vroom_open_vrp/judge_id.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_scale
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_vroom_open_vrp/unseen_scale.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_structure
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_vroom_open_vrp/unseen_structure.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_joint
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_vroom_open_vrp/unseen_joint.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false

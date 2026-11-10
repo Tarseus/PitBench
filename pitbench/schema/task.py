@@ -27,6 +27,7 @@ class TaskType(str, Enum):
 class PerformanceProtocol(str, Enum):
     HEURISTIC_FIXED_BUDGET = "heuristic_fixed_budget"
     EXACT_VERIFIED_SOLVE = "exact_verified_solve"
+    BUDGET_TRUNCATED_QUALITY = "budget_truncated_quality"
 
 
 class ExactTimeBasis(str, Enum):
@@ -428,6 +429,19 @@ class PitBenchTask(BaseModel):
             and performance_protocol == PerformanceProtocol.HEURISTIC_FIXED_BUDGET
         ):
             raise ValueError("exact task requires an exact performance protocol")
+        if performance_protocol == PerformanceProtocol.BUDGET_TRUNCATED_QUALITY:
+            if (
+                self.task_type != TaskType.EXACT_SOLVER
+                or self.oracle.kind != "best_known_solution"
+                or not self.oracle.source.startswith("private://")
+                or self.oracle.source_sha256 is None
+                or self.oracle.objective_sense is None
+                or self.evaluation.verifier != "exact_target"
+            ):
+                raise ValueError(
+                    "budget-truncated exact quality requires an exact solver, a "
+                    "hash-pinned private BKS oracle, and the exact-target verifier"
+                )
         if performance_protocol == PerformanceProtocol.EXACT_VERIFIED_SOLVE:
             if (
                 self.oracle.kind not in {"known_optimum", "best_known_solution"}

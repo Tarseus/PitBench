@@ -470,6 +470,89 @@ def test_cbc_relaxation_output_is_not_a_mip_incumbent(tmp_path, header):
 
 
 @pytest.mark.parametrize("driver", [CbcDriver, ScipDriver])
+def test_native_mip_parameters_keep_protocol_budget_and_seed_authoritative(
+    driver, tmp_path
+):
+    parameters = (
+        {"presolving/emphasis": "off", "limits/time": 1}
+        if driver is ScipDriver
+        else {"presolve": False, "seconds": 1}
+    )
+    args = SimpleNamespace(
+        solver="solver",
+        instance=tmp_path / "model.lp",
+        threads=1,
+        budget=12,
+        seed=7,
+        parameter_values=parameters,
+    )
+    command = driver._command(args, tmp_path / "solution.sol")
+    if driver is ScipDriver:
+        assert "set presolving emphasis off" in command
+        assert command.index("set limits time 1") < command.index("set limits time 12")
+        assert "set randomization randomseedshift 7" in command
+    else:
+        assert "-threads" not in command
+        assert command[command.index("-presolve") + 1] == "off"
+        values = [
+            command[i + 1] for i, value in enumerate(command) if value == "-seconds"
+        ]
+        assert values == ["1", "12"]
+        assert command[command.index("-randomSeed") + 1] == "7"
+
+
+@pytest.mark.parametrize(
+    "driver,message",
+    [
+        (CbcDriver, "No match for unknown_option"),
+        (ScipDriver, "parameter <unknown_option> unknown"),
+        (ScipDriver, "command <off> not available"),
+    ],
+)
+def test_native_mip_rejects_ignored_parameters_instead_of_reporting_a_solve(
+    tmp_path, monkeypatch, driver, message
+):
+    from pitbench.solver_drivers.common import ParameterRejected
+
+    instance = tmp_path / "model.mps"
+    instance.write_text(
+        "NAME Cover\nROWS\n N OBJ\n G demand\nCOLUMNS\n chooseA OBJ 1 demand 1\nRHS\n rhs demand 1\nBOUNDS\n BV bounds chooseA\nENDATA\n"
+    )
+    parameters = tmp_path / "parameters.json"
+    parameters.write_text('{"unknown_option":1}')
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, message, ""),
+    )
+    output = tmp_path / "result.json"
+    with pytest.raises(ParameterRejected):
+        driver.main(
+            [
+                "--solver",
+                "solver",
+                "--instance",
+                str(instance),
+                "--output",
+                str(output),
+                "--trajectory",
+                str(tmp_path / "trajectory.jsonl"),
+                "--seed",
+                "0",
+                "--budget",
+                "1",
+                "--threads",
+                "1",
+                "--parameters",
+                str(parameters),
+            ]
+        )
+    result = json.loads(output.read_text())
+    assert result["valid"] is False
+    assert result["failure_reason"] == "parameter_rejected"
+
+
+@pytest.mark.parametrize("driver", [CbcDriver, ScipDriver])
 def test_native_mip_retains_a_verified_time_limit_incumbent_without_scoring_a_solve(
     tmp_path, monkeypatch, driver
 ):
@@ -547,6 +630,61 @@ def test_native_mip_retains_a_verified_time_limit_incumbent_without_scoring_a_so
     outcome = compute_exact_run_outcome(observed)
     assert outcome.solved is False
     assert outcome.penalized_runtime_sec == 2
+
+
+def test_highs_driver_retains_a_time_limit_primal_for_budget_quality(
+    tmp_path, monkeypatch
+):
+    from pitbench.problem_families.verification import MIPFamily
+    from pitbench.solver_drivers.common import SolverTermination
+
+    instance = tmp_path / "cover.mps"
+    instance.write_text(
+        "NAME Cover\nROWS\n N OBJ\n G demand\nCOLUMNS\n"
+        " chooseA OBJ 1 demand 1\n chooseB OBJ 1 demand 1\n"
+        "RHS\n rhs demand 1\nBOUNDS\n BV bounds chooseA\n BV bounds chooseB\nENDATA\n"
+    )
+
+    def solve(argv, **kwargs):
+        solution = Path(
+            next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--solution_file="))
+        )
+        solution.write_text(
+            "Model status\nTime limit reached\n\n# Primal solution values\n"
+            "Feasible\nObjective 1\n# Columns 2\nchooseA 1\nchooseB 0\n"
+        )
+        log = (
+            "Solving report\nStatus Time limit reached\nPrimal bound 1\n"
+            "Dual bound 0\nNodes 5\n"
+        )
+        return subprocess.CompletedProcess(argv, 0, log, "")
+
+    monkeypatch.setattr(subprocess, "run", solve)
+    output = tmp_path / "result.json"
+    HighsDriver.main(
+        [
+            "--solver",
+            "highs",
+            "--instance",
+            str(instance),
+            "--output",
+            str(output),
+            "--trajectory",
+            str(tmp_path / "trajectory.jsonl"),
+            "--seed",
+            "1",
+            "--budget",
+            "1",
+            "--threads",
+            "1",
+        ]
+    )
+    result = json.loads(output.read_text())
+    solution_path = output.with_suffix(".solution.json")
+    assert result["valid"] is True
+    assert result["has_solution"] is True
+    assert result["solver_termination"] == SolverTermination.TIME_LIMIT
+    assert MIPFamily().verify(instance, solution_path).feasible
 
 
 def test_choco_driver_uses_python3() -> None:
@@ -751,6 +889,11 @@ class _LegacyRoute:
         return [1, 4]
 
 
+class _SingleCustomerLegacyRoute:
+    def visits(self) -> list[int]:
+        return [1]
+
+
 class _ModernRoute:
     def __iter__(self):
         return iter(
@@ -777,7 +920,9 @@ def test_pyvrp_driver_avoids_model_conversion_when_supported(
     data = object()
     calls = []
     result = SimpleNamespace(
-        best=SimpleNamespace(is_feasible=lambda: True, routes=lambda: [_LegacyRoute()]),
+        best=SimpleNamespace(
+            is_feasible=lambda: True, routes=lambda: [_SingleCustomerLegacyRoute()]
+        ),
         cost=lambda: 123,
         runtime=0.1,
         num_iterations=1,
@@ -841,11 +986,20 @@ def test_pyvrp_driver_avoids_model_conversion_when_supported(
         ]
     )
     assert calls == (["solve"] if direct_api else ["conversion", "solve"])
-    assert json.loads(output.read_text())["objective"] == 123
+    assert json.loads(output.read_text())["objective"] == pytest.approx(
+        2 * (2**0.5)
+    )
     assert json.loads(output.with_suffix(".solution.json").read_text()) == {
-        "routes": [[1, 4]],
+        "routes": [[1]],
     }
-    assert json.loads(trajectory.read_text()) == {"time_sec": 0.1, "objective": 123}
+    trajectory_rows = [
+        json.loads(line) for line in trajectory.read_text().splitlines()
+    ]
+    assert trajectory_rows[0] == {"time_sec": 0.1, "objective": 123.0}
+    assert trajectory_rows[-1] == {
+        "time_sec": 0.1,
+        "objective": pytest.approx(2 * (2**0.5)),
+    }
 
 
 def test_pyvrp_direct_solve_preserves_fixed_iteration_search(tmp_path):

@@ -55,7 +55,7 @@ class ConfigurationRobustnessConfig(BaseModel):
 
     enabled: bool = True
     scope: Literal["candidate", "release"] = "candidate"
-    experiment_config: Path = Path("configs/experiments/configuration_robustness.yaml")
+    experiment_config: Path = Path("configs/research/configuration_robustness_native_v2.yaml")
     output_path: Path = Path("configuration-robustness")
     cpus: list[int] | None = None
     search_seed: int = 20260918

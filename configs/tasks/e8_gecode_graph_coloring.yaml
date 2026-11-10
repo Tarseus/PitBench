@@ -1,0 +1,107 @@
+schema_version: '3.0'
+task_id: e8_gecode_graph_coloring
+release:
+  repository: Gecode/gecode
+  version: 6.4.0
+  tag: release-6.4.0
+  base_commit: 3e0e8ee76fb4ba01c53616dce02c0bb1a53f159e
+  tree_sha: a46cd7e55e376c430ace40ea40b8ce7de7f1f6c9
+  released_at: '2026-07-15T12:32:01Z'
+  url: https://github.com/Gecode/gecode/releases/tag/release-6.4.0
+task_type: exact_solver
+problem_family: cp
+problem_variant: graph_coloring
+formulation_id: graph_coloring_cp_gecode
+optimization_scope: graph_coloring source-level solve efficiency
+optimization_profile: null
+metric_scenarios: []
+research_budget: null
+instruction: Improve the pinned gecode 6.4.0 solver on graph_coloring under the declared
+  solve budgets. Use all supplied visible development inputs for diagnosis and regression
+  checks. Preserve feasibility, objective semantics, truthful solver statuses, and
+  the inherited seed, thread, and budget protocol. Report cross-target effects separately.
+repository:
+  clone_url: https://github.com/Gecode/gecode.git
+  plugin: pitbench.repositories.plugins:GecodeRepositoryPlugin
+  editable_paths:
+  - gecode/int
+  agent_image: pitbench-gecode:3e0e8ee76fb4-driver-qualified-a02fdc350c
+  judge_image: null
+oracle:
+  kind: best_known_solution
+  source: private://bootstrap/oracles/e8_gecode_graph_coloring.yaml
+  source_sha256: 37f93fc656daefa67c4a2a649ed6374a41a572a08b25a6dfb419d8610f739e79
+  objective_sense: minimize
+evaluation:
+  performance_protocol: budget_truncated_quality
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  fixed_solver_parameters:
+    gecode.bin_packing_propagation_level: full
+  solver_seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  seed_robustness: null
+  representation_robustness: null
+  controlled_transfer: null
+  operational_reliability: false
+  threads: 1
+  exact_time_basis: cpu_time
+  verifier: exact_target
+  validation_test_patch: null
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: .pitbench-runs/eight-solver-populations-v4/public-instance-sets/e8_gecode_graph_coloring/instances.yaml
+  instance_set_config_sha256: 219f53d16e6e98a60954f74b490563b266fd5483c05b94abbf99366938a1f8c9
+  size: 5
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://bootstrap/e8_gecode_graph_coloring/judge_id.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_scale
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_gecode_graph_coloring/unseen_scale.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_structure
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_gecode_graph_coloring/unseen_structure.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_joint
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_gecode_graph_coloring/unseen_joint.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false

@@ -46,6 +46,90 @@ def test_default_run_profile_needs_no_environment_variables(tmp_path, monkeypatc
     assert called[0].study_plan.name == "generalization_latest_high_v2.json"
 
 
+def test_parameter_supplementation_keeps_original_cohort_and_never_runs_an_agent(
+    tmp_path, monkeypatch
+):
+    import hashlib
+    from types import SimpleNamespace
+
+    from pitbench.cli.evaluate_config import EvaluationConfig
+    from scripts import run_benchmark_release as campaign
+
+    source = tmp_path / "original"
+    source.mkdir()
+    job = {
+        "run_id": "run-1",
+        "task_id": "task",
+        "model": {"agent": "codex", "model": "frozen-model"},
+        "arm": "standard",
+    }
+    campaign.write_json(source / "cohort.json", {"jobs": [job]})
+    patch = source / "candidate.patch"
+    patch.write_text("frozen source patch")
+    campaign.write_json(
+        source / "agent-status/run-1/status.json",
+        {
+            "status": "evaluation_completed",
+            "audit": {
+                "candidate_patch": str(patch),
+                "candidate_patch_sha256": hashlib.sha256(
+                    patch.read_bytes()
+                ).hexdigest(),
+            },
+        },
+    )
+    task_path = source / "workspaces/run-1/task"
+    task_path.mkdir(parents=True)
+    (task_path / "task.yaml").write_text(
+        yaml.safe_dump({"evaluator_config": {"judge_image": "frozen-image"}})
+    )
+    config = tmp_path / "evaluation.local.yaml"
+    config.write_text(EvaluationConfig().model_dump_json())
+    original = {
+        p.relative_to(source): p.read_bytes() for p in source.rglob("*") if p.is_file()
+    }
+    requests = []
+
+    def parameters(request, settings):
+        requests.append(request)
+        directory = request.output_dir / "parameters"
+        campaign.write_json(
+            directory / "experiment.json", {"searches": [{"id": "paired"}]}
+        )
+        campaign.write_json(
+            directory / "configuration_report.json",
+            {"searches": [{"id": "paired", "status": "completed"}]},
+        )
+        return directory
+
+    monkeypatch.setattr(campaign, "run_candidate_configuration", parameters)
+    monkeypatch.setattr(
+        campaign, "PitBenchEvaluator", lambda: pytest.fail("native grid was restarted")
+    )
+    monkeypatch.setattr(
+        campaign.subprocess, "Popen", lambda *a, **kw: pytest.fail("Agent was started")
+    )
+    output = tmp_path / "supplement"
+    campaign.study_parameters(
+        SimpleNamespace(
+            source_cohort=source,
+            output=output,
+            config=config,
+            evaluation_cpu_pools=["48-55"],
+            evaluation_workers=1,
+            task_id=None,
+        )
+    )
+    assert len(requests) == 1 and requests[0].candidate_patch_path == patch
+    assert (
+        json.loads((output / "parameter-results.json").read_text())[0]["status"]
+        == "completed"
+    )
+    assert original == {
+        p.relative_to(source): p.read_bytes() for p in source.rglob("*") if p.is_file()
+    }
+
+
 @pytest.mark.parametrize(
     "completed,gaps",
     [(True, []), (False, []), (True, ["missing scenario observations"])],

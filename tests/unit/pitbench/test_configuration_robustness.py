@@ -342,6 +342,36 @@ def test_native_candidate_preparation_binds_source_and_freezes_holdout(
         prepare_candidate_configuration(request, config, output, **args)["searches"]
         == manifest["searches"]
     )
+    native_config = json.loads(config.read_text())
+    native_config["solver_seed_count"] = 30
+    native_config["panels"][0].update(
+        native_only=True, search_mode="multi_fidelity", seed_min=1
+    )
+    native_config["fidelity_stages"] = [
+        {
+            "name": "screen_5",
+            "instance_count": 1,
+            "solver_seed_count": 5,
+            "configuration_count": 1,
+        },
+        {
+            "name": "full_30",
+            "instance_count": 1,
+            "solver_seed_count": 30,
+            "configuration_count": 1,
+        },
+    ]
+    config.write_text(json.dumps(native_config))
+    native = prepare_candidate_configuration(
+        request, config, tmp_path / "native-seeds", **args
+    )
+    assert all(search["solver_seeds"] == [1, 2] for search in native["searches"])
+    assert all(
+        len(stage["solver_seeds"]) == 2
+        for search in native["searches"]
+        for stage in search["fidelity_stages"]
+    )
+    assert all(seed >= 1 for seed in native["searches"][0]["retest_seeds"])
     patch.write_text("different patch")
     with pytest.raises(ValueError, match="patch changed"):
         prepare_candidate_configuration(request, config, output, **args)

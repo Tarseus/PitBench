@@ -748,7 +748,10 @@ def compute_task_performance_report(
     expected_run_grid: ExpectedRunGrid | None = None,
 ) -> PerformanceReport | ExactPerformanceReport | None:
     protocol = task.evaluation.performance_protocol
-    if protocol == PerformanceProtocol.HEURISTIC_FIXED_BUDGET:
+    if protocol in {
+        PerformanceProtocol.HEURISTIC_FIXED_BUDGET,
+        PerformanceProtocol.BUDGET_TRUNCATED_QUALITY,
+    }:
         return compute_performance_report(
             observations,
             primary_budget_sec=task.evaluation.primary_budget_sec,

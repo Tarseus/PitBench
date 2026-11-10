@@ -2042,9 +2042,61 @@ def test_vroom_request_uses_declared_cvrp_distance_metric() -> None:
         "capacity": 1,
         "distance_metric": "EUC_2D",
     }
-    assert VroomDriver._request(instance)["matrix"][0][1] == 1
+    assert VroomDriver._request(instance)["matrices"]["car"]["distances"][0][1] == 1
     instance["distance_metric"] = "EXACT_2D"
-    assert VroomDriver._request(instance)["matrix"][0][1] == 1414
+    request = VroomDriver._request(instance)
+    assert request["matrices"]["car"]["distances"][0][1] == 1414
+    assert request["matrices"]["car"]["durations"][0][1] == 1414
+
+
+def test_vroom_request_preserves_vrptw_windows_and_service_times() -> None:
+    request = VroomDriver._request(
+        {
+            "depot": 0,
+            "coordinates": [[0, 0], [10, 0]],
+            "demands": [0, 1],
+            "capacity": 1,
+            "distance_metric": "EUC_2D",
+            "time_windows": [[0, 100], [20, 60]],
+            "service_times": [0, 5],
+        }
+    )
+
+    assert request["jobs"][0]["time_windows"] == [[20, 60]]
+    assert request["jobs"][0]["service"] == 5
+    assert request["vehicles"][0]["time_window"] == [0, 100]
+
+
+def test_vroom_variant_request_uses_profile_custom_matrices() -> None:
+    request, vehicle_types = VroomDriver._routing_variant_request(
+        {
+            "problem_kind": "heterogeneous_fleet_vrp",
+            "coordinates": [[0, 0], [3, 4]],
+            "demands": [0, 1],
+            "customers": [1],
+            "vehicle_types": [
+                {
+                    "id": 0,
+                    "capacity": 2,
+                    "count": 1,
+                    "start_depot": 0,
+                    "end_depot": 0,
+                    "fixed_cost": 7,
+                }
+            ],
+            "distance_metric": "EUC_2D",
+        }
+    )
+
+    assert request["matrices"]["car"]["distances"] == [[0, 5], [5, 0]]
+    assert request["matrices"]["car"]["durations"] == [[0, 5], [5, 0]]
+    assert request["vehicles"][0]["profile"] == "car"
+    assert request["vehicles"][0]["costs"] == {
+        "fixed": 7,
+        "per_km": 1,
+        "per_hour": 0,
+    }
+    assert vehicle_types == {0: 0}
 
 
 def test_vroom_legacy_cli_is_feature_detected(monkeypatch) -> None:

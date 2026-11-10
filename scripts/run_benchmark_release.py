@@ -1409,6 +1409,117 @@ def study_models(args):
         )
 
 
+def study_parameters(args):
+    """Supplement captured patches in a new campaign, without another Agent."""
+    source = args.source_cohort.resolve()
+    if args.output.resolve().is_relative_to(source):
+        raise ValueError(
+            "parameter supplementation needs an output outside the original cohort"
+        )
+    cohort = json.loads((source / "cohort.json").read_text())
+    config = EvaluationConfig.from_yaml(args.config)
+    if not config.configuration_robustness.enabled:
+        raise ValueError(
+            "parameter supplementation is disabled in the supplied configuration"
+        )
+    slots = queue.SimpleQueue()
+    for pool in args.evaluation_cpu_pools:
+        slots.put(pool)
+    jobs = [
+        job
+        for job in cohort["jobs"]
+        if not args.task_id or job["task_id"] == args.task_id
+    ]
+    write_json(
+        args.output / "supplementation.json",
+        {"source_cohort": str(source), "jobs": jobs, "new_agent_starts": 0},
+    )
+
+    def run(job):
+        output = args.output / job["run_id"]
+        output.mkdir(parents=True, exist_ok=True)
+        status = {
+            **job,
+            "started_at": now(),
+            "status": "preparing",
+            "new_agent_starts": 0,
+        }
+        pool = slots.get()
+        try:
+            original = json.loads(
+                (source / "agent-status" / job["run_id"] / "status.json").read_text()
+            )
+            if original["status"] not in {
+                "evaluation_completed",
+                "evaluation_incomplete",
+            }:
+                status.update(
+                    status="not_run",
+                    reason="source development or native evaluation did not complete",
+                )
+                return status
+            execution = original.get("execution_run_id", job["run_id"])
+            audit = original["audit"]
+            patch = Path(audit["candidate_patch"])
+            task_path = source / "workspaces" / execution / job["task_id"]
+            context = yaml.safe_load((task_path / "task.yaml").read_text())[
+                "evaluator_config"
+            ]
+            resources = config.resources_for(job["task_id"])
+            for key in (
+                "judge_image",
+                "judge_cpus",
+                "judge_memory",
+                "judge_parallel_runs",
+            ):
+                value = getattr(resources, key, None) or getattr(config, key, None)
+                if value is not None:
+                    context[key] = value
+            context.update(
+                judge_cpuset_cpus=pool,
+                build_cache_path=str((args.output / "shared-cache/build").resolve()),
+            )
+            request = EvaluationRequest(
+                task_id=job["task_id"],
+                task_path=task_path,
+                candidate_patch_path=patch,
+                candidate_patch_sha256=audit["candidate_patch_sha256"],
+                output_dir=output,
+                agent_name=job.get("agent_import_path") or job["model"]["agent"],
+                model_name=job["model"]["model"],
+                evaluator_config=context,
+            )
+            status.update(status="running", cpu_pool=pool)
+            write_json(output / "status.json", status)
+            directory = run_candidate_configuration(
+                request, config.configuration_robustness
+            )
+            gaps = _configuration_dry_run_failures(directory)
+            status.update(
+                status="completed" if not gaps else "incomplete",
+                metric_gaps=gaps,
+                report=str(directory / "configuration_report.json"),
+            )
+        except Exception as error:
+            status.update(status="failed", error=f"{type(error).__name__}: {error}")
+        finally:
+            status["finished_at"] = now()
+            write_json(output / "status.json", status)
+            slots.put(pool)
+        return status
+
+    records = []
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=args.evaluation_workers
+    ) as pool:
+        futures = [pool.submit(run, job) for job in jobs]
+        for future in concurrent.futures.as_completed(futures):
+            records.append(future.result())
+            write_json(args.output / "parameter-results.json", records)
+    if any(record["status"] != "completed" for record in records):
+        raise SystemExit(1)
+
+
 def parse_run_arguments(parser, argv):
     preliminary = argparse.ArgumentParser(add_help=False)
     preliminary.add_argument("--profile", type=Path)
@@ -1490,12 +1601,14 @@ def main():
             "study-models",
             "study-evaluations",
             "study-agent-recovery",
+            "study-parameters",
         ],
     )
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--models", type=Path)
     parser.add_argument("--study-plan", type=Path)
     parser.add_argument("--study-views", type=Path)
+    parser.add_argument("--source-cohort", type=Path)
     parser.add_argument("--schedule-seed", type=int, default=20261101)
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--resume-models", action="store_true")
@@ -1517,7 +1630,7 @@ def main():
         and not args.cpu_pools
     ):
         parser.error("parallel model runs require disjoint --cpu-pools")
-    if args.evaluate_candidates:
+    if args.evaluate_candidates or args.phase == "study-parameters":
         if (
             args.evaluation_workers < 1
             or len(args.evaluation_cpu_pools) != args.evaluation_workers
@@ -1550,6 +1663,11 @@ def main():
     if len(task_ids) != len(set(task_ids)):
         parser.error("manifest task IDs must be unique")
     config = EvaluationConfig.from_yaml(args.config)
+    if args.phase == "study-parameters":
+        if args.source_cohort is None:
+            parser.error("parameter supplementation requires --source-cohort")
+        study_parameters(args)
+        return
     if args.phase in {"study-models", "study-evaluations", "study-agent-recovery"}:
         if args.study_plan is None or args.study_views is None:
             parser.error("study phases require --study-plan and --study-views")

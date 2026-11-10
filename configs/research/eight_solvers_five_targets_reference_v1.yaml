@@ -1,0 +1,498 @@
+{
+  "schema_version": "1.0",
+  "design_id": "eight_solvers_five_targets_reference_v1",
+  "status": "reference_search_campaign_ready_pending_execution",
+  "physical_cores": 32,
+  "cpus": [
+    96,
+    97,
+    98,
+    99,
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    108,
+    109,
+    110,
+    111,
+    112,
+    113,
+    114,
+    115,
+    116,
+    117,
+    118,
+    119,
+    120,
+    121,
+    122,
+    123,
+    124,
+    125,
+    126,
+    127
+  ],
+  "schedule_seed": 20261110,
+  "watchdog_grace_sec": 120,
+  "seeds": [
+    0
+  ],
+  "manifests": [
+    "/data3/gushengda/pitbench-runs/family-expansion-v1/populations-v3/population-construction.json"
+  ],
+  "prior_references": [
+    "/data3/gushengda/PitBench-family-expansion-20261109/private-reference-artifacts/initial-anchor-prior-v1.json"
+  ],
+  "backends": [
+    {
+      "name": "highs_docker",
+      "driver": "highs_docker",
+      "image": "sha256:810ae162704bc1d04bd21bd5c62bfc54d4687976b074147c8f5ea02157edd581",
+      "memory": "4g",
+      "threads": 1,
+      "kinds": [
+        "multidimensional_knapsack_mps",
+        "random_set_covering_mip",
+        "facility_location_mip",
+        "graph_coloring_mip",
+        "single_machine_weighted_tardiness_mip"
+      ]
+    },
+    {
+      "name": "cp_sat",
+      "driver": "cp_sat",
+      "package": "ortools",
+      "package_version": "9.15.6755",
+      "threads": 1,
+      "kinds": [
+        "graph_coloring",
+        "job_shop_scheduling",
+        "resource_constrained_project_scheduling",
+        "balanced_subset_sum"
+      ]
+    },
+    {
+      "name": "pyvrp",
+      "driver": "pyvrp",
+      "package": "pyvrp",
+      "package_version": "0.14.1",
+      "threads": 1,
+      "checkpoint_sec": 60,
+      "kinds": [
+        "euclidean_cvrp"
+      ]
+    },
+    {
+      "name": "native_packing",
+      "driver": "native",
+      "threads": 1,
+      "max_exact_customers": 12,
+      "max_exact_time_window_customers": 6,
+      "kinds": [
+        "bin_packing"
+      ]
+    },
+    {
+      "name": "native_vrp_variants",
+      "driver": "native",
+      "threads": 1,
+      "kinds": [
+        "heterogeneous_fleet_vrp",
+        "multi_depot_vrp",
+        "open_vrp"
+      ]
+    }
+  ],
+  "phases": [
+    {
+      "name": "highs-cal-0p1",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 0.1,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "highs_docker"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "cp-cal-0p1",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 0.1,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "cp_sat"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "pyvrp-cal-0p1",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 0.1,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "pyvrp"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "native-packing-cal-0p1",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 0.1,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "native_packing"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "highs-cal-1",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 1,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "highs_docker"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "cp-cal-1",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 1,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "cp_sat"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "pyvrp-cal-1",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 1,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "pyvrp"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "native-packing-cal-1",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 1,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "native_packing"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "highs-cal-5",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 5,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "highs_docker"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "cp-cal-5",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 5,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "cp_sat"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "pyvrp-cal-5",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 5,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "pyvrp"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "native-packing-cal-5",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 5,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "native_packing"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "highs-cal-20",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 20,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "highs_docker"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "cp-cal-20",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 20,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "cp_sat"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "pyvrp-cal-20",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 20,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "pyvrp"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "native-packing-cal-20",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 20,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "native_packing"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "highs-cal-60",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 60,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "highs_docker"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "cp-cal-60",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 60,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "cp_sat"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "pyvrp-cal-60",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 60,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "pyvrp"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "native-packing-cal-60",
+      "purpose": "calibration",
+      "roles": [
+        "protocol_calibration"
+      ],
+      "seconds": 60,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "native_packing"
+      ],
+      "skip_if_proven": false,
+      "use_warm_start": false
+    },
+    {
+      "name": "mip-reference-300",
+      "purpose": "reference",
+      "seconds": 300,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "highs_docker"
+      ],
+      "skip_if_proven": true,
+      "use_warm_start": true
+    },
+    {
+      "name": "cp-reference-300",
+      "purpose": "reference",
+      "seconds": 300,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "cp_sat"
+      ],
+      "skip_if_proven": true,
+      "use_warm_start": true
+    },
+    {
+      "name": "pyvrp-reference-300",
+      "purpose": "reference",
+      "seconds": 300,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "pyvrp"
+      ],
+      "skip_if_proven": true,
+      "use_warm_start": true
+    },
+    {
+      "name": "native-structured-reference-60",
+      "purpose": "reference",
+      "seconds": 60,
+      "seeds": [
+        0
+      ],
+      "backends": [
+        "native_packing",
+        "native_vrp_variants"
+      ],
+      "skip_if_proven": true,
+      "use_warm_start": true
+    }
+  ],
+  "protocol_source": "configs/research/generalization_difficulty_v2.yaml",
+  "protocol_budget_grid_sec": [
+    0.1,
+    1,
+    5,
+    20,
+    60
+  ],
+  "calibration_split": "replicates 0-4 discovery, 5-9 disjoint qualification",
+  "final_reference_budget_sec": 300,
+  "task_execution_budget_policy": "Each of 40 task rows keeps the source task evaluation budgets, primary budget and one-thread setting; these are separate from reference-search budgets.",
+  "new_agent_starts": 0
+}

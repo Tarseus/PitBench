@@ -1,0 +1,3404 @@
+{
+  "schema_version": "1.0",
+  "design_id": "eight_solvers_five_targets_v2",
+  "status": "instance_parameter_and_structure_design_complete_references_verified_solver_qualification_pending",
+  "scope": "Only the five selected target problems for each solver group; no additional problem families.",
+  "groups": {
+    "mip": {
+      "solvers": [
+        "cbc",
+        "scip",
+        "highs"
+      ],
+      "targets": [
+        "multidimensional_knapsack",
+        "set_covering",
+        "facility_location",
+        "graph_coloring",
+        "scheduling"
+      ]
+    },
+    "cp": {
+      "solvers": [
+        "choco",
+        "gecode",
+        "ortools_cp_sat"
+      ],
+      "targets": [
+        "bin_packing",
+        "graph_coloring",
+        "job_shop_scheduling",
+        "resource_constrained_project_scheduling",
+        "balanced_subset_sum"
+      ]
+    },
+    "routing": {
+      "solvers": [
+        "pyvrp",
+        "vroom"
+      ],
+      "targets": [
+        "cvrp",
+        "vrptw",
+        "heterogeneous_fleet_vrp",
+        "multi_depot_vrp",
+        "open_vrp"
+      ]
+    }
+  },
+  "tasks": [
+    {
+      "task_key": "pyvrp__cvrp",
+      "solver": "pyvrp",
+      "target_problem": "cvrp",
+      "group": "routing",
+      "target_level": "routing_variant",
+      "source_task_config": "configs/tasks/release_pyvrp_v0_14_1.yaml",
+      "source_task_id": "release_pyvrp_v0_14_1",
+      "source_version": "0.14.1",
+      "source_commit": "a1a9a700e104e53ba908cf81b76a3d9f7132a43c",
+      "source_tree": "b0dec3c0b0c310555084f681248b382705219944",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "cvrp",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.cvrp",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "cvrp",
+        "generator_kind": "euclidean_cvrp",
+        "structure": "Single-depot closed Euclidean CVRP; uniform, clustered, and mixed coordinates; demand/capacity ratio controlled by generation rather than seed alone.",
+        "parameter_ranges": {
+          "customers": [
+            50,
+            150,
+            300
+          ],
+          "coordinate_distribution": [
+            "uniform",
+            "clustered",
+            "mixed"
+          ],
+          "demand_distribution": [
+            "uniform_integer",
+            "depot_correlated"
+          ],
+          "vehicle_capacity": 50,
+          "fleet_size_multiple": [
+            1.0,
+            1.25,
+            1.5
+          ]
+        },
+        "reference_and_semantic_check": "Use a common integer EUC_2D distance rule and independent capacity/route-cost verification. Keep BKS provenance and any unproven bound explicit.",
+        "qualification_gate": "explicit fleet-size multiple and vehicle-limit verification implemented; references imported; solver Base/headroom qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          10.0
+        ],
+        "inherited_task_primary_budget_sec": 10.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "pyvrp__vrptw",
+      "solver": "pyvrp",
+      "target_problem": "vrptw",
+      "group": "routing",
+      "target_level": "routing_variant",
+      "source_task_config": "configs/tasks/release_pyvrp_v0_14_1.yaml",
+      "source_task_id": "release_pyvrp_v0_14_1",
+      "source_version": "0.14.1",
+      "source_commit": "a1a9a700e104e53ba908cf81b76a3d9f7132a43c",
+      "source_tree": "b0dec3c0b0c310555084f681248b382705219944",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "vrptw",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.vrptw",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "vrptw",
+        "generator_kind": "euclidean_cvrp",
+        "structure": "Single-depot closed VRP with integral time windows and service times; generate wide, medium, and tight windows as separate cells, including spatially correlated and uncorrelated windows.",
+        "parameter_ranges": {
+          "customers": [
+            50,
+            150,
+            300
+          ],
+          "time_window_slack": [
+            20,
+            100,
+            500
+          ],
+          "service_time": [
+            5,
+            10
+          ],
+          "coordinate_distribution": [
+            "uniform",
+            "mixed"
+          ]
+        },
+        "reference_and_semantic_check": "Independently verify capacity, arrival/service timing, waiting, and depot horizon. Keep infeasible generation diagnostics; do not silently regenerate until feasible.",
+        "qualification_gate": "integer-window generator and verifier implemented; VROOM solver path qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          10.0
+        ],
+        "inherited_task_primary_budget_sec": 10.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "pyvrp__heterogeneous_fleet_vrp",
+      "solver": "pyvrp",
+      "target_problem": "heterogeneous_fleet_vrp",
+      "group": "routing",
+      "target_level": "routing_variant",
+      "source_task_config": "configs/tasks/release_pyvrp_v0_14_1.yaml",
+      "source_task_id": "release_pyvrp_v0_14_1",
+      "source_version": "0.14.1",
+      "source_commit": "a1a9a700e104e53ba908cf81b76a3d9f7132a43c",
+      "source_tree": "b0dec3c0b0c310555084f681248b382705219944",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "heterogeneous_fleet_vrp",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.heterogeneous_fleet_vrp",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "heterogeneous_fleet_vrp",
+        "generator_kind": "heterogeneous_fleet_vrp",
+        "structure": "Single-depot closed routing; compare 2 vehicle types (capacities 40/80, fixed costs 0/20) with 3 types (30/60/100, fixed costs 0/10/30). Customer demand must make type choice relevant.",
+        "parameter_ranges": {
+          "customers": [
+            50,
+            150,
+            300
+          ],
+          "vehicle_type_count": [
+            2,
+            3
+          ],
+          "vehicle_type_specifications": [
+            [
+              {
+                "capacity": 40,
+                "fixed_cost": 0
+              },
+              {
+                "capacity": 80,
+                "fixed_cost": 20
+              }
+            ],
+            [
+              {
+                "capacity": 30,
+                "fixed_cost": 0
+              },
+              {
+                "capacity": 60,
+                "fixed_cost": 10
+              },
+              {
+                "capacity": 100,
+                "fixed_cost": 30
+              }
+            ]
+          ]
+        },
+        "reference_and_semantic_check": "Record vehicle type per route and verify type-specific capacity, availability, fixed cost, and route cost. Current common route solution format does not preserve all this evidence.",
+        "qualification_gate": "normalized generator, vehicle-type verifier and PyVRP 0.14.1 smoke solve passed; VROOM path qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          10.0
+        ],
+        "inherited_task_primary_budget_sec": 10.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "pyvrp__multi_depot_vrp",
+      "solver": "pyvrp",
+      "target_problem": "multi_depot_vrp",
+      "group": "routing",
+      "target_level": "routing_variant",
+      "source_task_config": "configs/tasks/release_pyvrp_v0_14_1.yaml",
+      "source_task_id": "release_pyvrp_v0_14_1",
+      "source_version": "0.14.1",
+      "source_commit": "a1a9a700e104e53ba908cf81b76a3d9f7132a43c",
+      "source_tree": "b0dec3c0b0c310555084f681248b382705219944",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "multi_depot_vrp",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.multi_depot_vrp",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "multi_depot_vrp",
+        "generator_kind": "multi_depot_vrp",
+        "structure": "Closed routes with 2 or 4 depots and explicit vehicle-to-depot eligibility; customer geography is either depot-balanced or deliberately imbalanced.",
+        "parameter_ranges": {
+          "customers": [
+            50,
+            150,
+            300
+          ],
+          "depots": [
+            2,
+            4
+          ],
+          "customer_depot_balance": [
+            "balanced",
+            "imbalanced"
+          ]
+        },
+        "reference_and_semantic_check": "Verify route starts/ends at the assigned depot, each customer exactly once, capacity, and objective. The current normalized instance and solution schemas are single-depot and need extension.",
+        "qualification_gate": "normalized generator/depot verifier and PyVRP 0.14.1 smoke solve passed; VROOM path qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          10.0
+        ],
+        "inherited_task_primary_budget_sec": 10.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "pyvrp__open_vrp",
+      "solver": "pyvrp",
+      "target_problem": "open_vrp",
+      "group": "routing",
+      "target_level": "routing_variant",
+      "source_task_config": "configs/tasks/release_pyvrp_v0_14_1.yaml",
+      "source_task_id": "release_pyvrp_v0_14_1",
+      "source_version": "0.14.1",
+      "source_commit": "a1a9a700e104e53ba908cf81b76a3d9f7132a43c",
+      "source_tree": "b0dec3c0b0c310555084f681248b382705219944",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "open_vrp",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.open_vrp",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "open_vrp",
+        "generator_kind": "open_vrp",
+        "structure": "Single-depot-start routes with no return-to-depot cost; keep vehicle end semantics explicit and distinct from a closed CVRP with a zero-cost final edge.",
+        "parameter_ranges": {
+          "customers": [
+            50,
+            150,
+            300
+          ],
+          "coordinate_distribution": [
+            "uniform",
+            "clustered",
+            "mixed"
+          ],
+          "vehicle_capacity": 50,
+          "fleet_size_multiple": [
+            1.0,
+            1.25,
+            1.5
+          ]
+        },
+        "reference_and_semantic_check": "Verify that routes start at the depot, cover each customer exactly once, obey capacity, and omit the return leg. Current verifier assumes closed routes.",
+        "qualification_gate": "normalized open-end generator/verifier and PyVRP 0.14.1 smoke solve passed; VROOM path qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          10.0
+        ],
+        "inherited_task_primary_budget_sec": 10.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "vroom__cvrp",
+      "solver": "vroom",
+      "target_problem": "cvrp",
+      "group": "routing",
+      "target_level": "routing_variant",
+      "source_task_config": "configs/tasks/release_vroom_v1_15_0.yaml",
+      "source_task_id": "release_vroom_v1_15_0",
+      "source_version": "1.15.0",
+      "source_commit": "43dd7d0b8b560431eb555bf335cf4797eb7343c4",
+      "source_tree": "cf39d27fd6cf7dfb12fe6ae5665a736ba159195d",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "cvrp",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.cvrp",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "cvrp",
+        "generator_kind": "euclidean_cvrp",
+        "structure": "Single-depot closed Euclidean CVRP; uniform, clustered, and mixed coordinates; demand/capacity ratio controlled by generation rather than seed alone.",
+        "parameter_ranges": {
+          "customers": [
+            50,
+            150,
+            300
+          ],
+          "coordinate_distribution": [
+            "uniform",
+            "clustered",
+            "mixed"
+          ],
+          "demand_distribution": [
+            "uniform_integer",
+            "depot_correlated"
+          ],
+          "vehicle_capacity": 50,
+          "fleet_size_multiple": [
+            1.0,
+            1.25,
+            1.5
+          ]
+        },
+        "reference_and_semantic_check": "Use a common integer EUC_2D distance rule and independent capacity/route-cost verification. Keep BKS provenance and any unproven bound explicit.",
+        "qualification_gate": "explicit fleet-size multiple and vehicle-limit verification implemented; references imported; solver Base/headroom qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          1.0,
+          5.0,
+          10.0
+        ],
+        "inherited_task_primary_budget_sec": 10.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "vroom__vrptw",
+      "solver": "vroom",
+      "target_problem": "vrptw",
+      "group": "routing",
+      "target_level": "routing_variant",
+      "source_task_config": "configs/tasks/release_vroom_v1_15_0.yaml",
+      "source_task_id": "release_vroom_v1_15_0",
+      "source_version": "1.15.0",
+      "source_commit": "43dd7d0b8b560431eb555bf335cf4797eb7343c4",
+      "source_tree": "cf39d27fd6cf7dfb12fe6ae5665a736ba159195d",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "vrptw",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.vrptw",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "vrptw",
+        "generator_kind": "euclidean_cvrp",
+        "structure": "Single-depot closed VRP with integral time windows and service times; generate wide, medium, and tight windows as separate cells, including spatially correlated and uncorrelated windows.",
+        "parameter_ranges": {
+          "customers": [
+            50,
+            150,
+            300
+          ],
+          "time_window_slack": [
+            20,
+            100,
+            500
+          ],
+          "service_time": [
+            5,
+            10
+          ],
+          "coordinate_distribution": [
+            "uniform",
+            "mixed"
+          ]
+        },
+        "reference_and_semantic_check": "Independently verify capacity, arrival/service timing, waiting, and depot horizon. Keep infeasible generation diagnostics; do not silently regenerate until feasible.",
+        "qualification_gate": "integer-window generator and verifier implemented; VROOM solver path qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          1.0,
+          5.0,
+          10.0
+        ],
+        "inherited_task_primary_budget_sec": 10.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "vroom__heterogeneous_fleet_vrp",
+      "solver": "vroom",
+      "target_problem": "heterogeneous_fleet_vrp",
+      "group": "routing",
+      "target_level": "routing_variant",
+      "source_task_config": "configs/tasks/release_vroom_v1_15_0.yaml",
+      "source_task_id": "release_vroom_v1_15_0",
+      "source_version": "1.15.0",
+      "source_commit": "43dd7d0b8b560431eb555bf335cf4797eb7343c4",
+      "source_tree": "cf39d27fd6cf7dfb12fe6ae5665a736ba159195d",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "heterogeneous_fleet_vrp",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.heterogeneous_fleet_vrp",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "heterogeneous_fleet_vrp",
+        "generator_kind": "heterogeneous_fleet_vrp",
+        "structure": "Single-depot closed routing; compare 2 vehicle types (capacities 40/80, fixed costs 0/20) with 3 types (30/60/100, fixed costs 0/10/30). Customer demand must make type choice relevant.",
+        "parameter_ranges": {
+          "customers": [
+            50,
+            150,
+            300
+          ],
+          "vehicle_type_count": [
+            2,
+            3
+          ],
+          "vehicle_type_specifications": [
+            [
+              {
+                "capacity": 40,
+                "fixed_cost": 0
+              },
+              {
+                "capacity": 80,
+                "fixed_cost": 20
+              }
+            ],
+            [
+              {
+                "capacity": 30,
+                "fixed_cost": 0
+              },
+              {
+                "capacity": 60,
+                "fixed_cost": 10
+              },
+              {
+                "capacity": 100,
+                "fixed_cost": 30
+              }
+            ]
+          ]
+        },
+        "reference_and_semantic_check": "Record vehicle type per route and verify type-specific capacity, availability, fixed cost, and route cost. Current common route solution format does not preserve all this evidence.",
+        "qualification_gate": "normalized generator, vehicle-type verifier and PyVRP 0.14.1 smoke solve passed; VROOM path qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          1.0,
+          5.0,
+          10.0
+        ],
+        "inherited_task_primary_budget_sec": 10.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "vroom__multi_depot_vrp",
+      "solver": "vroom",
+      "target_problem": "multi_depot_vrp",
+      "group": "routing",
+      "target_level": "routing_variant",
+      "source_task_config": "configs/tasks/release_vroom_v1_15_0.yaml",
+      "source_task_id": "release_vroom_v1_15_0",
+      "source_version": "1.15.0",
+      "source_commit": "43dd7d0b8b560431eb555bf335cf4797eb7343c4",
+      "source_tree": "cf39d27fd6cf7dfb12fe6ae5665a736ba159195d",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "multi_depot_vrp",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.multi_depot_vrp",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "multi_depot_vrp",
+        "generator_kind": "multi_depot_vrp",
+        "structure": "Closed routes with 2 or 4 depots and explicit vehicle-to-depot eligibility; customer geography is either depot-balanced or deliberately imbalanced.",
+        "parameter_ranges": {
+          "customers": [
+            50,
+            150,
+            300
+          ],
+          "depots": [
+            2,
+            4
+          ],
+          "customer_depot_balance": [
+            "balanced",
+            "imbalanced"
+          ]
+        },
+        "reference_and_semantic_check": "Verify route starts/ends at the assigned depot, each customer exactly once, capacity, and objective. The current normalized instance and solution schemas are single-depot and need extension.",
+        "qualification_gate": "normalized generator/depot verifier and PyVRP 0.14.1 smoke solve passed; VROOM path qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          1.0,
+          5.0,
+          10.0
+        ],
+        "inherited_task_primary_budget_sec": 10.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "vroom__open_vrp",
+      "solver": "vroom",
+      "target_problem": "open_vrp",
+      "group": "routing",
+      "target_level": "routing_variant",
+      "source_task_config": "configs/tasks/release_vroom_v1_15_0.yaml",
+      "source_task_id": "release_vroom_v1_15_0",
+      "source_version": "1.15.0",
+      "source_commit": "43dd7d0b8b560431eb555bf335cf4797eb7343c4",
+      "source_tree": "cf39d27fd6cf7dfb12fe6ae5665a736ba159195d",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "open_vrp",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.open_vrp",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "open_vrp",
+        "generator_kind": "open_vrp",
+        "structure": "Single-depot-start routes with no return-to-depot cost; keep vehicle end semantics explicit and distinct from a closed CVRP with a zero-cost final edge.",
+        "parameter_ranges": {
+          "customers": [
+            50,
+            150,
+            300
+          ],
+          "coordinate_distribution": [
+            "uniform",
+            "clustered",
+            "mixed"
+          ],
+          "vehicle_capacity": 50,
+          "fleet_size_multiple": [
+            1.0,
+            1.25,
+            1.5
+          ]
+        },
+        "reference_and_semantic_check": "Verify that routes start at the depot, cover each customer exactly once, obey capacity, and omit the return leg. Current verifier assumes closed routes.",
+        "qualification_gate": "normalized open-end generator/verifier and PyVRP 0.14.1 smoke solve passed; VROOM path qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          1.0,
+          5.0,
+          10.0
+        ],
+        "inherited_task_primary_budget_sec": 10.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "highs__multidimensional_knapsack",
+      "solver": "highs",
+      "target_problem": "multidimensional_knapsack",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_highs_v1_15_1.yaml",
+      "source_task_id": "release_highs_v1_15_1",
+      "source_version": "1.15.1",
+      "source_commit": "04024d701f79feb8e2f18bc3df0dffc04ef05088",
+      "source_tree": "fe3b6d8835077dcf71c501521d8cd26738bbb5a3",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "multidimensional_knapsack",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.multidimensional_knapsack",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "multidimensional_knapsack",
+        "generator_kind": "multidimensional_knapsack_mps",
+        "structure": "Binary item selection with multiple capacity rows; independent item profits, with a separate correlated-profit stratum only if the generator records and validates the correlation.",
+        "parameter_ranges": {
+          "items": [
+            80,
+            160,
+            320
+          ],
+          "dimensions": [
+            3,
+            5,
+            8
+          ],
+          "capacity_ratio": [
+            0.35,
+            0.5,
+            0.7
+          ],
+          "profit_mode": [
+            "independent",
+            "weakly_correlated",
+            "inverse_correlated"
+          ]
+        },
+        "reference_and_semantic_check": "Record original item vectors and independently check capacity feasibility and objective. Use exact DP only for a deliberately small subset; otherwise require proof-backed optimum or label BKS.",
+        "qualification_gate": "generator and MPS feature checks implemented; calibration references and solver headroom pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          10.0,
+          30.0
+        ],
+        "inherited_task_primary_budget_sec": 30.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "highs__set_covering",
+      "solver": "highs",
+      "target_problem": "set_covering",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_highs_v1_15_1.yaml",
+      "source_task_id": "release_highs_v1_15_1",
+      "source_version": "1.15.1",
+      "source_commit": "04024d701f79feb8e2f18bc3df0dffc04ef05088",
+      "source_tree": "fe3b6d8835077dcf71c501521d8cd26738bbb5a3",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "set_covering",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.set_covering",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "set_covering",
+        "generator_kind": "random_set_covering_mip",
+        "structure": "Binary minimum-cost covering with guaranteed row coverage, no planted optimal answer, and row/column degree diagnostics.",
+        "parameter_ranges": {
+          "variables": [
+            120,
+            250,
+            500
+          ],
+          "rows": [
+            80,
+            160,
+            320
+          ],
+          "row_density": [
+            0.05,
+            0.1,
+            0.2
+          ]
+        },
+        "reference_and_semantic_check": "Independently validate coverage and cost on the source set system. Avoid claiming optimality from MIP status unless a trusted reference or proof criterion passes.",
+        "qualification_gate": "random covering generator and exact matrix feature checks implemented; references imported; Base difficulty/headroom analysis pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          10.0,
+          30.0
+        ],
+        "inherited_task_primary_budget_sec": 30.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "highs__facility_location",
+      "solver": "highs",
+      "target_problem": "facility_location",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_highs_v1_15_1.yaml",
+      "source_task_id": "release_highs_v1_15_1",
+      "source_version": "1.15.1",
+      "source_commit": "04024d701f79feb8e2f18bc3df0dffc04ef05088",
+      "source_tree": "fe3b6d8835077dcf71c501521d8cd26738bbb5a3",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "facility_location",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.facility_location",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "facility_location",
+        "generator_kind": "facility_location_mip",
+        "structure": "Capacitated facility opening plus customer assignment, with fixed opening costs and transportation costs drawn independently; demand must be feasible under total capacity.",
+        "parameter_ranges": {
+          "facilities": [
+            10,
+            20,
+            40
+          ],
+          "customers": [
+            50,
+            120,
+            240
+          ],
+          "capacity_ratio": [
+            1.05,
+            1.25,
+            1.6
+          ]
+        },
+        "reference_and_semantic_check": "Retain the generated source data and independently verify assignment, facility capacities, opening charges, and total objective.",
+        "qualification_gate": "generator and sparse MPS independent check implemented; references imported; Base difficulty/headroom analysis pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          10.0,
+          30.0
+        ],
+        "inherited_task_primary_budget_sec": 30.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "highs__graph_coloring",
+      "solver": "highs",
+      "target_problem": "graph_coloring",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_highs_v1_15_1.yaml",
+      "source_task_id": "release_highs_v1_15_1",
+      "source_version": "1.15.1",
+      "source_commit": "04024d701f79feb8e2f18bc3df0dffc04ef05088",
+      "source_tree": "fe3b6d8835077dcf71c501521d8cd26738bbb5a3",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "graph_coloring_mip",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.graph_coloring_mip",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "graph_coloring_mip",
+        "generator_kind": "graph_coloring_mip",
+        "structure": "Planted-colorable random graphs; structure shift changes density while keeping vertex count and planted color count fixed.",
+        "parameter_ranges": {
+          "planted_partition_vertices": [
+            80,
+            160,
+            320
+          ],
+          "planted_colors": [
+            3,
+            4,
+            5
+          ],
+          "planted_edge_probability": [
+            0.02,
+            0.05,
+            0.1
+          ]
+        },
+        "reference_and_semantic_check": "A planted coloring proves feasibility only. Optimal color count needs a valid lower-bound proof or separately verified reference. Add a shared graph-to-MPS formulation and original-graph verifier path before including this MIP target.",
+        "qualification_gate": "graph-to-MPS formulation, source graph metadata, and independent graph/MPS checks implemented; references imported; Base difficulty/headroom analysis pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          10.0,
+          30.0
+        ],
+        "inherited_task_primary_budget_sec": 30.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets",
+        "scale_feature": "vertices"
+      }
+    },
+    {
+      "task_key": "highs__scheduling",
+      "solver": "highs",
+      "target_problem": "scheduling",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_highs_v1_15_1.yaml",
+      "source_task_id": "release_highs_v1_15_1",
+      "source_version": "1.15.1",
+      "source_commit": "04024d701f79feb8e2f18bc3df0dffc04ef05088",
+      "source_tree": "fe3b6d8835077dcf71c501521d8cd26738bbb5a3",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "mip_scheduling",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.mip_scheduling",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "mip_scheduling",
+        "generator_kind": "single_machine_weighted_tardiness_mip",
+        "structure": "Single-machine total weighted tardiness with release dates and due dates; structure shift tightens due dates while holding scale and release-date span fixed. The old SPT total-completion model remains a correctness-only panel.",
+        "parameter_ranges": {
+          "jobs": [
+            30,
+            60,
+            120
+          ],
+          "release_span_over_total_processing": [
+            0.0,
+            0.5,
+            1.0
+          ],
+          "due_date_tightness": [
+            0.5,
+            1.0,
+            1.5
+          ]
+        },
+        "reference_and_semantic_check": "The existing sum-start-time model is SPT-solvable and unsuitable as the only optimization target. Add a common MIP model and independent schedule verifier; verify objective terms in original scheduling data.",
+        "qualification_gate": "no-setup single-machine weighted-tardiness MPS, original schedule verifier, and feasible reference witness implemented; references imported; Base difficulty/headroom analysis pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          10.0,
+          30.0
+        ],
+        "inherited_task_primary_budget_sec": 30.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets",
+        "scale_feature": "jobs"
+      }
+    },
+    {
+      "task_key": "choco__bin_packing",
+      "solver": "choco",
+      "target_problem": "bin_packing",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_choco_v6_0_2.yaml",
+      "source_task_id": "release_choco_v6_0_2",
+      "source_version": "6.0.2",
+      "source_commit": "4456ac71ba28109b6af0fb1c41196ebddcae69ae",
+      "source_tree": "6abd2b027a06a73b97b504bcfbe676c935fcf502",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "bin_packing",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.bin_packing",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "bin_packing",
+        "generator_kind": "bin_packing",
+        "structure": "One-dimensional integer bin packing; mix uniform, triplet-hard, and bimodal item sizes with fixed capacity and explicitly recorded size-class ratios.",
+        "parameter_ranges": {
+          "capacity": 150,
+          "items": [
+            120,
+            300,
+            600
+          ],
+          "structures": [
+            "uniform_1_150",
+            "falkenauer_20_100",
+            "bimodal_30_45_75_90"
+          ]
+        },
+        "reference_and_semantic_check": "Independent packing feasibility check; use proof-backed bin counts on small instances and retain verified BKS on larger instances.",
+        "qualification_gate": "generator, verifier and bounded branch-and-bound reference backend available; solver-specific headroom qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "choco__graph_coloring",
+      "solver": "choco",
+      "target_problem": "graph_coloring",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_choco_v6_0_2.yaml",
+      "source_task_id": "release_choco_v6_0_2",
+      "source_version": "6.0.2",
+      "source_commit": "4456ac71ba28109b6af0fb1c41196ebddcae69ae",
+      "source_tree": "6abd2b027a06a73b97b504bcfbe676c935fcf502",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "graph_coloring_cp",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.graph_coloring_cp",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "graph_coloring_cp",
+        "generator_kind": "graph_coloring",
+        "structure": "Planted-colorable random graphs; structure shift changes density while keeping vertex count and planted color count fixed.",
+        "parameter_ranges": {
+          "planted_partition_vertices": [
+            80,
+            160,
+            320
+          ],
+          "planted_colors": [
+            3,
+            4,
+            5
+          ],
+          "planted_edge_probability": [
+            0.02,
+            0.05,
+            0.1
+          ]
+        },
+        "reference_and_semantic_check": "Verify every coloring against original edges. A planted coloring is a feasible reference, not an optimum certificate; preserve certified chromatic numbers only for valid theorem-backed cells.",
+        "qualification_gate": "generator and original-graph verifier implemented; CP-SAT reference backend available; solver Base/headroom qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "choco__job_shop_scheduling",
+      "solver": "choco",
+      "target_problem": "job_shop_scheduling",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_choco_v6_0_2.yaml",
+      "source_task_id": "release_choco_v6_0_2",
+      "source_version": "6.0.2",
+      "source_commit": "4456ac71ba28109b6af0fb1c41196ebddcae69ae",
+      "source_tree": "6abd2b027a06a73b97b504bcfbe676c935fcf502",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "job_shop_scheduling",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.job_shop_scheduling",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "job_shop_scheduling",
+        "generator_kind": "job_shop_scheduling",
+        "structure": "Classical job shop with random machine order per job; keep shared-order flow-shop cases as a separate structure control, not pooled into the primary result.",
+        "parameter_ranges": {
+          "jobs_machines": [
+            [
+              10,
+              5
+            ],
+            [
+              20,
+              10
+            ],
+            [
+              40,
+              10
+            ],
+            [
+              40,
+              15
+            ]
+          ],
+          "duration_range": [
+            1,
+            99
+          ],
+          "machine_order": [
+            "random_per_job",
+            "shared_flowshop"
+          ]
+        },
+        "reference_and_semantic_check": "Check operation precedence and machine non-overlap independently. Use known published instances only with source/identity hashes; otherwise independently verified BKS and lower bound.",
+        "qualification_gate": "generator and schedule verifier implemented; CP-SAT reference backend available; solver Base/headroom qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "choco__resource_constrained_project_scheduling",
+      "solver": "choco",
+      "target_problem": "resource_constrained_project_scheduling",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_choco_v6_0_2.yaml",
+      "source_task_id": "release_choco_v6_0_2",
+      "source_version": "6.0.2",
+      "source_commit": "4456ac71ba28109b6af0fb1c41196ebddcae69ae",
+      "source_tree": "6abd2b027a06a73b97b504bcfbe676c935fcf502",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "resource_constrained_project_scheduling",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.resource_constrained_project_scheduling",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "resource_constrained_project_scheduling",
+        "generator_kind": "resource_constrained_project_scheduling",
+        "structure": "Precedence DAG with renewable resources, non-preemptive activities, and makespan objective; include both generated layered DAGs and random topological-order DAGs as distinct cells.",
+        "parameter_ranges": {
+          "activities": [
+            30,
+            60,
+            120
+          ],
+          "renewable_resources": [
+            3,
+            5,
+            8
+          ],
+          "precedence_shapes": [
+            "layered_dag",
+            "random_topological_dag"
+          ],
+          "precedence_density": [
+            0.05,
+            0.1,
+            0.2
+          ],
+          "resource_tightness": [
+            0.7,
+            0.85,
+            0.95
+          ],
+          "duration_range": [
+            1,
+            20
+          ]
+        },
+        "reference_and_semantic_check": "Build a shared RCPSP representation/generator and independently verify precedence, renewable-resource capacity at every time point, and makespan. Keep a reproducible feasible serial schedule; prove optima only where independently available.",
+        "qualification_gate": "generator, normalized schema, verifier and CP-SAT reference backend implemented; Choco/Gecode/CP-SAT task-driver qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "choco__balanced_subset_sum",
+      "solver": "choco",
+      "target_problem": "balanced_subset_sum",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_choco_v6_0_2.yaml",
+      "source_task_id": "release_choco_v6_0_2",
+      "source_version": "6.0.2",
+      "source_commit": "4456ac71ba28109b6af0fb1c41196ebddcae69ae",
+      "source_tree": "6abd2b027a06a73b97b504bcfbe676c935fcf502",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "balanced_subset_sum",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.balanced_subset_sum",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "balanced_subset_sum",
+        "generator_kind": "balanced_subset_sum",
+        "structure": "Choose exactly k items whose sum is closest to a target; include bounded uniform and repeated-value/near-duplicate structures, with target offset expressed relative to reachable total.",
+        "parameter_ranges": {
+          "items": [
+            80,
+            160,
+            320
+          ],
+          "max_weight": [
+            100
+          ],
+          "cardinality_fraction": [
+            0.25,
+            0.5,
+            0.75
+          ],
+          "target_offset_fraction": [
+            -0.05,
+            0.0,
+            0.05
+          ],
+          "weight_structures": [
+            "uniform",
+            "repeated_values"
+          ]
+        },
+        "reference_and_semantic_check": "Use the existing exact fixed-cardinality DP reference where its measured cost is acceptable; independently verify selected cardinality, objective distance, and tie-break rule.",
+        "qualification_gate": "fixed-cardinality generator, exact DP reference and verifier implemented; bounded DP cost qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "gecode__bin_packing",
+      "solver": "gecode",
+      "target_problem": "bin_packing",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_gecode_v6_4_0.yaml",
+      "source_task_id": "release_gecode_v6_4_0",
+      "source_version": "6.4.0",
+      "source_commit": "3e0e8ee76fb4ba01c53616dce02c0bb1a53f159e",
+      "source_tree": "a46cd7e55e376c430ace40ea40b8ce7de7f1f6c9",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "bin_packing",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.bin_packing",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "bin_packing",
+        "generator_kind": "bin_packing",
+        "structure": "One-dimensional integer bin packing; mix uniform, triplet-hard, and bimodal item sizes with fixed capacity and explicitly recorded size-class ratios.",
+        "parameter_ranges": {
+          "capacity": 150,
+          "items": [
+            120,
+            300,
+            600
+          ],
+          "structures": [
+            "uniform_1_150",
+            "falkenauer_20_100",
+            "bimodal_30_45_75_90"
+          ]
+        },
+        "reference_and_semantic_check": "Independent packing feasibility check; use proof-backed bin counts on small instances and retain verified BKS on larger instances.",
+        "qualification_gate": "generator, verifier and bounded branch-and-bound reference backend available; solver-specific headroom qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "gecode__graph_coloring",
+      "solver": "gecode",
+      "target_problem": "graph_coloring",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_gecode_v6_4_0.yaml",
+      "source_task_id": "release_gecode_v6_4_0",
+      "source_version": "6.4.0",
+      "source_commit": "3e0e8ee76fb4ba01c53616dce02c0bb1a53f159e",
+      "source_tree": "a46cd7e55e376c430ace40ea40b8ce7de7f1f6c9",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "graph_coloring_cp",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.graph_coloring_cp",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "graph_coloring_cp",
+        "generator_kind": "graph_coloring",
+        "structure": "Planted-colorable random graphs; structure shift changes density while keeping vertex count and planted color count fixed.",
+        "parameter_ranges": {
+          "planted_partition_vertices": [
+            80,
+            160,
+            320
+          ],
+          "planted_colors": [
+            3,
+            4,
+            5
+          ],
+          "planted_edge_probability": [
+            0.02,
+            0.05,
+            0.1
+          ]
+        },
+        "reference_and_semantic_check": "Verify every coloring against original edges. A planted coloring is a feasible reference, not an optimum certificate; preserve certified chromatic numbers only for valid theorem-backed cells.",
+        "qualification_gate": "generator and original-graph verifier implemented; CP-SAT reference backend available; solver Base/headroom qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "gecode__job_shop_scheduling",
+      "solver": "gecode",
+      "target_problem": "job_shop_scheduling",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_gecode_v6_4_0.yaml",
+      "source_task_id": "release_gecode_v6_4_0",
+      "source_version": "6.4.0",
+      "source_commit": "3e0e8ee76fb4ba01c53616dce02c0bb1a53f159e",
+      "source_tree": "a46cd7e55e376c430ace40ea40b8ce7de7f1f6c9",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "job_shop_scheduling",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.job_shop_scheduling",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "job_shop_scheduling",
+        "generator_kind": "job_shop_scheduling",
+        "structure": "Classical job shop with random machine order per job; keep shared-order flow-shop cases as a separate structure control, not pooled into the primary result.",
+        "parameter_ranges": {
+          "jobs_machines": [
+            [
+              10,
+              5
+            ],
+            [
+              20,
+              10
+            ],
+            [
+              40,
+              10
+            ],
+            [
+              40,
+              15
+            ]
+          ],
+          "duration_range": [
+            1,
+            99
+          ],
+          "machine_order": [
+            "random_per_job",
+            "shared_flowshop"
+          ]
+        },
+        "reference_and_semantic_check": "Check operation precedence and machine non-overlap independently. Use known published instances only with source/identity hashes; otherwise independently verified BKS and lower bound.",
+        "qualification_gate": "generator and schedule verifier implemented; CP-SAT reference backend available; solver Base/headroom qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "gecode__resource_constrained_project_scheduling",
+      "solver": "gecode",
+      "target_problem": "resource_constrained_project_scheduling",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_gecode_v6_4_0.yaml",
+      "source_task_id": "release_gecode_v6_4_0",
+      "source_version": "6.4.0",
+      "source_commit": "3e0e8ee76fb4ba01c53616dce02c0bb1a53f159e",
+      "source_tree": "a46cd7e55e376c430ace40ea40b8ce7de7f1f6c9",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "resource_constrained_project_scheduling",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.resource_constrained_project_scheduling",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "resource_constrained_project_scheduling",
+        "generator_kind": "resource_constrained_project_scheduling",
+        "structure": "Precedence DAG with renewable resources, non-preemptive activities, and makespan objective; include both generated layered DAGs and random topological-order DAGs as distinct cells.",
+        "parameter_ranges": {
+          "activities": [
+            30,
+            60,
+            120
+          ],
+          "renewable_resources": [
+            3,
+            5,
+            8
+          ],
+          "precedence_shapes": [
+            "layered_dag",
+            "random_topological_dag"
+          ],
+          "precedence_density": [
+            0.05,
+            0.1,
+            0.2
+          ],
+          "resource_tightness": [
+            0.7,
+            0.85,
+            0.95
+          ],
+          "duration_range": [
+            1,
+            20
+          ]
+        },
+        "reference_and_semantic_check": "Build a shared RCPSP representation/generator and independently verify precedence, renewable-resource capacity at every time point, and makespan. Keep a reproducible feasible serial schedule; prove optima only where independently available.",
+        "qualification_gate": "generator, normalized schema, verifier and CP-SAT reference backend implemented; Choco/Gecode/CP-SAT task-driver qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "gecode__balanced_subset_sum",
+      "solver": "gecode",
+      "target_problem": "balanced_subset_sum",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_gecode_v6_4_0.yaml",
+      "source_task_id": "release_gecode_v6_4_0",
+      "source_version": "6.4.0",
+      "source_commit": "3e0e8ee76fb4ba01c53616dce02c0bb1a53f159e",
+      "source_tree": "a46cd7e55e376c430ace40ea40b8ce7de7f1f6c9",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "balanced_subset_sum",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.balanced_subset_sum",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "balanced_subset_sum",
+        "generator_kind": "balanced_subset_sum",
+        "structure": "Choose exactly k items whose sum is closest to a target; include bounded uniform and repeated-value/near-duplicate structures, with target offset expressed relative to reachable total.",
+        "parameter_ranges": {
+          "items": [
+            80,
+            160,
+            320
+          ],
+          "max_weight": [
+            100
+          ],
+          "cardinality_fraction": [
+            0.25,
+            0.5,
+            0.75
+          ],
+          "target_offset_fraction": [
+            -0.05,
+            0.0,
+            0.05
+          ],
+          "weight_structures": [
+            "uniform",
+            "repeated_values"
+          ]
+        },
+        "reference_and_semantic_check": "Use the existing exact fixed-cardinality DP reference where its measured cost is acceptable; independently verify selected cardinality, objective distance, and tie-break rule.",
+        "qualification_gate": "fixed-cardinality generator, exact DP reference and verifier implemented; bounded DP cost qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "ortools_cp_sat__bin_packing",
+      "solver": "ortools_cp_sat",
+      "target_problem": "bin_packing",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_ortools_cp_sat_v9_15.yaml",
+      "source_task_id": "release_ortools_cp_sat_v9_15",
+      "source_version": "9.15",
+      "source_commit": "551ad10d94835c99e5e1e684500d3db398c0e345",
+      "source_tree": "8f746840b74f32ce4b9d3ff0231ed2cabbd5072d",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "bin_packing",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.bin_packing",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "bin_packing",
+        "generator_kind": "bin_packing",
+        "structure": "One-dimensional integer bin packing; mix uniform, triplet-hard, and bimodal item sizes with fixed capacity and explicitly recorded size-class ratios.",
+        "parameter_ranges": {
+          "capacity": 150,
+          "items": [
+            120,
+            300,
+            600
+          ],
+          "structures": [
+            "uniform_1_150",
+            "falkenauer_20_100",
+            "bimodal_30_45_75_90"
+          ]
+        },
+        "reference_and_semantic_check": "Independent packing feasibility check; use proof-backed bin counts on small instances and retain verified BKS on larger instances.",
+        "qualification_gate": "generator, verifier and bounded branch-and-bound reference backend available; solver-specific headroom qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          10.0,
+          30.0
+        ],
+        "inherited_task_primary_budget_sec": 30.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "ortools_cp_sat__graph_coloring",
+      "solver": "ortools_cp_sat",
+      "target_problem": "graph_coloring",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_ortools_cp_sat_v9_15.yaml",
+      "source_task_id": "release_ortools_cp_sat_v9_15",
+      "source_version": "9.15",
+      "source_commit": "551ad10d94835c99e5e1e684500d3db398c0e345",
+      "source_tree": "8f746840b74f32ce4b9d3ff0231ed2cabbd5072d",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "graph_coloring_cp",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.graph_coloring_cp",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "graph_coloring_cp",
+        "generator_kind": "graph_coloring",
+        "structure": "Planted-colorable random graphs; structure shift changes density while keeping vertex count and planted color count fixed.",
+        "parameter_ranges": {
+          "planted_partition_vertices": [
+            80,
+            160,
+            320
+          ],
+          "planted_colors": [
+            3,
+            4,
+            5
+          ],
+          "planted_edge_probability": [
+            0.02,
+            0.05,
+            0.1
+          ]
+        },
+        "reference_and_semantic_check": "Verify every coloring against original edges. A planted coloring is a feasible reference, not an optimum certificate; preserve certified chromatic numbers only for valid theorem-backed cells.",
+        "qualification_gate": "generator and original-graph verifier implemented; CP-SAT reference backend available; solver Base/headroom qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          10.0,
+          30.0
+        ],
+        "inherited_task_primary_budget_sec": 30.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "ortools_cp_sat__job_shop_scheduling",
+      "solver": "ortools_cp_sat",
+      "target_problem": "job_shop_scheduling",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_ortools_cp_sat_v9_15.yaml",
+      "source_task_id": "release_ortools_cp_sat_v9_15",
+      "source_version": "9.15",
+      "source_commit": "551ad10d94835c99e5e1e684500d3db398c0e345",
+      "source_tree": "8f746840b74f32ce4b9d3ff0231ed2cabbd5072d",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "job_shop_scheduling",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.job_shop_scheduling",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "job_shop_scheduling",
+        "generator_kind": "job_shop_scheduling",
+        "structure": "Classical job shop with random machine order per job; keep shared-order flow-shop cases as a separate structure control, not pooled into the primary result.",
+        "parameter_ranges": {
+          "jobs_machines": [
+            [
+              10,
+              5
+            ],
+            [
+              20,
+              10
+            ],
+            [
+              40,
+              10
+            ],
+            [
+              40,
+              15
+            ]
+          ],
+          "duration_range": [
+            1,
+            99
+          ],
+          "machine_order": [
+            "random_per_job",
+            "shared_flowshop"
+          ]
+        },
+        "reference_and_semantic_check": "Check operation precedence and machine non-overlap independently. Use known published instances only with source/identity hashes; otherwise independently verified BKS and lower bound.",
+        "qualification_gate": "generator and schedule verifier implemented; CP-SAT reference backend available; solver Base/headroom qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          10.0,
+          30.0
+        ],
+        "inherited_task_primary_budget_sec": 30.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "ortools_cp_sat__resource_constrained_project_scheduling",
+      "solver": "ortools_cp_sat",
+      "target_problem": "resource_constrained_project_scheduling",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_ortools_cp_sat_v9_15.yaml",
+      "source_task_id": "release_ortools_cp_sat_v9_15",
+      "source_version": "9.15",
+      "source_commit": "551ad10d94835c99e5e1e684500d3db398c0e345",
+      "source_tree": "8f746840b74f32ce4b9d3ff0231ed2cabbd5072d",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "resource_constrained_project_scheduling",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.resource_constrained_project_scheduling",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "resource_constrained_project_scheduling",
+        "generator_kind": "resource_constrained_project_scheduling",
+        "structure": "Precedence DAG with renewable resources, non-preemptive activities, and makespan objective; include both generated layered DAGs and random topological-order DAGs as distinct cells.",
+        "parameter_ranges": {
+          "activities": [
+            30,
+            60,
+            120
+          ],
+          "renewable_resources": [
+            3,
+            5,
+            8
+          ],
+          "precedence_shapes": [
+            "layered_dag",
+            "random_topological_dag"
+          ],
+          "precedence_density": [
+            0.05,
+            0.1,
+            0.2
+          ],
+          "resource_tightness": [
+            0.7,
+            0.85,
+            0.95
+          ],
+          "duration_range": [
+            1,
+            20
+          ]
+        },
+        "reference_and_semantic_check": "Build a shared RCPSP representation/generator and independently verify precedence, renewable-resource capacity at every time point, and makespan. Keep a reproducible feasible serial schedule; prove optima only where independently available.",
+        "qualification_gate": "generator, normalized schema, verifier and CP-SAT reference backend implemented; Choco/Gecode/CP-SAT task-driver qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          10.0,
+          30.0
+        ],
+        "inherited_task_primary_budget_sec": 30.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "ortools_cp_sat__balanced_subset_sum",
+      "solver": "ortools_cp_sat",
+      "target_problem": "balanced_subset_sum",
+      "group": "cp",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_ortools_cp_sat_v9_15.yaml",
+      "source_task_id": "release_ortools_cp_sat_v9_15",
+      "source_version": "9.15",
+      "source_commit": "551ad10d94835c99e5e1e684500d3db398c0e345",
+      "source_tree": "8f746840b74f32ce4b9d3ff0231ed2cabbd5072d",
+      "evaluation_seed_policy": "inherit source task protocol",
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "balanced_subset_sum",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.balanced_subset_sum",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "balanced_subset_sum",
+        "generator_kind": "balanced_subset_sum",
+        "structure": "Choose exactly k items whose sum is closest to a target; include bounded uniform and repeated-value/near-duplicate structures, with target offset expressed relative to reachable total.",
+        "parameter_ranges": {
+          "items": [
+            80,
+            160,
+            320
+          ],
+          "max_weight": [
+            100
+          ],
+          "cardinality_fraction": [
+            0.25,
+            0.5,
+            0.75
+          ],
+          "target_offset_fraction": [
+            -0.05,
+            0.0,
+            0.05
+          ],
+          "weight_structures": [
+            "uniform",
+            "repeated_values"
+          ]
+        },
+        "reference_and_semantic_check": "Use the existing exact fixed-cardinality DP reference where its measured cost is acceptable; independently verify selected cardinality, objective distance, and tie-break rule.",
+        "qualification_gate": "fixed-cardinality generator, exact DP reference and verifier implemented; bounded DP cost qualification pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          10.0,
+          30.0
+        ],
+        "inherited_task_primary_budget_sec": 30.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "scip__multidimensional_knapsack",
+      "solver": "scip",
+      "target_problem": "multidimensional_knapsack",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_scip_v10_1_0.yaml",
+      "source_task_id": "release_scip_v10_1_0",
+      "source_version": "10.1.0",
+      "source_commit": "c8e5737a847219d2811f7dfbd7cc6aa5b96df684",
+      "source_tree": "332e47f096903f805ff6033f5a956e0b5b7b009e",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      },
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "multidimensional_knapsack",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.multidimensional_knapsack",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "multidimensional_knapsack",
+        "generator_kind": "multidimensional_knapsack_mps",
+        "structure": "Binary item selection with multiple capacity rows; independent item profits, with a separate correlated-profit stratum only if the generator records and validates the correlation.",
+        "parameter_ranges": {
+          "items": [
+            80,
+            160,
+            320
+          ],
+          "dimensions": [
+            3,
+            5,
+            8
+          ],
+          "capacity_ratio": [
+            0.35,
+            0.5,
+            0.7
+          ],
+          "profit_mode": [
+            "independent",
+            "weakly_correlated",
+            "inverse_correlated"
+          ]
+        },
+        "reference_and_semantic_check": "Record original item vectors and independently check capacity feasibility and objective. Use exact DP only for a deliberately small subset; otherwise require proof-backed optimum or label BKS.",
+        "qualification_gate": "generator and MPS feature checks implemented; calibration references and solver headroom pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "scip__set_covering",
+      "solver": "scip",
+      "target_problem": "set_covering",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_scip_v10_1_0.yaml",
+      "source_task_id": "release_scip_v10_1_0",
+      "source_version": "10.1.0",
+      "source_commit": "c8e5737a847219d2811f7dfbd7cc6aa5b96df684",
+      "source_tree": "332e47f096903f805ff6033f5a956e0b5b7b009e",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      },
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "set_covering",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.set_covering",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "set_covering",
+        "generator_kind": "random_set_covering_mip",
+        "structure": "Binary minimum-cost covering with guaranteed row coverage, no planted optimal answer, and row/column degree diagnostics.",
+        "parameter_ranges": {
+          "variables": [
+            120,
+            250,
+            500
+          ],
+          "rows": [
+            80,
+            160,
+            320
+          ],
+          "row_density": [
+            0.05,
+            0.1,
+            0.2
+          ]
+        },
+        "reference_and_semantic_check": "Independently validate coverage and cost on the source set system. Avoid claiming optimality from MIP status unless a trusted reference or proof criterion passes.",
+        "qualification_gate": "random covering generator and exact matrix feature checks implemented; references imported; Base difficulty/headroom analysis pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "scip__facility_location",
+      "solver": "scip",
+      "target_problem": "facility_location",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_scip_v10_1_0.yaml",
+      "source_task_id": "release_scip_v10_1_0",
+      "source_version": "10.1.0",
+      "source_commit": "c8e5737a847219d2811f7dfbd7cc6aa5b96df684",
+      "source_tree": "332e47f096903f805ff6033f5a956e0b5b7b009e",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      },
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "facility_location",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.facility_location",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "facility_location",
+        "generator_kind": "facility_location_mip",
+        "structure": "Capacitated facility opening plus customer assignment, with fixed opening costs and transportation costs drawn independently; demand must be feasible under total capacity.",
+        "parameter_ranges": {
+          "facilities": [
+            10,
+            20,
+            40
+          ],
+          "customers": [
+            50,
+            120,
+            240
+          ],
+          "capacity_ratio": [
+            1.05,
+            1.25,
+            1.6
+          ]
+        },
+        "reference_and_semantic_check": "Retain the generated source data and independently verify assignment, facility capacities, opening charges, and total objective.",
+        "qualification_gate": "generator and sparse MPS independent check implemented; references imported; Base difficulty/headroom analysis pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "scip__graph_coloring",
+      "solver": "scip",
+      "target_problem": "graph_coloring",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_scip_v10_1_0.yaml",
+      "source_task_id": "release_scip_v10_1_0",
+      "source_version": "10.1.0",
+      "source_commit": "c8e5737a847219d2811f7dfbd7cc6aa5b96df684",
+      "source_tree": "332e47f096903f805ff6033f5a956e0b5b7b009e",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      },
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "graph_coloring_mip",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.graph_coloring_mip",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "graph_coloring_mip",
+        "generator_kind": "graph_coloring_mip",
+        "structure": "Planted-colorable random graphs; structure shift changes density while keeping vertex count and planted color count fixed.",
+        "parameter_ranges": {
+          "planted_partition_vertices": [
+            80,
+            160,
+            320
+          ],
+          "planted_colors": [
+            3,
+            4,
+            5
+          ],
+          "planted_edge_probability": [
+            0.02,
+            0.05,
+            0.1
+          ]
+        },
+        "reference_and_semantic_check": "A planted coloring proves feasibility only. Optimal color count needs a valid lower-bound proof or separately verified reference. Add a shared graph-to-MPS formulation and original-graph verifier path before including this MIP target.",
+        "qualification_gate": "graph-to-MPS formulation, source graph metadata, and independent graph/MPS checks implemented; references imported; Base difficulty/headroom analysis pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets",
+        "scale_feature": "vertices"
+      }
+    },
+    {
+      "task_key": "scip__scheduling",
+      "solver": "scip",
+      "target_problem": "scheduling",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_scip_v10_1_0.yaml",
+      "source_task_id": "release_scip_v10_1_0",
+      "source_version": "10.1.0",
+      "source_commit": "c8e5737a847219d2811f7dfbd7cc6aa5b96df684",
+      "source_tree": "332e47f096903f805ff6033f5a956e0b5b7b009e",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      },
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "mip_scheduling",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.mip_scheduling",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "mip_scheduling",
+        "generator_kind": "single_machine_weighted_tardiness_mip",
+        "structure": "Single-machine total weighted tardiness with release dates and due dates; structure shift tightens due dates while holding scale and release-date span fixed. The old SPT total-completion model remains a correctness-only panel.",
+        "parameter_ranges": {
+          "jobs": [
+            30,
+            60,
+            120
+          ],
+          "release_span_over_total_processing": [
+            0.0,
+            0.5,
+            1.0
+          ],
+          "due_date_tightness": [
+            0.5,
+            1.0,
+            1.5
+          ]
+        },
+        "reference_and_semantic_check": "The existing sum-start-time model is SPT-solvable and unsuitable as the only optimization target. Add a common MIP model and independent schedule verifier; verify objective terms in original scheduling data.",
+        "qualification_gate": "no-setup single-machine weighted-tardiness MPS, original schedule verifier, and feasible reference witness implemented; references imported; Base difficulty/headroom analysis pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          5.0,
+          20.0
+        ],
+        "inherited_task_primary_budget_sec": 20.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets",
+        "scale_feature": "jobs"
+      }
+    },
+    {
+      "task_key": "cbc__multidimensional_knapsack",
+      "solver": "cbc",
+      "target_problem": "multidimensional_knapsack",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_cbc_v2_10_13.yaml",
+      "source_task_id": "release_cbc_v2_10_13",
+      "source_version": "2.10.13",
+      "source_commit": "8e898d0a4ab7bb5b202c2ebbf3f2d2c0823c1e9d",
+      "source_tree": "37bf689201969851486e10baab5e3f27bc74c3fc",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      },
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "multidimensional_knapsack",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.multidimensional_knapsack",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "multidimensional_knapsack",
+        "generator_kind": "multidimensional_knapsack_mps",
+        "structure": "Binary item selection with multiple capacity rows; independent item profits, with a separate correlated-profit stratum only if the generator records and validates the correlation.",
+        "parameter_ranges": {
+          "items": [
+            80,
+            160,
+            320
+          ],
+          "dimensions": [
+            3,
+            5,
+            8
+          ],
+          "capacity_ratio": [
+            0.35,
+            0.5,
+            0.7
+          ],
+          "profit_mode": [
+            "independent",
+            "weakly_correlated",
+            "inverse_correlated"
+          ]
+        },
+        "reference_and_semantic_check": "Record original item vectors and independently check capacity feasibility and objective. Use exact DP only for a deliberately small subset; otherwise require proof-backed optimum or label BKS.",
+        "qualification_gate": "generator and MPS feature checks implemented; calibration references and solver headroom pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          1.0,
+          5.0
+        ],
+        "inherited_task_primary_budget_sec": 1.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "cbc__set_covering",
+      "solver": "cbc",
+      "target_problem": "set_covering",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_cbc_v2_10_13.yaml",
+      "source_task_id": "release_cbc_v2_10_13",
+      "source_version": "2.10.13",
+      "source_commit": "8e898d0a4ab7bb5b202c2ebbf3f2d2c0823c1e9d",
+      "source_tree": "37bf689201969851486e10baab5e3f27bc74c3fc",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      },
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "set_covering",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.set_covering",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "set_covering",
+        "generator_kind": "random_set_covering_mip",
+        "structure": "Binary minimum-cost covering with guaranteed row coverage, no planted optimal answer, and row/column degree diagnostics.",
+        "parameter_ranges": {
+          "variables": [
+            120,
+            250,
+            500
+          ],
+          "rows": [
+            80,
+            160,
+            320
+          ],
+          "row_density": [
+            0.05,
+            0.1,
+            0.2
+          ]
+        },
+        "reference_and_semantic_check": "Independently validate coverage and cost on the source set system. Avoid claiming optimality from MIP status unless a trusted reference or proof criterion passes.",
+        "qualification_gate": "random covering generator and exact matrix feature checks implemented; references imported; Base difficulty/headroom analysis pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          1.0,
+          5.0
+        ],
+        "inherited_task_primary_budget_sec": 1.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "cbc__facility_location",
+      "solver": "cbc",
+      "target_problem": "facility_location",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_cbc_v2_10_13.yaml",
+      "source_task_id": "release_cbc_v2_10_13",
+      "source_version": "2.10.13",
+      "source_commit": "8e898d0a4ab7bb5b202c2ebbf3f2d2c0823c1e9d",
+      "source_tree": "37bf689201969851486e10baab5e3f27bc74c3fc",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      },
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "facility_location",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.facility_location",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "facility_location",
+        "generator_kind": "facility_location_mip",
+        "structure": "Capacitated facility opening plus customer assignment, with fixed opening costs and transportation costs drawn independently; demand must be feasible under total capacity.",
+        "parameter_ranges": {
+          "facilities": [
+            10,
+            20,
+            40
+          ],
+          "customers": [
+            50,
+            120,
+            240
+          ],
+          "capacity_ratio": [
+            1.05,
+            1.25,
+            1.6
+          ]
+        },
+        "reference_and_semantic_check": "Retain the generated source data and independently verify assignment, facility capacities, opening charges, and total objective.",
+        "qualification_gate": "generator and sparse MPS independent check implemented; references imported; Base difficulty/headroom analysis pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          1.0,
+          5.0
+        ],
+        "inherited_task_primary_budget_sec": 1.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets"
+      }
+    },
+    {
+      "task_key": "cbc__graph_coloring",
+      "solver": "cbc",
+      "target_problem": "graph_coloring",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_cbc_v2_10_13.yaml",
+      "source_task_id": "release_cbc_v2_10_13",
+      "source_version": "2.10.13",
+      "source_commit": "8e898d0a4ab7bb5b202c2ebbf3f2d2c0823c1e9d",
+      "source_tree": "37bf689201969851486e10baab5e3f27bc74c3fc",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      },
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "graph_coloring_mip",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.graph_coloring_mip",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "graph_coloring_mip",
+        "generator_kind": "graph_coloring_mip",
+        "structure": "Planted-colorable random graphs; structure shift changes density while keeping vertex count and planted color count fixed.",
+        "parameter_ranges": {
+          "planted_partition_vertices": [
+            80,
+            160,
+            320
+          ],
+          "planted_colors": [
+            3,
+            4,
+            5
+          ],
+          "planted_edge_probability": [
+            0.02,
+            0.05,
+            0.1
+          ]
+        },
+        "reference_and_semantic_check": "A planted coloring proves feasibility only. Optimal color count needs a valid lower-bound proof or separately verified reference. Add a shared graph-to-MPS formulation and original-graph verifier path before including this MIP target.",
+        "qualification_gate": "graph-to-MPS formulation, source graph metadata, and independent graph/MPS checks implemented; references imported; Base difficulty/headroom analysis pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          1.0,
+          5.0
+        ],
+        "inherited_task_primary_budget_sec": 1.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets",
+        "scale_feature": "vertices"
+      }
+    },
+    {
+      "task_key": "cbc__scheduling",
+      "solver": "cbc",
+      "target_problem": "scheduling",
+      "group": "mip",
+      "target_level": "problem_family",
+      "source_task_config": "configs/tasks/release_cbc_v2_10_13.yaml",
+      "source_task_id": "release_cbc_v2_10_13",
+      "source_version": "2.10.13",
+      "source_commit": "8e898d0a4ab7bb5b202c2ebbf3f2d2c0823c1e9d",
+      "source_tree": "37bf689201969851486e10baab5e3f27bc74c3fc",
+      "evaluation_seed_policy": {
+        "seed_count": 30,
+        "seed_min": 1,
+        "seed_max": 2147483646,
+        "preserve_existing": true
+      },
+      "readiness": "requires_solver_adapter_and_base_headroom_qualification",
+      "instance_design_id": "mip_scheduling",
+      "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json#target_designs.mip_scheduling",
+      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+      "configuration_status": "instance_ranges_structure_population_and_reference_complete; solver_base_qualification_pending",
+      "instance_configuration": {
+        "shared_design_id": "mip_scheduling",
+        "generator_kind": "single_machine_weighted_tardiness_mip",
+        "structure": "Single-machine total weighted tardiness with release dates and due dates; structure shift tightens due dates while holding scale and release-date span fixed. The old SPT total-completion model remains a correctness-only panel.",
+        "parameter_ranges": {
+          "jobs": [
+            30,
+            60,
+            120
+          ],
+          "release_span_over_total_processing": [
+            0.0,
+            0.5,
+            1.0
+          ],
+          "due_date_tightness": [
+            0.5,
+            1.0,
+            1.5
+          ]
+        },
+        "reference_and_semantic_check": "The existing sum-start-time model is SPT-solvable and unsuitable as the only optimization target. Add a common MIP model and independent schedule verifier; verify objective terms in original scheduling data.",
+        "qualification_gate": "no-setup single-machine weighted-tardiness MPS, original schedule verifier, and feasible reference witness implemented; references imported; Base difficulty/headroom analysis pending",
+        "population_roles": {
+          "protocol_calibration": "10 per declared calibration cell; 5 discovery + 5 disjoint qualification",
+          "agent_development": "5 shared instances per target task",
+          "unseen_id": "30 per declared split",
+          "unseen_scale": "30 per declared split",
+          "unseen_structure": "30 per declared split",
+          "unseen_joint": "30 per declared split"
+        },
+        "reference_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_threads": 1,
+        "status": "population_v4_generated_and_design_audit_passed; reference_import_verified; solver_adapter_or_base_qualification_pending",
+        "inherited_task_solve_budgets_sec": [
+          1.0,
+          5.0
+        ],
+        "inherited_task_primary_budget_sec": 1.0,
+        "inherited_threads": 1,
+        "reference_search_budget_grid_sec": [
+          0.1,
+          1,
+          5,
+          20,
+          60
+        ],
+        "reference_search_budget_origin": "configs/research/generalization_difficulty_v2.yaml; separate from task performance budgets",
+        "scale_feature": "jobs"
+      }
+    }
+  ],
+  "task_count": 40,
+  "source_study": "configs/research/latest_high_algorithm_space_v4.json",
+  "development": {
+    "one_fresh_development_per_target": true,
+    "model_matrix": "configs/experiments/generalization_high_matrix.yaml",
+    "conditions": [
+      "standard",
+      "algorithm_space"
+    ],
+    "repeats_per_model_condition": 3,
+    "planned_agent_starts": 480,
+    "research_budget": {
+      "track": "standard",
+      "wall_time_sec": 14400,
+      "cpus": 8,
+      "memory_gib": 32,
+      "development_parallel_runs": 4,
+      "checkpoints_sec": [
+        1800,
+        3600,
+        7200,
+        14400
+      ]
+    }
+  },
+  "generalization": {
+    "development": "Public complete visible development inputs for the target problem.",
+    "protocol_calibration": "Separate evaluator discovery and qualification cases; never choose difficulty/budgets from final hidden outcomes.",
+    "unseen_id": "New independent instances within the development scale and structural support.",
+    "unseen_scale": "Larger instances with structural distributions and normalized load controlled.",
+    "unseen_structure": "Different constraint/instance structure at matched scale.",
+    "unseen_joint": "Combined scale and structural extrapolation.",
+    "cross_target_transfer": "Evaluate retained patches on other selected targets separately from target-task success."
+  },
+  "server_work": [
+    "check frozen-version model expressiveness and driver input fidelity",
+    "construct and audit disjoint populations",
+    "independently verify feasible witnesses and objectives",
+    "obtain and record proven optima or qualified BKS without conflating them",
+    "run source-bound Base calibration on separate discovery cases",
+    "qualify budgets and difficulty on disjoint calibration cases",
+    "freeze formal inputs and scoring before any new Agent development"
+  ],
+  "execution": {
+    "artifact_root": "/data3/gushengda/pitbench-runs/family-expansion-v1",
+    "host_tmp_root": "/data3/tmp/gushengda",
+    "new_agent_starts_authorized_by_this_inventory": true,
+    "final_solve_budgets": "not frozen; keep existing protocols and use separate calibration evidence for new tasks",
+    "compute_hosts": [
+      "10.10.100.40",
+      "10.10.100.41",
+      "10.10.100.42",
+      "10.10.100.43",
+      "10.10.100.44",
+      "10.10.100.45",
+      "10.10.100.46",
+      "10.10.100.47"
+    ],
+    "compute_host_access": "SSH via g49 bastion using passwd.md; only reachable hosts are dispatched; run artifacts are returned to the configured /data3 root.",
+    "parallelism_policy": "Use all healthy available worker capacity subject to disk space and current host load; do not fill nodes with existing disk pressure."
+  },
+  "existing_implementation": {
+    "population_construction": "pitbench.research.construct_generalization_populations",
+    "split_audit": "pitbench.research.audit_population_design",
+    "reference_construction": "pitbench.research.prepare_population_references",
+    "baseline_calibration": "pitbench.research.measure_population_headroom",
+    "difficulty_analysis": "pitbench.research.analyze_population_difficulty"
+  },
+  "initial_server_probe": {
+    "purpose": "generator_model_and_independent_primal_capability_checks_only",
+    "role": "protocol_calibration_discovery",
+    "instances_per_problem": 2,
+    "solve_budget_sec": 10.0,
+    "budget_origin": "existing HiGHS native budget; not a new-task budget selection",
+    "seeds": {
+      "highs": 0,
+      "cbc": 1
+    },
+    "problems": {
+      "multidimensional_knapsack": {
+        "kind": "multidimensional_knapsack_mps",
+        "items": [
+          20,
+          40
+        ],
+        "dimensions": [
+          3
+        ],
+        "weight_max": 100,
+        "capacity_mode": "ratio",
+        "capacity_ratio": 0.5,
+        "profit_mode": "independent",
+        "profit_max": 100
+      },
+      "set_covering": {
+        "kind": "random_set_covering_mip",
+        "variables": [
+          30,
+          60
+        ],
+        "rows": [
+          20,
+          40
+        ],
+        "row_density": 0.2,
+        "cost_max": 100
+      },
+      "facility_location": {
+        "kind": "facility_location_mip",
+        "facilities": [
+          4,
+          8
+        ],
+        "customers": [
+          8,
+          16
+        ],
+        "capacity_ratio": 1.5
+      },
+      "scheduling": {
+        "kind": "single_machine_scheduling_mip",
+        "jobs": [
+          9,
+          12
+        ],
+        "processing_distribution": "uniform_integer",
+        "processing_parameters": {
+          "low": 1,
+          "high": 20
+        }
+      }
+    },
+    "qualification": "No final difficulty tier, generalization claim, or independent optimality certificate is established by this initial probe."
+  },
+  "instance_design_record": "docs/research/eight-solvers-five-targets-decisions.md",
+  "instance_configuration_status": "all_40_tasks_bound_to_15_shared_profiles; 2935_instances_generated_and_audited; 2935_references_hash_matched_and_independently_reverified; solver Base/headroom qualification remains pending",
+  "population_construction_receipt": "/data3/gushengda/pitbench-runs/family-expansion-v1/populations-v4/population-construction.json",
+  "population_design_audit": "/data3/gushengda/pitbench-runs/family-expansion-v1/populations-v4/design-audit.json",
+  "reference_campaign_config": "configs/research/eight_solvers_five_targets_reference_v2.yaml",
+  "reference_campaign_output": "/data3/gushengda/pitbench-runs/family-expansion-v1/reference-campaign-v3",
+  "instance_design_source": "configs/research/eight_solvers_five_targets_design_v2.json",
+  "reference_campaign_v2_output": "/data3/gushengda/pitbench-runs/family-expansion-v1/reference-campaign-v3",
+  "reference_repair_campaign_output": "/data3/gushengda/pitbench-runs/family-expansion-v1/reference-repair-v1",
+  "construction_receipt": "/data3/gushengda/pitbench-runs/family-expansion-v1/populations-v4/population-construction.json",
+  "design_audit": "/data3/gushengda/pitbench-runs/family-expansion-v1/populations-v4/design-audit.json",
+  "reference_campaigns": {
+    "main": {
+      "config": "configs/research/eight_solvers_five_targets_reference_v2.yaml",
+      "output": "/data3/gushengda/pitbench-runs/family-expansion-v1/reference-campaign-v3",
+      "state": "completed_with_88_solver_errors_preserved; 2935 references available"
+    },
+    "targeted_repair": {
+      "config": "configs/research/eight_solvers_five_targets_reference_repair_v1.yaml",
+      "output": "/data3/gushengda/pitbench-runs/family-expansion-v1/reference-repair-v1",
+      "state": "completed; zero solver errors; 2819 instance references"
+    }
+  },
+  "instance_generation_spec": "configs/research/eight_solvers_five_targets_generation_v2.yaml",
+  "instance_design_spec": "configs/research/eight_solvers_five_targets_design_v2.json",
+  "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
+  "reference_repair_campaign_config": "configs/research/eight_solvers_five_targets_reference_repair_v1.yaml",
+  "research_budget": {
+    "wall_time_sec": 14400,
+    "cpus": 8,
+    "memory_gib": 32,
+    "development_parallel_runs": 4,
+    "source": "configs/research/generalization_latest_high_v2.json"
+  },
+  "reference_import_output": "/data3/gushengda/PitBench-family-expansion-20261109/private-reference-artifacts/populations-v4-reference-import-final-v3/references.json",
+  "reference_import_receipt": {
+    "status": "references_verified",
+    "records": 2935,
+    "missing": 0,
+    "target_kinds": {
+      "trusted_optimum": 603,
+      "best_found": 382,
+      "computed_optimum": 756,
+      "feasible_reference": 1194
+    },
+    "optimality_note": "MIP solver primal/dual provenance is retained; the external branch-and-bound proof is not independently replayed.",
+    "output": "/data3/gushengda/PitBench-family-expansion-20261109/private-reference-artifacts/populations-v4-reference-import-final-v3/references.json"
+  }
+}

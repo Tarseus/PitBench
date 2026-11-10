@@ -1,8 +1,8 @@
 ARG JAVA_BASE_IMAGE=maven:3.9-eclipse-temurin-17@sha256:880934ae394bf91bc3e57d573e4fc04774f064f3c4df7ccd7cc10b3b126737bf
 FROM ${JAVA_BASE_IMAGE}
 
-ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu/
-ARG UBUNTU_SECURITY_MIRROR=http://security.ubuntu.com/ubuntu/
+ARG UBUNTU_MIRROR=https://archive.ubuntu.com/ubuntu/
+ARG UBUNTU_SECURITY_MIRROR=https://security.ubuntu.com/ubuntu/
 ARG PYPI_INDEX_URL=https://pypi.org/simple
 ARG SOURCE_REPOSITORY=https://github.com/chocoteam/choco-solver.git
 ARG BASE_COMMIT

@@ -169,7 +169,11 @@ def _exact_target_verifier(
 ) -> TrustedOptimumFamily:
     if (
         record.target_kind == "best_found"
-        and performance_protocol != PerformanceProtocol.HEURISTIC_FIXED_BUDGET
+        and performance_protocol
+        not in {
+            PerformanceProtocol.HEURISTIC_FIXED_BUDGET,
+            PerformanceProtocol.BUDGET_TRUNCATED_QUALITY,
+        }
     ):
         raise ValueError(
             "best-found MIP targets require a fixed-budget quality panel, not exact solved coverage"
@@ -344,13 +348,13 @@ class JudgePlan:
         cases: list[InstanceCase] = []
         development_seeds = _development_seeds(task)
         trusted_records = {}
-        if (
-            task.evaluation.performance_protocol
-            == PerformanceProtocol.EXACT_VERIFIED_SOLVE
-        ):
+        if task.evaluation.performance_protocol in {
+            PerformanceProtocol.EXACT_VERIFIED_SOLVE,
+            PerformanceProtocol.BUDGET_TRUNCATED_QUALITY,
+        }:
             if task.oracle.kind not in {"known_optimum", "best_known_solution"}:
                 raise ValueError(
-                    "exact verified solve requires a known-optimum or best-known-solution oracle"
+                    "exact-target evaluation requires a known-optimum or best-known-solution oracle"
                 )
             trusted_oracle_path = resolver.resolve(
                 task.oracle.source,
@@ -364,27 +368,43 @@ class JudgePlan:
                 for record in trusted_oracle.records
             ):
                 raise ValueError("trusted optimum objective sense differs from task")
-            expected_target_kind = (
-                "trusted_optimum"
-                if task.oracle.kind == "known_optimum"
-                else "published_bks"
-            )
-            bks_quality_panels = {
-                panel.name
-                for panel in task.instance_sets
-                if panel.kind == InstanceSetKind.JUDGE_SHIFT
-                and panel.performance_protocol
-                == PerformanceProtocol.HEURISTIC_FIXED_BUDGET
-            }
-            if any(
-                record.target_kind != expected_target_kind
-                and not (
-                    record.target_kind == "best_found"
-                    and record.instance_set in bks_quality_panels
-                )
-                for record in trusted_oracle.records
+            if (
+                task.evaluation.performance_protocol
+                == PerformanceProtocol.BUDGET_TRUNCATED_QUALITY
             ):
-                raise ValueError("exact target kind differs from task oracle kind")
+                if task.oracle.kind != "best_known_solution":
+                    raise ValueError(
+                        "budget-truncated quality requires a best-known-solution oracle"
+                    )
+                if any(
+                    record.target_kind not in {"trusted_optimum", "best_found"}
+                    for record in trusted_oracle.records
+                ):
+                    raise ValueError(
+                        "budget-truncated oracle records must be trusted optima or verified BKS"
+                    )
+            else:
+                expected_target_kind = (
+                    "trusted_optimum"
+                    if task.oracle.kind == "known_optimum"
+                    else "published_bks"
+                )
+                bks_quality_panels = {
+                    panel.name
+                    for panel in task.instance_sets
+                    if panel.kind == InstanceSetKind.JUDGE_SHIFT
+                    and panel.performance_protocol
+                    == PerformanceProtocol.HEURISTIC_FIXED_BUDGET
+                }
+                if any(
+                    record.target_kind != expected_target_kind
+                    and not (
+                        record.target_kind == "best_found"
+                        and record.instance_set in bks_quality_panels
+                    )
+                    for record in trusted_oracle.records
+                ):
+                    raise ValueError("exact target kind differs from task oracle kind")
             trusted_records = {
                 (record.instance_set, record.instance_id): record
                 for record in trusted_oracle.records
@@ -448,7 +468,10 @@ class JudgePlan:
                 if (
                     instance_set.kind == InstanceSetKind.JUDGE_ID
                     and task.evaluation.performance_protocol
-                    == PerformanceProtocol.EXACT_VERIFIED_SOLVE
+                    in {
+                        PerformanceProtocol.EXACT_VERIFIED_SOLVE,
+                        PerformanceProtocol.BUDGET_TRUNCATED_QUALITY,
+                    }
                     and not generated_instance_ids <= set(trusted_instance_records)
                 ):
                     raise ValueError(
@@ -535,7 +558,10 @@ class JudgePlan:
             if (
                 instance_set.kind == InstanceSetKind.JUDGE_ID
                 and task.evaluation.performance_protocol
-                == PerformanceProtocol.EXACT_VERIFIED_SOLVE
+                in {
+                    PerformanceProtocol.EXACT_VERIFIED_SOLVE,
+                    PerformanceProtocol.BUDGET_TRUNCATED_QUALITY,
+                }
                 and set(exact_instance_records)
                 != {item["id"] for item in payload["instances"]}
             ):
@@ -1570,6 +1596,7 @@ class LocalProcessJudge:
                 "timed_out": RunStatus.TIMED_OUT,
                 "out_of_memory": RunStatus.OUT_OF_MEMORY,
                 "solver_error": RunStatus.SOLVER_ERROR,
+                "parameter_rejected": RunStatus.SOLVER_ERROR,
             }
             status = reasons.get(
                 parsed.failure_reason if parsed else None, RunStatus.CRASHED

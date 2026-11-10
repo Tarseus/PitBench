@@ -1,0 +1,145 @@
+schema_version: '3.0'
+task_id: e8_pyvrp_heterogeneous_fleet_vrp
+release:
+  repository: PyVRP/PyVRP
+  version: 0.14.1
+  tag: v0.14.1
+  base_commit: a1a9a700e104e53ba908cf81b76a3d9f7132a43c
+  tree_sha: b0dec3c0b0c310555084f681248b382705219944
+  released_at: '2026-10-16T18:47:33Z'
+  url: https://github.com/PyVRP/PyVRP/releases/tag/v0.14.1
+task_type: heuristic_solver
+problem_family: cvrp
+problem_variant: heterogeneous_fleet_vrp
+formulation_id: heterogeneous_fleet_vrp_pyvrp
+optimization_scope: heterogeneous_fleet_vrp source-level solve efficiency
+optimization_profile: null
+metric_scenarios: []
+research_budget: null
+instruction: Improve the pinned pyvrp 0.14.1 solver on heterogeneous_fleet_vrp under
+  the declared solve budgets. Use all supplied visible development inputs for diagnosis
+  and regression checks. Preserve feasibility, objective semantics, truthful solver
+  statuses, and the inherited seed, thread, and budget protocol. Report cross-target
+  effects separately.
+repository:
+  clone_url: https://github.com/PyVRP/PyVRP.git
+  plugin: pitbench.repositories.plugins:PyVRPDebugOptimizedRepositoryPlugin
+  editable_paths:
+  - pyvrp
+  agent_image: pitbench-pyvrp:a1a9a700e104
+  judge_image: null
+oracle:
+  kind: best_known_solution
+  source: private://private-reference-artifacts/populations-v4-reference-import-local-v2/references.json
+  source_sha256: 50e6468f40bf8ef3838c33c602894dbec10e30e67795c8f7fbef5c1ee529eb4b
+  objective_sense: minimize
+evaluation:
+  performance_protocol: heuristic_fixed_budget
+  budgets_sec:
+  - 5.0
+  - 10.0
+  primary_budget_sec: 10.0
+  fixed_solver_parameters: null
+  solver_seeds: null
+  seed_robustness:
+    development_seeds:
+    - 3687993774
+    - 3799101943
+    - 2024317593
+    - 603286818
+    - 323182937
+    - 1688034243
+    - 686358246
+    - 3321626164
+    - 264305458
+    - 3402058414
+    - 1457906957
+    - 1890054919
+    - 251278272
+    - 879304733
+    - 2479629513
+    - 1226370639
+    - 3283797925
+    - 2931562165
+    - 3537754413
+    - 3663967696
+    - 3833187198
+    - 774434508
+    - 3062745665
+    - 1852073310
+    - 1040828950
+    - 2106353719
+    - 1705732003
+    - 1395251669
+    - 1260062517
+    - 4256231868
+    evaluation_seeds_file: private://seed_robustness/release_pyvrp_v0_14_1.yaml
+    evaluation_seeds_file_sha256: 38054370a545f01c12bbb531dbbdaecd86c976c494139ca2b2977860f4eec5ac
+    seed_selection:
+      seed_min: 0
+      seed_max: 4294967295
+      seed_count: 30
+  representation_robustness:
+    kind: customer_relabeling
+    verification_tolerance: null
+    instance_set: agent_dev
+    solver_seed: 0
+    relabeling_generation_seed: 20260907
+    relabelings_per_instance: 30
+  controlled_transfer: null
+  operational_reliability: false
+  threads: 1
+  exact_time_basis: cpu_time
+  verifier: cvrp_independent
+  validation_test_patch: null
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: .pitbench-runs/eight-solver-populations-v4/public-instance-sets/e8_pyvrp_heterogeneous_fleet_vrp/instances.yaml
+  instance_set_config_sha256: 614c03507516fb4e0c464c6921280781e51ac3aa384d676259f8920bef6ecb1e
+  size: 5
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://bootstrap/e8_pyvrp_heterogeneous_fleet_vrp/judge_id.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_scale
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_pyvrp_heterogeneous_fleet_vrp/unseen_scale.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_structure
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_pyvrp_heterogeneous_fleet_vrp/unseen_structure.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_joint
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_pyvrp_heterogeneous_fleet_vrp/unseen_joint.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false

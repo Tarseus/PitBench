@@ -15,7 +15,18 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir \
 RUN test -n "$BASE_COMMIT" \
     && git init --quiet /workspace/repo \
     && git -C /workspace/repo remote add origin "$SOURCE_REPOSITORY" \
-    && git -C /workspace/repo fetch --depth=1 --no-tags origin "$BASE_COMMIT" \
+    && git -C /workspace/repo config http.version HTTP/1.1 \
+    && for attempt in 1 2 3; do \
+       if git -C /workspace/repo \
+         -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 \
+         fetch --depth=1 --no-tags origin "$BASE_COMMIT"; then \
+         break; \
+       elif [ "$attempt" -eq 3 ]; then \
+         exit 1; \
+       else \
+         sleep 2; \
+       fi; \
+       done \
     && git -C /workspace/repo checkout --quiet --detach FETCH_HEAD \
     && git -C /workspace/repo remote remove origin \
     && git -C /workspace/repo reflog expire --expire=now --all \
