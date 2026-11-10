@@ -1,0 +1,140 @@
+schema_version: '3.0'
+task_id: e8_ortools_cp_sat_balanced_subset_sum
+release:
+  repository: google/or-tools
+  version: '9.15'
+  tag: v9.15
+  base_commit: 551ad10d94835c99e5e1e684500d3db398c0e345
+  tree_sha: 8f746840b74f32ce4b9d3ff0231ed2cabbd5072d
+  released_at: '2026-01-12T15:38:30Z'
+  url: https://github.com/google/or-tools/releases/tag/v9.15
+task_type: exact_solver
+problem_family: cp
+problem_variant: balanced_subset_sum
+formulation_id: balanced_subset_sum_ortools_cp_sat
+optimization_scope: balanced_subset_sum source-level solve efficiency
+optimization_profile: null
+metric_scenarios: []
+research_budget: null
+instruction: Improve the pinned ortools_cp_sat 9.15 solver on balanced_subset_sum
+  under the declared solve budgets. Use all supplied visible development inputs for
+  diagnosis and regression checks. Preserve feasibility, objective semantics, truthful
+  solver statuses, and the inherited seed, thread, and budget protocol. Report cross-target
+  effects separately.
+repository:
+  clone_url: https://github.com/google/or-tools.git
+  plugin: pitbench.repositories.plugins:OrToolsCpSatExactRepositoryPlugin
+  editable_paths:
+  - ortools
+  - build
+  agent_image: pitbench-ortools:551ad10d9483-driver-qualified-fd2068e6c3
+  judge_image: null
+oracle:
+  kind: best_known_solution
+  source: private://bootstrap/oracles/e8_ortools_cp_sat_balanced_subset_sum.yaml
+  source_sha256: 418a0fdc484cdf4baf93998a5a680dd65bd6c44c99c3acd8d32459ab29f58098
+  objective_sense: minimize
+evaluation:
+  performance_protocol: budget_truncated_quality
+  budgets_sec:
+  - 10.0
+  - 30.0
+  primary_budget_sec: 30.0
+  fixed_solver_parameters: null
+  solver_seeds: null
+  seed_robustness:
+    development_seeds:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    evaluation_seeds_file: private://seed_robustness/release_ortools_cp_sat_v9_15.yaml
+    evaluation_seeds_file_sha256: 0ff6320727fdbe98592036c8e6479085be098040ef8fc1b9effe0b3644941bbe
+    seed_selection:
+      seed_min: 0
+      seed_max: 2147483647
+      seed_count: 30
+  representation_robustness: null
+  controlled_transfer: null
+  operational_reliability: false
+  threads: 1
+  exact_time_basis: cpu_time
+  verifier: exact_target
+  validation_test_patch: null
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: .pitbench-runs/eight-solver-populations-v4/public-instance-sets/e8_ortools_cp_sat_balanced_subset_sum/instances.yaml
+  instance_set_config_sha256: 1a48fc846586d8d0cb269222aa8b2dac6a047918637d24fca690e1c5f6a4649f
+  size: 5
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://bootstrap/e8_ortools_cp_sat_balanced_subset_sum/judge_id.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_scale
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_ortools_cp_sat_balanced_subset_sum/unseen_scale.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_structure
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_ortools_cp_sat_balanced_subset_sum/unseen_structure.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_joint
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_ortools_cp_sat_balanced_subset_sum/unseen_joint.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
