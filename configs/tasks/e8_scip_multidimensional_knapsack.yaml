@@ -1,0 +1,107 @@
+schema_version: '3.0'
+task_id: e8_scip_multidimensional_knapsack
+release:
+  repository: scipopt/scip
+  version: 10.1.0
+  tag: v10.1.0
+  base_commit: c8e5737a847219d2811f7dfbd7cc6aa5b96df684
+  tree_sha: 332e47f096903f805ff6033f5a956e0b5b7b009e
+  released_at: '2026-09-18T10:01:31Z'
+  url: https://github.com/scipopt/scip/releases/tag/v10.1.0
+task_type: exact_solver
+problem_family: mip
+problem_variant: multidimensional_knapsack
+formulation_id: multidimensional_knapsack_scip
+optimization_scope: multidimensional_knapsack source-level solve efficiency
+optimization_profile: null
+metric_scenarios: []
+research_budget: null
+instruction: Improve the pinned scip 10.1.0 solver on multidimensional_knapsack under
+  the declared solve budgets. Use all supplied visible development inputs for diagnosis
+  and regression checks. Preserve feasibility, objective semantics, truthful solver
+  statuses, and the inherited seed, thread, and budget protocol. Report cross-target
+  effects separately.
+repository:
+  clone_url: https://github.com/scipopt/scip.git
+  plugin: pitbench.repositories.plugins:ScipRepositoryPlugin
+  editable_paths:
+  - src
+  agent_image: pitbench-scip:c8e5737a8472
+  judge_image: null
+oracle:
+  kind: best_known_solution
+  source: private://bootstrap/oracles/e8_scip_multidimensional_knapsack.yaml
+  source_sha256: 5f56080990bab3bbe5029e88ae0bc8262b1fa1605953c78b90b3bd2e89c00c92
+  objective_sense: minimize
+evaluation:
+  performance_protocol: budget_truncated_quality
+  budgets_sec:
+  - 5.0
+  - 20.0
+  primary_budget_sec: 20.0
+  fixed_solver_parameters: null
+  solver_seeds:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  seed_robustness: null
+  representation_robustness: null
+  controlled_transfer: null
+  operational_reliability: false
+  threads: 1
+  exact_time_basis: cpu_time
+  verifier: exact_target
+  validation_test_patch: null
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: .pitbench-runs/eight-solver-populations-v4/public-instance-sets/e8_scip_multidimensional_knapsack/instances.yaml
+  instance_set_config_sha256: f8130d1b9b40af0e0b8d535f1374defa092a0547a561fc4e818ef0cb589ab3f2
+  size: 5
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://bootstrap/e8_scip_multidimensional_knapsack/judge_id.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_scale
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_scip_multidimensional_knapsack/unseen_scale.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_structure
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_scip_multidimensional_knapsack/unseen_structure.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_joint
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_scip_multidimensional_knapsack/unseen_joint.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false

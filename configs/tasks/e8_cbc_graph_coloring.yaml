@@ -1,0 +1,106 @@
+schema_version: '3.0'
+task_id: e8_cbc_graph_coloring
+release:
+  repository: coin-or/Cbc
+  version: 2.10.13
+  tag: releases/2.10.13
+  base_commit: 8e898d0a4ab7bb5b202c2ebbf3f2d2c0823c1e9d
+  tree_sha: 37bf689201969851486e10baab5e3f27bc74c3fc
+  released_at: '2026-03-11T23:59:18Z'
+  url: https://github.com/coin-or/Cbc/releases/tag/releases/2.10.13
+task_type: exact_solver
+problem_family: mip
+problem_variant: graph_coloring
+formulation_id: graph_coloring_mip_cbc
+optimization_scope: graph_coloring source-level solve efficiency
+optimization_profile: null
+metric_scenarios: []
+research_budget: null
+instruction: Improve the pinned cbc 2.10.13 solver on graph_coloring under the declared
+  solve budgets. Use all supplied visible development inputs for diagnosis and regression
+  checks. Preserve feasibility, objective semantics, truthful solver statuses, and
+  the inherited seed, thread, and budget protocol. Report cross-target effects separately.
+repository:
+  clone_url: https://github.com/coin-or/Cbc.git
+  plugin: pitbench.repositories.plugins:CbcRepositoryPlugin
+  editable_paths:
+  - Cbc/src
+  agent_image: pitbench-cbc:8e898d0a4ab7
+  judge_image: null
+oracle:
+  kind: best_known_solution
+  source: private://bootstrap/oracles/e8_cbc_graph_coloring.yaml
+  source_sha256: d69b231e8d940af34bf8ef2bc38a689e5bc1d5deeb8b068b3908567f10ee7195
+  objective_sense: minimize
+evaluation:
+  performance_protocol: budget_truncated_quality
+  budgets_sec:
+  - 1.0
+  - 5.0
+  primary_budget_sec: 1.0
+  fixed_solver_parameters: null
+  solver_seeds:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  seed_robustness: null
+  representation_robustness: null
+  controlled_transfer: null
+  operational_reliability: false
+  threads: 1
+  exact_time_basis: cpu_time
+  verifier: exact_target
+  validation_test_patch: null
+instance_sets:
+- name: agent_dev
+  kind: agent_dev
+  instance_set_config: .pitbench-runs/eight-solver-populations-v4/public-instance-sets/e8_cbc_graph_coloring/instances.yaml
+  instance_set_config_sha256: 2cf50707dc165f84b9d68316933b4c9c5ac20c6f4d1f4fcbbc707425c5c48fcd
+  size: 5
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: judge_id
+  kind: judge_id
+  instance_set_config: private://bootstrap/e8_cbc_graph_coloring/judge_id.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_scale
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_cbc_graph_coloring/unseen_scale.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_structure
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_cbc_graph_coloring/unseen_structure.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
+- name: unseen_joint
+  kind: judge_shift
+  instance_set_config: private://bootstrap/e8_cbc_graph_coloring/unseen_joint.yaml
+  instance_set_config_sha256: null
+  size: 30
+  randomness: null
+  performance_protocol: null
+  budgets_sec: null
+  primary_budget_sec: null
+  scenario_only: false
