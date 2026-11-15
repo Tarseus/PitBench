@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 
 import yaml
@@ -41,6 +42,9 @@ from pitbench.schema.scenarios import (
 )
 from pitbench.schema.task import PitBenchTask
 from pitbench.solver_drivers.common import ScenarioSession, ScenarioUnsupported
+
+# The extra time bounds only the collector retry; it is not passed to the solver.
+WATCHDOG_RETRY_EXTRA_SEC = 60.0
 
 
 def digest(value) -> str:
@@ -512,11 +516,23 @@ def worker(job_path: Path) -> dict:
     return payload
 
 
-def run(output: Path, *, retry_errors: bool = False) -> dict:
+def run(
+    output: Path,
+    *,
+    retry_errors: bool = False,
+    retry_timeout_extra_sec: float = 0.0,
+    retry_statuses: set[str] | None = None,
+) -> dict:
     output = output.resolve()
     campaign = ScenarioCampaign.model_validate_json(
         (output / "campaign.json").read_text()
     )
+    if not math.isfinite(retry_timeout_extra_sec) or retry_timeout_extra_sec < 0:
+        raise ValueError("retry timeout extra must be finite and nonnegative")
+    if retry_timeout_extra_sec and not retry_errors:
+        raise ValueError("retry timeout extra requires --retry-errors")
+    if retry_statuses is not None and not retry_errors:
+        raise ValueError("retry statuses require --retry-errors")
     if campaign.started_at is None:
         campaign.started_at = time.time()
     runtime = json.loads((output / "runtime.json").read_text())
@@ -538,6 +554,7 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
         p = protocols[key.scenario_id]
         directory = output / "jobs" / digest(key.model_dump(mode="json"))
         attempts = sorted(directory.glob("attempt-*/result.json"))
+        retrying_failure = False
         if attempts:
             saved = json.loads(attempts[-1].read_text())
             if saved.get("run"):
@@ -546,9 +563,17 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
                     raise ValueError(
                         "saved scenario attempt differs from the frozen job"
                     )
-                if old.status == "returned" or not retry_errors:
+                if (
+                    old.status == "returned"
+                    or not retry_errors
+                    or (retry_statuses is not None and old.status not in retry_statuses)
+                ):
                     return old
-            elif not retry_errors:
+                retrying_failure = True
+            elif not retry_errors or (
+                retry_statuses is not None
+                and saved.get("execution_status") not in retry_statuses
+            ):
                 return ScenarioRun(
                     key=key,
                     protocol_sha256=p.digest(),
@@ -558,6 +583,8 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
                     else "process_error",
                     error=str(saved.get("error", saved.get("execution_status"))),
                 )
+            else:
+                retrying_failure = True
         if p.kind == "setup":
             signature = execution_signature(key)
             # Select by the frozen plan, never by completion time or success.
@@ -598,6 +625,11 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
         models = campaign.model_sequences[
             sequence_key(key.instance_set, key.instance_id, p.id)
         ]
+        watchdog_timeout_sec = (
+            len(models) * p.budget_sec + runtime["watchdog_grace_sec"]
+        )
+        if retrying_failure:
+            watchdog_timeout_sec += retry_timeout_extra_sec
         job = {
             "key": key.model_dump(mode="json"),
             "protocol": p.model_dump(mode="json"),
@@ -605,6 +637,10 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
             "runtime": selected,
             "cpus": cpus,
             "runtime_identity_sha256": campaign.runtime_identities[key.code_state],
+            "watchdog_timeout_sec": watchdog_timeout_sec,
+            "retry_timeout_extra_sec": (
+                retry_timeout_extra_sec if retrying_failure else 0.0
+            ),
         }
         write_json(attempt / "job.json", job)
         result = run_collection_process(
@@ -618,7 +654,7 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
             ],
             attempt,
             {"scenario_run": key.model_dump(mode="json")},
-            timeout=len(models) * p.budget_sec + runtime["watchdog_grace_sec"],
+            timeout=watchdog_timeout_sec,
             environment={
                 **os.environ,
                 "OMP_NUM_THREADS": "1",
@@ -792,6 +828,27 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
                 )
             return record
 
+    progress_lock = threading.Lock()
+
+    def collect(key, cpus):
+        record = execute(key, cpus)
+        with progress_lock:
+            existing[record.key] = record
+            # Keep a lightweight live receipt; complete reports still use all cells.
+            write_json(
+                output / "collection-status.json",
+                {
+                    "updated_at": time.time(),
+                    "expected_runs": len(campaign.expected_runs),
+                    "collected_runs": len(existing),
+                    "statuses": dict(
+                        Counter(item.status for item in existing.values())
+                    ),
+                    "last_run": record.key.model_dump(mode="json"),
+                },
+            )
+        return record
+
     for state in states:
         for setup in (False, True):
             keys = [
@@ -813,7 +870,7 @@ def run(output: Path, *, retry_errors: bool = False) -> dict:
                 )
             )
             records = run_collection_jobs(
-                keys, runtime["cpus"], execute, cpu_request=lambda key: key.threads
+                keys, runtime["cpus"], collect, cpu_request=lambda key: key.threads
             )
             existing.update({record.key: record for record in records})
             campaign.runs = list(existing.values())
@@ -1061,6 +1118,57 @@ def collect_for_evaluation(
         ):
             raise ValueError("saved scenario campaign belongs to another candidate")
     run(destination)
+    campaign = ScenarioCampaign.model_validate_json(
+        (destination / "campaign.json").read_text()
+    )
+    watchdog_runs = [
+        record for record in campaign.runs if record.status == "watchdog_timeout"
+    ]
+    if watchdog_runs:
+        recovery_dir = destination / "recovery-attempts"
+        recovery_dir.mkdir(parents=True, exist_ok=True)
+        attempt_number = len(list(recovery_dir.glob("attempt-*.json"))) + 1
+        report_path = destination / "scenario-report.json"
+        report_bytes = report_path.read_bytes()
+        report_snapshot = recovery_dir / (
+            f"scenario-report-attempt-{attempt_number:03d}-before.json"
+        )
+        shutil.copy2(report_path, report_snapshot)
+        receipt_path = recovery_dir / f"attempt-{attempt_number:03d}.json"
+        receipt = {
+            "status": "retry_started",
+            "attempt": attempt_number,
+            "started_at": time.time(),
+            "retry_timeout_extra_sec": WATCHDOG_RETRY_EXTRA_SEC,
+            "previous_report": str(report_snapshot),
+            "previous_report_sha256": hashlib.sha256(report_bytes).hexdigest(),
+            "watchdog_runs": [
+                {"key": record.key.model_dump(mode="json"), "error": record.error}
+                for record in watchdog_runs
+            ],
+        }
+        write_json(receipt_path, receipt)
+        run(
+            destination,
+            retry_errors=True,
+            retry_timeout_extra_sec=WATCHDOG_RETRY_EXTRA_SEC,
+            retry_statuses={"watchdog_timeout"},
+        )
+        retried_campaign = ScenarioCampaign.model_validate_json(
+            (destination / "campaign.json").read_text()
+        )
+        retried_report_bytes = report_path.read_bytes()
+        receipt.update(
+            status="retry_finished",
+            finished_at=time.time(),
+            retry_status_counts={
+                name: sum(record.status == name for record in retried_campaign.runs)
+                for name in sorted({record.status for record in retried_campaign.runs})
+            },
+            report_complete=json.loads(retried_report_bytes).get("complete"),
+            report_sha256=hashlib.sha256(retried_report_bytes).hexdigest(),
+        )
+        write_json(receipt_path, receipt)
     return load_report(
         destination / "campaign.json", task
     ), destination / "campaign.json"
@@ -1288,6 +1396,7 @@ def main():
         sub.add_argument("--output", type=Path, required=True)
         if action == "run":
             sub.add_argument("--retry-errors", action="store_true")
+            sub.add_argument("--retry-timeout-extra-sec", type=float, default=0.0)
         else:
             sub.add_argument(
                 "--scaling-time-policy",
@@ -1325,7 +1434,11 @@ def main():
     elif args.action == "prepare":
         result = prepare(args.config, args.output)
     elif args.action == "run":
-        result = run(args.output, retry_errors=args.retry_errors)
+        result = run(
+            args.output,
+            retry_errors=args.retry_errors,
+            retry_timeout_extra_sec=args.retry_timeout_extra_sec,
+        )
     elif args.action == "report":
         result = report(
             args.output,

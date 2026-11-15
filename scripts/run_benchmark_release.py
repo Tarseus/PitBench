@@ -1,23 +1,34 @@
 #!/usr/bin/env python3
 """Build a manifest's releases, run full unchanged-source Judges, then model runs."""
+# Script-path execution needs the checkout on sys.path before project imports.
+# ruff: noqa: E402
 
 from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import fcntl
 import hashlib
 import json
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections import Counter
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+# An absolute script path also works when launched outside the checkout.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(ROOT))
 
 from adapters.pitbench.adapter import PitBenchAdapter
 from pitbench.agent_tools import AgentTool
@@ -27,12 +38,13 @@ from pitbench.cli.main import (
     _evaluation_metric_failures,
 )
 from pitbench.cli.solver_images import build_solver_image
+from pitbench.evaluator.artifacts import write_json
 from pitbench.evaluator.configuration import (
     attach_configuration_report,
     run_candidate_configuration,
 )
 from pitbench.evaluator.evaluator import PitBenchEvaluator
-from pitbench.evaluator.storage import ObservationStore
+from pitbench.evaluator.storage import ObservationStore, cache_lock
 from pitbench.harness.evaluation import EvaluationRequest
 from pitbench.metrics.campaign_report import require_plotting, write_campaign_report
 from pitbench.research import (
@@ -44,18 +56,86 @@ from pitbench.schema.observation import RunStatus
 from pitbench.schema.task import PitBenchTask
 from pitbench.tasks import TaskCatalog
 
-ROOT = Path(__file__).resolve().parents[1]
-
 
 def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def write_json(path, payload):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(payload, indent=2) + "\n")
-    temporary.replace(path)
+def study_cpu_ids(pool):
+    cpus = set()
+    for part in pool.split(","):
+        bounds = part.split("-")
+        if len(bounds) not in (1, 2) or any(not b.isdecimal() for b in bounds):
+            raise ValueError(f"invalid CPU pool: {pool}")
+        first, last = int(bounds[0]), int(bounds[-1])
+        selected = set(range(first, last + 1))
+        if not selected or selected & cpus:
+            raise ValueError(f"invalid or overlapping CPU pool: {pool}")
+        cpus.update(selected)
+    return cpus
+
+
+@contextmanager
+def study_cpu_lease(pools, *, lock_root=None):
+    """Reserve host CPUs across study managers, including idle worker slots."""
+    occupied = set()
+    for pool in pools:
+        cpus = study_cpu_ids(pool)
+        if cpus & occupied:
+            raise ValueError("study CPU pools overlap")
+        occupied.update(cpus)
+    if not occupied <= os.sched_getaffinity(0):
+        raise ValueError("study CPU pools must be available on this host")
+    root = lock_root or Path(f"/tmp/pitbench-study-cpus-{os.getuid()}")
+    root.mkdir(parents=True, exist_ok=True)
+    with ExitStack() as stack:
+        for cpu in sorted(occupied):
+            handle = stack.enter_context((root / f"cpu-{cpu}.lock").open("a+"))
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise RuntimeError(
+                    f"CPU {cpu} is reserved by another study manager"
+                ) from error
+        yield
+
+
+def refresh_study_index(output):
+    """Publish a snapshot from live statuses under a separate writer lock."""
+    cohort_path = output / "cohort.json"
+    if not cohort_path.is_file():
+        return []
+    with cache_lock(output / "study-index.lock"):
+        cohort = json.loads(cohort_path.read_text())
+        records = []
+        for job in cohort["jobs"]:
+            path = output / "agent-status" / job["run_id"] / "status.json"
+            state = (
+                json.loads(path.read_text())
+                if path.is_file()
+                else {**job, "status": "not_started"}
+            )
+            records.append(
+                {
+                    **state,
+                    "condition_id": job["run_id"],
+                    "model": job["model"]["model"],
+                    "setting": job["model"].get("setting"),
+                    "arm": job["arm"],
+                    "task_id": job["task_id"],
+                }
+            )
+        write_json(output / "model-runs.json", records)
+        write_json(
+            output / "study-status.json",
+            {
+                "updated_at": now(),
+                "stop_requested": (output / "STOP").exists(),
+                "total": len(records),
+                "statuses": dict(Counter(row["status"] for row in records)),
+            },
+        )
+        return records
 
 
 def checked_run(command, log):
@@ -361,6 +441,7 @@ def audit_model_run(run_dir, task_id, *, evaluation_required=True):
     completed_turn = False
     rate_limited = False
     transport_failed = False
+    trace_closed_during_cleanup = False
     if transcript.is_file():
         for line in transcript.read_text(errors="replace").splitlines():
             try:
@@ -373,10 +454,23 @@ def audit_model_run(run_dir, task_id, *, evaluation_required=True):
                 transport_failed |= (
                     "stream disconnected" in line or "error sending request" in line
                 )
+    pipeline_trace = run_dir / "pipeline_trace.jsonl"
+    if pipeline_trace.is_file():
+        for line in pipeline_trace.read_text(errors="replace").splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            error = event.get("error") or {}
+            trace_closed_during_cleanup |= (
+                error.get("type") == "RuntimeError"
+                and error.get("message") == "agent trace is already closed"
+            )
     evidence = {
         "failure_mode": failure,
         "tokens": tokens,
         "completed_turn": completed_turn,
+        "trace_closed_during_cleanup": trace_closed_during_cleanup,
         "harness_result": str(path),
     }
     candidate = folder / "evaluation/candidate.patch"
@@ -403,6 +497,17 @@ def audit_model_run(run_dir, task_id, *, evaluation_required=True):
             "complete": False,
             "retryable": True,
             "reason": "initial model request rate limited; no model execution",
+        }
+    if (
+        failure == "unknown_agent_error"
+        and trace_closed_during_cleanup
+        and not completed_turn
+    ):
+        return {
+            **evidence,
+            "complete": False,
+            "retryable": True,
+            "reason": "agent trace closed during timeout cleanup; retain failed attempt",
         }
     if failure == "unknown_agent_error" and transport_failed and not completed_turn:
         return {
@@ -433,6 +538,52 @@ def audit_model_run(run_dir, task_id, *, evaluation_required=True):
         and (tokens > 0 or completed_turn),
         "reason": evaluation.get("error") or f"unresolved Agent outcome: {failure}",
     }
+
+
+def incomplete_condition_retry_reason(original_status, audit):
+    """Return why a failed condition can be restarted in a fresh workspace."""
+    if original_status != "development_failed":
+        return None
+    stream_disconnect = (
+        audit.get("reason")
+        == "model stream disconnected; retain partial infrastructure-failed attempt"
+        and int(audit.get("tokens") or 0) == 0
+        and not audit.get("completed_turn")
+        and not audit.get("candidate_patch")
+    )
+    trace_close_race = (
+        audit.get("reason")
+        == "agent trace closed during timeout cleanup; retain failed attempt"
+        and audit.get("trace_closed_during_cleanup")
+        and not audit.get("completed_turn")
+    )
+    incomplete_timeout = (
+        audit.get("failure_mode") == "agent_timeout"
+        and not audit.get("complete")
+        and not audit.get("evaluation_pending")
+        and not audit.get("completed_turn")
+    )
+    if incomplete_timeout:
+        return "incomplete_agent_timeout"
+    if trace_close_race:
+        return "trace_close_race"
+    if stream_disconnect:
+        return "stream_disconnect"
+    return None
+
+
+def acquire_condition_recovery_lock(retry_root):
+    """Prevent two recovery launches from racing on the same condition."""
+    retry_root.mkdir(parents=True, exist_ok=True)
+    lock_file = (retry_root / "active.lock").open("a+")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as error:
+        lock_file.close()
+        raise ValueError(
+            "a recovery attempt is already running for this condition"
+        ) from error
+    return lock_file
 
 
 def models(task_ids, args):
@@ -680,7 +831,11 @@ def report(task_ids, args, config):
 def study_agent_arguments(job):
     """Select the configured Agent through the existing CLI interface."""
     custom = job.get("agent_import_path")
-    return ["--agent-import-path", custom] if custom else ["--agent", job["model"]["agent"]]
+    return (
+        ["--agent-import-path", custom]
+        if custom
+        else ["--agent", job["model"]["agent"]]
+    )
 
 
 def configure_study_agent(config, job, budget):
@@ -702,12 +857,38 @@ def configure_study_scenarios(config, task_id, views):
 
 
 def evaluate_study_candidate(state, args, cpu_pool):
+    """Claim a condition before changing its status or starting any Judge work."""
+    status_path = args.output / "agent-status" / state["run_id"] / "status.json"
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    with (status_path.parent / "evaluation.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return (
+                json.loads(status_path.read_text()) if status_path.is_file() else state
+            )
+        previous = (
+            json.loads(status_path.read_text()) if status_path.is_file() else state
+        )
+        # A queued snapshot must not overwrite a condition finished by another manager.
+        if any(
+            previous.get(key) != state.get(key)
+            for key in ("status", "evaluation_attempt")
+        ) or (previous.get("audit") and previous["audit"] != state.get("audit")):
+            return previous
+        if (args.output / "STOP").exists():
+            return previous
+        previous = {**previous, "audit": state["audit"]}
+        return _evaluate_study_candidate(previous, args, cpu_pool)
+
+
+def _evaluate_study_candidate(state, args, cpu_pool):
     """Consume one captured patch through the existing independent evaluator."""
     job = dict(state)
     run_id, task_id = job["run_id"], job["task_id"]
-    execution_id = job.get("execution_run_id", run_id)
+    execution_id = job.get("execution_run_id") or run_id
     status_path = args.output / "agent-status" / run_id / "status.json"
-    patch = Path(job["audit"]["candidate_patch"])
+    source_patch = Path(job["audit"]["candidate_patch"])
     task_path = args.output / "workspaces" / execution_id / task_id
     previous = (
         json.loads(status_path.read_text()) if status_path.is_file() else dict(job)
@@ -722,15 +903,51 @@ def evaluate_study_candidate(state, args, cpu_pool):
         write_json(archive, previous)
     job.update(
         status="evaluating",
+        evaluation_attempt=int(previous.get("evaluation_attempt", 0)) + 1,
         evaluation_cpu_pool=cpu_pool,
         evaluation_started_at=now(),
         evaluation_finished_at=None,
         evaluation_error=None,
         metric_gaps=[],
         metrics_complete=False,
+        evaluation_output=None,
+        configuration_robustness_output=None,
     )
     write_json(status_path, job)
+    refresh_study_index(args.output)
     try:
+        expected = job["audit"]["candidate_patch_sha256"]
+        if (
+            not source_patch.is_file()
+            or hashlib.sha256(source_patch.read_bytes()).hexdigest() != expected
+        ):
+            raise ValueError("final captured candidate is missing or changed")
+        # Each invocation retains its own Judge identity and complete artifacts.
+        output = (
+            args.output
+            / "evaluations"
+            / run_id
+            / (f"attempt-{job['evaluation_attempt']:04d}-{uuid.uuid4().hex}")
+        )
+        output.mkdir(parents=True)
+        patch = output / "candidate.patch"
+        shutil.copy2(source_patch, patch)
+        if hashlib.sha256(patch.read_bytes()).hexdigest() != expected:
+            raise ValueError("copied candidate hash changed")
+        job["evaluation_output"] = str(output)
+        write_json(
+            output / "attempt.json",
+            {
+                "run_id": run_id,
+                "attempt": job["evaluation_attempt"],
+                "source_candidate": str(source_patch),
+                "candidate_patch_sha256": expected,
+                "cpu_pool": cpu_pool,
+                "started_at": job["evaluation_started_at"],
+            },
+        )
+        write_json(status_path, job)
+        refresh_study_index(args.output)
         configured = yaml.safe_load((task_path / "task.yaml").read_text())[
             "evaluator_config"
         ]
@@ -775,11 +992,21 @@ def evaluate_study_candidate(state, args, cpu_pool):
             try:
                 configuration_output = run_candidate_configuration(request, settings)
                 if configuration_output is not None:
-                    gaps.extend("parameter robustness: " + value for value in _configuration_dry_run_failures(configuration_output))
+                    gaps.extend(
+                        "parameter robustness: " + value
+                        for value in _configuration_dry_run_failures(
+                            configuration_output
+                        )
+                    )
                     job["configuration_robustness_output"] = str(configuration_output)
-                    attach_configuration_report(result.payload, configuration_output, output_root=patch.parent)
+                    attach_configuration_report(
+                        result.payload, configuration_output, output_root=patch.parent
+                    )
                     trials[0]["evaluation"] = result.model_dump(mode="json")
-                    write_json(patch.parent / "evaluation-envelope.json", result.model_dump(mode="json"))
+                    write_json(
+                        patch.parent / "evaluation-envelope.json",
+                        result.model_dump(mode="json"),
+                    )
                     write_json(results_path, harness)
             except Exception as error:
                 gaps.append(f"parameter robustness: {type(error).__name__}: {error}")
@@ -800,10 +1027,23 @@ def evaluate_study_candidate(state, args, cpu_pool):
     job["evaluation_finished_at"] = now()
     write_json(status_path, job)
     write_json(args.output / "evaluation-queue" / (run_id + ".json"), job)
+    refresh_study_index(args.output)
     return job
 
 
 def study_evaluations(args):
+    if (
+        args.evaluation_workers < 1
+        or len(args.evaluation_cpu_pools) != args.evaluation_workers
+    ):
+        raise ValueError(
+            "candidate evaluation requires one CPU pool per evaluation worker"
+        )
+    with study_cpu_lease(args.evaluation_cpu_pools):
+        return _study_evaluations(args)
+
+
+def _study_evaluations(args):
     """Evaluate retained final patches without allocating another Agent start."""
     output = args.output
     cohort = json.loads((output / "cohort.json").read_text())
@@ -811,7 +1051,11 @@ def study_evaluations(args):
     for cpus in args.evaluation_cpu_pools:
         slots.put(cpus)
     pending = []
-    for job in cohort["jobs"]:
+    run_id = getattr(args, "retry_run_id", None)
+    jobs = [job for job in cohort["jobs"] if run_id is None or job["run_id"] == run_id]
+    if run_id is not None and not jobs:
+        raise ValueError(f"study run ID is absent from the cohort: {run_id}")
+    for job in jobs:
         status_path = output / "agent-status" / job["run_id"] / "status.json"
         if not status_path.is_file():
             continue
@@ -831,32 +1075,7 @@ def study_evaluations(args):
             )
             if key in state
         }
-        candidate = Path(audit.get("candidate_patch", ""))
-        if not candidate.is_file() or hashlib.sha256(
-            candidate.read_bytes()
-        ).hexdigest() != audit.get("candidate_patch_sha256"):
-            state.update(
-                status="evaluation_failed",
-                evaluation_error="final captured candidate is missing or changed",
-            )
-            write_json(status_path, state)
-            continue
-        receipt_dir = output / "evaluation-attempts" / job["run_id"]
-        receipt_dir.mkdir(parents=True, exist_ok=True)
-        previous = {
-            key: state.get(key) for key in ("status", "evaluation_error", "judge_image")
-        }
-        write_json(
-            receipt_dir
-            / f"attempt-{int(state.get('evaluation_attempt', 0)) + 1:02d}-previous.json",
-            previous,
-        )
-        state.update(
-            audit=audit,
-            status="evaluation_pending",
-            evaluation_attempt=int(state.get("evaluation_attempt", 0)) + 1,
-        )
-        write_json(status_path, state)
+        state["audit"] = audit
         pending.append(state)
 
     def run(state):
@@ -873,25 +1092,7 @@ def study_evaluations(args):
             [pool.submit(run, state) for state in pending]
         ):
             future.result()
-    records = []
-    for job in cohort["jobs"]:
-        path = output / "agent-status" / job["run_id"] / "status.json"
-        state = (
-            json.loads(path.read_text())
-            if path.exists()
-            else {**job, "status": "not_started"}
-        )
-        records.append(
-            {
-                **state,
-                "condition_id": job["run_id"],
-                "model": job["model"]["model"],
-                "setting": job["model"]["setting"],
-                "arm": job["arm"],
-                "task_id": job["task_id"],
-            }
-        )
-    write_json(output / "model-runs.json", records)
+    records = refresh_study_index(output)
     print(
         json.dumps(
             {
@@ -904,7 +1105,7 @@ def study_evaluations(args):
 
 
 def retry_unexecuted_condition(args):
-    """Run the one authorized retry after a zero-token model stream disconnect."""
+    """Retry an incomplete condition after a model disconnect or hard timeout."""
     from pitbench.schema.research import GeneralizationStudyPlan
 
     plan = GeneralizationStudyPlan.model_validate_json(args.study_plan.read_text())
@@ -919,6 +1120,8 @@ def retry_unexecuted_condition(args):
     if len(matches) != 1:
         raise ValueError("retry run ID is absent from the frozen cohort")
     job = matches[0]
+    retry_root = args.output / "infrastructure-retries" / job["run_id"]
+    recovery_lock = acquire_condition_recovery_lock(retry_root)
     status_path = args.output / "agent-status" / job["run_id"] / "status.json"
     original = json.loads(status_path.read_text())
     audit = audit_model_run(
@@ -926,22 +1129,20 @@ def retry_unexecuted_condition(args):
         job["task_id"],
         evaluation_required=False,
     )
-    if (
-        original.get("status") != "development_failed"
-        or audit.get("reason")
-        != "model stream disconnected; retain partial infrastructure-failed attempt"
-        or int(audit.get("tokens") or 0) != 0
-        or audit.get("completed_turn")
-        or audit.get("candidate_patch")
-    ):
-        raise ValueError("retry is restricted to the audited zero-token disconnect")
-    receipt_dir = args.output / "infrastructure-retries" / job["run_id"]
+    retry_reason = incomplete_condition_retry_reason(original.get("status"), audit)
+    if retry_reason is None:
+        raise ValueError(
+            "retry requires a failed condition with an incomplete model stream "
+            "or a hard-timeout result without a completed turn"
+        )
+    retry_number = 1
+    while (retry_root / f"infra{retry_number}" / "retry.json").exists():
+        retry_number += 1
+    receipt_dir = retry_root / f"infra{retry_number}"
     receipt_dir.mkdir(parents=True, exist_ok=True)
     receipt = receipt_dir / "retry.json"
-    if receipt.exists():
-        raise ValueError("the one-time retry has already been used")
     write_json(receipt_dir / "initial-status.json", original)
-    retry_id = job["run_id"] + "-infra1"
+    retry_id = f"{job['run_id']}-infra{retry_number}"
     run_root = args.output / "runs"
     workspace_root = args.output / "workspaces"
     if (run_root / retry_id).exists() or (workspace_root / retry_id).exists():
@@ -997,6 +1198,7 @@ def retry_unexecuted_condition(args):
             "status": "retry_running",
             "original_run_id": job["run_id"],
             "retry_run_id": retry_id,
+            "retry_reason": retry_reason,
             "audit": audit,
             "cpu_pool": args.cpu_pool,
             "agent_attempts": 1,
@@ -1052,6 +1254,7 @@ def retry_unexecuted_condition(args):
             }
         )
     )
+    recovery_lock.close()
 
 
 def study_models(args):
@@ -1110,7 +1313,9 @@ def study_models(args):
         scenario_reference = row.get("metric_scenario_config")
         if not scenario_reference:
             if record.task.metric_scenarios:
-                raise ValueError("declared task scenarios require a frozen runtime configuration")
+                raise ValueError(
+                    "declared task scenarios require a frozen runtime configuration"
+                )
             continue
         scenario_file = Path(scenario_reference)
         scenario = yaml.load(
@@ -1173,7 +1378,9 @@ def study_models(args):
                 if arm.agent_provenance:
                     jobs[-1]["agent_provenance"] = arm.agent_provenance
                 if task_id in plan.task_targets:
-                    jobs[-1]["target_problem"] = plan.task_targets[task_id].problem_variant
+                    jobs[-1]["target_problem"] = plan.task_targets[
+                        task_id
+                    ].problem_variant
     args.output.mkdir(parents=True, exist_ok=True)
     manifest = {
         "kind": "generalization_agent_cohort",
@@ -1215,6 +1422,8 @@ def study_models(args):
         path = condition / "status.json"
         condition.mkdir(parents=True, exist_ok=True)
         existing = json.loads(path.read_text()) if path.exists() else None
+        if (args.output / "STOP").exists():
+            return existing or {**job, "status": "queued"}
         output_root = args.output / "runs"
         run_path = output_root / job["run_id"]
         workspace_path = args.output / "workspaces" / job["run_id"]
@@ -1533,7 +1742,12 @@ def parse_run_arguments(parser, argv):
             parser.error(f"unknown run profile options: {sorted(unknown)}")
         parser.set_defaults(**payload)
     args = parser.parse_args(argv)
-    for name in ("manifest", "config", "output", "phase"):
+    required = (
+        ("output", "phase")
+        if args.phase == "study-status"
+        else ("manifest", "config", "output", "phase")
+    )
+    for name in required:
         if getattr(args, name) is None:
             parser.error(f"--{name} is required, directly or through --profile")
     return args
@@ -1548,8 +1762,7 @@ def launch_background(args, argv):
             return
     command = [
         sys.executable,
-        "-m",
-        "scripts.run_benchmark_release",
+        str(Path(__file__).resolve()),
         *argv,
         "--foreground",
     ]
@@ -1600,6 +1813,7 @@ def main():
             "_judge",
             "study-models",
             "study-evaluations",
+            "study-status",
             "study-agent-recovery",
             "study-parameters",
         ],
@@ -1621,7 +1835,23 @@ def main():
     parser.add_argument("--cpu-pools", action="append", default=[])
     args = parse_run_arguments(parser, sys.argv[1:])
     for name in ("manifest", "config", "output"):
-        setattr(args, name, getattr(args, name).resolve())
+        value = getattr(args, name)
+        if value is not None:
+            setattr(args, name, value.resolve())
+    if args.phase == "study-status":
+        if not (args.output / "cohort.json").is_file():
+            parser.error("study-status requires an existing cohort.json")
+        records = refresh_study_index(args.output)
+        print(
+            json.dumps(
+                {
+                    "total": len(records),
+                    "statuses": dict(Counter(row["status"] for row in records)),
+                }
+            ),
+            flush=True,
+        )
+        return
     if args.workers < 1 or (args.cpu_pools and len(args.cpu_pools) != args.workers):
         parser.error("positive workers and one CPU pool per worker are required")
     if (
@@ -1630,7 +1860,10 @@ def main():
         and not args.cpu_pools
     ):
         parser.error("parallel model runs require disjoint --cpu-pools")
-    if args.evaluate_candidates or args.phase == "study-parameters":
+    if args.evaluate_candidates or args.phase in {
+        "study-parameters",
+        "study-evaluations",
+    }:
         if (
             args.evaluation_workers < 1
             or len(args.evaluation_cpu_pools) != args.evaluation_workers
@@ -1639,16 +1872,17 @@ def main():
                 "candidate evaluation requires one CPU pool per evaluation worker"
             )
 
-        def cpu_ids(pool):
-            result = set()
-            for part in pool.split(","):
-                bounds = [int(value) for value in part.split("-")]
-                result.update(range(bounds[0], bounds[-1] + 1))
-            return result
-
         occupied = set()
-        for pool in args.cpu_pools + args.evaluation_cpu_pools:
-            cpus = cpu_ids(pool)
+        agent_pools = (
+            args.cpu_pools
+            if args.phase not in {"study-evaluations", "study-parameters"}
+            else []
+        )
+        for pool in agent_pools + args.evaluation_cpu_pools:
+            try:
+                cpus = study_cpu_ids(pool)
+            except ValueError as error:
+                parser.error(str(error))
             if not cpus or cpus & occupied:
                 parser.error(
                     "Agent and evaluation CPU pools must be nonempty and disjoint"
@@ -1666,7 +1900,8 @@ def main():
     if args.phase == "study-parameters":
         if args.source_cohort is None:
             parser.error("parameter supplementation requires --source-cohort")
-        study_parameters(args)
+        with study_cpu_lease(args.evaluation_cpu_pools):
+            study_parameters(args)
         return
     if args.phase in {"study-models", "study-evaluations", "study-agent-recovery"}:
         if args.study_plan is None or args.study_views is None:
@@ -1674,11 +1909,16 @@ def main():
         args.study_plan = args.study_plan.resolve()
         args.study_views = args.study_views.resolve()
         if args.phase == "study-models":
-            study_models(args)
+            pools = args.cpu_pools + (
+                args.evaluation_cpu_pools if args.evaluate_candidates else []
+            )
+            with study_cpu_lease(pools):
+                study_models(args)
         elif args.phase == "study-agent-recovery":
             if not args.retry_run_id or not args.cpu_pool:
                 parser.error("a retry run ID and a dedicated CPU pool are required")
-            retry_unexecuted_condition(args)
+            with study_cpu_lease([args.cpu_pool]):
+                retry_unexecuted_condition(args)
         else:
             study_evaluations(args)
         return

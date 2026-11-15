@@ -13,7 +13,7 @@
     "configs/tasks/release_scip_v10_1_0.yaml",
     "configs/tasks/release_cbc_v2_10_13.yaml"
   ],
-  "model_matrix": "configs/experiments/generalization_high_matrix.yaml",
+  "model_matrix": "configs/research/algorithm_space_gpt_matrix.yaml",
   "population_plan": "configs/research/generalization_populations_v2.json",
   "research_budget": {
     "track": "standard",
@@ -63,7 +63,7 @@
       }
     }
   ],
-  "inference_scope": "Eight frozen latest solver releases, each with an explicit target problem and unchanged native primary scoring. Compare ordinary Codex against the exact content-hashed Algorithm-Space adapter on identical visible inputs, model settings and 4h/8-vCPU/32-GiB budgets. Sol/high and Terra/high each get three fresh starts per condition: 96 starts total. Algorithm modelling and coding use the same model session and total budget; no separate planner budget or extra PitBench hypothesis registration. Retain every attempt, failure and missing measurement. Cross-problem performance is separate transfer evidence. Preserve task-native seed protocols, including deterministic VROOM; CBC and SCIP retain the previously agreed 30 hidden seeds. Only implemented source-bound API dimensions are measured; unavailable capabilities are explicitly reported, never fabricated or scored as success. These tasks reuse the declared benchmark holdouts and do not constitute new untouched workload distributions.",
+  "inference_scope": "Eight frozen latest solver releases, each with an explicit target problem and unchanged native primary scoring. Compare ordinary Codex against the exact content-hashed Algorithm-Space adapter on identical visible inputs, model settings and 4h/8-vCPU/32-GiB budgets. Luna/medium, Terra/high and Sol/high each get three fresh starts per condition: 144 starts total. Algorithm modelling and coding use the same model session and total budget; no separate planner budget or extra PitBench hypothesis registration. Retain every attempt, failure and missing measurement. Cross-problem performance is separate transfer evidence. Preserve task-native seed protocols, including deterministic VROOM; CBC and SCIP retain the previously agreed 30 hidden seeds. Only implemented source-bound API dimensions are measured; unavailable capabilities are explicitly reported, never fabricated or scored as success. These tasks reuse the declared benchmark holdouts and do not constitute new untouched workload distributions.",
   "evaluation_run_target": 100000,
   "supplemental_seed_count": 5,
   "supplemental_primary_budget_only": true,

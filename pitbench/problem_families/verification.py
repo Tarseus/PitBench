@@ -2200,7 +2200,12 @@ class NumericModelFamily(ProblemFamilyPlugin):
                 "feasible": False,
                 "reason": "missing, nonfinite or wrong-sized solution",
             }
-        activity = model["matrix"] @ values
+        # Sparse accumulation can land on opposite sides of the same feasibility
+        # boundary depending on its summation order. Compute constraint activity
+        # in extended precision while keeping the declared tolerance unchanged.
+        activity = model["matrix"].astype(np.longdouble) @ values.astype(
+            np.longdouble
+        )
         if not np.isfinite(activity).all():
             return {"feasible": False, "reason": "nonfinite constraint activity"}
         bound_error = float(
@@ -2211,8 +2216,14 @@ class NumericModelFamily(ProblemFamilyPlugin):
         )
         row_error = float(
             max(
-                np.max(model["row_lower"] - activity, initial=0),
-                np.max(activity - model["row_upper"], initial=0),
+                np.max(
+                    np.asarray(model["row_lower"], dtype=np.longdouble) - activity,
+                    initial=np.longdouble(0),
+                ),
+                np.max(
+                    activity - np.asarray(model["row_upper"], dtype=np.longdouble),
+                    initial=np.longdouble(0),
+                ),
             )
         )
         integer_values = values[model["integrality"] == 1]
@@ -2239,9 +2250,9 @@ class NumericModelFamily(ProblemFamilyPlugin):
         return {
             "feasible": max(bound_error, row_error, integer_error) <= tolerance,
             "tolerance": tolerance,
-            "max_bound_violation": bound_error,
-            "max_row_violation": row_error,
-            "max_integrality_violation": integer_error,
+            "max_bound_violation": float(bound_error),
+            "max_row_violation": float(row_error),
+            "max_integrality_violation": float(integer_error),
             "objective": objective,
         }
 

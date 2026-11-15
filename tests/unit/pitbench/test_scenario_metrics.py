@@ -646,8 +646,21 @@ def test_process_timeouts_remain_terminal_until_explicit_retry(tmp_path, monkeyp
     assert len(calls) == 4
     assert not run(output)["complete"]
     assert len(calls) == 4
+    # Automatic watchdog recovery must preserve native unsupported results.
+    unsupported = next((output / "jobs").glob("*/attempt-*/result.json"))
+    saved = json.loads(unsupported.read_text())
+    saved["run"]["status"] = "unsupported"
+    saved["run"]["error"] = "native API is unavailable"
+    unsupported.write_text(json.dumps(saved))
+    before = unsupported.read_bytes()
+    run(output, retry_errors=True, retry_statuses={"watchdog_timeout"})
+    assert len(calls) == 7
+    assert unsupported.read_bytes() == before
+    progress = json.loads((output / "collection-status.json").read_text())
+    assert progress["collected_runs"] == progress["expected_runs"] == 4
+    assert progress["statuses"] == {"unsupported": 1, "watchdog_timeout": 3}
     run(output, retry_errors=True)
-    assert len(calls) == 8
+    assert len(calls) == 11
     assert all(path.is_dir() for path in calls)
 
 

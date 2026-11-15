@@ -241,6 +241,44 @@ The Judge records its launch identity before starting. Re-running an interrupted
 candidate automatically resumes only missing instance/state/seed/budget cells,
 including representation runs. Existing solver failures remain terminal records;
 identity mismatches preserve the old output and require a separate directory.
+The study launcher creates a fresh `evaluations/<run_id>/attempt-*` directory
+for each candidate evaluation invocation. It copies and verifies the captured
+patch, archives the previous condition status, and records `evaluation_output`
+in the live status. Prior Judge files retain their original identities even
+when the next attempt uses another CPU pool or harness revision. These retries
+do not launch another Agent.
+
+Study evaluators hold an exclusive condition lock through native evaluation,
+scenario collection, and configuration robustness. A second manager skips a
+condition already owned by another evaluator, and a queued stale status cannot
+overwrite a newer attempt. Host CPU leases reserve each declared CPU across
+study managers for the same Unix user, including idle worker slots. Launchers
+started before this mechanism and independently launched Docker containers do
+not participate in these leases; finish or stop those launchers before adopting
+the updated launcher.
+
+Each condition transition refreshes `model-runs.json` and `study-status.json`
+from `agent-status/*/status.json`. Reports follow the retained infrastructure
+retry and its `evaluation_output`. To rebuild a live status summary without
+starting an Agent or Judge:
+
+```bash
+python -m scripts.run_benchmark_release --phase study-status --output /path/to/cohort
+```
+
+Create `/path/to/cohort/STOP` to stop dispatching new study jobs. Already running
+conditions finish normally; queued conditions retain their status and attempt
+count. Remove that file before dispatching again. Freezing an active timed
+solver with an OS or Docker pause does not preserve the meaning of its wall-clock
+measurement; preserve those partial attempts and evaluate the retained candidate
+in a fresh attempt after maintenance.
+
+Scenario collection writes `metric-scenarios/collection-status.json` after each
+collected job, including expected/collected counts, status counts, and the last
+completed key. Automatic watchdog recovery retries only watchdog timeouts;
+unsupported native APIs and numerical verification failures remain explicit
+results and are not silently retried or classified as successful.
+
 Setup metrics reuse a compatible cold scenario measurement when input hashes,
 seed, threads, budget, runtime and execution options match. Raw source observations
 and explicit reuse references remain available.

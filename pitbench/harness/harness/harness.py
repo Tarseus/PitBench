@@ -1155,7 +1155,14 @@ class Harness:
 
         if not completed.is_set():
             if agent._agent_trace is not None:
-                agent._agent_trace.record("execution.timeout", timeout_sec=timeout_sec)
+                # The worker closes its trace in BaseAgent.execute_task() just
+                # before it signals `completed`. If that signal lands after
+                # this deadline check, a strict record() would raise
+                # "agent trace is already closed" and replace the real timeout
+                # with UNKNOWN_AGENT_ERROR in the outer harness.
+                agent._agent_trace.record_if_open(
+                    "execution.timeout", timeout_sec=timeout_sec
+                )
             agent.cancel()
             flush_deadline = loop.time() + 10
             while not completed.is_set() and loop.time() < flush_deadline:

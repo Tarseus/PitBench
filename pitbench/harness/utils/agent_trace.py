@@ -120,6 +120,11 @@ class AgentTrace:
         return self._last_state
 
     @property
+    def is_open(self) -> bool:
+        with self._lock:
+            return not self._closed
+
+    @property
     def collection_gap_count(self) -> int:
         return len(self._collection_errors)
 
@@ -212,13 +217,19 @@ class AgentTrace:
     def call(self, kind: str, *, name: str, inputs: Any, checkpoint=False):
         call_id = uuid.uuid4().hex
         parent_call_id = _CALL.get()
-        self.record(
+        started_event = self.record_if_open(
             f"{kind}.started",
             call_id=call_id,
             parent_call_id=parent_call_id,
             name=name,
             inputs=inputs,
         )
+        if started_event is None:
+            # Timeout cancellation can close collection while a terminal
+            # lifecycle call is still unwinding. Preserve the real operation;
+            # telemetry after closure is best effort.
+            yield call_id
+            return
         token = _CALL.set(call_id)
         started = time.monotonic()
         before_state = None
@@ -233,16 +244,16 @@ class AgentTrace:
                 yield call_id
             except BaseException as error:
                 failed = True
-                self.record(f"{kind}.failed", name=name, error=error)
+                self.record_if_open(f"{kind}.failed", name=name, error=error)
                 raise
             finally:
                 try:
                     after_state = (
                         self.checkpoint("after_call", call_id=call_id)
-                        if checkpoint
+                        if checkpoint and self.is_open
                         else None
                     )
-                    self.record(
+                    self.record_if_open(
                         f"{kind}.finished",
                         name=name,
                         elapsed_sec=time.monotonic() - started,
@@ -604,7 +615,7 @@ class AgentTrace:
         key = f"{source}:{type(error).__name__}:{error}"
         if key not in self._collection_errors:
             self._collection_errors.add(key)
-            self.record("collection.gap", source=source, error=error)
+            self.record_if_open("collection.gap", source=source, error=error)
 
     def _git(self, *args: str, allowed=(0,)) -> bytes:
         result = self._container.exec_run(
@@ -624,7 +635,7 @@ class AgentTrace:
         return output or b""
 
     def checkpoint(self, reason: str, *, call_id: str | None = None) -> str | None:
-        if self._container is None:
+        if self._container is None or not self.is_open:
             return
         with self._state_lock:
             started = time.monotonic()
@@ -641,7 +652,7 @@ class AgentTrace:
                     f"{head}:{patch_ref['sha256']}".encode()
                 ).hexdigest()
                 if state_id != self._last_state:
-                    self.record(
+                    self.record_if_open(
                         "repository.checkpoint",
                         call_id=call_id,
                         reason=reason,
@@ -967,7 +978,7 @@ def traced_call(kind: str, *, checkpoint: bool = False):
                 ):
                     raise RuntimeError("agent terminal was cancelled")
                 result = function(self, *args, **kwargs)
-                trace.record(
+                trace.record_if_open(
                     f"{kind}.result", result=result, visibility="returned_to_caller"
                 )
                 return result

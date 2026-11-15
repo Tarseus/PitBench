@@ -55,6 +55,23 @@ def _condition_index(source: Path, runs_root: Path, index: Path | None) -> list[
     if index is not None:
         payload = _read(index)
         return payload["conditions"] if isinstance(payload, dict) else payload
+    study_statuses = sorted((source / "agent-status").glob("*/status.json"))
+    if study_statuses:
+        records = []
+        for path in study_statuses:
+            state = _read(path)
+            model = state.get("model")
+            records.append(
+                {
+                    **state,
+                    "condition_id": path.parent.name,
+                    "model": model.get("model") if isinstance(model, dict) else model,
+                    "setting": model.get("setting", "unspecified")
+                    if isinstance(model, dict)
+                    else state.get("setting", "unspecified"),
+                }
+            )
+        return records
     statuses = sorted((source / "model-status").glob("*/status.json"))
     if statuses:
         return [{**_read(path), "condition_id": path.parent.name} for path in statuses]
@@ -81,6 +98,10 @@ def _condition_index(source: Path, runs_root: Path, index: Path | None) -> list[
 def _result_path(source: Path, runs_root: Path, record: dict) -> Path:
     if record.get("results_path"):
         return Path(record["results_path"])
+    execution = record.get("execution_run_id") or record["run_id"]
+    if record.get("execution_run_id"):
+        # A failed original trial must not hide its retained infrastructure retry.
+        return runs_root / execution / "results.json"
     candidates = [
         source / record.get("condition_id", record["run_id"]) / "results.json",
         runs_root / record["run_id"] / "results.json",
@@ -612,7 +633,8 @@ def collect_campaign(
             "evaluation_status": "missing",
             "classification": None,
             "confirmed": False,
-            "error": record.get("error")
+            "error": record.get("evaluation_error")
+            or record.get("error")
             or record.get("detail")
             or (record.get("audit") or {}).get("reason"),
             "issues": [],
@@ -647,8 +669,24 @@ def collect_campaign(
             if len(trials) > 1:
                 current["condition_id"] += "/" + trial["trial_name"]
             envelope = trial.get("evaluation") or {}
+            if "evaluation_output" in record:
+                attempt_output = record.get("evaluation_output")
+                attempt_envelope = (
+                    Path(attempt_output) / "evaluation-envelope.json"
+                    if attempt_output
+                    else None
+                )
+                envelope = (
+                    _read(attempt_envelope)
+                    if attempt_envelope and attempt_envelope.is_file()
+                    else {}
+                )
             evaluation_dir = result_path.parent / "evaluation"
-            if not evaluation_dir.is_dir():
+            if record.get("evaluation_output"):
+                evaluation_dir = Path(record["evaluation_output"])
+            elif (record.get("audit") or {}).get("candidate_patch"):
+                evaluation_dir = Path(record["audit"]["candidate_patch"]).parent
+            elif not evaluation_dir.is_dir():
                 evaluation_dir = (
                     result_path.parent
                     / row["task_id"]
@@ -657,9 +695,11 @@ def collect_campaign(
                 )
             summary = (envelope.get("payload") or {}).get("summary") or {}
             current.update(
-                evaluation_status="completed"
-                if envelope.get("completed")
-                else "failed",
+                evaluation_status=(
+                    "completed" if envelope.get("completed") else "failed"
+                )
+                if envelope
+                else "missing",
                 native_summary=summary,
                 validity_accepted=(envelope.get("payload") or {})
                 .get("validity", {})

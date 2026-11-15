@@ -32,7 +32,8 @@
 #endif
 
 using Clock = std::chrono::steady_clock;
-using Observer = void (*)(double, int, const double *, double, double);
+using Observer = void (*)(double, int, const double *, int, const double *, double,
+                          double);
 static thread_local std::string lastError;
 struct Session;
 
@@ -56,7 +57,7 @@ static constexpr SCIP_EVENTTYPE observedEvents =
 #endif
 
 struct Session {
-  int seed, threads, columns = 0;
+  int seed, threads, rows = 0, columns = 0;
   double budget, tolerance;
   bool reoptimization;
   Observer observer = nullptr;
@@ -69,6 +70,7 @@ struct Session {
 #else
   SCIP *scip = nullptr;
   std::vector<SCIP_VAR *> variables;
+  std::vector<SCIP_CONS *> constraints;
   SCIP_EVENTHDLR *handler = nullptr;
 #endif
   Session(int seed, int threads, double budget, double tolerance, bool reoptimization)
@@ -101,11 +103,12 @@ struct Session {
     }
 #endif
   }
-  void emit(const double *values, double primal, double dual) {
+  void emit(const double *values, const double *rowMultipliers, double primal,
+            double dual) {
     std::lock_guard<std::mutex> lock(mutex);
     if (observer)
       observer(std::chrono::duration<double>(Clock::now() - started).count(),
-               columns, values, primal, dual);
+               columns, values, rows, rowMultipliers, primal, dual);
   }
 };
 
@@ -120,14 +123,26 @@ CbcEventHandler::CbcAction Events::event(CbcEvent event) {
       model_->parentModel() != nullptr) return noAction;
   const bool incumbent = event == solution || event == heuristicSolution || event == endSearch;
   const double *values = nullptr;
+  const double *rowMultipliers = nullptr;
+  std::vector<double> multipliers;
+  const OsiSolverInterface *original = nullptr;
   if (incumbent && model_->bestSolution()) {
-    const OsiSolverInterface *original = model_->postProcessedSolver(1);
+    original = model_->postProcessedSolver(1);
     if (original && original->getNumCols() == session_->columns)
       values = original->getColSolution();
     else if (model_->getNumCols() == session_->columns)
       values = model_->bestSolution();
   }
-  session_->emit(values,
+  if (original && original->getNumRows() == session_->rows) {
+    // The Python verifier checks these row prices as an independent weak-duality
+    // certificate before any bound contributes to the frozen metric.
+    const double *prices = original->getRowPrice();
+    if (prices) {
+      multipliers.assign(prices, prices + session_->rows);
+      rowMultipliers = multipliers.data();
+    }
+  }
+  session_->emit(values, rowMultipliers,
                  model_->getObjValue(), model_->getBestPossibleObjValue());
   return noAction;
 }
@@ -142,13 +157,34 @@ static SCIP_DECL_EVENTEXEC(observeEvent) {
   auto *session = reinterpret_cast<Session *>(SCIPeventhdlrGetData(eventhdlr));
   SCIP_SOL *solution = SCIPgetBestSol(scip);
   std::vector<double> values;
+  std::vector<double> multipliers;
   if ((SCIPeventGetType(event) & SCIP_EVENTTYPE_BESTSOLFOUND) && solution) {
     values.resize(session->columns);
     SCIP_RETCODE result = SCIPgetSolVals(scip, solution, session->columns,
                                         session->variables.data(), values.data());
     if (result != SCIP_OKAY) return result;
   }
+  bool hasMultipliers = false;
+  if (session->threads == 1 && SCIPgetStage(scip) >= SCIP_STAGE_SOLVING &&
+      (SCIPeventGetType(event) & SCIP_EVENTTYPE_LPSOLVED)) {
+    // Export only original linear-row duals. The scenario verifier independently
+    // certifies their bound against the hash-checked input model.
+    multipliers.resize(session->rows, 0.0);
+    for (int row = 0; row < session->rows; ++row) {
+      SCIP_CONS *constraint = nullptr;
+      SCIP_RETCODE result = SCIPgetTransformedCons(
+          scip, session->constraints[row], &constraint);
+      if (result != SCIP_OKAY || !constraint) {
+        multipliers.clear();
+        hasMultipliers = false;
+        break;
+      }
+      multipliers[row] = SCIPgetDualsolLinear(scip, constraint);
+      hasMultipliers = true;
+    }
+  }
   session->emit(values.empty() ? nullptr : values.data(),
+                hasMultipliers ? multipliers.data() : nullptr,
                 SCIPgetPrimalbound(scip), SCIPgetDualbound(scip));
   return SCIP_OKAY;
 }
@@ -187,6 +223,7 @@ int pbs_load(void *opaque, int rows, int columns, const int *starts,
              const double *lower, const double *upper, const int *integer,
              const double *lhs, const double *rhs, int maximize, double offset) {
   auto &session = *static_cast<Session *>(opaque);
+  session.rows = rows;
   session.columns = columns;
   try {
 #ifdef PITBENCH_CBC
@@ -212,6 +249,7 @@ int pbs_load(void *opaque, int rows, int columns, const int *starts,
     checked(SCIPsetObjsense(session.scip, maximize ? SCIP_OBJSENSE_MAXIMIZE : SCIP_OBJSENSE_MINIMIZE));
     checked(SCIPaddOrigObjoffset(session.scip, offset));
     session.variables.resize(columns, nullptr);
+    session.constraints.resize(rows, nullptr);
     for (int column = 0; column < columns; ++column) {
       std::string name = "x" + std::to_string(column);
       checked(SCIPcreateVarBasic(session.scip, &session.variables[column], name.c_str(),
@@ -231,6 +269,7 @@ int pbs_load(void *opaque, int rows, int columns, const int *starts,
       std::string name = "c" + std::to_string(row);
       checked(SCIPcreateConsBasicLinear(session.scip, &constraint, name.c_str(),
           vars.size(), vars.data(), values.data(), lhs[row], rhs[row]));
+      session.constraints[row] = constraint;
       checked(SCIPaddCons(session.scip, constraint));
       checked(SCIPreleaseCons(session.scip, &constraint));
     }

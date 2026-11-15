@@ -36,6 +36,97 @@ from pitbench.tasks import TaskCatalog
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_report_follows_live_status_and_retained_retry_directory(tmp_path, monkeypatch):
+    from pitbench.metrics import campaign_report
+
+    original = tmp_path / "runs/run/results.json"
+    original.parent.mkdir(parents=True)
+    original.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "task_id": "task",
+                        "trial_name": "old",
+                        "evaluation": {
+                            "completed": False,
+                            "error": "original infrastructure failure",
+                        },
+                    }
+                ]
+            }
+        )
+    )
+    retry = tmp_path / "runs/run-infra1/results.json"
+    retry.parent.mkdir(parents=True)
+    retry.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "task_id": "task",
+                        "trial_name": "retry",
+                        "evaluation": {
+                            "completed": True,
+                            "payload": {"summary": {"fixture": True}},
+                        },
+                    }
+                ]
+            }
+        )
+    )
+    output = tmp_path / "evaluations/run/attempt-0002"
+    output.mkdir(parents=True)
+    (output / "evaluation-envelope.json").write_text(
+        json.dumps({"completed": True, "payload": {"summary": {"fixture": True}}})
+    )
+    status = tmp_path / "agent-status/run/status.json"
+    status.parent.mkdir(parents=True)
+    status.write_text(
+        json.dumps(
+            {
+                "run_id": "run",
+                "execution_run_id": "run-infra1",
+                "task_id": "task",
+                "model": {"model": "frozen", "setting": "reasoning_effort=high"},
+                "status": "evaluation_incomplete",
+                "evaluation_output": str(output),
+            }
+        )
+    )
+    (tmp_path / "model-runs.json").write_text(
+        json.dumps([{"run_id": "run", "task_id": "task", "status": "evaluating"}])
+    )
+    inspected = []
+    monkeypatch.setattr(
+        campaign_report,
+        "_inventory",
+        lambda row, trial, directory, task: inspected.append(directory),
+    )
+    monkeypatch.setattr(campaign_report, "_effects", lambda *args: [])
+    report = collect_campaign(tmp_path, repository_root=ROOT)
+    (condition,) = report["conditions"]
+    assert condition["execution_status"] == "evaluation_incomplete"
+    assert condition["evaluation_status"] == "completed"
+    assert condition["model"] == "frozen"
+    assert condition["trial_name"] == "retry"
+    assert condition["result_path"] == str(retry)
+    assert inspected == [output]
+    # An unfinished later attempt must not inherit the previous trial's success.
+    later = tmp_path / "evaluations/run/attempt-0003"
+    state = json.loads(status.read_text())
+    state.update(
+        status="evaluation_failed",
+        evaluation_output=str(later),
+        evaluation_error="new attempt failed",
+    )
+    status.write_text(json.dumps(state))
+    (condition,) = collect_campaign(tmp_path, repository_root=ROOT)["conditions"]
+    assert condition["evaluation_status"] == "missing"
+    assert condition["native_summary"] == {}
+    assert condition["error"] == "new attempt failed"
+
+
 def test_distribution_report_plots_saved_intervals_and_retains_pending_jobs(tmp_path):
     pytest.importorskip("matplotlib")
     from pitbench.metrics.campaign_report import write_distribution_report

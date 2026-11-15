@@ -12,6 +12,29 @@ import pytest
 from pitbench.harness.utils import artifact_storage
 
 
+def test_evaluator_artifacts_allow_concurrent_atomic_writers(tmp_path, monkeypatch):
+    import json
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from pitbench.evaluator.artifacts import write_json
+
+    path = tmp_path / "status.json"
+    barrier = Barrier(2)
+    replace = Path.replace
+
+    def together(source, target):
+        if target == path:
+            barrier.wait(timeout=5)
+        return replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", together)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda value: write_json(path, {"writer": value}), [1, 2]))
+    assert json.loads(path.read_text())["writer"] in {1, 2}
+    assert not list(tmp_path.glob("*.tmp"))
+
+
 def test_deduplication_preserves_paths_and_checks_duplicate_contents(tmp_path):
     content = b"immutable evidence"
     digest = hashlib.sha256(content).hexdigest()

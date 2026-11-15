@@ -42,6 +42,7 @@ from pitbench.harness.utils.agent_trace import (
     current_trace,
     model_completion,
     read_trace,
+    traced_call,
 )
 from pitbench.harness.utils.trace_validation import inspect_trace
 
@@ -539,6 +540,91 @@ def test_timeout_cancels_before_executor_shutdown_and_flushes_partial_trace(
     assert any(row["event"] == "execution.timeout" for row in rows)
     assert any(row["event"] == "custom.cancelled" for row in rows)
     assert rows[-1]["data"]["status"] == "failed"
+
+
+def test_timeout_racing_with_trace_close_stays_an_agent_timeout(
+    repository, tmp_path, monkeypatch
+):
+    import pitbench.harness.harness.harness as harness_module
+
+    real_event = threading.Event
+
+    class DelayedSetEvent:
+        """Let the worker close its trace before publishing completion."""
+
+        def __init__(self):
+            self._event = real_event()
+
+        def set(self):
+            time.sleep(0.35)
+            self._event.set()
+
+        def is_set(self):
+            return self._event.is_set()
+
+        def wait(self, timeout=None):
+            return self._event.wait(timeout)
+
+        def clear(self):
+            self._event.clear()
+
+    class ImmediateAgent(NopAgent):
+        def perform_task(self, **kwargs):
+            self._agent_trace.record("custom.finished_before_deadline_signal")
+            return AgentResult(failure_mode="none")
+
+        def cancel(self):
+            pass
+
+    agent = ImmediateAgent()
+    monkeypatch.setattr(harness_module.threading, "Event", DelayedSetEvent)
+    harness = Harness.__new__(Harness)
+    harness._run_id = "timeout-trace-race"
+    logdir = tmp_path / "timeout-trace-race" / "agent-logs"
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(
+            harness._run_agent_with_timeout(
+                trial_handler=SimpleNamespace(
+                    task_id="task",
+                    trial_name="timeout-trace-race",
+                    instruction="finish before the signal is delayed",
+                    task=SimpleNamespace(research_budget=None),
+                ),
+                session=SimpleNamespace(container=repository[1]),
+                logging_dir=logdir,
+                timeout_sec=0.2,
+                agent=agent,
+                portkey_metadata=None,
+                portkey_trace_id=None,
+            )
+        )
+
+    trace_path, = (logdir.parent / "agent-trace").glob("*/events.jsonl")
+    rows = list(read_trace(trace_path))
+    assert any(
+        row["event"] == "custom.finished_before_deadline_signal" for row in rows
+    )
+
+
+@pytest.mark.parametrize("close_during_call", [False, True])
+def test_terminal_lifecycle_call_survives_trace_closure(tmp_path, close_during_call):
+    trace = AgentTrace(tmp_path / "trace", context={})
+
+    class Session:
+        _agent_trace = trace
+
+        @traced_call("terminal")
+        def capture_pane(self):
+            if close_during_call:
+                trace.close()
+            return "captured pane"
+
+    session = Session()
+    if not close_during_call:
+        trace.close()
+
+    assert session.capture_pane() == "captured pane"
 
 
 def test_reader_handles_torn_tail_but_rejects_corrupt_evidence(tmp_path):

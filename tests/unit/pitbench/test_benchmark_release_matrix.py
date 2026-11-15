@@ -208,7 +208,7 @@ def test_captured_patch_queue_uses_native_evaluator_without_new_agent(
         if not settings.enabled:
             return None
         parameter_calls.append(request)
-        directory = patch.parent / "parameters"
+        directory = request.output_dir / "parameters"
         campaign.write_json(
             directory / "experiment.json", {"searches": [{"id": "paired"}]}
         )
@@ -228,7 +228,9 @@ def test_captured_patch_queue_uses_native_evaluator_without_new_agent(
         else "evaluation_failed"
     )
     assert result["metric_gaps"] == gaps
-    assert len(calls) == 1 and calls[0].candidate_patch_path == patch
+    assert len(calls) == 1
+    assert calls[0].candidate_patch_path != patch
+    assert calls[0].candidate_patch_path.read_bytes() == patch.read_bytes()
     assert calls[0].evaluator_config["judge_cpuset_cpus"] == "48-55"
     assert calls[0].evaluator_config["judge_parallel_runs"] == 4
     saved = json.loads((tmp_path / "runs" / run_id / "results.json").read_text())
@@ -650,6 +652,114 @@ def test_deferred_model_audit_requires_captured_patch_and_model_execution(
     assert not campaign.audit_model_run(tmp_path, task_id)["complete"]
 
 
+def test_timeout_cleanup_trace_race_is_audited_for_fresh_recovery(tmp_path):
+    from scripts import run_benchmark_release as campaign
+
+    run = tmp_path / "run"
+    campaign.write_json(
+        run / "results.json",
+        {
+            "results": [
+                {
+                    "task_id": "example",
+                    "trial_name": "trial",
+                    "failure_mode": "unknown_agent_error",
+                    "total_input_tokens": 0,
+                    "total_output_tokens": 0,
+                }
+            ]
+        },
+    )
+    (run / "pipeline_trace.jsonl").write_text(
+        json.dumps(
+            {
+                "stage": "terminal.lifecycle",
+                "status": "failed",
+                "error": {
+                    "type": "RuntimeError",
+                    "message": "agent trace is already closed",
+                },
+            }
+        )
+        + "\n"
+    )
+
+    audit = campaign.audit_model_run(run, "example", evaluation_required=False)
+    assert audit["retryable"]
+    assert audit["trace_closed_during_cleanup"]
+    assert (
+        campaign.incomplete_condition_retry_reason("development_failed", audit)
+        == "trace_close_race"
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "audit", "expected"),
+    [
+        (
+            "development_failed",
+            {
+                "failure_mode": "agent_timeout",
+                "complete": False,
+                "evaluation_pending": False,
+                "completed_turn": False,
+            },
+            "incomplete_agent_timeout",
+        ),
+        (
+            "development_failed",
+            {
+                "reason": "model stream disconnected; retain partial infrastructure-failed attempt",
+                "tokens": 0,
+                "completed_turn": False,
+            },
+            "stream_disconnect",
+        ),
+        (
+            "development_failed",
+            {
+                "failure_mode": "agent_timeout",
+                "complete": True,
+                "evaluation_pending": True,
+                "completed_turn": True,
+            },
+            None,
+        ),
+        (
+            "evaluation_pending",
+            {
+                "failure_mode": "agent_timeout",
+                "complete": False,
+                "evaluation_pending": False,
+                "completed_turn": False,
+            },
+            None,
+        ),
+    ],
+)
+def test_failed_incomplete_condition_recovery_is_limited_to_missing_turns(
+    status, audit, expected
+):
+    from scripts import run_benchmark_release as campaign
+
+    assert campaign.incomplete_condition_retry_reason(status, audit) == expected
+
+
+def test_condition_recovery_lock_rejects_concurrent_duplicate(tmp_path):
+    from scripts import run_benchmark_release as campaign
+
+    root = tmp_path / "recovery"
+    first = campaign.acquire_condition_recovery_lock(root)
+    try:
+        with pytest.raises(ValueError, match="already running"):
+            campaign.acquire_condition_recovery_lock(root)
+    finally:
+        first.close()
+
+    second = campaign.acquire_condition_recovery_lock(root)
+    second.close()
+
+
 @pytest.mark.parametrize(
     "plan_name",
     [
@@ -668,6 +778,7 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
 
     plan_path = ROOT / "configs/research" / plan_name
     plan = json.loads(plan_path.read_text())
+    model_matrix = yaml.safe_load((ROOT / plan["model_matrix"]).read_text())["runs"]
     plan["evaluation_seed_policy"] = None
     plan["task_evaluation_seed_policies"] = {}
     plan["evaluation_run_target"] = None
@@ -782,47 +893,50 @@ def test_study_prepare_selects_only_planned_tasks_without_starting_agents(
     frozen = json.loads((args.output / "cohort.json").read_text())
     assert (
         len(frozen["jobs"])
-        == len(selected) * len(plan["arms"]) * 2 * plan["agent_attempts_per_condition"]
+        == len(selected)
+        * len(plan["arms"])
+        * len(model_matrix)
+        * plan["agent_attempts_per_condition"]
     )
     assert set(validated) == set(selected)
     assert {row["model"]["label"] for row in frozen["jobs"]} == {
-        "sol-high",
-        "terra-high",
+        row["label"] for row in model_matrix
     }
     if plan.get("comparison_mode") == "model_repeats":
         assert {row["arm"] for row in frozen["jobs"]} == {"standard"}
         assert {row["attempt"] for row in frozen["jobs"]} == {1, 2, 3}
         assert frozen["agent_attempts_per_condition"] == 3
         for task_id in selected:
-            for model in ("gpt-6.1-sol", "gpt-6.1-terra"):
+            for model in model_matrix:
                 assert (
                     len(
                         [
                             row
                             for row in frozen["jobs"]
                             if row["task_id"] == task_id
-                            and row["model"]["model"] == model
+                            and row["model"]["model"] == model["model"]
                         ]
                     )
-                    == 3
+                    == plan["agent_attempts_per_condition"]
                 )
     elif plan.get("comparison_mode") == "agent_augmentation":
-        assert len(frozen["jobs"]) == 96
         assert (
             str(tmp_path / "public" / (selected[-1] + ".yaml"))
             in frozen["input_files_sha256"]
         )
         for task_id in selected:
-            for model in ("gpt-6.1-sol", "gpt-6.1-terra"):
+            for model in model_matrix:
                 for arm in plan["arms"]:
                     rows = [
                         j
                         for j in frozen["jobs"]
                         if j["task_id"] == task_id
-                        and j["model"]["model"] == model
+                        and j["model"]["model"] == model["model"]
                         and j["arm"] == arm["id"]
                     ]
-                    assert {j["attempt"] for j in rows} == {1, 2, 3}
+                    assert {j["attempt"] for j in rows} == set(
+                        range(1, plan["agent_attempts_per_condition"] + 1)
+                    )
                     assert all(
                         j.get("agent_import_path") == arm.get("agent_import_path")
                         for j in rows
@@ -1009,3 +1123,180 @@ def test_restarted_evaluation_archives_prior_attempt_and_clears_live_completion(
     assert result["evaluation_error"] != "old error"
     (archived,) = status_path.parent.glob("evaluation-attempts/*.json")
     assert json.loads(archived.read_text()) == previous
+
+
+@pytest.fixture
+def captured_study(tmp_path, monkeypatch):
+    import hashlib
+    from types import SimpleNamespace
+
+    from pitbench.harness.evaluation import EvaluationEnvelope
+    from scripts import run_benchmark_release as campaign
+
+    patch = tmp_path / "runs/run/task/trial/evaluation/candidate.patch"
+    patch.parent.mkdir(parents=True)
+    patch.write_text("retained candidate")
+    task = tmp_path / "workspaces/run/task/task.yaml"
+    task.parent.mkdir(parents=True)
+    task.write_text(yaml.safe_dump({"evaluator_config": {}}))
+    state = {
+        "run_id": "run",
+        "task_id": "task",
+        "arm": "standard",
+        "status": "evaluation_pending",
+        "execution_run_id": None,
+        "model": {
+            "agent": "codex",
+            "model": "frozen",
+            "setting": "reasoning_effort=high",
+        },
+        "audit": {
+            "candidate_patch": str(patch),
+            "candidate_patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
+        },
+    }
+    campaign.write_json(tmp_path / "cohort.json", {"jobs": [state]})
+    campaign.write_json(tmp_path / "agent-status/run/status.json", state)
+    campaign.write_json(
+        tmp_path / "runs/run/results.json", {"results": [{"task_id": "task"}]}
+    )
+    requests = []
+
+    def envelope(request):
+        requests.append(request)
+        return EvaluationEnvelope(
+            evaluator="pitbench",
+            evaluator_version="test",
+            completed=False,
+            payload={},
+            error="retained failure",
+        )
+
+    monkeypatch.setattr(
+        campaign, "PitBenchEvaluator", lambda: SimpleNamespace(envelope=envelope)
+    )
+    return campaign, SimpleNamespace(output=tmp_path), state, requests
+
+
+def test_retry_retains_prior_judge_and_refreshes_live_index(captured_study):
+    campaign, args, state, requests = captured_study
+    patch = Path(state["audit"]["candidate_patch"])
+    old_observations = patch.parent / "judge-observations.jsonl"
+    old_observations.write_text("original measurements\n")
+    first = campaign.evaluate_study_candidate(state, args, "0-7")
+    first_output = Path(first["evaluation_output"])
+    first_envelope = (first_output / "evaluation-envelope.json").read_bytes()
+    second = campaign.evaluate_study_candidate(first, args, "8-15")
+    assert first_output != Path(second["evaluation_output"])
+    assert [row.evaluator_config["judge_cpuset_cpus"] for row in requests] == [
+        "0-7",
+        "8-15",
+    ]
+    assert all(
+        row.candidate_patch_path.read_bytes() == patch.read_bytes() for row in requests
+    )
+    assert old_observations.read_text() == "original measurements\n"
+    assert (first_output / "evaluation-envelope.json").read_bytes() == first_envelope
+    assert second["evaluation_attempt"] == 2
+    index = json.loads((args.output / "model-runs.json").read_text())
+    assert index[0]["evaluation_attempt"] == 2
+    assert index[0]["status"] == "evaluation_failed"
+    assert json.loads((args.output / "study-status.json").read_text())["statuses"] == {
+        "evaluation_failed": 1
+    }
+
+
+def test_competing_manager_cannot_overwrite_active_condition(
+    captured_study, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from types import SimpleNamespace
+
+    campaign, args, state, requests = captured_study
+    entered, release = Event(), Event()
+    original = campaign.PitBenchEvaluator().envelope
+
+    def envelope(request):
+        entered.set()
+        assert release.wait(5)
+        return original(request)
+
+    monkeypatch.setattr(
+        campaign, "PitBenchEvaluator", lambda: SimpleNamespace(envelope=envelope)
+    )
+    path = args.output / "agent-status/run/status.json"
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(campaign.evaluate_study_candidate, state, args, "0-7")
+        try:
+            assert entered.wait(5)
+            before = path.read_bytes()
+            duplicate = campaign.evaluate_study_candidate(state, args, "8-15")
+            assert duplicate["status"] == "evaluating"
+            assert path.read_bytes() == before
+        finally:
+            release.set()
+        result = future.result()
+    assert len(requests) == 1
+    # A snapshot queued before the other manager completed must also be skipped.
+    assert campaign.evaluate_study_candidate(state, args, "8-15") == result
+    assert len(requests) == 1
+
+
+def test_stop_leaves_queued_condition_unchanged(captured_study):
+    campaign, args, state, requests = captured_study
+    (args.output / "STOP").touch()
+    path = args.output / "agent-status/run/status.json"
+    before = path.read_bytes()
+    assert campaign.evaluate_study_candidate(state, args, "0-7") == state
+    assert path.read_bytes() == before
+    assert not requests
+
+
+def test_evaluation_without_worker_pool_fails_before_dispatch(captured_study):
+    campaign, args, state, requests = captured_study
+    args.evaluation_workers = 1
+    args.evaluation_cpu_pools = []
+    with pytest.raises(ValueError, match="one CPU pool"):
+        campaign.study_evaluations(args)
+    assert not requests
+    assert (
+        json.loads((args.output / "agent-status/run/status.json").read_text()) == state
+    )
+
+
+def test_cpu_reservations_include_overlapping_worker_pools(tmp_path):
+    import os
+
+    from scripts import run_benchmark_release as campaign
+
+    first, second = sorted(os.sched_getaffinity(0))[:2]
+    with campaign.study_cpu_lease([str(first)], lock_root=tmp_path):
+        with pytest.raises(RuntimeError, match="reserved"):
+            with campaign.study_cpu_lease([f"{second},{first}"], lock_root=tmp_path):
+                pytest.fail("overlapping CPU reservation was accepted")
+        with campaign.study_cpu_lease([str(second)], lock_root=tmp_path):
+            pass
+    with campaign.study_cpu_lease([str(first)], lock_root=tmp_path):
+        pass
+
+
+def test_status_command_reads_live_conditions(captured_study, monkeypatch):
+    campaign, args, state, _ = captured_study
+    state = {**state, "status": "evaluation_incomplete"}
+    campaign.write_json(args.output / "agent-status/run/status.json", state)
+    campaign.write_json(args.output / "model-runs.json", [{"status": "evaluating"}])
+    monkeypatch.setattr(
+        campaign.sys,
+        "argv",
+        [
+            "run_benchmark_release",
+            "--phase",
+            "study-status",
+            "--output",
+            str(args.output),
+        ],
+    )
+    campaign.main()
+    index = json.loads((args.output / "model-runs.json").read_text())
+    assert index[0]["status"] == "evaluation_incomplete"

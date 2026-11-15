@@ -1636,7 +1636,14 @@ class NativeMipScenarioSession(ScenarioSession):
             C.POINTER(C.c_int),
         )
         self.observer_type = C.CFUNCTYPE(
-            None, C.c_double, C.c_int, self.double_pointer, C.c_double, C.c_double
+            None,
+            C.c_double,
+            C.c_int,
+            self.double_pointer,
+            C.c_int,
+            self.double_pointer,
+            C.c_double,
+            C.c_double,
         )
         lib.pbs_error.restype = C.c_char_p
         lib.pbs_create.argtypes = [C.c_int, C.c_int, C.c_double, C.c_double, C.c_int]
@@ -1686,6 +1693,7 @@ class NativeMipScenarioSession(ScenarioSession):
         import numpy as np
 
         matrix = model["matrix"].tocsr()
+        self.rows = matrix.shape[0]
         self.columns = len(model["cost"])
         arrays = [
             np.ascontiguousarray(matrix.indptr, dtype=np.int32),
@@ -1771,15 +1779,23 @@ class NativeMipScenarioSession(ScenarioSession):
         previous_bounds = None
         started = time.perf_counter()
 
-        def observe(timestamp, columns, values, primal, dual):
+        def observe(timestamp, columns, values, rows, row_multipliers, primal, dual):
             nonlocal previous_bounds
             try:
-                if columns != self.columns:
+                if columns != self.columns or rows != self.rows:
                     raise ValueError(
-                        "native assignment dimension differs from original model"
+                        "native observation dimensions differ from original model"
                     )
-                if values:
-                    emit(timestamp, [values[index] for index in range(columns)], None)
+                assignment = (
+                    [values[index] for index in range(columns)] if values else None
+                )
+                multipliers = (
+                    [row_multipliers[index] for index in range(rows)]
+                    if row_multipliers
+                    else None
+                )
+                if assignment is not None or multipliers is not None:
+                    emit(timestamp, assignment, multipliers)
                 bounds = (finite(primal), finite(dual))
                 if bounds != previous_bounds and getattr(self, "trace_directory", None):
                     append_trajectory(
