@@ -341,7 +341,8 @@ def _single_measurements(
             if metric == "dual_progress_integral" and (
                 not events
                 if dual_bound_source == "independently_verified"
-                else reported_bound_trace is None or not reported_bound_trace.observed_events
+                else reported_bound_trace is None
+                or not reported_bound_trace.observed_events
             ):
                 values[metric] = {
                     "value": None,
@@ -550,7 +551,9 @@ def compute_scenario_report(
                         result.target_attainment[state] = {}
                         for n in p.thread_counts:
                             expected = [
-                                k for k in keys if k.code_state == state and k.threads == n
+                                k
+                                for k in keys
+                                if k.code_state == state and k.threads == n
                             ]
                             observed = [k for k in expected if k in measured]
                             reached = sum(
@@ -751,10 +754,14 @@ def compute_scenario_report(
             {"key": key.model_dump(mode="json"), **trace.model_dump(exclude={"events"})}
             for key, trace in sorted(
                 reported_bound_traces.items(),
-                key=lambda item: json.dumps(item[0].model_dump(mode="json"), sort_keys=True),
+                key=lambda item: json.dumps(
+                    item[0].model_dump(mode="json"), sort_keys=True
+                ),
             )
         ]
-        design.update(dual_bound_source=dual_bound_source, bound_trace_sources=trace_sources)
+        design.update(
+            dual_bound_source=dual_bound_source, bound_trace_sources=trace_sources
+        )
     design_hash = hashlib.sha256(
         json.dumps(design, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()

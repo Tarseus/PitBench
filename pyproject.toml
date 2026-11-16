@@ -28,6 +28,7 @@ pitbench = "pitbench.cli.main:app"
 
 [project.optional-dependencies]
 reports = ["matplotlib>=3.9"]
+remote = ["paramiko>=3.5"]
 # SMAC 2.4.0 imports sklearn's private tree API, changed in newer releases.
 configuration = ["smac==2.4.0", "scikit-learn==1.7.2"]
 

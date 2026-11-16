@@ -1,0 +1,1178 @@
+from __future__ import annotations
+
+import io
+import json
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from adapters.jvm.runner import (
+    _adapter_output,
+    _adapter_source_sha256,
+    _choco_assembly,
+    _prepare_ortools_java_tests,
+    _solver_identity,
+    _verify_compiled_adapter,
+)
+from pitbench.repositories.base import (
+    BuildKind,
+    CommandSpec,
+    RepositoryPlugin,
+    RepositoryPluginRegistry,
+    SolverRunSpec,
+)
+from pitbench.repositories.plugins import (
+    ChocoRepositoryPlugin,
+    GecodeRepositoryPlugin,
+    HighsRepositoryPlugin,
+    PyVRPClassicRepositoryPlugin,
+    PyVRPRepositoryPlugin,
+    ScipRepositoryPlugin,
+)
+from pitbench.solver_drivers.run import (
+    CbcDriver,
+    GecodeExactDriver,
+    HighsDriver,
+    PyVRPDriver,
+    ScipDriver,
+    SolverDriver,
+    driver_records_trajectory,
+)
+from tests.support import ROOT
+
+
+def test_scip_basic_validation_selects_unit_tests_without_the_solve_regression_matrix():
+    commands = ScipRepositoryPlugin().build_commands(BuildKind.VALIDATION)
+    ctest = next(command for command in commands if command.argv[0] == "ctest")
+    test_filter = "^(unittest-branch-treemodel|unittest-heur-multistart)(-build)?$"
+    assert ctest.argv[ctest.argv.index("-R") + 1] == test_filter
+    assert "--no-tests=error" in ctest.argv
+    assert any(
+        "--show-only=json-v1" in " ".join(command.argv)
+        and test_filter in " ".join(command.argv)
+        for command in commands
+    )
+
+
+def test_generated_java_tests_use_the_built_package_instead_of_a_newer_release(
+    tmp_path,
+):
+    package = tmp_path / "build/java/ortools-java/pom.xml"
+    test = tmp_path / "build/java/sat/CpSolverTest/pom.xml"
+    package.parent.mkdir(parents=True)
+    test.parent.mkdir(parents=True)
+    package.write_text("""<project xmlns="http://maven.apache.org/POM/4.0.0">
+      <groupId>com.google.ortools</groupId><artifactId>ortools-java</artifactId>
+      <version>9.14.9999</version></project>""")
+    test.write_text("""<project xmlns="http://maven.apache.org/POM/4.0.0"><dependencies>
+      <dependency><groupId>com.google.ortools</groupId><artifactId>ortools-java</artifactId>
+        <version>[9.14.9999,)</version></dependency>
+      <dependency><groupId>com.google.truth</groupId><artifactId>truth</artifactId>
+        <version>1.4.4</version></dependency>
+      </dependencies></project>""")
+
+    _prepare_ortools_java_tests(tmp_path)
+
+    assert '<project xmlns="http://maven.apache.org/POM/4.0.0">' in test.read_text()
+    ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+    dependencies = ET.parse(test).findall("m:dependencies/m:dependency", ns)
+    assert [d.findtext("m:version", namespaces=ns) for d in dependencies] == [
+        "9.14.9999",
+        "1.4.4",
+    ]
+
+
+def test_java_legacy_tests_get_a_matching_engine_and_cannot_pass_with_zero_tests(
+    tmp_path,
+):
+    package = tmp_path / "build/java/ortools-java/pom.xml"
+    test = tmp_path / "build/java/sat/CpSolverTest/pom.xml"
+    source = tmp_path / "ortools/sat/java/CpSolverTest.java"
+    for path in (package, test, source):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    package.write_text("""<project xmlns="http://maven.apache.org/POM/4.0.0">
+      <groupId>com.google.ortools</groupId><artifactId>ortools-java</artifactId>
+      <version>9.15.9999</version></project>""")
+    test.write_text("""<project xmlns="http://maven.apache.org/POM/4.0.0"><dependencies>
+      <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-engine</artifactId>
+        <version>5.11.3</version></dependency></dependencies><build><plugins><plugin>
+      <artifactId>maven-surefire-plugin</artifactId><version>3.5.0</version>
+      </plugin></plugins></build></project>""")
+    source.write_text("import org.junit.Test;\n")
+
+    _prepare_ortools_java_tests(tmp_path)
+    _prepare_ortools_java_tests(tmp_path)
+
+    ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+    tree = ET.parse(test)
+    dependencies = tree.findall("m:dependencies/m:dependency", ns)
+    vintage = [
+        d
+        for d in dependencies
+        if d.findtext("m:artifactId", namespaces=ns) == "junit-vintage-engine"
+    ]
+    assert len(vintage) == 1
+    assert vintage[0].findtext("m:version", namespaces=ns) == "5.11.3"
+    assert (
+        tree.findtext(
+            "m:build/m:plugins/m:plugin/m:configuration/m:failIfNoTests", namespaces=ns
+        )
+        == "true"
+    )
+
+
+@pytest.mark.parametrize(
+    ("plugin_name", "driver_name", "class_name", "records_trajectory"),
+    [
+        ("pyvrp", "pyvrp", "PyVRPRepositoryPlugin", True),
+        ("pyvrp", "pyvrp", "PyVRPDebugOptimizedRepositoryPlugin", True),
+        ("vroom", "vroom", "VroomRepositoryPlugin", True),
+        ("highs", "highs", "HighsRepositoryPlugin", True),
+        ("scip", "scip", "ScipRepositoryPlugin", True),
+        ("cbc", "cbc", "CbcRepositoryPlugin", True),
+        ("choco", "choco", "ChocoRepositoryPlugin", True),
+        ("gecode", "gecode_exact", "GecodeRepositoryPlugin", True),
+        (
+            "ortools",
+            "ortools_cp_sat_exact",
+            "OrToolsCpSatExactRepositoryPlugin",
+            True,
+        ),
+    ],
+)
+def test_repository_plugins_resolve_to_runnable_drivers(
+    plugin_name, driver_name, class_name, records_trajectory, tmp_path
+):
+    plugin = RepositoryPluginRegistry.load(
+        f"pitbench.repositories.plugins:{class_name}"
+    )
+    assert plugin.name == plugin_name
+    assert plugin.driver_name == driver_name
+    assert driver_records_trajectory(driver_name) is records_trajectory
+    run = SolverRunSpec(
+        instance_path=tmp_path / "instance.json",
+        output_path=tmp_path / "result.json",
+        trajectory_path=tmp_path / "trajectory.jsonl",
+        solver_seed=17,
+        budget_sec=10,
+        threads=1,
+    )
+    command = plugin.run_command(run)
+    assert ("--trajectory" in command.argv) is records_trajectory
+    completed = subprocess.run(
+        [sys.executable, *command.argv[1:], "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "--instance" in completed.stdout
+    assert "--budget" in completed.stdout
+
+
+def test_fixed_solver_parameters_follow_repository_capability(tmp_path) -> None:
+    parameters = tmp_path / "parameters.json"
+    parameters.write_text('{"search_strategy":"dom_over_wdeg"}\n')
+    run = SolverRunSpec(
+        instance_path=tmp_path / "instance.json",
+        output_path=tmp_path / "result.json",
+        trajectory_path=tmp_path / "trajectory.jsonl",
+        solver_seed=0,
+        budget_sec=5,
+        threads=1,
+        parameters_path=parameters,
+    )
+
+    command = ChocoRepositoryPlugin().run_command(run)
+    assert command.argv[-2:] == ["--parameters", str(parameters)]
+    highs_command = HighsRepositoryPlugin().run_command(run)
+    assert HighsRepositoryPlugin.supports_fixed_solver_parameters
+    assert highs_command.argv[-2:] == ["--parameters", str(parameters)]
+    assert (
+        HighsDriver.options_file_content(
+            {"simplex_dual_edge_weight_strategy": 2, "parallel": "off"}
+        )
+        == "parallel = off\nsimplex_dual_edge_weight_strategy = 2\n"
+    )
+    with pytest.raises(ValueError, match="invalid HiGHS option name"):
+        HighsDriver.options_file_content({"invalid option": 1})
+
+
+def test_highs_validation_build_keeps_tests_and_legacy_catch_compatibility():
+    validation = HighsRepositoryPlugin().build_commands(BuildKind.VALIDATION)
+    release = HighsRepositoryPlugin().build_commands(BuildKind.PERFORMANCE)
+
+    assert (
+        "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -DCATCH_CONFIG_NO_POSIX_SIGNALS"
+    ) in validation[0].argv
+    assert "-DBUILD_TESTING=ON" in validation[0].argv
+    assert "-DBUILD_TESTING=OFF" in release[0].argv
+    assert "-DCMAKE_CXX_FLAGS=" in release[0].argv
+    assert validation[1].argv == ["cmake", "--build", "build", "-j1"]
+    assert release[1].argv == [
+        "cmake",
+        "--build",
+        "build",
+        "-j1",
+        "--target",
+        "highs",
+        "highs-bin",
+    ]
+    assert (
+        "--target highs highs-bin" in HighsRepositoryPlugin.agent_environment.prebuild
+    )
+
+
+def test_solver_driver_registry_rejects_duplicate_names():
+    name = "test-duplicate-driver"
+
+    class FirstDriver(SolverDriver):
+        @staticmethod
+        def main(argv=None):
+            return None
+
+    FirstDriver.name = name
+    SolverDriver._drivers[name] = FirstDriver
+    try:
+        with pytest.raises(ValueError, match="duplicate solver driver"):
+
+            class DuplicateDriver(SolverDriver):
+                name = "test-duplicate-driver"
+
+                @staticmethod
+                def main(argv=None):
+                    return None
+    finally:
+        SolverDriver._drivers.pop(name, None)
+
+
+def test_collection_backends_share_validated_interface():
+    from pitbench.evaluator.collection import CollectionBackend
+
+    for plugin in (PyVRPRepositoryPlugin(), HighsRepositoryPlugin()):
+        assert issubclass(plugin.load_collection_backend(), CollectionBackend)
+
+    class InvalidRepository(RepositoryPlugin):
+        name = "invalid"
+        driver_name = "invalid"
+        collection_backend = "pitbench.solver_drivers.run:PyVRPDriver"
+
+        def build_commands(self, kind):
+            return []
+
+    with pytest.raises(TypeError, match="is not a CollectionBackend"):
+        InvalidRepository().load_collection_backend()
+
+
+@pytest.mark.parametrize(
+    ("solver", "output", "class_name"),
+    [
+        ("choco", "target/pitbench-adapter", "ExactSolverRunner"),
+        ("ortools_cp_sat", "build/pitbench-adapter", "OrToolsCpSatRunner"),
+    ],
+)
+def test_jvm_probe_rejects_missing_or_stale_compiled_adapter(
+    tmp_path, solver, output, class_name
+):
+    compiled = tmp_path / output / "org/pitbench/adapters" / f"{class_name}.class"
+    compiled.parent.mkdir(parents=True)
+    with pytest.raises(RuntimeError, match="adapter is unavailable"):
+        _verify_compiled_adapter(tmp_path, solver)
+
+    compiled.write_bytes(b"compiled bytecode")
+    fingerprint = tmp_path / output / "adapter-source.sha256"
+    fingerprint.write_text("stale\n")
+    with pytest.raises(RuntimeError, match="differs from source"):
+        _verify_compiled_adapter(tmp_path, solver)
+
+    fingerprint.write_text(_adapter_source_sha256(solver) + "\n")
+    _verify_compiled_adapter(tmp_path, solver)
+
+
+def test_choco_identity_accepts_historical_prerelease_jar(tmp_path):
+    jar = tmp_path / "solver/target/choco-solver-5.0.0-beta.2-jar-with-dependencies.jar"
+    jar.parent.mkdir(parents=True)
+    jar.touch()
+
+    assert _solver_identity(tmp_path, "choco")["version"] == "5.0.0-beta.2"
+
+
+def test_choco_identity_accepts_single_module_historical_jar(tmp_path):
+    jar = tmp_path / "target/choco-solver-4.0.2-SNAPSHOT-with-dependencies.jar"
+    jar.parent.mkdir(parents=True)
+    jar.touch()
+
+    assert _choco_assembly(tmp_path) == jar.resolve()
+    assert _solver_identity(tmp_path, "choco")["version"] == "4.0.2-SNAPSHOT"
+
+
+def test_choco_adapter_output_matches_maven_layout(tmp_path):
+    assert _adapter_output(tmp_path, "choco") == tmp_path / "target/pitbench-adapter"
+    (tmp_path / "solver").mkdir()
+    (tmp_path / "solver/pom.xml").touch()
+    assert _adapter_output(tmp_path, "choco") == (
+        tmp_path / "solver/target/pitbench-adapter"
+    )
+
+
+def test_choco_builds_official_source_and_generic_jvm_adapter() -> None:
+    plugin = ChocoRepositoryPlugin()
+
+    validation = plugin.build_commands(BuildKind.VALIDATION)
+    performance = plugin.build_commands(BuildKind.PERFORMANCE)
+
+    assert (
+        validation[0]
+        == performance[0]
+        == CommandSpec(argv=["mkdir", "-p", "/tmp/choco-maven"])
+    )
+    assert (
+        validation[1]
+        == performance[1]
+        == CommandSpec(argv=["cp", "-a", "/root/.m2/repository/.", "/tmp/choco-maven"])
+    )
+    assert (
+        validation[2]
+        == performance[2]
+        == CommandSpec(
+            argv=[
+                "sh",
+                "-c",
+                "if [ -d /opt/pitbench-maven ]; then "
+                "cp -a /opt/pitbench-maven/. /tmp/choco-maven/; fi",
+            ]
+        )
+    )
+    assert validation[3] == CommandSpec(
+        argv=["mvn", "-q", "package", "-DskipTests", "-Dlicense.skip=true"],
+        env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/choco-maven"},
+    )
+    assert performance[3] == CommandSpec(
+        argv=["mvn", "-q", "package", "-DskipTests", "-Dlicense.skip=true"],
+        env={"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/choco-maven"},
+    )
+    assert (
+        validation[4].argv
+        == performance[4].argv
+        == [
+            "python3",
+            "/opt/pitbench-jvm/runner.py",
+            "compile",
+            "--solver",
+            "choco",
+        ]
+    )
+    assert plugin.agent_environment is not None
+    assert plugin.agent_environment.image.endswith("eclipse-temurin-17")
+    assert "solver/target/choco-solver-*-jar-with-dependencies.jar" in (
+        plugin.agent_artifact_globs
+    )
+    assert "target/choco-solver-*-with-dependencies.jar" in plugin.agent_artifact_globs
+
+
+def test_classic_pyvrp_uses_shared_offline_poetry_build() -> None:
+    plugin = PyVRPClassicRepositoryPlugin()
+    validation = plugin.build_commands(BuildKind.VALIDATION)
+
+    assert validation == plugin.build_commands(BuildKind.PERFORMANCE)
+    assert validation == plugin.agent_build_commands()
+    assert validation[0].argv == ["rm", "-rf", ".pitbench-venv"]
+    assert validation[1].argv == [
+        "python3",
+        "-m",
+        "venv",
+        "--system-site-packages",
+        ".pitbench-venv",
+    ]
+    assert validation[2].argv == [
+        ".pitbench-venv/bin/python",
+        "-m",
+        "pip",
+        "install",
+        "--no-build-isolation",
+        "--no-deps",
+        "--force-reinstall",
+        "-e",
+        ".",
+    ]
+    assert validation[3].argv == [
+        ".pitbench-venv/bin/python",
+        "-c",
+        "import pathlib, runpy, sys, tomllib; "
+        "sys.modules.setdefault('tomli', tomllib); "
+        "script = pathlib.Path('build_extensions.py'); "
+        "runpy.run_path(str(script), run_name='__main__') "
+        "if script.is_file() else None",
+    ]
+    assert validation[4].argv == [
+        ".pitbench-venv/bin/python",
+        "-c",
+        "import sys, tomllib; "
+        "sys.modules.setdefault('tomli', tomllib); "
+        "import pyvrp; print(pyvrp.__file__)",
+    ]
+    assert plugin.driver_python == ".pitbench-venv/bin/python"
+
+
+def test_highs_driver_uses_python3() -> None:
+    assert HighsRepositoryPlugin().driver_python == "python3"
+
+
+@pytest.mark.parametrize(
+    ("driver", "header", "assignment"),
+    [
+        (
+            ScipDriver,
+            "solution status: optimal solution found\nobjective value: -12\n",
+            "x0 1 (obj:-12)\n",
+        ),
+        (
+            CbcDriver,
+            "Optimal - objective value -12\n",
+            "0 x0 1 -12\n",
+        ),
+    ],
+)
+def test_native_mip_solution_parser_restores_implicit_zeros(
+    tmp_path: Path, driver, header: str, assignment: str
+) -> None:
+    solution = tmp_path / "solution.sol"
+    solution.write_text(header + assignment)
+
+    parsed = driver._solution(solution, {"x0", "x1"})
+
+    assert parsed == (-12, {"x0": 1, "x1": 0})
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Integer infeasible - objective value -2.5",
+        "Stopped on time (no integer solution - continuous used) - objective value -2.5",
+        "Unbounded - objective value -2.5",
+    ],
+)
+def test_cbc_relaxation_output_is_not_a_mip_incumbent(tmp_path, header):
+    solution = tmp_path / "solution.sol"
+    solution.write_text(header + "\n0 x0 0.5 -5\n")
+    assert CbcDriver._solution(solution, {"x0"}) is None
+    assert "infeasible" in CbcDriver._status(
+        "Pre-processing says infeasible or unbounded"
+    )
+
+
+@pytest.mark.parametrize("driver", [CbcDriver, ScipDriver])
+def test_native_mip_parameters_keep_protocol_budget_and_seed_authoritative(
+    driver, tmp_path
+):
+    parameters = (
+        {"presolving/emphasis": "off", "limits/time": 1}
+        if driver is ScipDriver
+        else {"presolve": False, "seconds": 1}
+    )
+    args = SimpleNamespace(
+        solver="solver",
+        instance=tmp_path / "model.lp",
+        threads=1,
+        budget=12,
+        seed=7,
+        parameter_values=parameters,
+    )
+    command = driver._command(args, tmp_path / "solution.sol")
+    if driver is ScipDriver:
+        assert "set presolving emphasis off" in command
+        assert command.index("set limits time 1") < command.index("set limits time 12")
+        assert "set randomization randomseedshift 7" in command
+    else:
+        assert "-threads" not in command
+        assert command[command.index("-presolve") + 1] == "off"
+        values = [
+            command[i + 1] for i, value in enumerate(command) if value == "-seconds"
+        ]
+        assert values == ["1", "12"]
+        assert command[command.index("-randomSeed") + 1] == "7"
+
+
+@pytest.mark.parametrize(
+    "driver,message",
+    [
+        (CbcDriver, "No match for unknown_option"),
+        (ScipDriver, "parameter <unknown_option> unknown"),
+        (ScipDriver, "command <off> not available"),
+    ],
+)
+def test_native_mip_rejects_ignored_parameters_instead_of_reporting_a_solve(
+    tmp_path, monkeypatch, driver, message
+):
+    from pitbench.solver_drivers.common import ParameterRejected
+
+    instance = tmp_path / "model.mps"
+    instance.write_text(
+        "NAME Cover\nROWS\n N OBJ\n G demand\nCOLUMNS\n chooseA OBJ 1 demand 1\nRHS\n rhs demand 1\nBOUNDS\n BV bounds chooseA\nENDATA\n"
+    )
+    parameters = tmp_path / "parameters.json"
+    parameters.write_text('{"unknown_option":1}')
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, message, ""),
+    )
+    output = tmp_path / "result.json"
+    with pytest.raises(ParameterRejected):
+        driver.main(
+            [
+                "--solver",
+                "solver",
+                "--instance",
+                str(instance),
+                "--output",
+                str(output),
+                "--trajectory",
+                str(tmp_path / "trajectory.jsonl"),
+                "--seed",
+                "0",
+                "--budget",
+                "1",
+                "--threads",
+                "1",
+                "--parameters",
+                str(parameters),
+            ]
+        )
+    result = json.loads(output.read_text())
+    assert result["valid"] is False
+    assert result["failure_reason"] == "parameter_rejected"
+
+
+@pytest.mark.parametrize("driver", [CbcDriver, ScipDriver])
+def test_native_mip_retains_a_verified_time_limit_incumbent_without_scoring_a_solve(
+    tmp_path, monkeypatch, driver
+):
+    from pitbench.metrics.performance_report import compute_exact_run_outcome
+    from pitbench.problem_families.verification import MIPFamily
+    from pitbench.schema.observation import RunObservation
+
+    instance = tmp_path / "cover.mps"
+    instance.write_text(
+        "NAME Cover\nROWS\n N OBJ\n G demand\nCOLUMNS\n"
+        " chooseA OBJ 1 demand 1\n chooseB OBJ 1 demand 1\n"
+        "RHS\n rhs demand 1\nBOUNDS\n BV bounds chooseA\n BV bounds chooseB\nENDATA\n"
+    )
+
+    def solve(argv, **kwargs):
+        if driver is CbcDriver:
+            solution = Path(argv[argv.index("-solution") + 1])
+            solution.write_text("Stopped on time - objective value 1\n0 chooseA 1 1\n")
+            log = "Result - Stopped on time limit\n"
+        else:
+            solution = Path(
+                next(
+                    arg for arg in argv if arg.startswith("write solution ")
+                ).removeprefix("write solution ")
+            )
+            solution.write_text(
+                "solution status: feasible solution found\nobjective value: 1\nchooseA 1\n"
+            )
+            log = "SCIP Status : solving was interrupted [time limit reached]\n"
+        return subprocess.CompletedProcess(argv, 0, log, "")
+
+    monkeypatch.setattr(subprocess, "run", solve)
+    output = tmp_path / "result.json"
+    driver.main(
+        [
+            "--solver",
+            "solver",
+            "--instance",
+            str(instance),
+            "--output",
+            str(output),
+            "--trajectory",
+            str(tmp_path / "trajectory.jsonl"),
+            "--seed",
+            "1",
+            "--budget",
+            "1",
+            "--threads",
+            "1",
+        ]
+    )
+    result = json.loads(output.read_text())
+    solution_path = output.with_suffix(".solution.json")
+    assert json.loads(solution_path.read_text())["values"] == {
+        "chooseA": 1,
+        "chooseB": 0,
+    }
+    assert result["has_solution"] is True
+    assert MIPFamily().verify(instance, solution_path).feasible
+    observed = RunObservation(
+        task_id="fixture",
+        code_state="base",
+        instance_set="judge_id",
+        instance_set_kind="judge_id",
+        instance_id="cover",
+        solver_seed=1,
+        budget_sec=1,
+        status="completed",
+        valid=True,
+        objective=1,
+        reported_objective=1,
+        optimal_or_bks=1,
+        solver_termination=result["solver_termination"],
+    )
+    outcome = compute_exact_run_outcome(observed)
+    assert outcome.solved is False
+    assert outcome.penalized_runtime_sec == 2
+
+
+def test_highs_driver_retains_a_time_limit_primal_for_budget_quality(
+    tmp_path, monkeypatch
+):
+    from pitbench.problem_families.verification import MIPFamily
+    from pitbench.solver_drivers.common import SolverTermination
+
+    instance = tmp_path / "cover.mps"
+    instance.write_text(
+        "NAME Cover\nROWS\n N OBJ\n G demand\nCOLUMNS\n"
+        " chooseA OBJ 1 demand 1\n chooseB OBJ 1 demand 1\n"
+        "RHS\n rhs demand 1\nBOUNDS\n BV bounds chooseA\n BV bounds chooseB\nENDATA\n"
+    )
+
+    def solve(argv, **kwargs):
+        solution = Path(
+            next(
+                arg.split("=", 1)[1]
+                for arg in argv
+                if arg.startswith("--solution_file=")
+            )
+        )
+        solution.write_text(
+            "Model status\nTime limit reached\n\n# Primal solution values\n"
+            "Feasible\nObjective 1\n# Columns 2\nchooseA 1\nchooseB 0\n"
+        )
+        log = (
+            "Solving report\nStatus Time limit reached\nPrimal bound 1\n"
+            "Dual bound 0\nNodes 5\n"
+        )
+        return subprocess.CompletedProcess(argv, 0, log, "")
+
+    monkeypatch.setattr(subprocess, "run", solve)
+    output = tmp_path / "result.json"
+    HighsDriver.main(
+        [
+            "--solver",
+            "highs",
+            "--instance",
+            str(instance),
+            "--output",
+            str(output),
+            "--trajectory",
+            str(tmp_path / "trajectory.jsonl"),
+            "--seed",
+            "1",
+            "--budget",
+            "1",
+            "--threads",
+            "1",
+        ]
+    )
+    result = json.loads(output.read_text())
+    solution_path = output.with_suffix(".solution.json")
+    assert result["valid"] is True
+    assert result["has_solution"] is True
+    assert result["solver_termination"] == SolverTermination.TIME_LIMIT
+    assert MIPFamily().verify(instance, solution_path).feasible
+
+
+def test_choco_driver_uses_python3() -> None:
+    assert ChocoRepositoryPlugin().driver_python == "python3"
+
+
+def test_vroom_driver_uses_python3() -> None:
+    from pitbench.repositories.plugins import VroomRepositoryPlugin
+
+    assert VroomRepositoryPlugin().driver_python == "python3"
+
+
+def test_vroom_build_uses_its_source_makefile_and_portable_header_flag() -> None:
+    from pitbench.repositories.plugins import VroomRepositoryPlugin
+
+    plugin = VroomRepositoryPlugin()
+    validation = plugin.build_commands(BuildKind.VALIDATION)
+    performance = plugin.build_commands(BuildKind.PERFORMANCE)
+
+    assert plugin.agent_environment is not None
+    assert "CXX=g++ -include vector -include array" in plugin.agent_environment.prebuild
+
+    assert validation == [
+        CommandSpec(
+            argv=[
+                "sh",
+                "-lc",
+                "cd src && test -f structures/typedefs.h && exec make -j1 "
+                '"CXX=g++ -include vector -include array" '
+                '"CXXFLAGS=-MMD -MP -I. -Isrc -std=c++20 -Wextra -Wpedantic -Wall '
+                "-O3 -DASIO_STANDALONE -DUSE_ROUTING=true -DNDEBUG "
+                '-D USE_LIBGLPK=true -DBOOST_LOG_DYN_LINK -O1 -g -fsanitize=address,undefined" 2>&1',
+            ]
+        )
+    ]
+    assert performance == [
+        CommandSpec(
+            argv=[
+                "sh",
+                "-lc",
+                "cd src && test -f structures/typedefs.h && exec make -j1 "
+                '"CXX=g++ -include vector -include array" '
+                '"CXXFLAGS=-MMD -MP -I. -Isrc -std=c++20 -Wextra -Wpedantic -Wall '
+                "-O3 -DASIO_STANDALONE -DUSE_ROUTING=true -DNDEBUG "
+                '-D USE_LIBGLPK=true -DBOOST_LOG_DYN_LINK" 2>&1',
+            ]
+        )
+    ]
+
+
+def test_ortools_build_reuses_evaluator_owned_dependency_cache() -> None:
+    from pitbench.repositories.plugins import (
+        OrToolsCpSatExactRepositoryPlugin,
+        OrToolsRepositoryPlugin,
+    )
+
+    prepare_cache, prepare_maven, copy_maven, configure, build = (
+        OrToolsRepositoryPlugin().build_commands(BuildKind.PERFORMANCE)
+    )
+
+    assert prepare_cache.argv == ["mkdir", "-p", "/tmp/ortools-deps"]
+    assert prepare_maven.argv == ["mkdir", "-p", "/tmp/ortools-maven"]
+    assert copy_maven.argv == [
+        "cp",
+        "-a",
+        "/root/.m2/repository/.",
+        "/tmp/ortools-maven",
+    ]
+    assert configure.argv[:6] == ["cmake", "-S", ".", "-B", "build", "-G"]
+    assert "-DFETCHCONTENT_BASE_DIR=/tmp/ortools-deps" in configure.argv
+    assert "-DCMAKE_BUILD_TYPE=Release" in configure.argv
+    assert "-DFETCHCONTENT_SOURCE_DIR_ZLIB=/opt/ortools-deps/zlib-src" in configure.argv
+    assert (
+        "-DFETCHCONTENT_SOURCE_DIR_BZIP2=/opt/ortools-deps/bzip2-src" in configure.argv
+    )
+    assert "-DFETCHCONTENT_SOURCE_DIR_ABSL=/opt/ortools-deps/absl-src" in configure.argv
+    assert (
+        "-DFETCHCONTENT_SOURCE_DIR_PROTOBUF=/opt/ortools-deps/protobuf-src"
+        in configure.argv
+    )
+    assert "-DFETCHCONTENT_SOURCE_DIR_RE2=/opt/ortools-deps/re2-src" in configure.argv
+    assert (
+        "-DFETCHCONTENT_SOURCE_DIR_EIGEN3=/opt/ortools-deps/eigen3-src"
+        in configure.argv
+    )
+    assert "-DBUILD_JAVA=ON" in configure.argv
+    assert "-DBUILD_DEPS=ON" in configure.argv
+    assert "-DBUILD_TESTING=OFF" in configure.argv
+    assert "-DUSE_GUROBI=ON" in configure.argv
+    assert "-DBUILD_SAMPLES=OFF" in configure.argv
+    assert "-DBUILD_EXAMPLES=OFF" in configure.argv
+    assert build.argv == [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "java_package",
+        "-j6",
+    ]
+    assert build.env == {"MAVEN_OPTS": "-Dmaven.repo.local=/tmp/ortools-maven"}
+
+    exact_commands = OrToolsCpSatExactRepositoryPlugin().build_commands(
+        BuildKind.PERFORMANCE
+    )
+    assert OrToolsCpSatExactRepositoryPlugin().driver_python == "python3"
+    assert exact_commands[-1].argv == [
+        "python3",
+        "/opt/pitbench-jvm/runner.py",
+        "compile",
+        "--solver",
+        "ortools_cp_sat",
+    ]
+
+
+def test_ortools_assignment_checker_source_is_evaluator_owned() -> None:
+    from adapters.jvm.runner import _ORTOOLS_CP_SAT_ASSIGNMENT_VERIFIER_SOURCE
+
+    assert _ORTOOLS_CP_SAT_ASSIGNMENT_VERIFIER_SOURCE.startswith(
+        "package org.pitbench.adapters;"
+    )
+    assert "addConstraintsBuilder" in _ORTOOLS_CP_SAT_ASSIGNMENT_VERIFIER_SOURCE
+    assert "assignment is infeasible in the fixed model" in (
+        _ORTOOLS_CP_SAT_ASSIGNMENT_VERIFIER_SOURCE
+    )
+
+
+def test_ortools_runner_uses_the_built_native_library_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from adapters.jvm import runner
+
+    captured: dict[str, object] = {}
+
+    def run(command, **kwargs):
+        captured["command"] = command
+        return SimpleNamespace(
+            returncode=0, stdout=json.dumps({"valid": True}), stderr=""
+        )
+
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "instance_path": "/instances/model.pb",
+                    "solver_seed": 17,
+                    "budget_sec": 10.0,
+                    "threads": 1,
+                    "parameters": {"cp_model_presolve": True},
+                }
+            )
+        ),
+    )
+    monkeypatch.setattr(runner.subprocess, "run", run)
+    monkeypatch.setattr(runner, "_adapter_output", lambda *args: tmp_path / "adapter")
+    monkeypatch.setattr(runner, "_ortools_classpath", lambda *args: "runner-classpath")
+
+    runner.run_ortools_cp_sat(tmp_path)
+
+    assert captured["command"][:4] == [
+        "java",
+        f"-Djava.library.path={tmp_path / 'build' / 'lib'}",
+        "-cp",
+        "runner-classpath",
+    ]
+
+
+def test_each_target_plugin_has_an_image_definition() -> None:
+    for name in ("pyvrp", "vroom", "highs", "choco", "ortools", "gecode"):
+        assert (ROOT / "docker/solver-images" / name / "Dockerfile").is_file()
+
+
+def test_gecode_driver_accepts_fixed_propagation_parameters(tmp_path: Path) -> None:
+    plugin = GecodeRepositoryPlugin()
+    parameters = tmp_path / "parameters.json"
+    parameters.write_text('{"gecode.bin_packing_propagation_level":"full"}\n')
+    command = plugin.run_command(
+        SolverRunSpec(
+            instance_path=tmp_path / "instance.json",
+            output_path=tmp_path / "result.json",
+            trajectory_path=tmp_path / "trajectory.jsonl",
+            solver_seed=0,
+            budget_sec=5,
+            threads=1,
+            parameters_path=parameters,
+        )
+    )
+    assert command.argv[:3] == [
+        "python3",
+        "-m",
+        "pitbench.solver_drivers.run",
+    ]
+    assert command.argv[3] == "gecode_exact"
+    assert command.argv[command.argv.index("--parameters") + 1] == str(parameters)
+    assert plugin.supports_fixed_solver_parameters is True
+    assert GecodeExactDriver.name == "gecode_exact"
+
+
+class _LegacyRoute:
+    def visits(self) -> list[int]:
+        return [1, 4]
+
+
+class _SingleCustomerLegacyRoute:
+    def visits(self) -> list[int]:
+        return [1]
+
+
+class _ModernRoute:
+    def __iter__(self):
+        return iter(
+            [
+                SimpleNamespace(idx=0, is_client=lambda: False),
+                SimpleNamespace(idx=0, is_client=lambda: True),
+                SimpleNamespace(idx=3, is_client=lambda: True),
+                SimpleNamespace(idx=0, is_client=lambda: False),
+            ]
+        )
+
+
+def test_route_extraction_supports_pre_and_post_v0_14_apis() -> None:
+    assert PyVRPDriver._route_visits(_LegacyRoute()) == [1, 4]
+    assert PyVRPDriver._route_visits(_ModernRoute()) == [1, 4]
+
+
+@pytest.mark.parametrize("direct_api", [True, False])
+def test_pyvrp_driver_avoids_model_conversion_when_supported(
+    tmp_path, monkeypatch, direct_api
+):
+    import types
+
+    data = object()
+    calls = []
+    result = SimpleNamespace(
+        best=SimpleNamespace(
+            is_feasible=lambda: True, routes=lambda: [_SingleCustomerLegacyRoute()]
+        ),
+        cost=lambda: 123,
+        runtime=0.1,
+        num_iterations=1,
+        stats=SimpleNamespace(
+            runtimes=[0.1],
+            feas_stats=[SimpleNamespace(size=1, best_cost=123)],
+        ),
+    )
+
+    def solve(problem, *, stop, seed, display=True):
+        assert problem is data
+        assert stop == 0.1 and seed == 17 and display is False
+        calls.append("solve")
+        return result
+
+    class Model:
+        @classmethod
+        def from_data(cls, problem):
+            assert not direct_api, "driver rebuilt the complete edge graph"
+            assert problem is data
+            calls.append("conversion")
+            return cls()
+
+        def solve(self, *, stop, seed, display=True):
+            return solve(data, stop=stop, seed=seed, display=display)
+
+    module = types.ModuleType("pyvrp")
+    module.Model = Model
+    module.read = lambda *args, **kwargs: data
+    if direct_api:
+        module.solve = solve
+    stop = types.ModuleType("pyvrp.stop")
+    stop.MaxRuntime = lambda seconds: seconds
+    monkeypatch.setitem(sys.modules, "pyvrp", module)
+    monkeypatch.setitem(sys.modules, "pyvrp.stop", stop)
+    instance = tmp_path / "instance.json"
+    instance.write_text(
+        json.dumps(
+            {
+                "coordinates": [[0, 0], [1, 1]],
+                "demands": [0, 1],
+                "capacity": 2,
+            }
+        )
+    )
+    output, trajectory = tmp_path / "result.json", tmp_path / "trajectory.jsonl"
+    PyVRPDriver.main(
+        [
+            "--instance",
+            str(instance),
+            "--output",
+            str(output),
+            "--trajectory",
+            str(trajectory),
+            "--seed",
+            "17",
+            "--budget",
+            "0.1",
+            "--threads",
+            "1",
+        ]
+    )
+    assert calls == (["solve"] if direct_api else ["conversion", "solve"])
+    assert json.loads(output.read_text())["objective"] == pytest.approx(2 * (2**0.5))
+    assert json.loads(output.with_suffix(".solution.json").read_text()) == {
+        "routes": [[1]],
+    }
+    trajectory_rows = [json.loads(line) for line in trajectory.read_text().splitlines()]
+    assert trajectory_rows[0] == {"time_sec": 0.1, "objective": 123.0}
+    assert trajectory_rows[-1] == {
+        "time_sec": 0.1,
+        "objective": pytest.approx(2 * (2**0.5)),
+    }
+
+
+def test_pyvrp_direct_solve_preserves_fixed_iteration_search(tmp_path):
+    pyvrp = pytest.importorskip("pyvrp")
+    from pyvrp.stop import MaxIterations
+
+    from pitbench.problem_families.public_verification import check_cvrp
+
+    instance = {
+        "coordinates": [[0, 0], [1, 2], [3, 4], [8, 2], [9, 6], [2, 8]],
+        "distance_metric": "EUC_2D",
+        "demands": [0, 1, 2, 1, 2, 1],
+        "capacity": 3,
+    }
+    path = tmp_path / "instance.vrp"
+    PyVRPDriver._vrplib(instance, path)
+    data = pyvrp.read(path, round_func=PyVRPDriver.round_euc_2d)
+    model = pyvrp.Model.from_data(data)
+    previous = model.solve(stop=MaxIterations(25), seed=17, display=False)
+    direct = pyvrp.solve(data, stop=MaxIterations(25), seed=17, display=False)
+
+    def routes(result):
+        return [PyVRPDriver._route_visits(route) for route in result.best.routes()]
+
+    assert routes(direct) == routes(previous)
+    assert direct.cost() == previous.cost()
+    checked = check_cvrp(instance, {"routes": routes(direct)})
+    assert checked["feasible"] and checked["objective"] == direct.cost()
+
+
+def test_statistics_supports_v0_12_instance_set_layout() -> None:
+    stats = SimpleNamespace(
+        runtimes=[0.1, 0.2],
+        feas_stats=[
+            SimpleNamespace(size=0, best_cost=float("nan")),
+            SimpleNamespace(size=2, best_cost=123),
+        ],
+    )
+
+    rows = list(PyVRPDriver._statistics_rows(stats))
+
+    assert rows[0][0:2] == (0.1, False)
+    assert rows[1] == (0.2, True, 123)
+
+
+def test_statistics_supports_v0_13_and_v0_14_iterable_layout() -> None:
+    class Stats:
+        runtimes = [0.1, 0.2]
+
+        def __iter__(self):
+            return iter(
+                [
+                    SimpleNamespace(best_feas=False, best_cost=999),
+                    SimpleNamespace(best_feas=True, best_cost=123),
+                ]
+            )
+
+    assert list(PyVRPDriver._statistics_rows(Stats())) == [
+        (0.1, False, 999),
+        (0.2, True, 123),
+    ]
+
+
+def test_vrplib_uses_declared_euc_2d_semantics(tmp_path) -> None:
+    instance = {
+        "name": "rounded",
+        "coordinates": [[0, 0], [1, 1]],
+        "demands": [0, 1],
+        "capacity": 1,
+        "distance_metric": "EUC_2D",
+    }
+    path = tmp_path / "instance.vrp"
+
+    PyVRPDriver._vrplib(instance, path)
+
+    assert "EDGE_WEIGHT_TYPE : EUC_2D" in path.read_text()
+
+
+def test_euc_2d_half_distances_match_the_independent_verifier():
+    import numpy as np
+
+    from pitbench.problem_families.public_verification import edge_cost
+
+    values = np.array([0.5, 1.5, 2.5, 3.5])
+    rounded = PyVRPDriver.round_euc_2d(values)
+    assert (
+        rounded.tolist()
+        == [
+            edge_cost([[0, 0], [float(distance), 0]], 0, 1, "EUC_2D")
+            for distance in values
+        ]
+        == [1, 2, 3, 4]
+    )
+
+
+@pytest.mark.external
+def test_pyvrp_loader_preserves_exact_half_distance_semantics(tmp_path):
+    pyvrp = pytest.importorskip("pyvrp")
+    instance = {
+        "coordinates": [[0, 0], [0.5, 0], [1.5, 0]],
+        "demands": [0, 1, 1],
+        "capacity": 2,
+        "distance_metric": "EUC_2D",
+    }
+    path = tmp_path / "half.vrp"
+    PyVRPDriver._vrplib(instance, path)
+    data = pyvrp.read(path, round_func=PyVRPDriver.round_euc_2d)
+    assert data.distance_matrix(0).tolist() == [[0, 1, 2], [1, 0, 1], [2, 1, 0]]
+
+
+def test_vrplib_rejects_incompatible_declared_distance_semantics(tmp_path) -> None:
+    instance = {
+        "coordinates": [[0, 0], [1, 1]],
+        "demands": [0, 1],
+        "capacity": 1,
+        "distance_metric": "EXACT_2D",
+    }
+
+    with pytest.raises(ValueError, match="only supports.*EUC_2D"):
+        PyVRPDriver._vrplib(instance, tmp_path / "instance.vrp")
+
+
+def test_pyvrp_builds_and_runs_in_per_workspace_virtual_environments(
+    tmp_path,
+) -> None:
+    plugin = PyVRPRepositoryPlugin()
+
+    validation = plugin.build_commands(BuildKind.VALIDATION)
+    performance = plugin.build_commands(BuildKind.PERFORMANCE)
+    run = plugin.run_command(
+        SolverRunSpec(
+            instance_path=tmp_path / "instance.json",
+            output_path=tmp_path / "result.json",
+            trajectory_path=tmp_path / "trajectory.jsonl",
+            solver_seed=0,
+            budget_sec=1,
+            threads=1,
+        )
+    )
+
+    assert validation[0].argv[-2:] == ["--system-site-packages", ".pitbench-venv"]
+    assert performance[0].argv[-2:] == ["--system-site-packages", ".pitbench-venv"]
+    assert all(
+        command.argv[0] == ".pitbench-venv/bin/python"
+        for command in (*validation[1:], *performance[1:])
+    )
+    assert validation[1].argv[3:5] == ["--build_type", "debug"]
+    assert validation[1].argv[-5:] == [
+        "-Doptimization=1",
+        "-Ddebug=true",
+        "-Db_sanitize=address,undefined",
+        "-Db_coverage=false",
+        "-Db_lto=false",
+    ]
+    assert "prepare_metadata_for_build_wheel" in validation[2].argv[-1]
+    assert validation[3].env["LD_PRELOAD"] == "libasan.so.8:libstdc++.so.6"
+    assert validation[3].env["PYTHONPATH"] == ".pitbench-metadata"
+    assert validation[3].env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+    assert "--no-build-isolation" in performance[1].argv
+    assert validation[3].argv[-6:] == [
+        "-o",
+        "addopts=",
+        "tests",
+        "--ignore=tests/plotting",
+        "--junitxml=.pitbench-upstream-tests.xml",
+        "--deselect=tests/search/test_LocalSearch.py::test_debug_operator_logs",
+    ]
+    assert run.argv[0] == ".pitbench-venv/bin/python"
+
+
+def test_historical_pyvrp_validation_keeps_sanitizers_without_debug_logging() -> None:
+    from pitbench.repositories.plugins import PyVRPDebugOptimizedRepositoryPlugin
+
+    historical = PyVRPDebugOptimizedRepositoryPlugin()
+    validation = historical.build_commands(BuildKind.VALIDATION)
+    current = PyVRPRepositoryPlugin().build_commands(BuildKind.VALIDATION)
+
+    assert validation[1].argv[3:5] == ["--build_type", "debugoptimized"]
+    assert "-Db_sanitize=address,undefined" in validation[1].argv
+    assert current[1].argv[3:5] == ["--build_type", "debug"]

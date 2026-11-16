@@ -33,9 +33,16 @@ for task_id in "$@"; do
     echo "$task_id already completed in this batch; preserving its results"
     continue
   fi
+  # Frozen older batches retain their original entry point and are replayed
+  # through that snapshot, rather than modifying its recorded source.
+  if [[ -f "$BATCH_DIR/harness/scripts/collect.py" ]]; then
+    entry=("$BATCH_DIR/harness/scripts/collect.py" seeds)
+  else
+    entry=("$BATCH_DIR/harness/scripts/validate_seed_robustness_real_solver.py")
+  fi
   command=(
     "${PITBENCH_PYTHON:-python}"
-    "$BATCH_DIR/harness/scripts/validate_seed_robustness_real_solver.py"
+    "${entry[@]}"
     --task-config "$BATCH_DIR/harness/configs/tasks/$task_id.yaml"
     --repository "$BATCH_DIR/sources/$task_id"
     --private-root "$PRIVATE_ROOT"

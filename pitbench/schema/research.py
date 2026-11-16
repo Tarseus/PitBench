@@ -170,7 +170,9 @@ class GeneralizationStudyPlan(BaseModel):
     population_plan: str
     research_budget: ResearchBudget
     agent_attempts_per_condition: int = Field(gt=0)
-    comparison_mode: Literal["three_arm", "model_repeats", "agent_augmentation"] = "three_arm"
+    comparison_mode: Literal["three_arm", "model_repeats", "agent_augmentation"] = (
+        "three_arm"
+    )
     arms: list[StudyArm] = Field(min_length=1, max_length=3)
     shared_agent_tools: list[str] = Field(min_length=1)
     required_scenario_kinds: list[
@@ -178,7 +180,9 @@ class GeneralizationStudyPlan(BaseModel):
     ] = Field(min_length=1)
     inference_scope: str = Field(min_length=20)
     evaluation_seed_policy: StudySeedPolicy | None = None
-    task_evaluation_seed_policies: dict[str, StudySeedPolicy] = Field(default_factory=dict)
+    task_evaluation_seed_policies: dict[str, StudySeedPolicy] = Field(
+        default_factory=dict
+    )
     task_targets: dict[str, StudyTaskTarget] = Field(default_factory=dict)
     evaluation_run_target: int | None = Field(default=None, gt=0)
     supplemental_seed_count: int | None = Field(default=None, gt=0)
@@ -200,12 +204,24 @@ class GeneralizationStudyPlan(BaseModel):
             if arms["standard"].require_candidate_hypotheses:
                 raise ValueError("the standard condition does not add an intervention")
         elif self.comparison_mode == "agent_augmentation":
-            if len(self.arms) != 2 or sum(a.agent_import_path is not None for a in self.arms) != 1:
-                raise ValueError("augmentation comparison needs one ordinary and one custom Agent")
-            if len({a.development_view for a in self.arms}) != 1 or len({a.instruction for a in self.arms}) != 1:
-                raise ValueError("augmentation comparison must share data and task instructions")
+            if (
+                len(self.arms) != 2
+                or sum(a.agent_import_path is not None for a in self.arms) != 1
+            ):
+                raise ValueError(
+                    "augmentation comparison needs one ordinary and one custom Agent"
+                )
+            if (
+                len({a.development_view for a in self.arms}) != 1
+                or len({a.instruction for a in self.arms}) != 1
+            ):
+                raise ValueError(
+                    "augmentation comparison must share data and task instructions"
+                )
             if any(a.require_candidate_hypotheses for a in self.arms):
-                raise ValueError("augmentation comparison does not add PitBench hypothesis registration")
+                raise ValueError(
+                    "augmentation comparison does not add PitBench hypothesis registration"
+                )
         elif (
             set(arms) != {"original", "diverse", "mechanism_aware"}
             or len(self.arms) != 3
@@ -244,6 +260,9 @@ class GeneralizationStudyPlan(BaseModel):
         if len(set(self.task_configs)) != len(self.task_configs):
             raise ValueError("study task configurations must be unique")
         task_ids = {Path(path).stem for path in self.task_configs}
-        if set(self.task_evaluation_seed_policies) - task_ids or set(self.task_targets) - task_ids:
+        if (
+            set(self.task_evaluation_seed_policies) - task_ids
+            or set(self.task_targets) - task_ids
+        ):
             raise ValueError("task-specific study settings refer to an unselected task")
         return self

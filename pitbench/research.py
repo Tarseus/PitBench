@@ -64,7 +64,9 @@ def prepare_targeted_study_views(
         source = evaluator_task_configs.get(task_id, original_record.task_config_path)
         task = catalog.validate_file(source).task.model_copy(deep=True)
         if not study_evaluation_matches(original, task, plan):
-            raise ValueError("targeted study changed the frozen release or primary evaluation")
+            raise ValueError(
+                "targeted study changed the frozen release or primary evaluation"
+            )
         target = plan.task_targets.get(task_id)
         if target is not None:
             task.problem_variant = target.problem_variant
@@ -75,25 +77,34 @@ def prepare_targeted_study_views(
         task = PitBenchTask.model_validate(task.model_dump())
         task_path = destination / "evaluator" / (task_id + ".yaml")
         task_path.parent.mkdir(exist_ok=True)
-        task_path.write_text(yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False))
+        task_path.write_text(
+            yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False)
+        )
         scenario = scenario_configs.get(task_id)
         if task.metric_scenarios and scenario is None:
-            raise ValueError("declared scenarios need their source-bound runtime configuration")
+            raise ValueError(
+                "declared scenarios need their source-bound runtime configuration"
+            )
         declared = {p.kind for p in task.metric_scenarios}
-        public_panel = next(p for p in task.instance_sets if p.kind == InstanceSetKind.AGENT_DEV)
+        public_panel = next(
+            p for p in task.instance_sets if p.kind == InstanceSetKind.AGENT_DEV
+        )
         metadata = {
             "evaluator_task_config": str(task_path),
             "evaluator_sha256": _sha(task_path),
             "scientific_panels": {
                 p.name: {"instances": p.size}
                 for p in task.instance_sets
-                if p.name not in {q.name for q in original.instance_sets} and not p.scenario_only
+                if p.name not in {q.name for q in original.instance_sets}
+                and not p.scenario_only
             },
             "target_problem": task.problem_variant or task.problem_family.value,
             "primary_panel": "judge_id",
             "cross_problem_performance_role": "separate_transfer_reporting",
             "available_scenario_kinds": sorted(declared),
-            "unavailable_scenario_kinds": sorted(set(plan.required_scenario_kinds) - declared),
+            "unavailable_scenario_kinds": sorted(
+                set(plan.required_scenario_kinds) - declared
+            ),
             "development_original_size": public_panel.size,
         }
         views["input_files_sha256"][str(source.resolve())] = _sha(source)
@@ -106,7 +117,11 @@ def prepare_targeted_study_views(
                 relative_config = development_configs[task_id]
                 development = _public_asset(root, relative_config)
                 payload = yaml.safe_load(development.read_text())
-                panel = next(p for p in public.instance_sets if p.kind == InstanceSetKind.AGENT_DEV)
+                panel = next(
+                    p
+                    for p in public.instance_sets
+                    if p.kind == InstanceSetKind.AGENT_DEV
+                )
                 panel.instance_set_config = relative_config
                 panel.instance_set_config_sha256 = _sha(development)
                 panel.size = len(payload["instances"])
@@ -114,14 +129,18 @@ def prepare_targeted_study_views(
             public.instruction += "\n\n" + arm.instruction
             public_path = destination / "agent" / arm.id / (task_id + ".yaml")
             public_path.parent.mkdir(parents=True, exist_ok=True)
-            public_path.write_text(yaml.safe_dump(public.model_dump(mode="json"), sort_keys=False))
+            public_path.write_text(
+                yaml.safe_dump(public.model_dump(mode="json"), sort_keys=False)
+            )
             views["arms"][arm.id][task_id] = {
                 "task_config_path": str(task_path),
                 "agent_task_config_path": str(public_path),
                 "candidate_hypotheses_required": arm.require_candidate_hypotheses,
             }
             metadata["development_diverse_size"] = next(
-                p.size for p in public.instance_sets if p.kind == InstanceSetKind.AGENT_DEV
+                p.size
+                for p in public.instance_sets
+                if p.kind == InstanceSetKind.AGENT_DEV
             )
         views["tasks"][task_id] = metadata
     path = destination / "task-views.json"
@@ -333,7 +352,8 @@ def qualify_scenario_runtime(
         [
             python,
             "-m",
-            "scripts.collect_metric_scenarios",
+            "scripts.collect",
+            "scenarios",
             "probe",
             "--session-plugin",
             plugin.scenario_session_plugin,
@@ -993,16 +1013,16 @@ def _construct_generalization_populations(
                         raise ValueError(
                             f"requested distribution feature was not realized: {name}:{feature}"
                         )
-                for feature, allowed in definition["condition"].get(
-                    "expected_feature_values", {}
-                ).items():
+                for feature, allowed in (
+                    definition["condition"].get("expected_feature_values", {}).items()
+                ):
                     if entry["features"].get(feature) not in allowed:
                         raise ValueError(
                             f"observed feature is outside declared levels: {name}:{feature}"
                         )
-                for feature, bounds in definition["condition"].get(
-                    "expected_feature_ranges", {}
-                ).items():
+                for feature, bounds in (
+                    definition["condition"].get("expected_feature_ranges", {}).items()
+                ):
                     observed = entry["features"].get(feature)
                     if (
                         not isinstance(bounds, list)
@@ -1424,9 +1444,10 @@ def import_population_references(
             },
             verification_provenance="pitbench.problem_families.verification:TrustedOptimumFamily",
         )
-        if TrustedOptimumFamily(
-            record, solution_target
-        )._check_oracle(path) is not None:
+        if (
+            TrustedOptimumFamily(record, solution_target)._check_oracle(path)
+            is not None
+        ):
             raise ValueError(
                 "imported target failed reference/oracle consistency checks"
             )
@@ -1791,9 +1812,7 @@ def materialize_generalization_views(
             "set_covering": {"random_set_covering_mip"},
             "facility_location": {"facility_location_mip"},
             "scheduling": {"single_machine_weighted_tardiness_mip"},
-            "single_machine_scheduling": {
-                "single_machine_weighted_tardiness_mip"
-            },
+            "single_machine_scheduling": {"single_machine_weighted_tardiness_mip"},
             "bin_packing": {"bin_packing"},
             "graph_coloring": {"graph_coloring", "graph_coloring_mip"},
             "job_shop_scheduling": {"job_shop_scheduling"},
@@ -1977,7 +1996,9 @@ def materialize_generalization_views(
                         "instance_file": data.relative_to(public_folder).as_posix(),
                         "instance_file_sha256": _sha(data),
                         "bks": item["bks"],
-                        "bks_solution_file": solution.relative_to(public_folder).as_posix(),
+                        "bks_solution_file": solution.relative_to(
+                            public_folder
+                        ).as_posix(),
                         "bks_solution_file_sha256": _sha(solution),
                         "proven_optimal": item.get("proven_optimal"),
                     }
@@ -2315,7 +2336,9 @@ def prepare_generalization_seed_views(
     resolver = PrivateAssetResolver(private_root)
     files, counts = {}, {}
     for task_id in selected:
-        policy = plan.task_evaluation_seed_policies.get(task_id, plan.evaluation_seed_policy)
+        policy = plan.task_evaluation_seed_policies.get(
+            task_id, plan.evaluation_seed_policy
+        )
         if policy is None:
             continue
         metadata = result["tasks"][task_id]
@@ -2421,7 +2444,9 @@ def study_evaluation_matches(
         return False
     if original.evaluation == study.evaluation:
         return True
-    policy = plan.task_evaluation_seed_policies.get(original.task_id, plan.evaluation_seed_policy)
+    policy = plan.task_evaluation_seed_policies.get(
+        original.task_id, plan.evaluation_seed_policy
+    )
     current = study.evaluation.seed_robustness
     if policy is None or current is None or study.evaluation.solver_seeds is not None:
         return False

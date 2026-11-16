@@ -171,7 +171,8 @@ class PyVRPDriver(SolverDriver):
     @staticmethod
     def _routing_variant_model(pyvrp, instance: dict):
         """Build heterogeneous, multi-depot, or open routing data from normalized nodes."""
-        from pyvrp import Location, Model
+        from pyvrp import Model
+
         from pitbench.problem_families.public_verification import edge_cost
 
         model = Model()
@@ -183,7 +184,7 @@ class PyVRPDriver(SolverDriver):
             depot: model.add_depot(locations[depot], name=f"depot_{depot}")
             for depot in instance["depots"]
         }
-        clients = [
+        _clients = [
             model.add_client(
                 locations[node],
                 delivery=int(instance["demands"][node]),
@@ -278,8 +279,8 @@ class PyVRPDriver(SolverDriver):
                 }
                 variant_clients = None
                 if variant:
-                    native_model, variant_clients = (
-                        PyVRPDriver._routing_variant_model(pyvrp, instance)
+                    native_model, variant_clients = PyVRPDriver._routing_variant_model(
+                        pyvrp, instance
                     )
                     result = native_model.solve(
                         stop=MaxRuntime(args.budget),
@@ -369,9 +370,7 @@ class PyVRPDriver(SolverDriver):
             solution_path = write_solution(args.output, solution)
             checked = CVRPFamily().verify(args.instance, solution_path)
             if not checked.feasible or checked.objective is None:
-                raise ValueError(
-                    f"PyVRP returned an invalid route: {checked.detail}"
-                )
+                raise ValueError(f"PyVRP returned an invalid route: {checked.detail}")
             objective = float(checked.objective)
             elapsed = 0.0
             incumbent = float("inf")
@@ -985,9 +984,7 @@ class HighsDriver(SolverDriver):
                     if raw_solution.exists()
                     else ""
                 )
-                exported_columns = re.search(
-                    r"(?m)^#?\s*Columns(?:\s+\d+)?\s*$", raw
-                )
+                exported_columns = re.search(r"(?m)^#?\s*Columns(?:\s+\d+)?\s*$", raw)
                 if raw_solution.exists():
                     # Retain evidence even when a time limit prevents exporting
                     # a qualified incumbent. A finite log bound alone is not a
@@ -1043,6 +1040,10 @@ class HighsDriver(SolverDriver):
             has_solution = (
                 objective is not None
                 and exported_columns is not None
+                and (
+                    solver_termination == SolverTermination.OPTIMAL
+                    or re.search(r"(?mi)^\s*Feasible\s*$", raw) is not None
+                )
             )
             if has_solution:
                 write_solution(
@@ -1111,7 +1112,9 @@ class NativeMipCliDriver(SolverDriver):
         for name, value in sorted(parameters.items()):
             if cls.dialect == "cbc" and name.lower() == "threads":
                 if value != 1:
-                    raise ParameterRejected("native MIP tasks require one solver thread")
+                    raise ParameterRejected(
+                        "native MIP tasks require one solver thread"
+                    )
                 continue
             if (
                 not isinstance(name, str)

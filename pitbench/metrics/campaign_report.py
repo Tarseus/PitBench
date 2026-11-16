@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import re
+import statistics
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from importlib.resources import files
@@ -21,6 +22,10 @@ from jinja2 import Environment, select_autoescape
 from pydantic import ValidationError
 
 from pitbench.evaluator.storage import ObservationStore
+from pitbench.harness.utils.agent_trace import read_trace
+from pitbench.harness.utils.artifact_storage import (
+    file_identity as artifact_file_identity,
+)
 from pitbench.metrics.objective_report import compute_objective_report
 from pitbench.metrics.performance_report import (
     _run_key,
@@ -52,19 +57,37 @@ def _write_json(path: Path, value: Any) -> None:
 
 
 def _condition_index(source: Path, runs_root: Path, index: Path | None) -> list[dict]:
-    if index is not None:
-        payload = _read(index)
-        return payload["conditions"] if isinstance(payload, dict) else payload
+    snapshot_path = index if index is not None else source / "model-runs.json"
+    snapshot = _read(snapshot_path) if snapshot_path.is_file() else []
+    snapshot = snapshot["conditions"] if isinstance(snapshot, dict) else snapshot
+    cohort_path = source / "cohort.json"
     study_statuses = sorted((source / "agent-status").glob("*/status.json"))
-    if study_statuses:
+    if cohort_path.is_file() or study_statuses:
+        planned = _read(cohort_path)["jobs"] if cohort_path.is_file() else snapshot
+        if not planned:
+            planned = [
+                {**_read(path), "condition_id": path.parent.name}
+                for path in study_statuses
+            ]
+        saved = {row.get("condition_id", row.get("run_id")): row for row in snapshot}
         records = []
-        for path in study_statuses:
-            state = _read(path)
+        for job in planned:
+            identity = job.get("condition_id", job.get("run_id"))
+            state = {**job, **saved.get(identity, {})}
+            path = (
+                source
+                / "agent-status"
+                / str(job.get("run_id", identity))
+                / "status.json"
+            )
+            if path.is_file():
+                state.update(_read(path))
+            state.setdefault("status", "not_started")
             model = state.get("model")
             records.append(
                 {
                     **state,
-                    "condition_id": path.parent.name,
+                    "condition_id": identity,
                     "model": model.get("model") if isinstance(model, dict) else model,
                     "setting": model.get("setting", "unspecified")
                     if isinstance(model, dict)
@@ -72,6 +95,8 @@ def _condition_index(source: Path, runs_root: Path, index: Path | None) -> list[
                 }
             )
         return records
+    if index is not None:
+        return snapshot
     statuses = sorted((source / "model-status").glob("*/status.json"))
     if statuses:
         return [{**_read(path), "condition_id": path.parent.name} for path in statuses]
@@ -108,6 +133,38 @@ def _result_path(source: Path, runs_root: Path, record: dict) -> Path:
         source / record["run_id"] / "results.json",
     ]
     return next((path for path in candidates if path.is_file()), candidates[1])
+
+
+def retained_conditions(source: Path, runs_root: Path) -> list[dict]:
+    """Common complete condition selection for reporting, diagnostics and export."""
+    indexed = _condition_index(source, runs_root, None)
+    audit_path = source / "final-model-audit-summary.json"
+    if not audit_path.is_file():
+        return indexed
+    audit = _read(audit_path).get("conditions", [])
+    explicit = (source / "cohort.json").is_file() or (
+        source / "model-runs.json"
+    ).is_file()
+    records, additions = (list(indexed), audit) if explicit else (list(audit), indexed)
+    for row in additions:
+        identity = (
+            row.get("execution_run_id") or row.get("run_id") or row.get("condition_id")
+        )
+        associated = False
+        for known in records:
+            names = {
+                known.get("condition_id"),
+                known.get("run_id"),
+                known.get("execution_run_id"),
+            } - {None}
+            if identity in names or any(
+                str(identity).startswith(str(name) + "-infra") for name in names
+            ):
+                associated = True
+                break
+        if not associated:
+            records.append(row)
+    return records
 
 
 def _point(
@@ -406,7 +463,12 @@ def _inventory(row: dict, trial: dict, evaluation_dir: Path, task_path: Path) ->
             "frozen task configuration unavailable; catalog coverage cannot be verified"
         )
         return
-    checkpoint = evaluation_dir / "judge-checkpoint.json"
+    artifacts = (trial.get("evaluation") or {}).get("payload", {}).get("artifacts", {})
+    grid_path = evaluation_dir / (artifacts.get("expected_run_grid") or {}).get(
+        "path", "expected-run-grid.json"
+    )
+    measurement_root = grid_path.parent
+    checkpoint = measurement_root / "judge-checkpoint.json"
     if checkpoint.is_file():
         expected_hash = _read(checkpoint).get("identity", {}).get("task_config_sha256")
         if (
@@ -421,7 +483,6 @@ def _inventory(row: dict, trial: dict, evaluation_dir: Path, task_path: Path) ->
     if task.task_id != row["task_id"]:
         raise ValueError("report task configuration belongs to another task")
     summary = EvaluationSummary.model_validate(row["native_summary"])
-    artifacts = (trial.get("evaluation") or {}).get("payload", {}).get("artifacts", {})
     observations_path = evaluation_dir / (artifacts.get("observations") or {}).get(
         "path", "trials.parquet"
     )
@@ -430,7 +491,6 @@ def _inventory(row: dict, trial: dict, evaluation_dir: Path, task_path: Path) ->
         if observations_path.is_file()
         else None
     )
-    grid_path = evaluation_dir / "expected-run-grid.json"
     if (
         observations is not None
         and grid_path.is_file()
@@ -494,11 +554,21 @@ def _inventory(row: dict, trial: dict, evaluation_dir: Path, task_path: Path) ->
                 }
             )
             _observed_scale_slices(row, task, grid, selected)
-    representation_path = evaluation_dir / "representation/details.json"
+    representation_ref = artifacts.get("representation_robustness_details")
+    representation_path = (
+        evaluation_dir / representation_ref["path"]
+        if representation_ref
+        else measurement_root / "representation/details.json"
+    )
     representation = None
     if representation_path.is_file():
         details = _read(representation_path)
-        patch_path = evaluation_dir / "candidate.patch"
+        patch_ref = artifacts.get("candidate_patch")
+        patch_path = (
+            evaluation_dir / patch_ref["path"]
+            if patch_ref
+            else measurement_root / "candidate.patch"
+        )
         if (
             patch_path.is_file()
             and details.get("candidate_patch_sha256")
@@ -1454,3 +1524,408 @@ def write_campaign_report(
         template.render(report=report, catalog=objective_catalog())
     )
     return report
+
+
+def mean(values):
+    return statistics.fmean(values) if values else None
+
+
+def observation_diagnostics(
+    directory,
+    performance,
+    expected,
+    outcome_function,
+    observation_class,
+    time_basis_class,
+):
+    obs_path = directory / "judge-observations.jsonl"
+    if not obs_path.exists():
+        return {"missing_observation_file": True}
+    observations = [json.loads(line) for line in obs_path.open() if line.strip()]
+    exact = "time_basis" in performance
+    by_budget = defaultdict(dict)
+    statuses = Counter()
+    all_grid_keys = set()
+    duplicate_keys = []
+    for row in observations:
+        fullkey = (
+            row["code_state"],
+            row["instance_set"],
+            row["instance_id"],
+            row["solver_seed"],
+            row["budget_sec"],
+            row.get("test_suite"),
+            row.get("equivalence_parent_id"),
+        )
+        if fullkey in all_grid_keys:
+            duplicate_keys.append(fullkey)
+        all_grid_keys.add(fullkey)
+        statuses[row["code_state"] + ":" + row["status"]] += 1
+        if (
+            row.get("instance_set_kind") != "judge_id"
+            or row.get("test_suite")
+            or row.get("equivalence_parent_id")
+        ):
+            continue
+        key = (row["instance_id"], row["solver_seed"])
+        by_budget[row["budget_sec"]].setdefault(key, {})[row["code_state"]] = row
+    expected_keys = {
+        (
+            row["code_state"],
+            row["instance_set"],
+            row["instance_id"],
+            row["solver_seed"],
+            row["budget_sec"],
+            row.get("test_suite"),
+            row.get("equivalence_parent_id"),
+        )
+        for row in expected.get("runs", [])
+    }
+    result = {
+        "observations": len(observations),
+        "state_status_counts": dict(statuses),
+        "expected_grid_rows": len(expected_keys),
+        "missing_grid_rows": len(expected_keys - all_grid_keys),
+        "unexpected_grid_rows": len(all_grid_keys - expected_keys),
+        "duplicate_grid_rows": len(duplicate_keys),
+        "by_budget": {},
+    }
+    for budget, pairs in sorted(by_budget.items()):
+        per_instance = defaultdict(lambda: defaultdict(list))
+        missing_pairs = 0
+        progress = Counter()
+        work = defaultdict(list)
+        for (instance, seed), states in pairs.items():
+            if set(states) != {"base", "agent"}:
+                missing_pairs += 1
+                continue
+            base, agent = states["base"], states["agent"]
+            for state, row in states.items():
+                trajectory = row.get("trajectory_path")
+                if trajectory:
+                    path = directory / trajectory.removeprefix("/output/")
+                    if path.is_file():
+                        lines = sum(1 for line in path.open() if line.strip())
+                        progress[state + ":files"] += 1
+                        progress[state + ":multiple_records"] += lines > 1
+                        progress[state + ":single_record"] += lines == 1
+                    else:
+                        progress[state + ":missing_file"] += 1
+                for key in ["iterations", "nodes", "wall_time_sec", "cpu_time_sec"]:
+                    if row.get(key) is not None:
+                        work[state + ":" + key].append(row[key])
+            inst = per_instance[instance]
+            inst["seeds"].append(seed)
+            if exact:
+                outcomes = {
+                    name: outcome_function(
+                        observation_class.model_validate(row),
+                        time_basis=time_basis_class(performance["time_basis"]),
+                    )
+                    for name, row in states.items()
+                }
+                for name, outcome in outcomes.items():
+                    inst[name + "_outcomes"].append(outcome.kind.value)
+                if all(
+                    value.solved is not None and value.penalized_runtime_sec is not None
+                    for value in outcomes.values()
+                ):
+                    inst["coverage_delta"].append(
+                        float(outcomes["agent"].solved) - float(outcomes["base"].solved)
+                    )
+                    inst["runtime_reduction"].append(
+                        outcomes["base"].penalized_runtime_sec
+                        - outcomes["agent"].penalized_runtime_sec
+                    )
+                    inst["base_metric"].append(outcomes["base"].penalized_runtime_sec)
+                    inst["agent_metric"].append(outcomes["agent"].penalized_runtime_sec)
+            elif all(
+                row.get("valid") and row.get("normalized_gap") is not None
+                for row in states.values()
+            ):
+                inst["gap_reduction"].append(
+                    base["normalized_gap"] - agent["normalized_gap"]
+                )
+                inst["base_metric"].append(base["normalized_gap"])
+                inst["agent_metric"].append(agent["normalized_gap"])
+        points = []
+        coordinate = "coverage_delta" if exact else "gap_reduction"
+        if (
+            exact
+            and mean(
+                [
+                    mean(v["coverage_delta"])
+                    for v in per_instance.values()
+                    if v["coverage_delta"]
+                ]
+            )
+            == 0
+        ):
+            coordinate = "runtime_reduction"
+        for instance, values in sorted(per_instance.items()):
+            point = {
+                "instance_id": instance,
+                "paired_seeds": len(values["seeds"]),
+                "valid_primary_pairs": len(values[coordinate]),
+                "base_mean": mean(values["base_metric"]),
+                "agent_mean": mean(values["agent_metric"]),
+                "effect": mean(values[coordinate]),
+            }
+            if exact:
+                point.update(
+                    coverage_delta=mean(values["coverage_delta"]),
+                    runtime_reduction=mean(values["runtime_reduction"]),
+                    base_outcomes=dict(Counter(values["base_outcomes"])),
+                    agent_outcomes=dict(Counter(values["agent_outcomes"])),
+                )
+            if len(values[coordinate]) > 1:
+                point["within_instance_seed_sd"] = statistics.stdev(values[coordinate])
+            points.append(point)
+        deltas = [point["effect"] for point in points if point["effect"] is not None]
+        leave_one_out = (
+            [(sum(deltas) - v) / (len(deltas) - 1) for v in deltas]
+            if len(deltas) > 1
+            else []
+        )
+        result["by_budget"][f"{budget:g}"] = {
+            "coordinate": coordinate,
+            "units": "fraction"
+            if coordinate in ["coverage_delta", "gap_reduction"]
+            else "seconds",
+            "paired_instances": len(points),
+            "paired_seed_cells": len(pairs) - missing_pairs,
+            "missing_pairs": missing_pairs,
+            "better_instances": sum(v > 0 for v in deltas),
+            "equal_instances": sum(v == 0 for v in deltas),
+            "worse_instances": sum(v < 0 for v in deltas),
+            "equal_instance_mean": mean(deltas),
+            "median": statistics.median(deltas) if deltas else None,
+            "leave_one_instance_out_min": min(leave_one_out) if leave_one_out else None,
+            "leave_one_instance_out_max": max(leave_one_out) if leave_one_out else None,
+            "top_absolute_contribution_share": max(map(abs, deltas))
+            / sum(map(abs, deltas))
+            if deltas and sum(map(abs, deltas))
+            else None,
+            "mean_recorded_work": {key: mean(value) for key, value in work.items()},
+            "trajectory_record_counts": dict(progress),
+            "instances": points,
+        }
+    return result
+
+
+def trace_diagnostics(run, root):
+    messages, commands, traces = [], {}, []
+    first_change = None
+    patch_states = set()
+    for path in run.glob("*/*/agent-trace/*/events.jsonl"):
+        coverage_path = path.parent / "coverage.json"
+        coverage = _read(coverage_path) if coverage_path.exists() else {}
+        finishes = []
+        budget_summary = None
+        for event in read_trace(path):
+            kind = event["event"]
+            if kind not in [
+                "agent.event",
+                "repository.checkpoint",
+                "execution.finished",
+                "research.budget_summary",
+            ]:
+                continue
+            data = event["data"]
+            source = {
+                "path": str(path.relative_to(root))
+                if path.is_relative_to(root)
+                else str(path),
+                "sequence": event["sequence"],
+                "timestamp": event["timestamp"],
+            }
+            if kind == "repository.checkpoint":
+                patch = data.get("patch", {})
+                sha = patch.get("sha256")
+                if sha:
+                    patch_states.add(sha)
+                if patch.get("bytes", 0) > 0 and (
+                    first_change is None or event["timestamp"] < first_change
+                ):
+                    first_change = event["timestamp"]
+            elif kind == "execution.finished":
+                finishes.append(data)
+            elif kind == "research.budget_summary":
+                budget_summary = data.get("summary", data)
+            else:
+                native = data.get("native", {})
+                item = native.get("item", {})
+                if (
+                    native.get("type") == "item.completed"
+                    and item.get("type") == "agent_message"
+                ):
+                    messages.append(
+                        {
+                            **source,
+                            "native_id": item.get("id"),
+                            "text": item.get("text", ""),
+                        }
+                    )
+                if item.get("type") == "command_execution":
+                    ident = path.parent.name + ":" + item.get("id", "")
+                    old = commands.get(ident, {})
+                    commands[ident] = {
+                        **source,
+                        "started_at": old.get("started_at", event["timestamp"]),
+                        "command": item.get("command", ""),
+                        "exit_code": item.get("exit_code"),
+                        "status": item.get("status"),
+                        "output_excerpt": item.get("aggregated_output", "")[:1500],
+                        "excerpt_limit": 1500,
+                    }
+        traces.append(
+            {
+                "events": artifact_file_identity(path, root),
+                "execution_finished": coverage.get("execution_finished"),
+                "observed_operations_paired": coverage.get(
+                    "observed_operations_paired"
+                ),
+                "unpaired_operations": sum(
+                    bool(op.get("missing")) for op in coverage.get("operations", [])
+                ),
+                "collection_gaps": coverage.get("collection_gaps", []),
+                "event_counts": coverage.get("event_counts", {}),
+                "execution_end_events": finishes,
+                "budget_summary": budget_summary,
+            }
+        )
+    for message in messages:
+        message["before_first_observed_source_change"] = (
+            message["timestamp"] < first_change if first_change else None
+        )
+    commands = sorted(commands.values(), key=lambda x: x["started_at"])
+    profiler = [
+        c
+        for c in commands
+        if re.search(
+            r"\bperf\s+(?:record|stat)|\bcProfile\b|\bgprof\s+[^-]|--tool[= ]callgrind",
+            c["command"],
+        )
+        and not re.search(r"command -v|which |--help", c["command"])
+    ]
+    benches = [c for c in commands if re.search(r"pitbench\s+bench\b", c["command"])]
+    return {
+        "traces": traces,
+        "messages": messages,
+        "commands": commands,
+        "first_source_change_at": first_change,
+        "distinct_recorded_source_patch_hashes": len(patch_states),
+        "recorded_benchmark_command_count": len(benches),
+        "recorded_profiler_attempts": profiler,
+        "successful_profiler_command_count": sum(c["exit_code"] == 0 for c in profiler),
+        "scope": "Observable event records; command-pattern counts do not establish bottleneck correctness or absence of unrecorded work.",
+    }
+
+
+def collect_campaign_diagnostics(
+    project: Path,
+    campaign_name: str,
+    runs_directory: Path,
+    campaign_directory: Path,
+    output: Path,
+) -> dict:
+    """Inspect all saved conditions, retaining failures and missing executions."""
+    from pitbench.metrics.performance_report import compute_exact_run_outcome
+    from pitbench.schema.observation import RunObservation
+    from pitbench.schema.task import ExactTimeBasis
+
+    root = project.resolve()
+    runs = (root / runs_directory).resolve()
+    source = (root / campaign_directory).resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    audit_path = source / "final-model-audit-summary.json"
+    audit = _read(audit_path) if audit_path.is_file() else {}
+    conditions = retained_conditions(source, runs)
+    result = {
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "project": str(root),
+        "campaign": campaign_name,
+        "conditions": [],
+        "new_agent_calls": 0,
+        "new_solver_runs": 0,
+        "audit": audit,
+        "analysis_scope": "Saved evidence; missing and failed conditions remain visible. No new performance thresholds.",
+    }
+    for row in conditions:
+        execution = (
+            row.get("execution_run_id") or row.get("run_id") or row["condition_id"]
+        )
+        run = runs / execution
+        path = _result_path(
+            source, runs, {**row, "run_id": row.get("run_id", execution)}
+        )
+        if not path.is_file():
+            result["conditions"].append(
+                {
+                    "condition": row,
+                    "missing_result": True,
+                    "trace": trace_diagnostics(run, root),
+                }
+            )
+            continue
+        trials = _read(path).get("results", [])
+        trial = next(
+            (trial for trial in trials if trial.get("task_id") == row.get("task_id")),
+            trials[0] if trials else {},
+        )
+        envelope = trial.get("evaluation") or {}
+        payload = envelope.get("payload") or {}
+        summary = payload.get("summary") or {}
+        entry = {
+            "condition": row,
+            "result_identity": artifact_file_identity(path, root),
+            "evaluation_completed": envelope.get("completed"),
+            "evaluation_error": envelope.get("error"),
+            "validity": payload.get("validity"),
+            "summary": summary,
+            "trial_count": len(trials),
+            **{
+                key: trial.get(key)
+                for key in [
+                    "failure_mode",
+                    "agent_metrics",
+                    "total_input_tokens",
+                    "total_output_tokens",
+                    "agent_started_at",
+                    "agent_ended_at",
+                ]
+            },
+        }
+        directory = (
+            Path(row["evaluation_output"])
+            if row.get("evaluation_output")
+            else next(run.glob("*/*/evaluation"), None)
+        )
+        if directory is not None:
+            ref = (payload.get("artifacts") or {}).get("expected_run_grid") or {}
+            grid = directory / ref.get("path", "expected-run-grid.json")
+            if not grid.is_file():
+                grid = directory / "expected-run-grid.json"
+            measurement = grid.parent
+            patch = measurement / "candidate.patch"
+            if patch.is_file():
+                entry["patch"] = {
+                    **artifact_file_identity(patch, root),
+                    "text": patch.read_text(errors="replace"),
+                }
+            performance = summary.get("performance")
+            if performance and grid.is_file():
+                entry["observations"] = observation_diagnostics(
+                    measurement,
+                    performance,
+                    _read(grid),
+                    compute_exact_run_outcome,
+                    RunObservation,
+                    ExactTimeBasis,
+                )
+            elif performance:
+                entry["missing_expected_run_grid"] = True
+        entry["trace"] = trace_diagnostics(run, root)
+        result["conditions"].append(entry)
+    _write_json(output / "release-diagnostics.json", result)
+    return result

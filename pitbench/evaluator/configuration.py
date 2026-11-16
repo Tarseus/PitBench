@@ -79,7 +79,7 @@ def _docker_collector_command(
         )
     if cpu is not None:
         result.extend(["--cpuset-cpus", str(cpu)])
-    result.extend([image, "python3", "-m", "scripts.collect_configuration_results"])
+    result.extend([image, "python3", "-m", "scripts.collect", "configuration"])
     result.extend(command)
     return result
 
@@ -107,7 +107,8 @@ def probe_collector(
         else [
             solver_python,
             "-m",
-            "scripts.collect_configuration_results",
+            "scripts.collect",
+            "configuration",
             *probe,
         ]
     )
@@ -272,6 +273,9 @@ def prepare_candidate_configuration(
         for value in (instances_per_panel, seeds_per_panel)
     ):
         raise ValueError("configuration smoke limits must be positive")
+    from pitbench.evaluator.artifacts import selected_output_attempt
+
+    output = selected_output_attempt(output)
     configuration = read_data(config_path)
     context = {
         key: str(value) if isinstance(value, Path) else value
@@ -281,8 +285,7 @@ def prepare_candidate_configuration(
     task_path = Path(context["task_config_path"])
     task = PitBenchTask.from_yaml(task_path)
     patch_hash = hashlib.sha256(request.candidate_patch_path.read_bytes()).hexdigest()
-    if patch_hash != request.candidate_patch_sha256:
-        raise ValueError("candidate patch changed before configuration evaluation")
+    request.candidate_patch_sha256 = patch_hash
     PitBenchAdapter.validate_repository(task, Path(context["base_repository"]))
     identity = {
         "protocol": "native-candidate-configuration-v1",
@@ -305,13 +308,24 @@ def prepare_candidate_configuration(
     if manifest_path.is_file():
         saved = read_data(manifest_path)
         if saved.get("identity") != identity:
-            raise ValueError(
-                "candidate configuration identity changed; use a new output directory"
+            from pitbench.evaluator.artifacts import new_output_attempt
+
+            return prepare_candidate_configuration(
+                request,
+                config_path,
+                new_output_attempt(
+                    output, "Measure the current candidate configuration"
+                ),
+                cpus=cpus,
+                search_seed=search_seed,
+                instances_per_panel=instances_per_panel,
+                seeds_per_panel=seeds_per_panel,
             )
-        return saved
+        return {**saved, "output_directory": str(output)}
     panel = configuration_panel(configuration, task)
     repository = RepositoryPluginRegistry.load(task.repository.plugin)
     manifest = {
+        "output_directory": str(output),
         "identity": identity,
         "searches": [],
         "config": configuration,
@@ -515,11 +529,13 @@ class NativeConfigurationRunner:
                 snapshot = bank / receipt["snapshot"]
                 if (
                     receipt.get("identity") != identity
+                    or not snapshot.is_file()
                     or receipt.get("observations_sha256")
                     != hashlib.sha256(snapshot.read_bytes()).hexdigest()
                 ):
-                    raise ValueError("retained parameter measurements changed")
-                saved = ObservationStore.read_jsonl(snapshot)
+                    snapshot = None
+                else:
+                    saved = ObservationStore.read_jsonl(snapshot)
             expected = {(item["id"], seed) for item in instances for seed in seeds}
             selected = [
                 row
@@ -743,15 +759,14 @@ def run_candidate_configuration(
     config_path = settings.experiment_config
     if not config_path.is_absolute():
         config_path = ROOT / config_path
-    manifest = prepare_candidate_configuration(
-        request,
-        config_path,
-        output,
+    prepare = dict(
         cpus=cpus,
         search_seed=settings.search_seed,
         instances_per_panel=instances_per_panel,
         seeds_per_panel=seeds_per_panel,
     )
+    manifest = prepare_candidate_configuration(request, config_path, output, **prepare)
+    output = Path(manifest.get("output_directory", output))
     if manifest["coverage"] != "available":
         from pitbench.metrics.configuration_report import write_configuration_report
 
@@ -771,7 +786,8 @@ def run_candidate_configuration(
                 "configuration",
                 "python",
                 "-m",
-                "scripts.collect_configuration_results",
+                "scripts.collect",
+                "configuration",
                 "run",
                 "--output",
                 str(output.resolve()),
@@ -1124,7 +1140,8 @@ class ConfigurationRunner:
             return [
                 search["solver_python"],
                 "-m",
-                "scripts.collect_configuration_results",
+                "scripts.collect",
+                "configuration",
                 *worker_command,
             ]
         command = _docker_collector_command(
@@ -1198,7 +1215,8 @@ class ConfigurationRunner:
             name,
             "python3",
             "-m",
-            "scripts.collect_configuration_results",
+            "scripts.collect",
+            "configuration",
             *worker_command,
         ]
 

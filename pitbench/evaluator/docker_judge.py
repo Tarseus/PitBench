@@ -8,6 +8,11 @@ from collections import deque
 from pathlib import Path
 from typing import Callable
 
+from pitbench.evaluator.artifacts import (
+    FreshEvaluationRequired,
+    new_output_attempt,
+    selected_output_attempt,
+)
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.schema.observation import CodeState, RunObservation
@@ -34,6 +39,30 @@ def docker_cli_image(image: str) -> str:
     if re.fullmatch(r"sha256:[0-9a-f]{64}", image):
         return image.removeprefix("sha256:")
     return image
+
+
+def judge_container_prefix(
+    *,
+    cpus: float,
+    memory: str,
+    tmpfs_size: str = "4g",
+    output_label: Path | None = None,
+) -> list[str]:
+    """Common isolation/resource envelope for scored and validation Judges."""
+    command = ["docker", "run", "--rm", "--network", "none"]
+    if output_label is not None:
+        command.extend(["--label", f"pitbench.judge_output={output_label}"])
+    return command + [
+        "--read-only",
+        "--cpus",
+        str(cpus),
+        "--memory",
+        memory,
+        "--pids-limit",
+        "2048",
+        "--tmpfs",
+        f"/tmp:rw,exec,nosuid,size={tmpfs_size}",
+    ]
 
 
 class DockerJudge:
@@ -132,28 +161,39 @@ class DockerJudge:
         return identity
 
     def run(self) -> list[RunObservation]:
+        # Resume is an optimization, not a precondition for evaluating new inputs.
+        self.output_dir = selected_output_attempt(self.output_dir)
+        observations = self.output_dir / "judge-observations.jsonl"
+        if observations.is_file() and observations.stat().st_size:
+            marker = self.output_dir / "judge-launch.json"
+            if not marker.is_file():
+                marker = self.output_dir / "judge-checkpoint.json"
+            try:
+                compatible = (
+                    json.loads(marker.read_text()).get("identity")
+                    == self.checkpoint_identity()
+                )
+            except (OSError, ValueError, KeyError):
+                compatible = False
+            if not compatible:
+                self.output_dir = new_output_attempt(
+                    self.output_dir,
+                    "Measure current inputs without reusing the previous run",
+                )
+        return self._run()
+
+    def _run(self) -> list[RunObservation]:
         package_root = self.package_root
         self._check_inputs_unchanged("before launch")
         judge_tmp = self.output_dir / "judge-tmp"
         judge_tmp.mkdir(parents=True, exist_ok=True)
         observations = self.output_dir / "judge-observations.jsonl"
-        command = [
-            "docker",
-            "run",
-            "--rm",
-            "--network",
-            "none",
-            "--label",
-            f"pitbench.judge_output={self.output_dir}",
-            "--read-only",
-            "--cpus",
-            str(self.cpus),
-            "--memory",
-            self.memory,
-            "--pids-limit",
-            "2048",
-            "--tmpfs",
-            f"/tmp:rw,exec,nosuid,size={self.tmpfs_size}",
+        command = judge_container_prefix(
+            cpus=self.cpus,
+            memory=self.memory,
+            tmpfs_size=self.tmpfs_size,
+            output_label=self.output_dir,
+        ) + [
             "--env",
             "PYTHONPATH=/opt/pitbench",
             "--volume",
@@ -246,8 +286,8 @@ class DockerJudge:
                 not receipt.is_file()
                 or json.loads(receipt.read_text()).get("identity") != identity
             ):
-                raise RuntimeError(
-                    "retained observations have a different or missing Judge identity; preserve this output and use a new directory"
+                raise FreshEvaluationRequired(
+                    "Start a separate Judge attempt for the current inputs"
                 )
             command.append("--resume-existing-observations")
         launch_tmp = launch_path.with_suffix(".json.tmp")
@@ -332,4 +372,6 @@ class DockerJudge:
                     if observations is not None
                     else ""
                 )
-                raise RuntimeError(f"{name} changed {phase}{retained}")
+                raise FreshEvaluationRequired(
+                    f"Restart measurements after {name} was updated {phase}{retained}"
+                )

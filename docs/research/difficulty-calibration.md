@@ -21,7 +21,7 @@ MIP 使用独立利润背包、非预置最优解的随机加权覆盖、随机�
 
 ## 难度与时限的实际校准
 
-统一入口为 `scripts.collect_reference_solutions`，经 g52 跳转到 10.10.100.40–47。每次 solver 搜索固定单核，同一实例的版本、seed 和预算组合分在同一机器，记录 CPU 绑定、构建、包版本及运行负载。并发属于调度资源，不改变单次求解时限。部署包包含代码、指定求解器及生成数据，凭据只保留在本地。
+统一入口为 `scripts.collect reference`，经 g52 跳转到 10.10.100.40–47。每次 solver 搜索固定单核，同一实例的版本、seed 和预算组合分在同一机器，记录 CPU 绑定、构建、包版本及运行负载。并发属于调度资源，不改变单次求解时限。部署包包含代码、指定求解器及生成数据，凭据只保留在本地。
 
 探索预算为 0.1、1、5、20、60 秒，先覆盖各条件的 10 个校准实例，再搜索独立参考值。CBC、SCIP 使用四个已固定 commit 的 Release 构建；两版 PyVRP 分别加载对应版本。CBC 的零 seed 会取时钟随机数，因此保留零 seed 试跑诊断，预算选择使用正 seed 的确认批次。
 
@@ -41,7 +41,7 @@ MIP 使用独立利润背包、非预置最优解的随机加权覆盖、随机�
 
 新增面板的预算进入统一 Judge、expected run grid、性能和资源报告。seed 分散度仍使用原生估计器，新增面板按自己的协议与预算记录，主面板结果不合并改写。B/C 开发文件完全一致，三组共享隐藏数据。
 
-构造、检查和导入入口为同一 `scripts.prepare_research_cases` 的 `populations`、`audit`、`difficulty`、`import-references`、`views` 子命令。`views --difficulty FILE` 使用冻结的实测预算。正式 Agent 启动前仍需完成场景与 headroom 的完整资格化；本协议不以参考搜索更长或 BKS 更好替代源代码优化空间的证据。
+构造、检查和导入入口为同一 `scripts.prepare research` 的 `populations`、`audit`、`difficulty`、`import-references`、`views` 子命令。`views --difficulty FILE` 使用冻结的实测预算。正式 Agent 启动前仍需完成场景与 headroom 的完整资格化；本协议不以参考搜索更长或 BKS 更好替代源代码优化空间的证据。
 
 ## 完成的校准结果
 

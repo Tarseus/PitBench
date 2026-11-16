@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
@@ -11,6 +12,7 @@ from adapters.pitbench.adapter import (
     IMAGE_REVISION_LABEL,
     IMAGE_SOURCE_LABEL,
     IMAGE_TOOLS_LABEL,
+    dockerfile_base_reference,
     image_context_digest,
 )
 from pitbench.agent_tools import AGENT_TOOLS_METADATA, agent_tools_label
@@ -41,9 +43,10 @@ def prepare_task_image(
         sessions_logs_path=task_path / ".image-prepare/sessions",
         agent_logs_path=task_path / ".image-prepare/agent-logs",
     )
-    expected_source = (
-        (task_path / "Dockerfile").read_text().splitlines()[0].removeprefix("FROM ")
-    )
+    dockerfile = (task_path / "Dockerfile").read_text()
+    base_reference = dockerfile.splitlines()[0].removeprefix("FROM ")
+    source_label = re.search(rf'{re.escape(IMAGE_SOURCE_LABEL)}="([^"]+)"', dockerfile)
+    expected_source = source_label.group(1) if source_label else base_reference
     context_match = re.search(
         rf'^LABEL {re.escape(IMAGE_CONTEXT_LABEL)}="([0-9a-f]{{64}})"$',
         (task_path / "Dockerfile").read_text(),
@@ -75,6 +78,13 @@ def prepare_task_image(
         or cached_context != expected_context
     ):
         progress(f"Building task image {trial.client_image_name}")
+        if (
+            base_reference != expected_source
+            and base_reference == dockerfile_base_reference(expected_source)
+        ):
+            subprocess.run(
+                ["docker", "image", "tag", expected_source, base_reference], check=True
+            )
         manager.build()
     else:
         progress(f"Reusing task image {trial.client_image_name}")

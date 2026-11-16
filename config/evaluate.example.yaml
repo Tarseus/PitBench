@@ -10,6 +10,10 @@ paths:
   private_root: private
   base_cache_path: .pitbench/cache/base
 
+# Used by dry-run and run --smoke-test; formal task budgets remain unchanged.
+dry_run:
+  solver_budget_sec: 0.1
+
 # Configuration Robustness is launched automatically after the candidate run.
 configuration_robustness:
   enabled: true

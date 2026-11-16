@@ -473,9 +473,15 @@ def _run_build_steps(
     if not commands:
         print("public build commands are unavailable", file=sys.stderr)
         if not dry_run:
-            (log_root / "report.json").write_text(json.dumps({
-                "status": "fail", "error": "public build commands are unavailable", "steps": [],
-            }))
+            (log_root / "report.json").write_text(
+                json.dumps(
+                    {
+                        "status": "fail",
+                        "error": "public build commands are unavailable",
+                        "steps": [],
+                    }
+                )
+            )
         return False
     steps = []
     for index, step in enumerate(commands, start=1):
@@ -513,22 +519,34 @@ def _run_build_steps(
             stdout, stderr = "", str(error)
         stdout_path = log_root / f"step-{index}.stdout.log"
         stderr_path = log_root / f"step-{index}.stderr.log"
-        stdout_path.write_text(stdout.decode(errors="replace") if isinstance(stdout, bytes) else stdout)
-        stderr_path.write_text(stderr.decode(errors="replace") if isinstance(stderr, bytes) else stderr)
+        stdout_path.write_text(
+            stdout.decode(errors="replace") if isinstance(stdout, bytes) else stdout
+        )
+        stderr_path.write_text(
+            stderr.decode(errors="replace") if isinstance(stderr, bytes) else stderr
+        )
         payload.update(
             stdout_log=str(stdout_path),
             stderr_log=str(stderr_path),
         )
         steps.append(payload)
         failed = "error" in payload or payload.get("returncode") != 0
-        (log_root / "report.json").write_text(json.dumps({
-            "status": "fail" if failed else "running", "steps": steps,
-        }, indent=2))
+        (log_root / "report.json").write_text(
+            json.dumps(
+                {
+                    "status": "fail" if failed else "running",
+                    "steps": steps,
+                },
+                indent=2,
+            )
+        )
         print(json.dumps(payload), flush=True)
         if failed:
             return False
     if not dry_run:
-        (log_root / "report.json").write_text(json.dumps({"status": "pass", "steps": steps}, indent=2))
+        (log_root / "report.json").write_text(
+            json.dumps({"status": "pass", "steps": steps}, indent=2)
+        )
     return True
 
 
@@ -739,20 +757,31 @@ def bench_command(args: argparse.Namespace) -> int:
     from uuid import uuid4
 
     result_id = f"bench_{uuid4().hex}"
-    result_path = getattr(args, "result", None) or runs_root / "results" / f"{result_id}.json"
+    result_path = (
+        getattr(args, "result", None) or runs_root / "results" / f"{result_id}.json"
+    )
     build_root = runs_root / "attempts" / result_id
     result = {
-        "schema_version": "1.0", "kind": "pitbench.development_result",
-        "id": result_id, "task_id": config["task_id"],
+        "schema_version": "1.0",
+        "kind": "pitbench.development_result",
+        "id": result_id,
+        "task_id": config["task_id"],
         "source": _source_version(patch) if not args.dry_run else None,
         "summary": f"Public development benchmark: {args.label}",
-        "stage": "build" if args.build else "solve", "attempt_status": "running",
-        "execution_status": "missing", "solution_validity": "unverified",
-        "expected_runs": len(grid), "observations": [], "artifact_paths": [],
+        "stage": "build" if args.build else "solve",
+        "attempt_status": "running",
+        "execution_status": "missing",
+        "solution_validity": "unverified",
+        "expected_runs": len(grid),
+        "observations": [],
+        "artifact_paths": [],
         "workload": {
             "instances": [str(instance) for instance in instances],
-            "seeds": list(seeds), "budgets_sec": list(budgets), "threads": threads,
-            "label": args.label, "experiment_id": getattr(args, "experiment_id", None),
+            "seeds": list(seeds),
+            "budgets_sec": list(budgets),
+            "threads": threads,
+            "label": args.label,
+            "experiment_id": getattr(args, "experiment_id", None),
             "hypothesis_id": getattr(args, "hypothesis_id", None),
         },
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -773,12 +802,24 @@ def bench_command(args: argparse.Namespace) -> int:
             log_path.write_text(json.dumps({"error": str(error)}, indent=2))
             result["workload"]["build_error"] = str(error)
             built = False
-        result["artifact_paths"] = [str(path) for path in sorted((build_root / "build").glob("*")) if path.is_file()]
+        result["artifact_paths"] = [
+            str(path)
+            for path in sorted((build_root / "build").glob("*"))
+            if path.is_file()
+        ]
         if not built:
-            result.update(execution_status="fail", attempt_status="finished", failure_stage="build",
-                          finished_at=datetime.now(timezone.utc).isoformat())
+            result.update(
+                execution_status="fail",
+                attempt_status="finished",
+                failure_stage="build",
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
             save_result()
-            print(json.dumps({"development_result": str(result_path), "execution_status": "fail"}))
+            print(
+                json.dumps(
+                    {"development_result": str(result_path), "execution_status": "fail"}
+                )
+            )
             return 1
         result["stage"] = "solve"
         save_result()
@@ -786,7 +827,10 @@ def bench_command(args: argparse.Namespace) -> int:
     if not args.dry_run:
         (build_root / args.label).mkdir(parents=True, exist_ok=True)
         if args.label == "agent" and (runs_root / "base").exists():
-            (build_root / "base").symlink_to((runs_root / "base").resolve(), target_is_directory=True)
+            (build_root / "base").symlink_to(
+                (runs_root / "base").resolve(), target_is_directory=True
+            )
+
     def run_one(spec):
         instance, seed, budget = spec
         return _run_one(
@@ -827,30 +871,52 @@ def bench_command(args: argparse.Namespace) -> int:
                 payloads.append(json.loads(fb_path.read_text(encoding="utf-8")))
                 feedback_paths.append(str(fb_path))
             else:
-                missing_feedback.append({"path": str(fb_path), "error": "feedback missing"})
+                missing_feedback.append(
+                    {"path": str(fb_path), "error": "feedback missing"}
+                )
         except (OSError, ValueError) as error:
-            missing_feedback.append({
-                "instance": str(instance), "seed": seed, "budget_sec": budget,
-                "error": str(error),
-            })
+            missing_feedback.append(
+                {
+                    "instance": str(instance),
+                    "seed": seed,
+                    "budget_sec": budget,
+                    "error": str(error),
+                }
+            )
 
     complete = len(payloads) == len(grid)
-    execution_status = "missing" if not complete else (
-        "fail" if any(
-            item.get("result_error") is not None or item.get("returncode") not in (None, 0)
-            for item in payloads
-        ) else "pass"
+    execution_status = (
+        "missing"
+        if not complete
+        else (
+            "fail"
+            if any(
+                item.get("result_error") is not None
+                or item.get("returncode") not in (None, 0)
+                for item in payloads
+            )
+            else "pass"
+        )
     )
     validity = [item.get("verified_valid") for item in payloads]
-    solution_validity = "unverified" if not complete else (
-        "invalid" if any(value is False for value in validity) else (
-            "valid" if all(value is True for value in validity) else "unverified"
+    solution_validity = (
+        "unverified"
+        if not complete
+        else (
+            "invalid"
+            if any(value is False for value in validity)
+            else ("valid" if all(value is True for value in validity) else "unverified")
         )
     )
     result.update(
-        observations=payloads, stage="solve", attempt_status="finished",
-        execution_status=execution_status, solution_validity=solution_validity,
-        failure_stage="solve" if execution_status != "pass" or not all(succeeded) else None,
+        observations=payloads,
+        stage="solve",
+        attempt_status="finished",
+        execution_status=execution_status,
+        solution_validity=solution_validity,
+        failure_stage="solve"
+        if execution_status != "pass" or not all(succeeded)
+        else None,
         finished_at=datetime.now(timezone.utc).isoformat(),
     )
     result["artifact_paths"].extend(feedback_paths)
@@ -866,8 +932,14 @@ def bench_command(args: argparse.Namespace) -> int:
     latest_tmp.symlink_to(run_root_label.resolve(), target_is_directory=True)
     os.replace(latest_tmp, latest)
     save_result()
-    print(json.dumps({"development_result": str(result_path),
-                      "execution_status": result["execution_status"]}))
+    print(
+        json.dumps(
+            {
+                "development_result": str(result_path),
+                "execution_status": result["execution_status"],
+            }
+        )
+    )
     return 0 if all(succeeded) and complete else 1
 
 
@@ -888,7 +960,9 @@ def _write_development_result(path: Path, payload: dict) -> None:
 
 
 def _source_version(patch: bytes) -> dict[str, str]:
-    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=_repository(), text=True).strip()
+    base = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=_repository(), text=True
+    ).strip()
     return {"base_commit": base, "patch_sha256": hashlib.sha256(patch).hexdigest()}
 
 
@@ -1110,7 +1184,11 @@ def parser() -> argparse.ArgumentParser:
         bench = commands.add_parser("bench")
         bench.add_argument("--hypothesis-id")
         bench.add_argument("--experiment-id")
-        bench.add_argument("--result", type=Path, help="export versioned public benchmark evidence (including failures)")
+        bench.add_argument(
+            "--result",
+            type=Path,
+            help="export versioned public benchmark evidence (including failures)",
+        )
         bench.add_argument("--split", default="dev")
         bench.add_argument("--label", choices=("base", "agent"), default="agent")
         bench.add_argument(

@@ -9,6 +9,42 @@ from typing import Any
 from pitbench.schema.evaluation import ArtifactRef
 
 
+class FreshEvaluationRequired(RuntimeError):
+    """Retained measurements need a fresh attempt under the current inputs."""
+
+
+def selected_output_attempt(output: Path) -> Path:
+    """Follow the retained attempt selection, keeping the original root usable."""
+    root = output.resolve()
+    current, seen = root, set()
+    while current not in seen:
+        seen.add(current)
+        try:
+            selected = Path(
+                json.loads((current / "latest-attempt.json").read_text())["output"]
+            ).resolve()
+        except (OSError, ValueError, KeyError, TypeError):
+            break
+        if not selected.is_relative_to(root) or not selected.is_dir():
+            break
+        current = selected
+    return current
+
+
+def new_output_attempt(output: Path, reason: str) -> Path:
+    """Retain prior files in place and select a separate directory automatically."""
+    directory = output / "attempts" / uuid.uuid4().hex
+    directory.mkdir(parents=True)
+    write_json(
+        output / "latest-attempt.json",
+        {
+            "output": str(directory.resolve()),
+            "reason": reason,
+        },
+    )
+    return directory
+
+
 def write_text_atomic(path: Path, payload: str) -> None:
     """Replace one text artifact without exposing a partial destination file."""
     path.parent.mkdir(parents=True, exist_ok=True)

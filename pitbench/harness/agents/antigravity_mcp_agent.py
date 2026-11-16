@@ -195,7 +195,7 @@ Task:
         if not self._runner_path.is_file():
             raise RuntimeError(
                 "The isolated Antigravity runner is not installed. Run "
-                "`sudo scripts/install-antigravity-runner.sh`."
+                "`sudo scripts/install-runner.sh antigravity`."
             )
         runner_check = subprocess.run(
             [

@@ -13,7 +13,7 @@
 统一入口为 `scripts.run_benchmark_release --phase study-models`。机器本地配置 `config/study.local.yaml` 可从 `configs/experiments/generalization_launch.yaml` 配置，包含计划、任务视图、运行配置、CPU 池和输出目录；代理、认证路径和镜像由其引用的本地 evaluation 配置提供，不要求调用者设置环境变量。配置就绪后直接执行：
 
 ```bash
-.venv/bin/python -m scripts.run_benchmark_release
+uv run python -m scripts.run_benchmark_release
 ```
 
 默认后台执行，日志和进程回执写入输出目录；`--prepare-only` 只冻结清单，`--foreground` 用于前台运行。每个开发结束的最终补丁通过现有独立 evaluator 进入隐藏评测，使用独立 CPU 池；无需新一次 Agent 调用。全部条件处理完后使用原生报告入口自动汇总，包括失败和缺测。实际源代码 API 构建和指标采集随候选执行，尚未资格化的优化空间在结果中标记为待确认，不能提前宣称能力结论。
@@ -131,7 +131,7 @@ Base/候选及三组之间按共同实例、solver seed、预算配对，交替�
 设计在 `configs/research/archive/generalization.json`，模型矩阵在 `configs/experiments/archive/generalization_model_matrix.yaml`，总体与待办证据在 `configs/research/archive/generalization_populations.json`。准备入口：
 
 ```bash
-.venv/bin/python -m scripts.prepare_research_cases study \
+uv run python -m scripts.prepare research study \
   --plan configs/research/archive/generalization.json --root . \
   --output-dir gushengda/experiments/generalization/design-v1
 ```

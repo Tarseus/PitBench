@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import tarfile
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -111,6 +112,76 @@ def _prepare_task_image(task_path: Path, *, rebuild: bool) -> None:
     )
 
 
+def _short_scenario_config(
+    original: Path,
+    task: PitBenchTask,
+    task_config: Path,
+    output_dir: Path,
+    private_root: Path,
+) -> Path:
+    settings = yaml.safe_load(original.read_text())
+    if settings.get("source_build"):
+        from pitbench.evaluator.scenarios import resolve_model_inputs
+
+        settings, _ = resolve_model_inputs(
+            settings, task, private_root=private_root, config_dir=original.parent
+        )
+    settings["protocols"] = [
+        item.model_dump(mode="json") for item in task.metric_scenarios
+    ]
+    settings["task_config"] = str(task_config)
+    destination = output_dir / "metric-scenario-config.yaml"
+    destination.write_text(yaml.safe_dump(settings))
+    return destination
+
+
+def _prepare_smoke_inputs(
+    root: Path, config: EvaluationConfig, task_ids: list[str], output_dir: Path
+) -> None:
+    """Save short task views for a real-Agent trial without changing source tasks."""
+    catalog = TaskCatalog(root)
+    for task_id in task_ids:
+        resources = config.resources_for(task_id)
+        record = (
+            catalog.validate_file(resolve_repository_path(root, resources.task_config_path))
+            if resources.task_config_path is not None
+            else catalog.validate_one(task_id)
+        )
+        if record.task.task_id != task_id:
+            raise ValueError("configured task ID differs from requested task")
+        task = config.dry_run.task_view(record.task)
+        destination = output_dir / "task-config" / task_id
+        destination.mkdir(parents=True, exist_ok=True)
+        path = destination / f"{task_id}.yaml"
+        path.write_text(yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False))
+        original = record.task_config_path
+        if resources.agent_task_config_path is not None:
+            agent_record = catalog.validate_file(
+                resolve_repository_path(root, resources.agent_task_config_path)
+            )
+            agent_path = destination / "agent" / f"{task_id}.yaml"
+            agent_path.parent.mkdir(parents=True, exist_ok=True)
+            agent_path.write_text(yaml.safe_dump(
+                config.dry_run.task_view(agent_record.task).model_dump(mode="json"),
+                sort_keys=False,
+            ))
+            resources.agent_task_config_path = agent_path
+        resources.task_config_path = path
+        config.tasks[task_id] = resources
+        if task_id in config.metric_scenario_configs:
+            config.metric_scenario_configs[task_id] = _short_scenario_config(
+                resolve_repository_path(root, config.metric_scenario_configs[task_id]),
+                task, path, destination, config.paths.private_root,
+            )
+        (destination / "smoke-test.json").write_text(json.dumps({
+            "real_agent": True,
+            "formal_evaluation": False,
+            "solver_budget_sec": config.dry_run.solver_budget_sec,
+            "original_task_config": str(original),
+            "task_config": str(path),
+        }, indent=2) + "\n")
+
+
 def _run_configuration_robustness(
     repository_root: Path,
     evaluation_config: EvaluationConfig,
@@ -144,7 +215,8 @@ def _run_configuration_robustness(
         "configuration",
         "python",
         "-m",
-        "scripts.collect_configuration_results",
+        "scripts.collect",
+        "configuration",
         "prepare",
         "--config",
         str(experiment_config),
@@ -170,7 +242,9 @@ def _run_configuration_robustness(
             "seeds_per_panel": seeds_per_panel,
         }
         if any(manifest.get(key) != value for key, value in identity.items()):
-            raise ValueError("configuration experiment identity changed; use a new output directory")
+            raise ValueError(
+                "configuration experiment identity changed; use a new output directory"
+            )
     else:
         subprocess.run(prepare, cwd=repository_root, check=True)
     run = [
@@ -180,7 +254,8 @@ def _run_configuration_robustness(
         "configuration",
         "python",
         "-m",
-        "scripts.collect_configuration_results",
+        "scripts.collect",
+        "configuration",
         "run",
         "--output",
         str(output),
@@ -382,8 +457,12 @@ def _configuration_dry_run_failures(output_dir: Path) -> list[str]:
     if manifest.get("native_context"):
         comparisons = report.get("candidate_comparison", {}).get("comparisons", [])
         expected_budgets = {search["budget_sec"] for search in manifest["searches"]}
-        if {row["budget_sec"] for row in comparisons} != expected_budgets or not all(row.get("complete") for row in comparisons):
-            failures.append("paired Base/Agent parameter comparisons are missing or incomplete")
+        if {row["budget_sec"] for row in comparisons} != expected_budgets or not all(
+            row.get("complete") for row in comparisons
+        ):
+            failures.append(
+                "paired Base/Agent parameter comparisons are missing or incomplete"
+            )
     return failures
 
 
@@ -523,11 +602,20 @@ def _normal_metric_coverage(
         result_records = json.loads(results_path.read_text()).get("results", [])
         catalog = TaskCatalog(repository_root)
         for task_id in task_ids:
-            resources = evaluation_config.resources_for(task_id) if evaluation_config else None
-            configured = (resources.task_config_path or resources.agent_task_config_path) if resources else None
+            resources = (
+                evaluation_config.resources_for(task_id) if evaluation_config else None
+            )
+            configured = (
+                (resources.task_config_path or resources.agent_task_config_path)
+                if resources
+                else None
+            )
             task = (
-                catalog.validate_file(resolve_repository_path(repository_root, configured)).task
-                if configured is not None else catalog.validate_one(task_id).task
+                catalog.validate_file(
+                    resolve_repository_path(repository_root, configured)
+                ).task
+                if configured is not None
+                else catalog.validate_one(task_id).task
             )
             trials = [item for item in result_records if item.get("task_id") == task_id]
             if not trials:
@@ -634,12 +722,16 @@ def build_images(
         else EvaluationConfig()
     )
     for task_id in task_ids:
+        configured_task = config.resources_for(task_id).task_config_path
         built = build_solver_image(
             task_id,
             repository_root,
             config=config.solver_image_build,
             image_tag=image_tag,
             progress=typer.echo,
+            task_config_path=resolve_repository_path(repository_root, configured_task)
+            if configured_task is not None
+            else None,
         )
         typer.echo(f"Built {built.task_id}: {built.image_tag} ({built.image_id})")
 
@@ -817,7 +909,8 @@ def run_task(
             "--smoke-test",
             help=(
                 "Run one instance per set and at most two seeds per case, with a "
-                "five-minute Agent limit; results are not formal metric evidence"
+                "five-minute Agent limit and dry_run.solver_budget_sec per solve "
+                "(default 0.1s); results are not formal metric evidence"
             ),
         ),
     ] = False,
@@ -950,9 +1043,15 @@ def run_task(
     else:
         from pitbench.harness.agents.agent_factory import AgentFactory
 
-        preflight_agent = AgentFactory.get_agent_from_import_path(agent_import_path).name()
+        preflight_agent = AgentFactory.get_agent_from_import_path(
+            agent_import_path
+        ).name()
     checks = evaluation_checks(
-        task_ids, repository_root, effective_config, preflight_agent, effective_agent_kwargs
+        task_ids,
+        repository_root,
+        effective_config,
+        preflight_agent,
+        effective_agent_kwargs,
     )
     for check in checks:
         typer.echo(f"{check.status.value} {check.name}: {check.detail}")
@@ -964,8 +1063,24 @@ def run_task(
     if check_only:
         typer.echo("READY: prerequisite checks passed; no agent was started.")
         return
-    if dataset_path.exists() or (resolved_output_path / resolved_run_id).exists():
+    smoke_inputs = resolved_workspace_path / ".smoke-inputs" / resolved_run_id
+    if (
+        dataset_path.exists()
+        or (resolved_output_path / resolved_run_id).exists()
+        or (smoke_test and smoke_inputs.exists())
+    ):
         raise typer.BadParameter("run ID already exists; choose a new --run-id")
+    if smoke_test:
+        _prepare_smoke_inputs(
+            repository_root, effective_config, task_ids, smoke_inputs,
+        )
+        typer.echo(
+            f"SMOKE TEST: real Agent, at most 5 minutes; "
+            f"{effective_config.dry_run.solver_budget_sec:g}s per solve; "
+            "results are not formal performance evidence."
+        )
+    typer.echo(f"Results and logs: {resolved_output_path / resolved_run_id}")
+    typer.echo(f"Workspaces: {dataset_path}")
     adapter = PitBenchAdapter(repository_root, resolved_private_root)
     for task_id in task_ids:
         resources = effective_config.resources_for(task_id)
@@ -1088,10 +1203,18 @@ def run_task(
         )
         try:
             if effective_config.configuration_robustness.scope == "candidate":
-                _run_captured_configuration(effective_config, resolved_output_path / resolved_run_id, dataset_path, smoke_test=smoke_test)
+                _run_captured_configuration(
+                    effective_config,
+                    resolved_output_path / resolved_run_id,
+                    dataset_path,
+                    smoke_test=smoke_test,
+                )
             else:
                 _run_configuration_robustness(
-                    repository_root, effective_config, resolved_output_path, resolved_run_id,
+                    repository_root,
+                    effective_config,
+                    resolved_output_path,
+                    resolved_run_id,
                     instances_per_panel=1 if smoke_test else None,
                     seeds_per_panel=2 if smoke_test else None,
                 )
@@ -1160,8 +1283,12 @@ def judge_candidate(
         typer.Option(min=0.1, help="CPU limit for the isolated judge"),
     ] = None,
     judge_memory: Annotated[
-        str, typer.Option(help="Memory limit for the isolated judge")
-    ] = "8g",
+        str | None, typer.Option(help="Memory limit for the isolated judge")
+    ] = None,
+    judge_tmpfs_size: Annotated[
+        str | None,
+        typer.Option(help="Temporary filesystem limit for the isolated judge"),
+    ] = None,
     judge_parallel_runs: Annotated[
         int | None,
         typer.Option(
@@ -1300,7 +1427,14 @@ def judge_candidate(
         or configured_resources.judge_cpus
         or evaluation_config.judge_cpus,
         "judge_cpuset_cpus": configured_resources.judge_cpuset_cpus,
-        "judge_memory": judge_memory,
+        "judge_memory": judge_memory
+        or configured_resources.judge_memory
+        or evaluation_config.judge_memory
+        or "8g",
+        "judge_tmpfs_size": judge_tmpfs_size
+        or configured_resources.judge_tmpfs_size
+        or evaluation_config.judge_tmpfs_size
+        or "4g",
         "judge_parallel_runs": judge_parallel_runs
         or configured_resources.judge_parallel_runs
         or evaluation_config.judge_parallel_runs,
@@ -1422,7 +1556,8 @@ def dry_run_tasks(
         int, typer.Option("--judge-parallel-runs", min=1)
     ] = 1,
     judge_cpus: Annotated[float, typer.Option("--judge-cpus", min=0.1)] = 8.0,
-    judge_memory: Annotated[str, typer.Option("--judge-memory")] = "8g",
+    judge_memory: Annotated[str | None, typer.Option("--judge-memory")] = None,
+    judge_tmpfs_size: Annotated[str | None, typer.Option("--judge-tmpfs-size")] = None,
     configuration_robustness: Annotated[
         bool,
         typer.Option(
@@ -1442,7 +1577,7 @@ def dry_run_tasks(
     ] = None,
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
 ) -> None:
-    """Run the full evaluator pipeline on a limited empty-patch panel without an agent."""
+    """Check the real evaluator with an empty patch and short solver budgets."""
     task_ids = _normalize_task_ids(task_ids)
     if not task_ids:
         raise typer.BadParameter(
@@ -1484,19 +1619,70 @@ def dry_run_tasks(
         resources = evaluation_config.resources_for(task_id)
         task_workspace = workspace_root / task_id
         task_output = output_root / task_id
+        memory = (
+            judge_memory
+            or resources.judge_memory
+            or evaluation_config.judge_memory
+            or "8g"
+        )
+        tmpfs = (
+            judge_tmpfs_size
+            or resources.judge_tmpfs_size
+            or evaluation_config.judge_tmpfs_size
+            or "4g"
+        )
         task_output.mkdir(parents=True, exist_ok=True)
         patch_path = task_output / "candidate.patch"
         patch_path.write_text("")
         try:
+            catalog = TaskCatalog(repository_root)
+            record = (
+                catalog.validate_file(
+                    resolve_repository_path(repository_root, resources.task_config_path)
+                )
+                if resources.task_config_path is not None
+                else catalog.validate_one(task_id)
+            )
+            if record.task.task_id != task_id:
+                raise TaskNotFoundError(
+                    "configured task ID differs from requested task"
+                )
+            smoke_task = evaluation_config.dry_run.task_view(record.task)
+            task_config = task_output / "task-config" / f"{task_id}.yaml"
+            task_config.parent.mkdir(parents=True)
+            task_config.write_text(
+                yaml.safe_dump(smoke_task.model_dump(mode="json"), sort_keys=False)
+            )
+            dry_run_settings = {
+                "empty_candidate_patch": True,
+                "solver_budget_sec": evaluation_config.dry_run.solver_budget_sec,
+                "original_task_config": str(record.task_config_path),
+                "task_config": str(task_config),
+                "formal_evaluation": False,
+            }
+            (task_output / "dry-run.json").write_text(
+                json.dumps(dry_run_settings, indent=2) + "\n"
+            )
+            scenario_config = None
+            if task_id in evaluation_config.metric_scenario_configs:
+                original = resolve_repository_path(
+                    repository_root, evaluation_config.metric_scenario_configs[task_id]
+                )
+                scenario_config = _short_scenario_config(
+                    original, smoke_task, task_config, task_output, resolved_private_root
+                )
             adapter.materialize(
                 task_id,
                 task_workspace,
                 agent_image=resources.agent_image,
                 judge_image=resources.judge_image,
+                judge_memory=memory,
+                judge_tmpfs_size=tmpfs,
                 use_base_cache=False,
+                task_config_path=task_config,
+                metric_scenario_config=scenario_config,
             )
             _prepare_task_image(task_workspace, rebuild=True)
-            record = TaskCatalog(repository_root).validate_one(task_id)
             judge_image = resources.judge_image or record.task.repository.judge_image
             if not judge_image:
                 raise ValueError("dry-run requires a pinned judge image")
@@ -1509,24 +1695,33 @@ def dry_run_tasks(
                 agent_name="dry-run",
                 model_name=None,
                 evaluator_config={
-                    "task_config_path": str(record.task_config_path),
+                    "task_config_path": str(task_config),
                     "base_repository": str(task_workspace / "repo"),
                     "private_root": str(resolved_private_root),
                     "judge_image": judge_image,
                     "judge_cpus": judge_cpus,
-                    "judge_memory": judge_memory,
+                    "judge_memory": memory,
+                    "judge_tmpfs_size": tmpfs,
                     "judge_parallel_runs": judge_parallel_runs,
                     "use_base_cache": False,
                     "instances_per_instance_set": instances_per_instance_set,
+                    "dry_run": True,
+                    **(
+                        {"metric_scenario_config": str(scenario_config)}
+                        if scenario_config is not None
+                        else {}
+                    ),
                 },
             )
             envelope = PitBenchEvaluator().envelope(request)
+            if envelope.completed:
+                envelope.payload.setdefault("summary", {})["dry_run"] = dry_run_settings
             (task_output / "evaluation.json").write_text(
                 json.dumps(envelope.model_dump(mode="json"), indent=2) + "\n"
             )
             if envelope.completed:
                 preflight_failures = _limited_evaluation_failures(
-                    record.task,
+                    smoke_task,
                     task_output,
                     envelope.payload,
                 )
@@ -1563,7 +1758,8 @@ def dry_run_tasks(
                     )
                 else:
                     typer.echo(
-                        f"PASS {task_id}: empty-patch limited-panel evaluation completed"
+                        f"PASS {task_id}: empty-patch evaluation completed "
+                        f"({evaluation_config.dry_run.solver_budget_sec:g}s per solve)"
                     )
             else:
                 failures += 1
@@ -1579,6 +1775,41 @@ def dry_run_tasks(
         and evaluation_config.configuration_robustness.scope == "release"
     ):
         try:
+            if evaluation_config.configuration_robustness.enabled:
+                # The legacy release collector also reads task budgets directly.
+                # Give it saved smoke task views, never edit its formal inputs.
+                experiment_path = resolve_repository_path(
+                    repository_root,
+                    evaluation_config.configuration_robustness.experiment_config,
+                )
+                experiment = yaml.safe_load(experiment_path.read_text())
+                for index, panel in enumerate(experiment["panels"]):
+                    original = resolve_repository_path(
+                        repository_root, Path(panel["task_config"])
+                    )
+                    task = PitBenchTask.from_yaml(original)
+                    destination = (
+                        output_root
+                        / "configuration-tasks"
+                        / str(index)
+                        / f"{task.task_id}.yaml"
+                    )
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(
+                        yaml.safe_dump(
+                            evaluation_config.dry_run.task_view(task).model_dump(
+                                mode="json"
+                            ),
+                            sort_keys=False,
+                        )
+                    )
+                    panel["task_config"] = str(destination)
+                experiment_path = output_root / "configuration-dry-run.yaml"
+                experiment_path.write_text(yaml.safe_dump(experiment, sort_keys=False))
+                evaluation_config = evaluation_config.model_copy(deep=True)
+                evaluation_config.configuration_robustness.experiment_config = (
+                    experiment_path
+                )
             configuration_output = _run_configuration_robustness(
                 repository_root,
                 evaluation_config,
@@ -1611,11 +1842,39 @@ def dry_run_tasks(
 @tasks_app.command("validate")
 def validate_tasks(
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
+    task_dir: Annotated[
+        Path | None,
+        typer.Option(help="Explicit task directory; defaults to the released catalog"),
+    ] = None,
 ) -> None:
-    records = TaskCatalog(_root(root)).validate_all()
+    records = TaskCatalog(_root(root), task_config_dir=task_dir).validate_all()
     for record in records:
         typer.echo(f"OK {record.task.task_id} {record.task_config_sha256[:12]}")
     typer.echo(f"Validated {len(records)} task configs")
+
+
+@tasks_app.command("prepare-inputs")
+def prepare_task_inputs(
+    source: Annotated[
+        str, typer.Option(help="Local tar bundle or direct HTTP(S) download URL")
+    ],
+    output: Annotated[
+        Path, typer.Option(help="Data directory to populate, outside Git")
+    ],
+    root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
+) -> None:
+    """Import externally stored task definitions and public inputs."""
+    from pitbench.instances.storage import prepare_public_inputs
+
+    repository_root = _root(root)
+    if not source.startswith(("https://", "http://")):
+        source = str(resolve_repository_path(repository_root, Path(source)))
+    destination = resolve_repository_path(repository_root, output)
+    try:
+        count = prepare_public_inputs(source, destination)
+    except (OSError, ValueError, tarfile.TarError) as error:
+        raise typer.BadParameter(str(error)) from error
+    typer.echo(f"Prepared {count} public input files in {destination}")
 
 
 @tasks_app.command("fixture")
@@ -1624,13 +1883,17 @@ def fixture_tasks(
     instances_per_instance_set: Annotated[
         int, typer.Option(min=1, help="Synthetic cases per judge instance set")
     ] = 1,
+    task_dir: Annotated[
+        Path | None,
+        typer.Option(help="Explicit task directory; defaults to the released catalog"),
+    ] = None,
 ) -> None:
     """Run the deterministic evaluator contract fixture for every task.
 
     This command does not build repositories, run solvers, or load private judge data.
     """
     repository_root = _root(root)
-    records = TaskCatalog(repository_root).validate_all()
+    records = TaskCatalog(repository_root, task_config_dir=task_dir).validate_all()
     summaries: list[dict[str, object]] = []
     with tempfile.TemporaryDirectory(prefix="pitbench-fixture-") as temporary:
         run_root = Path(temporary)
@@ -1668,6 +1931,12 @@ def fixture_tasks(
 def materialize_task(
     task_id: Annotated[str, typer.Argument(help="PitBench task ID")],
     output: Annotated[Path, typer.Option(help="Exact task destination")],
+    task_config: Annotated[
+        Path | None,
+        typer.Option(
+            "--task-config", help="Explicit external task or image-smoke configuration"
+        ),
+    ] = None,
     private_root: Annotated[
         Path, typer.Option(help="Evaluator-only private storage")
     ] = Path("private"),
@@ -1698,6 +1967,9 @@ def materialize_task(
         agent_image=agent_image,
         judge_image=judge_image,
         agent_tools=agent_tools,
+        task_config_path=resolve_repository_path(repository_root, task_config)
+        if task_config
+        else None,
     )
     typer.echo(f"Materialized {task_id} at {task_dir}")
 
@@ -1821,7 +2093,8 @@ def report_command(
                 for item in task.instance_sets
             },
             expected_instance_counts={
-                item.name: item.size for item in task.instance_sets
+                item.name: item.size
+                for item in task.instance_sets
                 if not item.scenario_only
             },
             expected_seed_count=(

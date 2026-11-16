@@ -355,7 +355,17 @@ class TaskProgressDisplay:
             if state is None or state.outcome:
                 return
             phase = self.STAGES.get(stage)
-            if status == "failed":
+            if (
+                stage == "agent.execute"
+                and status == "failed"
+                and (execution or {}).get("failure_mode") == "agent_timeout"
+            ):
+                self.progress.update(
+                    state.row,
+                    phase="Coding agent timed out",
+                    detail="Wall-time limit reached; retained patch proceeds to evaluation",
+                )
+            elif status == "failed":
                 self.progress.update(
                     state.row,
                     phase=f"{state.phase} failed",
@@ -578,6 +588,10 @@ class AgentActivity:
                 activity = (
                     "Model response" if item_type == "agent_message" else "Planning"
                 )
+        elif kind in {"error", "turn.failed"}:
+            error = event.get("error") or {}
+            message = str(event.get("message") or (error.get("message") if isinstance(error, dict) else error) or "")
+            activity = "Model rate limited (429)" if "429" in message else "Response failed"
         elif kind == "turn.completed":
             self.rounds += 1
             activity = "Response complete"

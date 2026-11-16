@@ -80,8 +80,12 @@ def _metric_scenario_checks(context) -> list:
                 raise ValueError("repository has no source-bound scenario build path")
             from pitbench.evaluator.scenarios import resolve_model_inputs
 
-            private_root = resolve_repository_path(context.repository_root, context.config.paths.private_root)
-            resolve_model_inputs(config, task, private_root=private_root, config_dir=path.parent)
+            private_root = resolve_repository_path(
+                context.repository_root, context.config.paths.private_root
+            )
+            resolve_model_inputs(
+                config, task, private_root=private_root, config_dir=path.parent
+            )
             return [
                 _check(
                     CheckStatus.PASS,
@@ -296,13 +300,20 @@ def _load_context(
         catalog = TaskCatalog(repository_root)
         resources = config.resources_for(task_id)
         task = (
-            catalog.validate_file(resolve_repository_path(repository_root, resources.task_config_path))
-            if resources.task_config_path is not None else catalog.validate_one(task_id)
+            catalog.validate_file(
+                resolve_repository_path(repository_root, resources.task_config_path)
+            )
+            if resources.task_config_path is not None
+            else catalog.validate_one(task_id)
         )
         if task.task.task_id != task_id:
             raise ValueError("configured evaluator task ID differs from requested task")
         if resources.agent_task_config_path is not None:
-            agent_task = catalog.validate_file(resolve_repository_path(repository_root, resources.agent_task_config_path))
+            agent_task = catalog.validate_file(
+                resolve_repository_path(
+                    repository_root, resources.agent_task_config_path
+                )
+            )
             if agent_task.task.task_id != task_id:
                 raise ValueError("configured Agent task ID differs from requested task")
     except Exception as error:
@@ -820,22 +831,38 @@ def _judge_environment_check(
     plugin = RepositoryPluginRegistry.load(context.task.task.repository.plugin)
     from pitbench.evaluator.representations import representation_type
 
-    dependencies = sorted({
-        dependency
-        for protocol in getattr(context.task.task, "metric_scenarios", [])
-        for dependency in representation_type(protocol.representation).runtime_dependencies
-    })
+    dependencies = sorted(
+        {
+            dependency
+            for protocol in getattr(context.task.task, "metric_scenarios", [])
+            for dependency in representation_type(
+                protocol.representation
+            ).runtime_dependencies
+        }
+    )
     if dependencies:
         try:
             client.containers.run(
                 reference,
-                ["python3", "-c", "import importlib; [importlib.import_module(name) for name in " + repr(dependencies) + "]"],
-                network_disabled=True, remove=True, stdout=True, stderr=True,
+                [
+                    "python3",
+                    "-c",
+                    "import importlib; [importlib.import_module(name) for name in "
+                    + repr(dependencies)
+                    + "]",
+                ],
+                network_disabled=True,
+                remove=True,
+                stdout=True,
+                stderr=True,
             )
         except Exception as error:
-            return _check(CheckStatus.FAIL, "judge environment",
-                          f"metric scenario runtime dependencies are unavailable: {error}",
-                          "Rebuild the configured image with the declared representation dependencies before collection.")
+            return _check(
+                CheckStatus.FAIL,
+                "judge environment",
+                f"metric scenario runtime dependencies are unavailable: {error}",
+                "Rebuild the configured image with the declared representation dependencies before collection.",
+            )
     requirements = plugin.judge_environment_requirements
     if not requirements:
         return _check(
@@ -925,8 +952,10 @@ def _docker_storage_check(info: dict) -> DoctorCheck:
             "Check free space on DockerRootDir on the daemon host.",
         )
     status = (
-        CheckStatus.FAIL if disk < 10 * _GIB
-        else CheckStatus.WARN if disk < 20 * _GIB
+        CheckStatus.FAIL
+        if disk < 10 * _GIB
+        else CheckStatus.WARN
+        if disk < 20 * _GIB
         else CheckStatus.PASS
     )
     return _check(
@@ -934,7 +963,8 @@ def _docker_storage_check(info: dict) -> DoctorCheck:
         "Docker storage",
         f"{root}: {_format_gib(disk)} free; image layers use this filesystem",
         "Free daemon storage or move DockerRootDir before building images."
-        if status is not CheckStatus.PASS else None,
+        if status is not CheckStatus.PASS
+        else None,
     )
 
 
@@ -950,14 +980,6 @@ def _image_reference_check(
         )
     local_id = re.fullmatch(r"sha256:[0-9a-f]{64}", reference)
     digest = re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", reference)
-    if kind == "agent" and local_id:
-        return _check(
-            CheckStatus.FAIL,
-            "agent image reference",
-            "a digest-only image ID cannot be used in the generated Dockerfile FROM",
-            "Tag the image (for example `docker tag IMAGE_ID pitbench/agent:local`) "
-            "and configure that tag.",
-        )
     if kind == "judge" and not (local_id or digest):
         return _check(
             CheckStatus.FAIL,
@@ -1283,7 +1305,7 @@ def _runner_check(agent: str, values: dict[str, object]) -> tuple[DoctorCheck, b
     default_path, default_user = defaults[agent]
     runner_path = Path(str(values.get("runner_path") or default_path))
     runner_user = str(values.get("runner_user") or default_user)
-    installer = f"scripts/install-{agent}-runner.sh"
+    installer = f"scripts/install-runner.sh {agent}"
     try:
         metadata = runner_path.stat()
     except OSError as error:
@@ -1520,7 +1542,11 @@ def run_doctor(
     checks.append(_seed_protocol_check(context))
     checks.append(_reliability_plan_check(context))
     checks.append(_pinned_source_check(context, {}))
-    checks.append(_configuration_robustness_check(root, context.config, context.task.task if context.task else None))
+    checks.append(
+        _configuration_robustness_check(
+            root, context.config, context.task.task if context.task else None
+        )
+    )
     checks.extend(_metric_scenario_checks(context))
     checks.extend(_configuration_collector_checks(root, context.config))
     client, docker_info, docker_result = _docker_check(client_factory)
@@ -1615,7 +1641,9 @@ def evaluation_checks(
                     f"representation transformations={'enabled' if protocol.representation_robustness else 'disabled'}",
                 )
             )
-            task_checks.append(_configuration_robustness_check(repository_root, config, record.task))
+            task_checks.append(
+                _configuration_robustness_check(repository_root, config, record.task)
+            )
             task_checks.extend(_metric_scenario_checks(context))
             checks.extend(
                 DoctorCheck(

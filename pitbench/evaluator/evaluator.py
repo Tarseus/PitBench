@@ -11,7 +11,13 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from adapters.pitbench.adapter import PitBenchAdapter
-from pitbench.evaluator.artifacts import artifact_ref, write_json
+from pitbench.evaluator.artifacts import (
+    FreshEvaluationRequired,
+    artifact_ref,
+    new_output_attempt,
+    selected_output_attempt,
+    write_json,
+)
 from pitbench.evaluator.docker_judge import DockerJudge, judge_harness_sha256
 from pitbench.evaluator.judge import FixtureJudge, JudgePlan, _evaluation_seeds
 from pitbench.evaluator.private_assets import (
@@ -453,6 +459,45 @@ class PitBenchEvaluator(Evaluator):
     version = "6"
 
     def evaluate(self, request: EvaluationRequest) -> EvaluationResult:
+        root = request.output_dir.resolve()
+        selected = selected_output_attempt(root)
+        candidate = request.candidate_patch_path
+        retained = selected / "candidate.patch"
+        if (
+            selected != root
+            and retained.is_file()
+            and candidate.is_file()
+            and retained.read_bytes() == candidate.read_bytes()
+        ):
+            candidate = retained
+        actual = request.model_copy(
+            update={"output_dir": selected, "candidate_patch_path": candidate}
+        )
+        try:
+            result = self._evaluate(actual)
+        except FreshEvaluationRequired as error:
+            output = new_output_attempt(root, str(error))
+            patch = output / "candidate.patch"
+            shutil.copy2(request.candidate_patch_path, patch)
+            actual = request.model_copy(
+                update={
+                    "output_dir": output,
+                    "candidate_patch_path": patch,
+                    "candidate_patch_sha256": hashlib.sha256(
+                        patch.read_bytes()
+                    ).hexdigest(),
+                }
+            )
+            result = self._evaluate(actual)
+        if actual.output_dir != root:
+            prefix = actual.output_dir.relative_to(root).as_posix()
+            for _, value in result.artifacts:
+                for ref in value if isinstance(value, list) else [value]:
+                    if ref is not None and not Path(ref.path).is_absolute():
+                        ref.path = prefix + "/" + ref.path
+        return result
+
+    def _evaluate(self, request: EvaluationRequest) -> EvaluationResult:
         config = request.evaluator_config
         progress_callback = config.get("_progress_callback")
         if not callable(progress_callback):
@@ -469,14 +514,7 @@ class PitBenchEvaluator(Evaluator):
             actual_patch_sha256 = hashlib.sha256(
                 request.candidate_patch_path.read_bytes()
             ).hexdigest()
-            if request.candidate_patch_sha256 is None:
-                if not fixture_mode:
-                    raise ValueError("real judge requires candidate_patch_sha256")
-            elif actual_patch_sha256 != request.candidate_patch_sha256:
-                raise ValueError(
-                    "candidate patch identity mismatch: "
-                    f"{actual_patch_sha256} != {request.candidate_patch_sha256}"
-                )
+            request.candidate_patch_sha256 = actual_patch_sha256
         code_states = tuple(
             CodeState(value)
             for value in config.get("code_states", [state.value for state in CodeState])
@@ -538,8 +576,13 @@ class PitBenchEvaluator(Evaluator):
                 if not marker.is_file():
                     marker = request.output_dir / "judge-checkpoint.json"
                 if marker.is_file():
-                    prior = json.loads(marker.read_text())["identity"]
-                    own_measurements = set(prior["code_states"]) == {
+                    try:
+                        prior = json.loads(marker.read_text())["identity"]
+                    except (OSError, ValueError, KeyError) as error:
+                        raise FreshEvaluationRequired(
+                            "Start a separate attempt after an incomplete launch receipt"
+                        ) from error
+                    own_measurements = set(prior.get("code_states", [])) == {
                         state.value for state in CodeState
                     }
                     if use_base_cache:
@@ -561,8 +604,8 @@ class PitBenchEvaluator(Evaluator):
                         if any(
                             prior.get(key) != value for key, value in current.items()
                         ):
-                            raise ValueError(
-                                "retained Judge identity changed; preserve this output and use a new directory"
+                            raise FreshEvaluationRequired(
+                                "Evaluate the current candidate and resource allocation in a separate attempt"
                             )
                         if prior.get("shared_base_sha256"):
                             shared_input = (
@@ -576,16 +619,16 @@ class PitBenchEvaluator(Evaluator):
                                 ]
                                 != shared_identity
                             ):
-                                raise ValueError(
-                                    "retained shared Base hardware or resource profile changed"
+                                raise FreshEvaluationRequired(
+                                    "Collect Base measurements under the current resource profile"
                                 )
                             if (
                                 not shared_input.is_file()
                                 or hashlib.sha256(shared_input.read_bytes()).hexdigest()
                                 != prior["shared_base_sha256"]
                             ):
-                                raise ValueError(
-                                    "retained shared Base input is missing or changed"
+                                raise FreshEvaluationRequired(
+                                    "Recollect unavailable retained Base measurements"
                                 )
                             # Resume with the original local Base even if the
                             # campaign cache has since been removed or repaired.
@@ -724,6 +767,7 @@ class PitBenchEvaluator(Evaluator):
                         )
                         or baseline_judge.run()
                     )
+                    producer = getattr(baseline_judge, "output_dir", producer)
                     if not _base_cache_is_complete(
                         task, base_obs, Path(config["private_root"])
                     ):
@@ -759,6 +803,19 @@ class PitBenchEvaluator(Evaluator):
                         )
                 if observations is None:
                     observations = judge.run()
+                    destination = getattr(judge, "output_dir", request.output_dir)
+                    if destination != request.output_dir:
+                        for name in (
+                            "shared-base.json",
+                            "shared-base-observations.jsonl",
+                        ):
+                            source = request.output_dir / name
+                            if source.is_file():
+                                shutil.copy2(source, destination / name)
+                        patch = destination / "candidate.patch"
+                        shutil.copy2(request.candidate_patch_path, patch)
+                        request.output_dir = destination
+                        request.candidate_patch_path = patch
 
             if cached_base is not None:
                 existing_states = {item.code_state for item in observations}
@@ -1054,6 +1111,8 @@ class PitBenchEvaluator(Evaluator):
                     media_type="application/json",
                     private=True,
                 )
+            except FreshEvaluationRequired:
+                raise
             except Exception as error:
                 scenario_error = f"{type(error).__name__}: {error}"
                 (request.output_dir / "metric-scenario-error.json").write_text(

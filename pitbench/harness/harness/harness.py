@@ -596,6 +596,10 @@ class Harness:
             "failed": f"{label} failed",
         }.get(status)
         if suffix is not None:
+            if stage == "agent.execute" and (execution or {}).get("failure_mode") == "agent_timeout":
+                suffix = "Agent reached its wall-time limit; retained patch proceeds to evaluation"
+            if getattr(self, "_livestream", False):
+                print(f"\n[PitBench {task_id or 'run'}] {suffix}", flush=True)
             external_callback = getattr(self, "_external_progress_callback", None)
             if external_callback is not None:
                 external_callback(suffix)
@@ -606,6 +610,8 @@ class Harness:
         trial_name: str | None,
         detail: str,
     ) -> None:
+        if getattr(self, "_livestream", False):
+            print(f"\n[PitBench {task_id or 'run'}] {detail}", flush=True)
         external_callback = getattr(self, "_external_progress_callback", None)
         if external_callback is not None:
             external_callback(detail)
@@ -730,6 +736,7 @@ class Harness:
 
     def _needs_nested_command_sandbox(self) -> bool:
         """Whether this task container must support Codex bubblewrap nesting."""
+
         def needs_workspace(agent_name, import_path, kwargs):
             if kwargs.get("runner_backend") != "workspace":
                 return False
@@ -751,7 +758,8 @@ class Harness:
             return False
         return any(
             needs_workspace(
-                config.agent_name, config.agent_import_path,
+                config.agent_name,
+                config.agent_import_path,
                 {**self._agent_kwargs, **config.agent_kwargs},
             )
             for config in self._agent_configs
@@ -1907,6 +1915,7 @@ class Harness:
                         f"{type(task_agent).__name__}.perform_task"
                     ),
                     "operation": "Return agent token, cost, marker, and failure data.",
+                    "failure_mode": agent_failure_mode.value,
                 },
                 task_id=trial_handler.task_id,
                 trial_name=trial_handler.trial_name,

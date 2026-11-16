@@ -167,14 +167,10 @@ def _exact_target_verifier(
     *,
     performance_protocol=None,
 ) -> TrustedOptimumFamily:
-    if (
-        record.target_kind == "best_found"
-        and performance_protocol
-        not in {
-            PerformanceProtocol.HEURISTIC_FIXED_BUDGET,
-            PerformanceProtocol.BUDGET_TRUNCATED_QUALITY,
-        }
-    ):
+    if record.target_kind == "best_found" and performance_protocol not in {
+        PerformanceProtocol.HEURISTIC_FIXED_BUDGET,
+        PerformanceProtocol.BUDGET_TRUNCATED_QUALITY,
+    }:
         raise ValueError(
             "best-found MIP targets require a fixed-budget quality panel, not exact solved coverage"
         )
@@ -932,7 +928,8 @@ class LocalProcessJudge:
                     argv = [
                         self.repository.driver_python,
                         "-m",
-                        "scripts.prepare_research_cases",
+                        "scripts.prepare",
+                        "research",
                         "binding",
                         "--source",
                         str(workspace),

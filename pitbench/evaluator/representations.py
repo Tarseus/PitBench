@@ -27,6 +27,7 @@ class RepresentationPlugin(ABC):
     def check_runtime(cls) -> None:
         for name in cls.runtime_dependencies:
             importlib.import_module(name)
+
     _plugins: ClassVar[dict[str, type[RepresentationPlugin]]] = {}
 
     def __init_subclass__(cls, **kwargs) -> None:

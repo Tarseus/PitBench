@@ -23,8 +23,6 @@ from pitbench.harness.terminal.docker_compose_manager import DockerComposeManage
 from pitbench.harness.terminal.tmux_session import TmuxSession
 from pitbench.harness.utils.progress import AgentActivity, TaskProgressDisplay
 
-# Tests consolidated from tests/unit/harness/test_progress.py
-
 """Tests for TaskProgressDisplay and summary progress functionality."""
 
 
@@ -34,8 +32,10 @@ def test_recording_uses_writable_config_for_probe_and_session(monkeypatch):
     monkeypatch.setattr(TmuxSession, "copy_to_container", MagicMock())
     session = TmuxSession("agent", container, user="pitbench-agent")
     assert container.exec_run.call_args.args[0] == [
-        "env", "ASCIINEMA_CONFIG_HOME=/agent-logs/.asciinema",
-        "asciinema", "--version",
+        "env",
+        "ASCIINEMA_CONFIG_HOME=/agent-logs/.asciinema",
+        "asciinema",
+        "--version",
     ]
     assert container.exec_run.call_args.kwargs["user"] == "pitbench-agent"
     session.send_keys = MagicMock()
@@ -75,10 +75,7 @@ def test_development_storage_resolves_log_symlinks_and_keeps_tmp_writable(tmp_pa
 def test_nested_sandbox_override_avoids_duplicate_security_options(tmp_path: Path):
     compose_path = tmp_path / "docker-compose.yaml"
     compose_path.write_text(
-        "services:\n"
-        "  client:\n"
-        "    security_opt:\n"
-        "      - no-new-privileges:true\n"
+        "services:\n  client:\n    security_opt:\n      - no-new-privileges:true\n"
     )
     manager = DockerComposeManager.__new__(DockerComposeManager)
     manager._nested_sandbox = True
@@ -154,9 +151,6 @@ def test_task_progress_display_summary_row():
     assert summary_task.fields["failed"] == 1
 
     display.stop()
-
-
-# Tests consolidated from tests/unit/utils/test_progress.py
 
 
 def display(clock=None, width=150):
@@ -519,21 +513,233 @@ class CustomWorkspaceCodex(CodexMCPAgent):
     pass
 
 
-@pytest.mark.parametrize('multi_agent', [False, True])
-@pytest.mark.parametrize('backend,expected', [('workspace', True), ('container', False)])
-def test_imported_codex_subclass_keeps_nested_sandbox_requirements(multi_agent, backend, expected):
+@pytest.mark.parametrize("multi_agent", [False, True])
+@pytest.mark.parametrize(
+    "backend,expected", [("workspace", True), ("container", False)]
+)
+def test_imported_codex_subclass_keeps_nested_sandbox_requirements(
+    multi_agent, backend, expected
+):
     from pitbench.harness.harness.harness import MultiAgentConfig
 
     harness = Harness.__new__(Harness)
     harness._is_multi_agent = multi_agent
     harness._agent_name = None
-    harness._agent_import_path = f'{__name__}:CustomWorkspaceCodex'
-    harness._agent_kwargs = {'runner_backend': backend}
-    harness._agent_configs = [MultiAgentConfig(agent_import_path=harness._agent_import_path)] if multi_agent else None
+    harness._agent_import_path = f"{__name__}:CustomWorkspaceCodex"
+    harness._agent_kwargs = {"runner_backend": backend}
+    harness._agent_configs = (
+        [MultiAgentConfig(agent_import_path=harness._agent_import_path)]
+        if multi_agent
+        else None
+    )
     assert harness._needs_nested_command_sandbox() is expected
     harness._remote_build = True
     if expected:
-        with pytest.raises(ValueError, match='not supported'):
+        with pytest.raises(ValueError, match="not supported"):
             harness._validate_remote_workspace_compatibility()
     else:
         harness._validate_remote_workspace_compatibility()
+
+
+def test_grouped_commands_forward_worker_arguments_and_restore_argv(monkeypatch):
+    import sys
+
+    from scripts import dispatch
+
+    previous = ["original-entry", "unchanged"]
+    monkeypatch.setattr(sys, "argv", previous)
+    calls = []
+
+    def worker():
+        calls.append(sys.argv[1:])
+        return "completed"
+
+    assert (
+        dispatch({"worker": worker}, ["worker", "--job", "input.json", "--cpu", "1"])
+        == "completed"
+    )
+    assert calls == [["--job", "input.json", "--cpu", "1"]]
+    assert sys.argv is previous
+
+
+def test_grouped_command_help_belongs_to_selected_parser(monkeypatch, capsys):
+    import argparse
+    import sys
+
+    from scripts import dispatch
+
+    previous = ["original-entry"]
+    monkeypatch.setattr(sys, "argv", previous)
+
+    def worker():
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--task")
+        parser.parse_args()
+
+    with pytest.raises(SystemExit) as result:
+        dispatch({"worker": worker}, ["worker", "--help"])
+    assert result.value.code == 0
+    assert "--task" in capsys.readouterr().out
+    assert sys.argv is previous
+
+
+def test_grouped_command_imports_only_the_selected_backend(monkeypatch):
+    from types import SimpleNamespace
+
+    import scripts
+
+    requested = []
+
+    def load(name):
+        requested.append(name)
+        return SimpleNamespace(Commands=SimpleNamespace(main=lambda: "selected"))
+
+    monkeypatch.setattr(scripts.importlib, "import_module", load)
+    assert (
+        scripts.dispatch(
+            {"worker": "worker.module:Commands.main", "unused": "absent:main"},
+            ["worker"],
+        )
+        == "selected"
+    )
+    assert requested == ["worker.module"]
+
+
+@pytest.mark.parametrize(
+    "group,command,option",
+    [
+        ("collect", "reference", "--retry-status"),
+        ("collect", "seeds", "--generation-seed"),
+        ("report", "controls", "--baseline-only"),
+        ("prepare", "research", "populations"),
+        ("check", "feedback", "--behavior-config"),
+    ],
+)
+def test_grouped_cli_retains_selected_command_options(group, command, option):
+    import subprocess
+    import sys
+
+    from tests.support import ROOT
+
+    result = subprocess.run(
+        [sys.executable, "-m", f"scripts.{group}", command, "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert option in result.stdout
+
+
+@pytest.mark.parametrize("argument,expected", [("--help", 0), ("unsupported-agent", 2)])
+def test_shared_runner_installer_safe_argument_paths(argument, expected):
+    import subprocess
+
+    from tests.support import ROOT
+
+    result = subprocess.run(
+        ["sh", str(ROOT / "scripts/install-runner.sh"), argument],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == expected
+    assert "codex|antigravity" in result.stdout + result.stderr
+
+
+def test_grouped_entry_can_run_directly_outside_checkout_without_pythonpath(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    from tests.support import ROOT
+
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/collect.py"), "reference", "--help"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--retry-status" in result.stdout
+
+
+def test_seed_matrix_replays_an_older_frozen_batch_without_rewriting_it(tmp_path):
+    import json
+    import os
+    import subprocess
+    import sys
+
+    from tests.support import ROOT
+
+    batch = tmp_path / "batch"
+    scripts = batch / "harness/scripts"
+    scripts.mkdir(parents=True)
+    legacy = scripts / "validate_seed_robustness_real_solver.py"
+    legacy.write_text(
+        "import json,sys\nfrom pathlib import Path\np=Path(sys.argv[sys.argv.index('--output-dir')+1])\n(p/'arguments.json').write_text(json.dumps(sys.argv[1:]))\n"
+    )
+    before = legacy.read_bytes()
+    configs = batch / "harness/configs/tasks"
+    configs.mkdir(parents=True)
+    (configs / "task.yaml").write_text(
+        'repository:\n  judge_image: "sha256:' + "a" * 64 + '"\n'
+    )
+    (batch / "sources/task/.git").mkdir(parents=True)
+    private = tmp_path / "private"
+    private.mkdir()
+    env = dict(os.environ, PITBENCH_PYTHON=sys.executable)
+    env.pop("PITBENCH_JUDGE_IMAGE", None)
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / "scripts/run-seed-validation-matrix.sh"),
+            str(batch),
+            str(private),
+            "task",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert legacy.read_bytes() == before
+    assert "seeds" not in json.loads((batch / "task/arguments.json").read_text())
+
+
+
+def test_livestream_exposes_agent_progress_and_lifecycle(capsys):
+    harness = Harness.__new__(Harness)
+    harness._livestream = True
+    harness._update_progress_detail("task", "trial", "Agent: Waiting for model")
+    harness._update_progress_from_stage(
+        stage="agent.execute", status="failed", task_id="task", trial_name="trial"
+    )
+    output = capsys.readouterr().out
+    assert "Agent: Waiting for model" in output
+    assert "failed" in output
+
+
+def test_agent_activity_shows_rate_limit_and_deduplicates_failure():
+    activity = AgentActivity()
+    detail = activity.feed(json.dumps({"type": "error", "message": "429 Too Many Requests"}))
+    assert "Model rate limited (429)" in detail
+    assert activity.feed(json.dumps({
+        "type": "turn.failed", "error": {"message": "429 Too Many Requests"}
+    })) is None
+
+
+
+def test_agent_timeout_progress_explains_retained_candidate():
+    progress, _ = display()
+    progress.add("task", "trial")
+    progress.stage("task", "trial", "agent.execute", "started")
+    progress.stage(
+        "task", "trial", "agent.execute", "failed",
+        execution={"failure_mode": "agent_timeout"},
+    )
+    row = progress.progress.tasks[progress.rows["trial"].row]
+    assert row.fields["phase"] == "Coding agent timed out"
+    assert "retained patch" in row.fields["detail"]

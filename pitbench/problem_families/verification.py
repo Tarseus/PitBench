@@ -730,26 +730,40 @@ def _mip_graph_coloring_source_check(
         )
     color_count = int(formulation.split("colors=", 1)[1].split()[0])
     expected_columns = {
-        *(f"x{vertex}_{color}" for vertex in range(vertex_count) for color in range(color_count)),
+        *(
+            f"x{vertex}_{color}"
+            for vertex in range(vertex_count)
+            for color in range(color_count)
+        ),
         *(f"y{color}" for color in range(color_count)),
     }
     edges = list(zip(endpoints[::2], endpoints[1::2], strict=True))
     expected_rows = {
         *(f"v{vertex}" for vertex in range(vertex_count)),
-        *(f"e{edge}_{color}" for edge in range(len(edges)) for color in range(color_count)),
-        *(f"l{vertex}_{color}" for vertex in range(vertex_count) for color in range(color_count)),
+        *(
+            f"e{edge}_{color}"
+            for edge in range(len(edges))
+            for color in range(color_count)
+        ),
+        *(
+            f"l{vertex}_{color}"
+            for vertex in range(vertex_count)
+            for color in range(color_count)
+        ),
         *(f"s{color}" for color in range(color_count - 1)),
     }
     if set(model["columns"]) != expected_columns or set(model["rows"]) != expected_rows:
         return VerificationResult(
-            feasible=False, detail="graph-coloring MPS structure differs from source graph"
+            feasible=False,
+            detail="graph-coloring MPS structure differs from source graph",
         )
     expected_costs = {f"y{color}": 1 for color in range(color_count)}
     if model["cost"] != {
         column: expected_costs.get(column, 0) for column in model["columns"]
     }:
         return VerificationResult(
-            feasible=False, detail="graph-coloring MPS objective differs from source model"
+            feasible=False,
+            detail="graph-coloring MPS objective differs from source model",
         )
 
     def matches_row(name: str, sense: str, rhs: float, terms: dict[str, float]) -> bool:
@@ -807,9 +821,7 @@ def _mip_graph_coloring_source_check(
     colors = []
     for vertex in range(vertex_count):
         selected = [
-            color
-            for color in range(color_count)
-            if values[f"x{vertex}_{color}"] == 1
+            color for color in range(color_count) if values[f"x{vertex}_{color}"] == 1
         ]
         if len(selected) != 1:
             return VerificationResult(
@@ -824,7 +836,8 @@ def _mip_graph_coloring_source_check(
         != checked["objective"]
     ):
         return VerificationResult(
-            feasible=False, detail="MIP assignment fails original graph coloring semantics"
+            feasible=False,
+            detail="MIP assignment fails original graph coloring semantics",
         )
     return VerificationResult(
         feasible=True,
@@ -869,7 +882,8 @@ def _mip_weighted_tardiness_source_check(
         actual = max(0, start + processing[job] - dues[job])
         if tardiness[job] < actual:
             return VerificationResult(
-                feasible=False, detail=f"job {job} tardiness variable understates lateness"
+                feasible=False,
+                detail=f"job {job} tardiness variable understates lateness",
             )
     for first in range(count):
         for second in range(first + 1, count):
@@ -877,16 +891,12 @@ def _mip_weighted_tardiness_source_check(
             if before == 1:
                 valid = (
                     start_times[second]
-                    >= start_times[first]
-                    + processing[first]
-                    + setups[first][second]
+                    >= start_times[first] + processing[first] + setups[first][second]
                 )
             else:
                 valid = (
                     start_times[first]
-                    >= start_times[second]
-                    + processing[second]
-                    + setups[second][first]
+                    >= start_times[second] + processing[second] + setups[second][first]
                 )
             if not valid:
                 return VerificationResult(
@@ -1228,15 +1238,19 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
         kind = self.record.problem_kind
         if kind == "linear_mip":
             checked = MIPFamily._verify_numeric_model_solution(instance_path, solution)
-            if checked.feasible and _mps_metadata_payload(
-                instance_path, "PITBENCH_SCHEDULING_DATA"
-            ) is not None:
+            if (
+                checked.feasible
+                and _mps_metadata_payload(instance_path, "PITBENCH_SCHEDULING_DATA")
+                is not None
+            ):
                 return _mip_weighted_tardiness_source_check(
                     instance_path, solution, checked
                 )
-            if checked.feasible and _mps_metadata_payload(
-                instance_path, "PITBENCH_GRAPH_DATA"
-            ) is not None:
+            if (
+                checked.feasible
+                and _mps_metadata_payload(instance_path, "PITBENCH_GRAPH_DATA")
+                is not None
+            ):
                 return _mip_graph_coloring_source_check(
                     instance_path, solution, checked
                 )
@@ -1247,16 +1261,12 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
                 lines = instance_path.read_text().splitlines()
                 job_count, machine_count = map(int, lines[0].split())
                 rows = [list(map(int, line.split())) for line in lines[1:]]
-                if (
-                    len(rows) != job_count
-                    or any(len(row) != 2 * machine_count for row in rows)
+                if len(rows) != job_count or any(
+                    len(row) != 2 * machine_count for row in rows
                 ):
                     raise ValueError("job-shop operation dimensions do not match")
                 jobs = [
-                    [
-                        (row[index], row[index + 1])
-                        for index in range(0, len(row), 2)
-                    ]
+                    [(row[index], row[index + 1]) for index in range(0, len(row), 2)]
                     for row in rows
                 ]
                 start_times = solution.get("start_times")
@@ -1271,7 +1281,9 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
         try:
             instance = json.loads(instance_path.read_text())
         except (OSError, json.JSONDecodeError) as error:
-            return VerificationResult(feasible=False, detail=f"invalid instance: {error}")
+            return VerificationResult(
+                feasible=False, detail=f"invalid instance: {error}"
+            )
 
         if kind == "bin_packing":
             return _check_bin_packing_solution(
@@ -1360,9 +1372,11 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
             checked = MIPFamily._verify_numeric_model_solution(
                 instance_path, reference_solution
             )
-            if checked.feasible and _mps_metadata_payload(
-                instance_path, "PITBENCH_SCHEDULING_DATA"
-            ) is not None:
+            if (
+                checked.feasible
+                and _mps_metadata_payload(instance_path, "PITBENCH_SCHEDULING_DATA")
+                is not None
+            ):
                 checked = _mip_weighted_tardiness_source_check(
                     instance_path, reference_solution, checked
                 )
@@ -1430,10 +1444,7 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
                 return self._oracle_error("invalid scheduling reference optimum")
             return None
 
-        if (
-            self.record.problem_kind
-            == "resource_constrained_project_scheduling"
-        ):
+        if self.record.problem_kind == "resource_constrained_project_scheduling":
             try:
                 instance = json.loads(instance_path.read_text())
                 checked = check_resource_constrained_project_schedule(
@@ -1997,10 +2008,7 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
                 solution,
                 self.record.optimality_basis["processing_times"],
             )
-        if (
-            self.record.problem_kind
-            == "resource_constrained_project_scheduling"
-        ):
+        if self.record.problem_kind == "resource_constrained_project_scheduling":
             try:
                 return VerificationResult.model_validate(
                     check_resource_constrained_project_schedule(
@@ -2148,7 +2156,13 @@ class MIPFamily(ExternalVerifierFamily):
                     return _mip_weighted_tardiness_source_check(
                         instance_path, solution, result
                     )
-            except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+            except (
+                KeyError,
+                OSError,
+                TypeError,
+                ValueError,
+                json.JSONDecodeError,
+            ) as error:
                 return VerificationResult(
                     feasible=False, detail=f"invalid MIP family metadata: {error}"
                 )
@@ -2203,9 +2217,7 @@ class NumericModelFamily(ProblemFamilyPlugin):
         # Sparse accumulation can land on opposite sides of the same feasibility
         # boundary depending on its summation order. Compute constraint activity
         # in extended precision while keeping the declared tolerance unchanged.
-        activity = model["matrix"].astype(np.longdouble) @ values.astype(
-            np.longdouble
-        )
+        activity = model["matrix"].astype(np.longdouble) @ values.astype(np.longdouble)
         if not np.isfinite(activity).all():
             return {"feasible": False, "reason": "nonfinite constraint activity"}
         bound_error = float(

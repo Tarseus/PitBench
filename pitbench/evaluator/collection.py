@@ -11,6 +11,7 @@ import platform
 import random
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -18,38 +19,52 @@ import tempfile
 import time
 import traceback
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from queue import Queue
 from threading import Condition
+from typing import Any
 
 from pitbench.evaluator.artifacts import write_json
 from pitbench.problem_families.verification import _check_bin_packing_solution
+from pitbench.schema.task import PitBenchTask
 from pitbench.solver_drivers.common import ParameterRejected
 from pitbench.solver_drivers.run import HighsDriver
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def run_collection_process(
+def execute_collection_command(
     command: list[str],
     directory: Path,
-    identity: dict,
     *,
     timeout: float,
     environment: dict | None = None,
+    stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
+    cleanup_command: list[str] | None = None,
 ) -> dict:
-    """Collect one isolated worker, including process failures and watchdog exits."""
+    """Execute an isolated command with shared logging and process-group cleanup."""
+    from contextlib import ExitStack
+
     directory.mkdir(parents=True, exist_ok=True)
-    result = dict(identity)
+    result = {}
     started = time.perf_counter()
     try:
-        with (directory / "process.log").open("w") as log:
+        with ExitStack() as stack:
+            log = stack.enter_context(
+                (stdout_path or directory / "process.log").open("w")
+            )
+            error_log = (
+                stack.enter_context(stderr_path.open("w"))
+                if stderr_path
+                else subprocess.STDOUT
+            )
             process = subprocess.Popen(
                 command,
                 cwd=ROOT,
                 stdout=log,
-                stderr=subprocess.STDOUT,
+                stderr=error_log,
                 env=environment
                 or {
                     **os.environ,
@@ -68,19 +83,40 @@ def run_collection_process(
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
+                if cleanup_command is not None:
+                    subprocess.run(cleanup_command, check=False, capture_output=True)
                 raise
-        result.update(execution_status="process_error", returncode=process.returncode)
-        if (directory / "result.json").exists():
-            result.update(json.loads((directory / "result.json").read_text()))
-            result["returncode"] = process.returncode
-            if process.returncode:
-                result["execution_status"] = "process_error"
+        result.update(execution_status="process_exited", returncode=process.returncode)
     except subprocess.TimeoutExpired:
         result.update(execution_status="watchdog_timeout", verified_feasible=False)
     except OSError as error:
         result.update(execution_status="collector_error", error=str(error))
+    result["process_wall_sec"] = time.perf_counter() - started
+    return result
+
+
+def run_collection_process(
+    command: list[str],
+    directory: Path,
+    identity: dict,
+    *,
+    timeout: float,
+    environment: dict | None = None,
+) -> dict:
+    """Collect worker results using the common process/log/watchdog interface."""
+    executed = execute_collection_command(
+        command, directory, timeout=timeout, environment=environment
+    )
+    result = {**identity, **executed}
+    if executed["execution_status"] == "process_exited":
+        result["execution_status"] = "process_error"
+        if (directory / "result.json").exists():
+            result.update(json.loads((directory / "result.json").read_text()))
+            result["returncode"] = executed["returncode"]
+            if executed["returncode"]:
+                result["execution_status"] = "process_error"
     result.update(
-        process_wall_sec=time.perf_counter() - started,
+        process_wall_sec=executed["process_wall_sec"],
         result_path=str(directory / "result.json"),
     )
     write_json(directory / "result.json", result)
@@ -183,6 +219,66 @@ def reference_resource_state(limits: dict, root: Path) -> dict:
         ):
             state["blocked_by"].append(name)
     return state
+
+
+def reference_progress(output: Path) -> dict:
+    """Read live reference records without changing manifests or result files."""
+    import json
+    import subprocess
+    import time
+    from pathlib import Path
+
+    def read(path):
+        return json.loads(path.read_text()) if path.is_file() else {}
+
+    status = read(output / "status.json")
+    manifest = read(output / "campaign.json")
+    details = []
+    for record in status.get("running", []):
+        job_id = record["job_id"]
+        if Path(job_id).is_absolute() or ".." in Path(job_id).parts:
+            raise ValueError("running job is outside the campaign")
+        attempts = sorted((output / "jobs" / job_id).glob("attempt-*"))
+        entry = dict(record)
+        if attempts:
+            directory = attempts[-1]
+            entry["attempt"] = directory.name
+            entry["incumbent"] = read(directory / "incumbent.json")
+            entry["files"] = {}
+            for name in [
+                "candidate.solution.json",
+                "process.log",
+                "solver.log",
+                "trajectory.jsonl",
+            ]:
+                path = directory / name
+                entry["files"][name] = (
+                    {
+                        "bytes": path.stat().st_size,
+                        "age_sec": max(0, time.time() - path.stat().st_mtime),
+                    }
+                    if path.is_file()
+                    else {"bytes": 0, "age_sec": None}
+                )
+        if record.get("pid"):
+            completed = subprocess.run(
+                ["ps", "-p", str(record["pid"]), "-o", "%cpu=,rss=,stat=,etime="],
+                capture_output=True,
+                text=True,
+            )
+            entry["process"] = {
+                "alive": completed.returncode == 0,
+                "summary": completed.stdout.strip(),
+            }
+        details.append(entry)
+    return {
+        **status,
+        "host_id": manifest.get("host_id"),
+        "running": details,
+        "stop_requested": (output / "STOP").exists(),
+        "needs_repair": read(output / "NEEDS_REPAIR.json"),
+        "read_only": True,
+    }
 
 
 class ReferenceCollection:
@@ -480,12 +576,22 @@ class ReferenceCollection:
         return summary
 
     @staticmethod
-    def run(config_path: Path, output: Path) -> dict:
+    def run(
+        config_path: Path,
+        output: Path,
+        *,
+        job_ids: list[str] | None = None,
+        retry_statuses: set[str] | None = None,
+        require_queue_drained: bool = False,
+    ) -> dict:
         import fcntl
         import threading
 
         output = output.resolve()
         manifest = ReferenceCollection.prepare(config_path, output)
+        selected = None if job_ids is None else set(job_ids)
+        if selected is not None and selected - {job["id"] for job in manifest["jobs"]}:
+            raise ValueError("retry names jobs outside the prepared assignment")
         lockfile = (output / "controller.lock").open("a+")
         fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
         lockfile.seek(0)
@@ -493,6 +599,13 @@ class ReferenceCollection:
         lockfile.write(str(os.getpid()))
         lockfile.flush()
         ReferenceCollection.recover_interrupted(output)
+        if require_queue_drained:
+            current = ReferenceCollection.status(output)
+            if current["running_jobs"] or current["pending_jobs"]:
+                lockfile.close()
+                raise RuntimeError(
+                    "ordinary assigned queue must drain before targeted retry"
+                )
         state_lock = threading.Lock()
         stop_heartbeat = threading.Event()
         snapshot = output / "code_snapshot"
@@ -637,6 +750,32 @@ class ReferenceCollection:
                 jobs = [
                     job for job in manifest["jobs"] if job["phase"] == phase["name"]
                 ]
+                if selected is not None:
+                    jobs = [job for job in jobs if job["id"] in selected]
+                if retry_statuses is not None:
+
+                    def retryable(job):
+                        attempts = sorted(
+                            (output / "jobs" / job["id"]).glob("attempt-*/result.json")
+                        )
+                        selected_status = (
+                            bool(attempts)
+                            and json.loads(attempts[-1].read_text())["execution_status"]
+                            in retry_statuses
+                        )
+                        if selected_status and job["instance"].get("sha256"):
+                            if (
+                                hashlib.sha256(
+                                    Path(job["instance"]["path"]).read_bytes()
+                                ).hexdigest()
+                                != job["instance"]["sha256"]
+                            ):
+                                raise ValueError(
+                                    "prepared reference input changed before retry"
+                                )
+                        return selected_status
+
+                    jobs = [job for job in jobs if retryable(job)]
                 random.Random(manifest["config"].get("schedule_seed", 0)).shuffle(jobs)
                 run_collection_jobs(
                     jobs,
@@ -1034,7 +1173,8 @@ class IsolatedCollection:
                 [
                     sys.executable,
                     "-m",
-                    "scripts.collect_nuisance_results",
+                    "scripts.collect",
+                    "nuisance",
                     "worker",
                     "--job",
                     str(directory / "job.json"),
@@ -1819,3 +1959,612 @@ def configuration_worker(job_path: Path, cpu: int) -> None:
     result["total_worker_wall_sec"] = time.perf_counter() - started
     result.update(job.get("nuisance_identity", {}))
     write_json(job_path.parent / "result.json", result)
+
+
+class ReleaseControlCollection:
+    """Paired release/baseline calibration through shared drivers and execution."""
+
+    ROOT = ROOT
+
+    @staticmethod
+    def _source_path(value: str) -> Path:
+        if value.startswith("private://"):
+            return (
+                ReleaseControlCollection.ROOT
+                / "private"
+                / value.removeprefix("private://")
+            )
+        path = Path(value)
+        return path if path.is_absolute() else ReleaseControlCollection.ROOT / path
+
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    @staticmethod
+    def _image_id(reference: str) -> str:
+        completed = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", reference],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return completed.stdout.strip()
+
+    @staticmethod
+    def _inputs(manifest: dict[str, Any]) -> tuple[PitBenchTask, list[dict], list[int]]:
+        import yaml
+
+        from pitbench.schema.task import PitBenchTask
+
+        task = PitBenchTask.from_yaml(
+            ReleaseControlCollection._source_path(manifest["task_config"])
+        )
+        oracle = yaml.safe_load(
+            ReleaseControlCollection._source_path(manifest["oracle_path"]).read_text()
+        )
+        instances = []
+        for entry in oracle["instances"]:
+            path = ReleaseControlCollection._source_path(entry["instance_uri"])
+            if not path.is_file():
+                raise FileNotFoundError(path)
+            instances.append(
+                {"id": entry["id"], "path": path, "target": float(entry["bks"])}
+            )
+        if len(instances) != len({item["id"] for item in instances}):
+            raise ValueError("duplicate instance IDs in oracle")
+        seed_data = yaml.safe_load(
+            ReleaseControlCollection._source_path(manifest["seed_file"]).read_text()
+        )
+        seeds = list(map(int, seed_data["evaluation_seeds"][: manifest["seed_count"]]))
+        if len(seeds) != manifest["seed_count"] or len(seeds) != len(set(seeds)):
+            raise ValueError("seed selection is incomplete or duplicated")
+        if task.evaluation.threads != 1 or manifest["cpus_per_solver"] != 1:
+            raise ValueError("release control requires one thread and one CPU per run")
+        if manifest["budget_sec"] not in task.evaluation.budgets_sec:
+            raise ValueError("release-control budget is outside the task protocol")
+        labels = (
+            ("old",)
+            if manifest.get("run_mode") == "baseline_qualification"
+            else ("old", "new")
+        )
+        for label in labels:
+            reference = manifest[label]["image"]
+            if ReleaseControlCollection._image_id(reference) != reference:
+                raise ValueError(f"{label} image identity does not match manifest")
+        return (task, instances, seeds)
+
+    @staticmethod
+    def _run_solver(
+        *,
+        manifest: dict[str, Any],
+        task: PitBenchTask,
+        instance: dict[str, Any],
+        seed: int,
+        round_index: int,
+        attempt: int,
+        label: str,
+        output_dir: Path,
+        runner_template: list[str],
+    ) -> dict[str, Any]:
+        from pitbench.problem_families.base import (
+            ProblemFamilyPlugin,
+            ProblemFamilyRegistry,
+        )
+
+        artifact_dir = (
+            output_dir
+            / "artifacts"
+            / f"round-{round_index}"
+            / instance["id"]
+            / f"seed-{seed}"
+            / f"attempt-{attempt}"
+        )
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        output = artifact_dir / f"{label}.json"
+        trajectory = output.with_suffix(".trajectory.jsonl")
+        container_output = "/output/" + str(output.relative_to(output_dir))
+        container_trajectory = "/output/" + str(trajectory.relative_to(output_dir))
+        container_instance = "/instances/" + instance["path"].name
+        container_name = (
+            f"pitbench-release-{os.getpid()}-{round_index}-{seed}-{label}-{attempt}-"
+            + hashlib.sha256(instance["id"].encode()).hexdigest()[:10]
+        )
+        arguments = [
+            token.format_map(
+                {
+                    "instance": container_instance,
+                    "output": container_output,
+                    "trajectory": container_trajectory,
+                    "seed": seed,
+                    "budget": manifest["budget_sec"],
+                    "threads": 1,
+                }
+            )
+            for token in runner_template
+        ]
+        parameters_path = None
+        if task.evaluation.fixed_solver_parameters is not None:
+            parameters_path = artifact_dir / f"{label}.parameters.json"
+            parameters_path.write_text(
+                json.dumps(task.evaluation.fixed_solver_parameters, sort_keys=True)
+                + "\n"
+            )
+            arguments.extend(
+                [
+                    "--parameters",
+                    "/output/" + str(parameters_path.relative_to(output_dir)),
+                ]
+            )
+        command = [
+            "docker",
+            "run",
+            "--rm",
+            "--name",
+            container_name,
+            "--network",
+            "none",
+            "--cpus",
+            "1",
+            "--memory",
+            manifest["memory_limit"],
+            "--user",
+            f"{os.getuid()}:{os.getgid()}",
+            "--mount",
+            f"type=bind,src={output_dir / 'harness' / 'pitbench'},dst=/opt/pitbench,readonly",
+            "--mount",
+            f"type=bind,src={instance['path'].parent},dst=/instances,readonly",
+            "--mount",
+            f"type=bind,src={output_dir},dst=/output",
+            "-e",
+            "PYTHONPATH=/opt",
+            manifest[label]["image"],
+            *arguments,
+        ]
+        stdout_path = artifact_dir / f"{label}.stdout.log"
+        stderr_path = artifact_dir / f"{label}.stderr.log"
+        started = time.perf_counter()
+        executed = execute_collection_command(
+            command,
+            artifact_dir,
+            timeout=manifest["budget_sec"] + 120,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            cleanup_command=["docker", "container", "rm", "-f", container_name],
+        )
+        exit_code = (
+            executed.get("returncode")
+            if executed["execution_status"] == "process_exited"
+            else None
+        )
+        stderr = stderr_path.read_text(errors="replace") if stderr_path.exists() else ""
+        stderr = executed.get("error") or stderr
+
+        record: dict[str, Any] = {
+            "version": manifest[label]["version"],
+            "commit": manifest[label]["commit"],
+            "image": manifest[label]["image"],
+            "container_exit_code": exit_code,
+            "host_wall_time_sec": time.perf_counter() - started,
+            "output_path": str(output),
+            "solution_path": str(output.with_suffix(".solution.json")),
+            "trajectory_path": str(trajectory),
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+        }
+        if parameters_path is not None:
+            record["fixed_solver_parameters_path"] = str(parameters_path)
+            record["fixed_solver_parameters_sha256"] = ReleaseControlCollection._sha256(
+                parameters_path
+            )
+        if exit_code != 0 or not output.is_file():
+            record.update(status="execution_failure", error=stderr[-2000:])
+            return record
+        try:
+            solver = json.loads(output.read_text())
+            solution = output.with_suffix(".solution.json")
+            if not solution.is_file():
+                record.update(status="no_solution", reported=solver)
+                return record
+            verified = ProblemFamilyRegistry.load(task.problem_family).verify(
+                instance["path"], solution
+            )
+            record.update(
+                status="completed" if verified.feasible else "invalid",
+                reported_valid=solver.get("valid"),
+                reported_objective=solver.get("objective"),
+                verified_objective=verified.objective,
+                verification_detail=verified.detail,
+                normalized_gap=ProblemFamilyPlugin.normalized_gap(
+                    verified.objective if verified.feasible else None,
+                    instance["target"],
+                    objective_sense=task.oracle.objective_sense,
+                ),
+                solver_cpu_time_sec=solver.get("cpu_time_sec"),
+                solver_wall_time_sec=solver.get("wall_time_sec"),
+                solver_iterations=solver.get("iterations"),
+                solver_termination=solver.get("solver_termination"),
+            )
+            if solver.get("valid") is not True:
+                record["status"] = "invalid"
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            record.update(status="output_error", error=str(error))
+        return record
+
+    @staticmethod
+    def _run_pair(
+        *,
+        manifest: dict[str, Any],
+        task: PitBenchTask,
+        instance: dict[str, Any],
+        seed: int,
+        round_index: int,
+        pair_index: int,
+        attempt: int,
+        output_dir: Path,
+        runner_template: list[str],
+    ) -> dict[str, Any]:
+        order = (
+            ("old", "new") if (pair_index + round_index) % 2 == 0 else ("new", "old")
+        )
+        runs = {
+            label: ReleaseControlCollection._run_solver(
+                manifest=manifest,
+                task=task,
+                instance=instance,
+                seed=seed,
+                round_index=round_index,
+                attempt=attempt,
+                label=label,
+                output_dir=output_dir,
+                runner_template=runner_template,
+            )
+            for label in order
+        }
+        return {
+            "round": round_index,
+            "instance_id": instance["id"],
+            "instance_path": str(instance["path"]),
+            "target": instance["target"],
+            "solver_seed": seed,
+            "budget_sec": manifest["budget_sec"],
+            "order": list(order),
+            "attempt": attempt,
+            "old": runs["old"],
+            "new": runs["new"],
+        }
+
+    @staticmethod
+    def _run_baseline(
+        *,
+        manifest: dict[str, Any],
+        task: PitBenchTask,
+        instance: dict[str, Any],
+        seed: int,
+        attempt: int,
+        output_dir: Path,
+        runner_template: list[str],
+    ) -> dict[str, Any]:
+        run = ReleaseControlCollection._run_solver(
+            manifest=manifest,
+            task=task,
+            instance=instance,
+            seed=seed,
+            round_index=0,
+            attempt=attempt,
+            label="old",
+            output_dir=output_dir,
+            runner_template=runner_template,
+        )
+        return {
+            "instance_id": instance["id"],
+            "instance_path": str(instance["path"]),
+            "target": instance["target"],
+            "solver_seed": seed,
+            "budget_sec": manifest["budget_sec"],
+            "attempt": attempt,
+            "base": run,
+        }
+
+    @staticmethod
+    def _execute_baseline(
+        *,
+        manifest: dict[str, Any],
+        task: PitBenchTask,
+        instances: list[dict],
+        seeds: list[int],
+        output_dir: Path,
+        runner_template: list[str],
+    ) -> None:
+        from pitbench.schema.task import PerformanceProtocol
+
+        exact = (
+            task.evaluation.performance_protocol
+            == PerformanceProtocol.EXACT_VERIFIED_SOLVE
+        )
+
+        def acceptable(row: dict[str, Any]) -> bool:
+            base = row["base"]
+            return base["status"] == "completed" or (
+                exact
+                and base["status"] == "no_solution"
+                and (base.get("reported", {}).get("solver_termination") == "time_limit")
+            )
+
+        record_path = output_dir / "baseline_runs.jsonl"
+        previous: dict[tuple[str, int], list[dict[str, Any]]] = {}
+        if record_path.is_file():
+            for line in record_path.read_text().splitlines():
+                row = json.loads(line)
+                previous.setdefault(
+                    (row["instance_id"], row["solver_seed"]), []
+                ).append(row)
+        jobs = []
+        for instance in instances:
+            for seed in seeds:
+                key = (instance["id"], seed)
+                if any((acceptable(row) for row in previous.get(key, []))):
+                    continue
+                jobs.append(
+                    {
+                        "manifest": manifest,
+                        "task": task,
+                        "instance": instance,
+                        "seed": seed,
+                        "attempt": len(previous.get(key, [])) + 1,
+                        "output_dir": output_dir,
+                        "runner_template": runner_template,
+                    }
+                )
+        print(
+            json.dumps(
+                {
+                    "expected_baseline_runs": len(instances) * len(seeds),
+                    "completed_prior_runs": len(instances) * len(seeds) - len(jobs),
+                    "remaining_runs": len(jobs),
+                    "parallel_runs": manifest["parallel_pairs"],
+                }
+            ),
+            flush=True,
+        )
+        failed = 0
+        with ThreadPoolExecutor(max_workers=manifest["parallel_pairs"]) as pool:
+            futures = {
+                pool.submit(ReleaseControlCollection._run_baseline, **job): job
+                for job in jobs
+            }
+            with record_path.open("a") as stream:
+                for finished, future in enumerate(as_completed(futures), 1):
+                    try:
+                        row = future.result()
+                    except Exception as error:
+                        job = futures[future]
+                        row = {
+                            "instance_id": job["instance"]["id"],
+                            "solver_seed": job["seed"],
+                            "budget_sec": manifest["budget_sec"],
+                            "attempt": job["attempt"],
+                            "base": {
+                                "status": "orchestration_failure",
+                                "error": str(error),
+                            },
+                        }
+                    stream.write(json.dumps(row, allow_nan=False) + "\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                    if not acceptable(row):
+                        failed += 1
+                    if finished % 10 == 0 or finished == len(jobs):
+                        print(
+                            json.dumps(
+                                {
+                                    "finished_runs": finished,
+                                    "remaining_runs": len(jobs) - finished,
+                                    "failed_runs": failed,
+                                }
+                            ),
+                            flush=True,
+                        )
+        if failed:
+            raise SystemExit(f"{failed} baseline runs failed; raw records retained")
+
+    @staticmethod
+    def run(manifest_path: Path, output_dir: Path, *, check: bool = False) -> None:
+        from concurrent.futures import as_completed
+
+        from pitbench.repositories.base import RepositoryPluginRegistry
+
+        manifest_path = manifest_path.resolve()
+        output_dir = output_dir.resolve()
+        manifest = json.loads(manifest_path.read_text())
+        if manifest.get("schema_version") != 1 or manifest.get("rounds", 0) < 1:
+            raise ValueError("unsupported or empty release-control manifest")
+        run_mode = manifest.get("run_mode", "paired_control")
+        if run_mode not in {"paired_control", "baseline_qualification"}:
+            raise ValueError("unknown release-control run mode")
+        baseline_mode = run_mode == "baseline_qualification"
+        if baseline_mode and manifest["rounds"] != 1:
+            raise ValueError("baseline qualification requires exactly one round")
+        task, instances, seeds = ReleaseControlCollection._inputs(manifest)
+        runner = RepositoryPluginRegistry.load(
+            task.repository.plugin
+        ).agent_run_template()
+        if check:
+            summary = {
+                "task_id": task.task_id,
+                "instance_count": len(instances),
+                "selected_seeds": seeds,
+                "runner_template": runner,
+            }
+            summary["expected_baseline_runs" if baseline_mode else "expected_pairs"] = (
+                len(instances) * len(seeds) * manifest["rounds"]
+            )
+            print(json.dumps(summary, indent=2))
+            return
+        from pitbench.evaluator.artifacts import (
+            new_output_attempt,
+            selected_output_attempt,
+        )
+
+        original_output = output_dir
+        output_dir = selected_output_attempt(output_dir)
+        identity = {
+            "manifest_sha256": ReleaseControlCollection._sha256(manifest_path),
+            "task_sha256": ReleaseControlCollection._sha256(
+                ReleaseControlCollection._source_path(manifest["task_config"])
+            ),
+            "oracle_sha256": ReleaseControlCollection._sha256(
+                ReleaseControlCollection._source_path(manifest["oracle_path"])
+            ),
+            "seed_file_sha256": ReleaseControlCollection._sha256(
+                ReleaseControlCollection._source_path(manifest["seed_file"])
+            ),
+            "driver_sha256": ReleaseControlCollection._sha256(
+                ReleaseControlCollection.ROOT / "pitbench/solver_drivers/run.py"
+            ),
+            "verifier_sha256": ReleaseControlCollection._sha256(
+                ReleaseControlCollection.ROOT
+                / "pitbench/problem_families/verification.py"
+            ),
+            "runner_script_sha256": ReleaseControlCollection._sha256(Path(__file__)),
+            "instance_count": len(instances),
+            "selected_seeds": seeds,
+            "expected_pairs": len(instances) * len(seeds) * manifest["rounds"],
+        }
+        if task.evaluation.fixed_solver_parameters is not None:
+            identity["fixed_solver_parameters"] = (
+                task.evaluation.fixed_solver_parameters
+            )
+        if baseline_mode:
+            identity["run_mode"] = "baseline_qualification"
+            identity["expected_baseline_runs"] = len(instances) * len(seeds)
+        identity_path = output_dir / "identity.json"
+        if (
+            identity_path.is_file()
+            and json.loads(identity_path.read_text()) != identity
+        ):
+            output_dir = new_output_attempt(
+                original_output,
+                "Calibrate the current task and runtime in a separate attempt",
+            )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        write_json(output_dir / "identity.json", identity)
+        harness_root = output_dir / "harness" / "pitbench"
+        if not harness_root.is_dir():
+            shutil.copytree(
+                ReleaseControlCollection.ROOT / "pitbench",
+                harness_root,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
+        if baseline_mode:
+            ReleaseControlCollection._execute_baseline(
+                manifest=manifest,
+                task=task,
+                instances=instances,
+                seeds=seeds,
+                output_dir=output_dir,
+                runner_template=runner,
+            )
+            return
+        record_path = output_dir / "pairs.jsonl"
+        previous: dict[tuple[int, str, int], list[dict[str, Any]]] = {}
+        if record_path.is_file():
+            for line in record_path.read_text().splitlines():
+                row = json.loads(line)
+                key = (row["round"], row["instance_id"], row["solver_seed"])
+                previous.setdefault(key, []).append(row)
+        jobs = []
+        for round_index in range(manifest["rounds"]):
+            for instance_index, instance in enumerate(instances):
+                for seed_index, seed in enumerate(seeds):
+                    key = (round_index, instance["id"], seed)
+                    if any(
+                        (
+                            all(
+                                (
+                                    row[label]["status"] == "completed"
+                                    for label in ("old", "new")
+                                )
+                            )
+                            for row in previous.get(key, [])
+                        )
+                    ):
+                        continue
+                    jobs.append(
+                        {
+                            "manifest": manifest,
+                            "task": task,
+                            "instance": instance,
+                            "seed": seed,
+                            "round_index": round_index,
+                            "pair_index": instance_index * len(seeds) + seed_index,
+                            "attempt": len(previous.get(key, [])) + 1,
+                            "output_dir": output_dir,
+                            "runner_template": runner,
+                        }
+                    )
+        print(
+            json.dumps(
+                {
+                    "expected_pairs": identity["expected_pairs"],
+                    "completed_prior_pairs": identity["expected_pairs"] - len(jobs),
+                    "remaining_pairs": len(jobs),
+                    "parallel_pairs": manifest["parallel_pairs"],
+                }
+            ),
+            flush=True,
+        )
+        finished = 0
+        failed = 0
+        with ThreadPoolExecutor(max_workers=manifest["parallel_pairs"]) as pool:
+            futures = {
+                pool.submit(ReleaseControlCollection._run_pair, **job): job
+                for job in jobs
+            }
+            with record_path.open("a") as stream:
+                for future in as_completed(futures):
+                    try:
+                        row = future.result()
+                    except Exception as error:
+                        job = futures[future]
+                        row = {
+                            "round": job["round_index"],
+                            "instance_id": job["instance"]["id"],
+                            "solver_seed": job["seed"],
+                            "budget_sec": manifest["budget_sec"],
+                            "attempt": job["attempt"],
+                            "old": {
+                                "status": "orchestration_failure",
+                                "error": str(error),
+                            },
+                            "new": {
+                                "status": "orchestration_failure",
+                                "error": str(error),
+                            },
+                        }
+                    stream.write(json.dumps(row, allow_nan=False) + "\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                    finished += 1
+                    if any(
+                        (
+                            row[label]["status"] != "completed"
+                            for label in ("old", "new")
+                        )
+                    ):
+                        failed += 1
+                    if finished % 10 == 0 or finished == len(jobs):
+                        print(
+                            json.dumps(
+                                {
+                                    "finished_pairs": finished,
+                                    "remaining_pairs": len(jobs) - finished,
+                                    "failed_pairs": failed,
+                                }
+                            ),
+                            flush=True,
+                        )
+        if failed:
+            raise SystemExit(
+                f"{failed} release-control pairs failed; raw records retained"
+            )

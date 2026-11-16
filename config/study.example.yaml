@@ -1,0 +1,33 @@
+# Copy to config/study.local.yaml, then run:
+#   python -m scripts.run_benchmark_release
+# Task/solver/problem/model/method selection belongs to the frozen study plan
+# and task package. Keep experiment-specific task files outside Git.
+phase: study-models
+background: true
+manifest: configs/benchmarks/0.0.1.json
+config: config/evaluate.local.yaml
+study_plan: dataset/studies/my-study/study-plan.json
+study_views: dataset/studies/my-study/task-views.json
+output: gushengda/experiments/agent-optimization/my-study/cohort
+
+# Zero or omitted: use available physical cores and memory limits.
+# Explicit CPU pools/counts remain supported.
+workers: 0
+cpu_pools: []
+evaluate_candidates: true
+evaluation_workers: 0
+evaluation_cpu_pools: []
+# After all Agents finish, their allocations join the evaluation queue.
+reuse_agent_pools: true
+dispatch_interval_sec: 20
+
+# Use a short local path: Unix sockets have a platform path-length limit.
+# On g49, use a short directory on /data3 instead.
+temporary_root: /tmp/pitbench-study
+
+# Example machine policy; calibrate for the target host.
+resource_policy:
+  min_available_memory_gib: 64
+  max_cpu_temperature_c: 86
+  max_load_1min: 112
+  check_every_sec: 10

@@ -145,10 +145,15 @@ def check_routing_variant(instance: dict, solution: dict) -> dict:
         or len(demands) != len(coordinates)
         or not isinstance(depots, list)
         or not depots
-        or any(type(node) is not int or not 0 <= node < len(coordinates) for node in depots)
+        or any(
+            type(node) is not int or not 0 <= node < len(coordinates) for node in depots
+        )
         or len(set(depots)) != len(depots)
         or not isinstance(customers, list)
-        or any(type(node) is not int or not 0 <= node < len(coordinates) for node in customers)
+        or any(
+            type(node) is not int or not 0 <= node < len(coordinates)
+            for node in customers
+        )
         or set(customers) & set(depots)
         or not isinstance(vehicle_types, list)
         or not vehicle_types
@@ -156,12 +161,17 @@ def check_routing_variant(instance: dict, solution: dict) -> dict:
         or not isinstance(type_ids, list)
         or len(routes) != len(type_ids)
     ):
-        return {"feasible": False, "detail": "invalid routing-variant input or solution"}
+        return {
+            "feasible": False,
+            "detail": "invalid routing-variant input or solution",
+        }
     if set(customers) | set(depots) != set(range(len(coordinates))):
-        return {"feasible": False, "detail": "routing nodes are not a depot/client partition"}
+        return {
+            "feasible": False,
+            "detail": "routing nodes are not a depot/client partition",
+        }
     if any(
-        len(point) != 2
-        or any(not math.isfinite(value) for value in point)
+        len(point) != 2 or any(not math.isfinite(value) for value in point)
         for point in coordinates
     ) or any(type(value) is not int or value < 0 for value in demands):
         return {"feasible": False, "detail": "invalid routing coordinates or demands"}
@@ -213,7 +223,10 @@ def check_routing_variant(instance: dict, solution: dict) -> dict:
         )
         visited.extend(route)
     if len(visited) != len(set(visited)) or set(visited) != set(customers):
-        return {"feasible": False, "detail": "client coverage is incomplete or duplicated"}
+        return {
+            "feasible": False,
+            "detail": "client coverage is incomplete or duplicated",
+        }
     return {
         "feasible": True,
         "objective": objective,
@@ -285,9 +298,7 @@ def check_graph_coloring(instance: dict, solution: dict) -> dict:
     }
 
 
-def check_resource_constrained_project_schedule(
-    instance: dict, solution: dict
-) -> dict:
+def check_resource_constrained_project_schedule(instance: dict, solution: dict) -> dict:
     """Check non-preemptive RCPSP precedence, renewable resources, and makespan."""
     activities = instance.get("activities")
     arcs = instance.get("precedence_arcs")
@@ -354,8 +365,7 @@ def check_resource_constrained_project_schedule(
             "detail": "RCPSP flattened solver input differs from canonical activities/arcs",
         }
     makespan = max(
-        start + duration
-        for start, duration in zip(starts, durations, strict=True)
+        start + duration for start, duration in zip(starts, durations, strict=True)
     )
     for time in range(makespan):
         for resource, capacity in enumerate(capacities):

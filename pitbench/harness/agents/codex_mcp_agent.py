@@ -141,9 +141,7 @@ Task:
             "relay_max_duration_sec": self._relay_max_duration_sec,
         }
         invalid = [
-            name
-            for name, value in budgets.items()
-            if value is not None and value <= 0
+            name for name, value in budgets.items() if value is not None and value <= 0
         ]
         if invalid:
             raise ValueError(f"relay budgets must be positive: {', '.join(invalid)}")
@@ -213,7 +211,7 @@ Task:
         if not self._runner_path.is_file():
             raise RuntimeError(
                 "The isolated Codex runner is not installed. Run "
-                "`sudo scripts/install-codex-runner.sh`."
+                "`sudo scripts/install-runner.sh codex`."
             )
         runner_check = subprocess.run(
             [

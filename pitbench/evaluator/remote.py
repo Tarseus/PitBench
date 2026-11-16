@@ -210,6 +210,226 @@ class SSHHost:
 
 class RemoteReferenceCollection:
     @staticmethod
+    def progress(config_path: Path, output: Path) -> dict:
+        """Read each configured host through the common SSH and progress interfaces."""
+        import inspect
+
+        import yaml
+
+        from pitbench.evaluator.collection import reference_progress
+
+        config = yaml.safe_load(config_path.read_text())
+        distribution = json.loads((output / "distribution.json").read_text())
+        credentials = RemoteReferenceCollection._credentials(config)
+        source = "import json\nfrom pathlib import Path\n" + inspect.getsource(
+            reference_progress
+        )
+
+        def collect(host):
+            connection = None
+            try:
+                connection = SSHHost(host, credentials, output / "known_hosts")
+                program = (
+                    source
+                    + "\nprint(json.dumps(reference_progress(Path("
+                    + repr(host["root"] + "/campaign")
+                    + "))))\n"
+                )
+                result = json.loads(
+                    connection.run(
+                        shlex.quote(host["root"] + "/env/bin/python")
+                        + " -c "
+                        + shlex.quote(program)
+                    )
+                )
+                return {"host": host["host"], "reachable": True, "status": result}
+            except (OSError, RuntimeError, ValueError) as error:
+                return {"host": host["host"], "reachable": False, "error": str(error)}
+            finally:
+                if connection is not None:
+                    connection.close()
+
+        with ThreadPoolExecutor(
+            max_workers=config.get("ssh_parallel_connections", 2)
+        ) as pool:
+            return {
+                "hosts": list(pool.map(collect, distribution["hosts"])),
+                "read_only": True,
+            }
+
+    @staticmethod
+    def retry(
+        config_path: Path, output: Path, job_ids: list[str], statuses: set[str]
+    ) -> dict:
+        """Dispatch targeted retries with unchanged prepared jobs and budgets."""
+        import yaml
+
+        config = yaml.safe_load(config_path.read_text())
+        distribution = json.loads((output / "distribution.json").read_text())
+        assignments = distribution["assignments"]
+        known = {job["id"] for jobs in assignments.values() for job in jobs}
+        if set(job_ids) - known:
+            raise ValueError("retry names jobs outside the prepared distribution")
+        credentials = RemoteReferenceCollection._credentials(config)
+        results = []
+        for host in distribution["hosts"]:
+            selected = sorted(
+                set(job_ids) & {job["id"] for job in assignments[host["host"]]}
+            )
+            if not selected:
+                continue
+            root = host["root"]
+            command = [
+                root + "/env/bin/python",
+                "-m",
+                "scripts.collect",
+                "reference",
+                "--campaign-config",
+                root + "/project/config.yaml",
+                "--output-dir",
+                root + "/campaign",
+                "--require-queue-drained",
+            ]
+            for identity in selected:
+                command.extend(["--job-id", identity])
+            for status in sorted(statuses):
+                command.extend(["--retry-status", status])
+            connection = SSHHost(host, credentials, output / "known_hosts")
+            try:
+                log = root + "/targeted-retry-" + str(time.time_ns()) + ".log"
+                connection.run(
+                    "cd "
+                    + shlex.quote(root + "/project")
+                    + "; nohup "
+                    + shlex.join(command)
+                    + " > "
+                    + shlex.quote(log)
+                    + " 2>&1 < /dev/null &"
+                )
+                results.append({"host": host["host"], "jobs": selected, "log": log})
+            finally:
+                connection.close()
+        return {"hosts": results, "budgets_changed": False}
+
+    @staticmethod
+    def collect_job_artifacts(
+        connection: SSHHost, host: dict, local: Path, limit: int
+    ) -> None:
+        """Archive finished attempts locally, including solver logs and failures."""
+        from pitbench.evaluator.artifacts import write_json
+
+        attempts = local / "attempts.jsonl"
+        if not attempts.exists():
+            return
+        index_path = local / "job-artifacts.json"
+        saved = json.loads(index_path.read_text()) if index_path.exists() else {}
+        root = Path(host["root"])
+        campaign = root / "campaign"
+        pending = {}
+        scanned_jobs = set()
+        for line in attempts.read_text().splitlines():
+            record = json.loads(line)
+            result, job_id = record.get("result_path"), record.get("job_id")
+            if not job_id:
+                continue
+            if result:
+                relative = Path(result).relative_to(campaign / "jobs")
+                if ".." in relative.parts:
+                    raise ValueError("attempt artifact is outside the jobs directory")
+                if result not in saved:
+                    pending[result] = str(Path("jobs") / relative.parent)
+                job_relative = relative.parent.parent
+            else:
+                if record.get("execution_status") in {
+                    "stopped_before_start",
+                    "skipped_proven_optimal",
+                }:
+                    continue
+                job_relative = Path(job_id)
+                if job_relative.is_absolute() or ".." in job_relative.parts:
+                    raise ValueError("invalid attempt job ID")
+            if job_relative in scanned_jobs:
+                continue
+            scanned_jobs.add(job_relative)
+            job_directory = campaign / "jobs" / job_relative
+            try:
+                attempt_names = sorted(
+                    entry.filename
+                    for entry in connection.sftp.listdir_attr(str(job_directory))
+                    if entry.filename.startswith("attempt-")
+                )
+            except FileNotFoundError as error:
+                raise ValueError(
+                    "logged attempt has no remote job directory"
+                ) from error
+            for attempt_name in attempt_names:
+                relative = job_relative / attempt_name / "result.json"
+                if ".." in relative.parts:
+                    raise ValueError("attempt artifact is outside the jobs directory")
+                remote_result = str(campaign / "jobs" / relative)
+                if (
+                    remote_result in saved
+                    or remote_result in pending
+                    or f"{job_id}#{attempt_name}" in saved
+                    or (attempt_name == "attempt-0000" and job_id in saved)
+                ):
+                    continue
+                try:
+                    connection.sftp.stat(remote_result)
+                except FileNotFoundError:
+                    continue
+                pending[remote_result] = str(Path("jobs") / relative.parent)
+
+        selected = dict(list(pending.items())[:limit])
+        if not selected:
+            return
+        request = root / "artifact-export-request.json"
+        remote_archive = root / "artifact-export.tar.gz"
+        connection.put_json(sorted(set(selected.values())), str(request))
+        script = (
+            "import hashlib,json,tarfile\nfrom pathlib import Path\n"
+            f"root=Path({str(campaign)!r})\n"
+            f"destination=Path({str(remote_archive)!r})\n"
+            f"paths=json.loads(Path({str(request)!r}).read_text())\n"
+            "with tarfile.open(destination,'w:gz',compresslevel=1) as archive:\n"
+            " for directory in paths:\n"
+            "  source=root/directory\n"
+            "  if not (source/'result.json').is_file():\n"
+            "   raise ValueError('finished attempt has no result file')\n"
+            "  for file in sorted(source.rglob('*')):\n"
+            "   if file.is_file() and not file.is_symlink():\n"
+            "    archive.add(file,arcname=str(file.relative_to(root)),recursive=False)\n"
+            "print(hashlib.sha256(destination.read_bytes()).hexdigest())\n"
+        )
+        digest = connection.run(
+            shlex.quote(str(root / "runtime/bin/python3"))
+            + " -c "
+            + shlex.quote(script),
+            timeout=300,
+        ).strip()
+        if len(digest) != 64 or any(
+            character not in "0123456789abcdef" for character in digest
+        ):
+            raise ValueError("invalid attempt archive digest")
+        archives = local / "job-artifacts"
+        archives.mkdir(exist_ok=True)
+        target = archives / (digest + ".tar.gz")
+        temporary = target.with_suffix(".tmp")
+        connection.sftp.get(str(remote_archive), str(temporary))
+        if hashlib.sha256(temporary.read_bytes()).hexdigest() != digest:
+            raise ValueError("attempt archive hash mismatch")
+        temporary.replace(target)
+        for result in selected:
+            saved[result] = {"archive": str(target), "sha256": digest}
+        write_json(index_path, saved)
+        connection.run(
+            "rm -f "
+            + shlex.quote(str(remote_archive))
+            + " "
+            + shlex.quote(str(request))
+        )
+
+    @staticmethod
     def prepare(config_path: Path, output: Path) -> dict:
         import yaml
 
@@ -301,9 +521,10 @@ class RemoteReferenceCollection:
                         ),
                     )
             include(
-                ROOT / "scripts/collect_reference_solutions.py",
-                "project/scripts/collect_reference_solutions.py",
+                ROOT / "scripts/collect.py",
+                "project/scripts/collect.py",
             )
+            include(ROOT / "scripts/__init__.py", "project/scripts/__init__.py")
             for path in sorted(runtime.rglob("*")):
                 include(path, str(Path("runtime") / path.relative_to(runtime)))
             for path in sorted((ROOT / config["wheels"]).glob("*.whl")):
@@ -569,7 +790,7 @@ class RemoteReferenceCollection:
             + shlex.quote(root + "/project")
             + "; nohup nice -n 10 "
             + shlex.quote(root + "/env/bin/python")
-            + " -m scripts.collect_reference_solutions --campaign-config "
+            + " -m scripts.collect reference --campaign-config "
             + shlex.quote(root + "/project/config.yaml")
             + " --output-dir "
             + shlex.quote(root + "/campaign")
@@ -707,6 +928,13 @@ class RemoteReferenceCollection:
                         temporary.replace(local / local_name)
                         versions[remote_name] = version
                 write_json(metadata_path, versions)
+                if config.get("collect_job_artifacts", False):
+                    RemoteReferenceCollection.collect_job_artifacts(
+                        connection,
+                        host,
+                        local,
+                        config.get("job_artifact_batch_size", 64),
+                    )
                 result_state = "reachable"
                 try:
                     connection.sftp.stat(host["root"] + "/campaign/NEEDS_REPAIR.json")

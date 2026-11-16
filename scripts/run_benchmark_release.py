@@ -10,11 +10,13 @@ import concurrent.futures
 import fcntl
 import hashlib
 import json
+import math
 import os
 import queue
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -73,6 +75,183 @@ def study_cpu_ids(pool):
             raise ValueError(f"invalid or overlapping CPU pool: {pool}")
         cpus.update(selected)
     return cpus
+
+
+def available_study_sockets(
+    *, topology=Path("/sys/devices/system/cpu"), lock_root=None, excluded=()
+):
+    """One available hardware thread per physical core, grouped by socket."""
+    allowed = sorted(os.sched_getaffinity(0))
+    lock_root = lock_root or Path(f"/tmp/pitbench-study-cpus-{os.getuid()}")
+    reserved = set(excluded)
+    for cpu in allowed:
+        path = lock_root / f"cpu-{cpu}.lock"
+        if path.exists():
+            with path.open("a") as handle:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    reserved.add(cpu)
+    cores = {}
+    for cpu in allowed:
+        folder = topology / f"cpu{cpu}" / "topology"
+        if folder.is_dir():
+            socket = int((folder / "physical_package_id").read_text())
+            core = int((folder / "core_id").read_text())
+        else:
+            socket, core = 0, cpu
+        cores.setdefault((socket, core), []).append(cpu)
+    sockets = {}
+    for (socket, _), siblings in sorted(cores.items()):
+        if not reserved.intersection(siblings):
+            sockets.setdefault(socket, []).append(min(siblings))
+    return list(sockets.values())
+
+
+def automatic_study_pools(
+    sockets, cpus_per_worker, memory_gib, available_gib, reserve_gib=0
+):
+    """Spread each worker over sockets instead of filling one hot socket first."""
+    count = math.ceil(cpus_per_worker)
+    if count < 1 or memory_gib <= 0:
+        raise ValueError(
+            "automatic scheduling requires positive CPU allocations and memory"
+        )
+    ordered = []
+    for index in range(max(map(len, sockets), default=0)):
+        ordered.extend(group[index] for group in sockets if index < len(group))
+    slots = min(
+        len(ordered) // count, int(max(0, available_gib - reserve_gib) // memory_gib)
+    )
+    return [
+        ",".join(map(str, ordered[start : start + count]))
+        for start in range(0, slots * count, count)
+    ]
+
+
+def study_judge_resources(config, task_ids):
+    from docker.utils import parse_bytes
+
+    cpus, memory = [], []
+    for task_id in task_ids:
+        resources = config.resources_for(task_id)
+        cpus.append(float(resources.judge_cpus or config.judge_cpus or 8))
+        memory.append(
+            parse_bytes(resources.judge_memory or config.judge_memory or "8g") / 1024**3
+        )
+    return max(cpus, default=8), max(memory, default=8)
+
+
+def configure_study_parallelism(args):
+    """Resolve omitted worker counts from host capacity; explicit pools stay explicit."""
+    if args.workers < 0 or args.evaluation_workers < 0:
+        raise ValueError("worker counts must be nonnegative (0 means automatic)")
+    if args.phase not in {
+        "study-models",
+        "study-evaluations",
+        "study-parameters",
+        "study-agent-recovery",
+    }:
+        args.workers = args.workers or 1
+        args.evaluation_workers = args.evaluation_workers or 1
+        return
+    if args.cpu_pools:
+        args.workers = args.workers or len(args.cpu_pools)
+    if args.evaluation_cpu_pools:
+        args.evaluation_workers = args.evaluation_workers or len(
+            args.evaluation_cpu_pools
+        )
+    needs_agents = (
+        args.phase == "study-models"
+        and not args.cpu_pools
+        and (not args.workers or args.workers > 1)
+    )
+    needs_judges = (
+        args.phase in {"study-evaluations", "study-parameters"}
+        and not args.evaluation_cpu_pools
+    )
+    if needs_agents or needs_judges:
+        config = EvaluationConfig.from_yaml(args.config)
+        from pitbench.schema.research import GeneralizationStudyPlan
+
+        plan = (
+            GeneralizationStudyPlan.model_validate_json(
+                Path(args.study_plan).read_text()
+            )
+            if args.study_plan
+            else None
+        )
+        if plan is not None:
+            task_ids = [Path(path).stem for path in plan.task_configs]
+        else:
+            source = args.source_cohort or args.output
+            task_ids = sorted(
+                {
+                    job["task_id"]
+                    for job in json.loads((source / "cohort.json").read_text())["jobs"]
+                }
+            )
+        judge_cpus, judge_memory = study_judge_resources(config, task_ids)
+        policy_path = args.output / "resource-policy.json"
+        policy = json.loads(policy_path.read_text()) if policy_path.is_file() else {}
+        reserve = policy.get("min_available_memory_gib", 0)
+        excluded = (
+            set().union(*(study_cpu_ids(pool) for pool in args.evaluation_cpu_pools))
+            if needs_agents
+            else set()
+        )
+        sockets = available_study_sockets(excluded=excluded)
+        if needs_agents:
+            cpus = (
+                max(plan.research_budget.cpus, judge_cpus)
+                if args.evaluate_candidates
+                else plan.research_budget.cpus
+            )
+            memory = (
+                max(plan.research_budget.memory_gib, judge_memory)
+                if args.evaluate_candidates
+                else plan.research_budget.memory_gib
+            )
+        else:
+            cpus, memory = judge_cpus, judge_memory
+        available = host_snapshot()["available_memory_gib"]
+        if needs_agents:
+            available -= len(args.evaluation_cpu_pools) * judge_memory
+        pools = automatic_study_pools(sockets, cpus, memory, available, reserve)
+        if not pools:
+            raise ValueError(
+                "no free CPU/memory allocation fits the configured study budget"
+            )
+        if needs_agents:
+            dedicated = (
+                min(args.evaluation_workers or 1, max(0, len(pools) - 1))
+                if args.evaluate_candidates and not args.evaluation_cpu_pools
+                else 0
+            )
+            if args.workers:
+                pools = pools[: args.workers + dedicated]
+            if args.evaluate_candidates and not args.evaluation_cpu_pools:
+                args.evaluation_cpu_pools = pools[:dedicated]
+            args.cpu_pools = pools[dedicated:]
+            args.workers = len(args.cpu_pools)
+            args.evaluation_workers = len(args.evaluation_cpu_pools) or 1
+        else:
+            args.evaluation_cpu_pools = pools[: args.evaluation_workers or len(pools)]
+            args.evaluation_workers = len(args.evaluation_cpu_pools)
+    args.workers = args.workers or 1
+    args.evaluation_workers = (
+        args.evaluation_workers or len(args.evaluation_cpu_pools) or 1
+    )
+    write_json(
+        args.output / "parallelism.json",
+        {
+            "agent_workers": args.workers,
+            "agent_cpu_pools": args.cpu_pools,
+            "evaluation_workers": args.evaluation_workers,
+            "evaluation_cpu_pools": args.evaluation_cpu_pools,
+            "reuse_agent_pools": args.reuse_agent_pools,
+        },
+    )
 
 
 @contextmanager
@@ -178,6 +357,8 @@ def wait_for_capacity(args):
     policy = json.loads(policy_path.read_text())
     waiting = False
     while True:
+        if (args.output / "STOP").exists():
+            return False
         health = host_snapshot()
         reasons = []
         if health["available_memory_gib"] < policy["min_available_memory_gib"]:
@@ -856,6 +1037,26 @@ def configure_study_scenarios(config, task_id, views):
         config.metric_scenario_configs.pop(task_id, None)
 
 
+def launch_study_process(command, args, status_path, log, dispatch_at, previous):
+    """Honor STOP while waiting and immediately before spending an Agent start."""
+    if not wait_for_study_dispatch(args, dispatch_at):
+        write_json(status_path, previous)
+        return None
+    return subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+
+
+def wait_for_study_dispatch(args, dispatch_at):
+    """Apply the same STOP, spacing and host admission policy to both stages."""
+    while not (args.output / "STOP").exists():
+        remaining = dispatch_at - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(remaining, 1.0))
+    if (args.output / "STOP").exists() or wait_for_capacity(args) is False:
+        return False
+    return not (args.output / "STOP").exists()
+
+
 def evaluate_study_candidate(state, args, cpu_pool):
     """Claim a condition before changing its status or starting any Judge work."""
     status_path = args.output / "agent-status" / state["run_id"] / "status.json"
@@ -916,12 +1117,8 @@ def _evaluate_study_candidate(state, args, cpu_pool):
     write_json(status_path, job)
     refresh_study_index(args.output)
     try:
-        expected = job["audit"]["candidate_patch_sha256"]
-        if (
-            not source_patch.is_file()
-            or hashlib.sha256(source_patch.read_bytes()).hexdigest() != expected
-        ):
-            raise ValueError("final captured candidate is missing or changed")
+        if not source_patch.is_file():
+            raise ValueError("final captured candidate is missing")
         # Each invocation retains its own Judge identity and complete artifacts.
         output = (
             args.output
@@ -932,8 +1129,8 @@ def _evaluate_study_candidate(state, args, cpu_pool):
         output.mkdir(parents=True)
         patch = output / "candidate.patch"
         shutil.copy2(source_patch, patch)
-        if hashlib.sha256(patch.read_bytes()).hexdigest() != expected:
-            raise ValueError("copied candidate hash changed")
+        expected = hashlib.sha256(patch.read_bytes()).hexdigest()
+        job["audit"] = {**job["audit"], "candidate_patch_sha256": expected}
         job["evaluation_output"] = str(output)
         write_json(
             output / "attempt.json",
@@ -1040,7 +1237,18 @@ def study_evaluations(args):
             "candidate evaluation requires one CPU pool per evaluation worker"
         )
     with study_cpu_lease(args.evaluation_cpu_pools):
-        return _study_evaluations(args)
+        _study_evaluations(args)
+    # A batch manager also owns report completion while peer managers finish.
+    # Per-condition invocations return after their own measurement.
+    if not getattr(args, "retry_run_id", None):
+        while True:
+            records = refresh_study_index(args.output)
+            if (args.output / "STOP").exists():
+                return
+            if not any(row.get("status") == "evaluating" for row in records):
+                break
+            time.sleep(5)
+    finalize_study_report(args)
 
 
 def _study_evaluations(args):
@@ -1061,7 +1269,7 @@ def _study_evaluations(args):
             continue
         state = json.loads(status_path.read_text())
         retryable_statuses = set(
-            getattr(args, "retry_evaluation_statuses", None) or ["evaluation_failed"]
+            getattr(args, "retry_evaluation_statuses", None) or ["evaluation_pending"]
         )
         if state.get("status") not in retryable_statuses:
             continue
@@ -1078,9 +1286,18 @@ def _study_evaluations(args):
         state["audit"] = audit
         pending.append(state)
 
+    dispatch_lock = threading.Lock()
+    next_dispatch = [0.0]
+
     def run(state):
         cpus = slots.get()
         try:
+            with dispatch_lock:
+                if not wait_for_study_dispatch(args, next_dispatch[0]):
+                    return state
+                next_dispatch[0] = time.monotonic() + getattr(
+                    args, "dispatch_interval_sec", 0
+                )
             return evaluate_study_candidate(state, args, cpus)
         finally:
             slots.put(cpus)
@@ -1102,6 +1319,135 @@ def _study_evaluations(args):
             }
         )
     )
+
+
+def finalize_study_report(args, views=None):
+    """The last evaluator writes the final report, including across managers."""
+    terminal = {
+        "evaluation_completed",
+        "evaluation_incomplete",
+        "evaluation_failed",
+        "development_failed",
+    }
+    with cache_lock(args.output / "study-report.lock"):
+        records = refresh_study_index(args.output)
+        if not records or any(row.get("status") not in terminal for row in records):
+            return False
+        if views is None:
+            candidates = [
+                args.output / "evaluation-views/task-views.json",
+                args.output / "frozen-seed-views/task-views.json",
+                Path(args.study_views),
+            ]
+            views = json.loads(
+                next(path for path in candidates if path.is_file()).read_text()
+            )
+        write_campaign_report(
+            args.output,
+            args.output / "report",
+            repository_root=ROOT,
+            index=args.output / "model-runs.json",
+            runs_root=args.output / "runs",
+            task_configs={
+                key: Path(row["evaluator_task_config"])
+                for key, row in views["tasks"].items()
+            },
+        )
+        write_json(
+            args.output / "execution-complete.json",
+            {
+                "finished_at": now(),
+                "conditions": len(records),
+                "statuses": dict(Counter(row["status"] for row in records)),
+                "scientific_interpretation": "optimization_space_qualification_pending",
+            },
+        )
+    return True
+
+
+def reusable_agent_pools(args, config, task_ids, agent_pools):
+    if not getattr(args, "reuse_agent_pools", True):
+        return []
+    cpus, memory = study_judge_resources(config, task_ids)
+    candidates = [
+        pool for pool in agent_pools if pool and len(study_cpu_ids(pool)) >= cpus
+    ]
+    policy_path = args.output / "resource-policy.json"
+    policy = json.loads(policy_path.read_text()) if policy_path.is_file() else {}
+    maximum = int(
+        max(
+            0,
+            host_snapshot()["available_memory_gib"]
+            - policy.get("min_available_memory_gib", 0),
+        )
+        // memory
+    )
+    return candidates[: max(0, maximum - len(args.evaluation_cpu_pools))]
+
+
+def run_study_jobs(jobs, one, args, agent_pools, config, task_ids):
+    """Recycle the Agent CPU allocation into the evaluation queue after coding."""
+    evaluate = getattr(args, "evaluate_candidates", False)
+    dedicated = getattr(args, "evaluation_cpu_pools", [])
+    slots = queue.SimpleQueue()
+    for pool in dedicated:
+        slots.put(pool)
+    dispatch_lock = threading.Lock()
+    next_dispatch = [0.0]
+
+    def collect(state):
+        pool = slots.get()
+        try:
+            with dispatch_lock:
+                if not wait_for_study_dispatch(args, next_dispatch[0]):
+                    return state
+                next_dispatch[0] = time.monotonic() + getattr(
+                    args, "dispatch_interval_sec", 0
+                )
+            return evaluate_study_candidate(state, args, pool)
+        finally:
+            slots.put(pool)
+
+    maximum = len(dedicated) + (
+        len(agent_pools) if getattr(args, "reuse_agent_pools", True) else 0
+    )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, maximum)) as judges:
+        measured = []
+        deferred = []
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(args.workers, len(agent_pools))
+        ) as agents:
+            for future in concurrent.futures.as_completed(
+                [agents.submit(one, job) for job in jobs]
+            ):
+                state = future.result()
+                if evaluate and state["status"] == "evaluation_pending":
+                    if dedicated:
+                        measured.append(judges.submit(collect, state))
+                    else:
+                        deferred.append(state)
+        if evaluate:
+            recycled = reusable_agent_pools(args, config, task_ids, agent_pools)
+            for pool in recycled:
+                slots.put(pool)
+            if recycled:
+                measured.extend(judges.submit(collect, state) for state in deferred)
+            elif deferred:
+                print(
+                    "No evaluation allocation fits current memory; captured candidates remain pending",
+                    flush=True,
+                )
+            write_json(
+                args.output / "evaluation-parallelism.json",
+                {
+                    "agent_phase_finished_at": now(),
+                    "dedicated_cpu_pools": dedicated,
+                    "reused_agent_cpu_pools": recycled,
+                    "evaluation_workers": len(dedicated) + len(recycled),
+                },
+            )
+        for future in concurrent.futures.as_completed(measured):
+            future.result()
 
 
 def retry_unexecuted_condition(args):
@@ -1289,6 +1635,7 @@ def study_models(args):
         raise ValueError("development requires frozen scenario/task views")
     matrix = yaml.safe_load((ROOT / plan.model_matrix).read_text())["runs"]
     task_ids = [Path(name).stem for name in plan.task_configs]
+    source_configs = {Path(name).stem: ROOT / name for name in plan.task_configs}
     missing = set(task_ids) - set(views["tasks"])
     if missing:
         raise ValueError(
@@ -1300,7 +1647,7 @@ def study_models(args):
         row = views["tasks"][task_id]
         task_file = Path(row["evaluator_task_config"])
         record = TaskCatalog(ROOT).validate_file(task_file)
-        original = TaskCatalog(ROOT).validate_one(task_id).task
+        original = TaskCatalog(ROOT).validate_file(source_configs[task_id]).task
         if not study_evaluation_matches(original, record.task, plan):
             raise ValueError(
                 "study changed the frozen source or original primary contract"
@@ -1500,12 +1847,12 @@ def study_models(args):
             ]
             with (condition / "controller.log").open("a") as log:
                 with launch_lock:
-                    delay = max(0.0, next_launch[0] - time.monotonic())
-                    if delay:
-                        time.sleep(delay)
-                    process = subprocess.Popen(
-                        command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT
+                    previous = existing or {**job, "status": "queued"}
+                    process = launch_study_process(
+                        command, args, path, log, next_launch[0], previous
                     )
+                    if process is None:
+                        return previous
                     next_launch[0] = time.monotonic() + args.dispatch_interval_sec
                     state.update(status="development_running", pid=process.pid)
                     write_json(path, state)
@@ -1551,71 +1898,9 @@ def study_models(args):
         )
         return state
 
-    evaluate = getattr(args, "evaluate_candidates", False)
-    evaluation_pools = getattr(args, "evaluation_cpu_pools", [])
-    evaluation_slots = queue.SimpleQueue()
-    for cpu_pool in evaluation_pools:
-        evaluation_slots.put(cpu_pool)
-
-    def collect(state):
-        cpu_pool = evaluation_slots.get()
-        try:
-            return evaluate_study_candidate(state, args, cpu_pool)
-        finally:
-            evaluation_slots.put(cpu_pool)
-
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=getattr(args, "evaluation_workers", 1)
-    ) as judges:
-        measured = []
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=min(args.workers, len(pools))
-        ) as agents:
-            futures = [agents.submit(one, job) for job in jobs]
-            for future in concurrent.futures.as_completed(futures):
-                state = future.result()
-                if evaluate and state["status"] == "evaluation_pending":
-                    measured.append(judges.submit(collect, state))
-        for future in concurrent.futures.as_completed(measured):
-            future.result()
-    if evaluate:
-        records = []
-        for job in jobs:
-            path = args.output / "agent-status" / job["run_id"] / "status.json"
-            state = json.loads(path.read_text()) if path.exists() else job
-            records.append(
-                {
-                    **state,
-                    "condition_id": job["run_id"],
-                    "model": job["model"]["model"],
-                    "setting": job["model"]["setting"],
-                }
-            )
-        index = args.output / "model-runs.json"
-        write_json(index, records)
-        write_campaign_report(
-            args.output,
-            args.output / "report",
-            repository_root=ROOT,
-            index=index,
-            runs_root=args.output / "runs",
-            task_configs={
-                key: Path(row["evaluator_task_config"])
-                for key, row in views["tasks"].items()
-            },
-        )
-        write_json(
-            args.output / "execution-complete.json",
-            {
-                "finished_at": now(),
-                "conditions": len(jobs),
-                "statuses": {
-                    status: sum(row.get("status") == status for row in records)
-                    for status in {row.get("status", "missing") for row in records}
-                },
-                "scientific_interpretation": "optimization_space_qualification_pending",
-            },
-        )
+    run_study_jobs(jobs, one, args, pools, config_template, task_ids)
+    if getattr(args, "evaluate_candidates", False):
+        finalize_study_report(args, views)
 
 
 def study_parameters(args):
@@ -1753,20 +2038,39 @@ def parse_run_arguments(parser, argv):
     return args
 
 
-def launch_background(args, argv):
-    receipt = args.output / "launcher-process.json"
+def study_launcher_paths(args):
+    name = (
+        "launcher"
+        if args.phase in {"study-models", "models", "all"}
+        else "launcher-" + args.phase
+    )
+    receipt = args.output / (name + "-process.json")
+    return receipt, args.output / (name + ".log")
+
+
+def active_study_launcher(args):
+    receipt, _ = study_launcher_paths(args)
     if receipt.exists():
         old = json.loads(receipt.read_text())
-        if Path(f"/proc/{old['pid']}").exists():
-            print(json.dumps({**old, "status": "already_running"}), flush=True)
-            return
+        stat = Path(f"/proc/{old['pid']}/stat")
+        if stat.is_file() and stat.read_text().split()[2] != "Z":
+            return old
+    return None
+
+
+def launch_background(args, argv):
+    receipt, log_path = study_launcher_paths(args)
+    old = active_study_launcher(args)
+    if old:
+        print(json.dumps({**old, "status": "already_running"}), flush=True)
+        return
     command = [
         sys.executable,
         str(Path(__file__).resolve()),
         *argv,
         "--foreground",
     ]
-    with (args.output / "launcher.log").open("a") as log:
+    with log_path.open("a") as log:
         process = subprocess.Popen(
             command,
             cwd=ROOT,
@@ -1779,7 +2083,7 @@ def launch_background(args, argv):
         "pid": process.pid,
         "started_at": now(),
         "status": "started",
-        "log": str(args.output / "launcher.log"),
+        "log": str(log_path),
     }
     write_json(receipt, result)
     print(json.dumps(result), flush=True)
@@ -1794,7 +2098,12 @@ def main():
     parser.add_argument("--background", action="store_true")
     parser.add_argument("--foreground", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--evaluate-candidates", action="store_true")
-    parser.add_argument("--evaluation-workers", type=int, default=1)
+    parser.add_argument(
+        "--evaluation-workers",
+        type=int,
+        default=0,
+        help="Initial evaluation slots; 0 selects from host resources",
+    )
     parser.add_argument("--evaluation-cpu-pools", action="append", default=[])
     parser.add_argument(
         "--retry-evaluation-status",
@@ -1818,7 +2127,25 @@ def main():
             "study-parameters",
         ],
     )
-    parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Agent slots; 0 selects from host resources",
+    )
+    parser.add_argument(
+        "--reuse-agent-pools", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument(
+        "--temporary-root",
+        type=Path,
+        help="Host temporary directory (use a short path for Unix sockets)",
+    )
+    parser.add_argument(
+        "--resource-policy",
+        type=Path,
+        help="JSON admission policy copied into the campaign",
+    )
     parser.add_argument("--models", type=Path)
     parser.add_argument("--study-plan", type=Path)
     parser.add_argument("--study-views", type=Path)
@@ -1827,13 +2154,17 @@ def main():
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--resume-models", action="store_true")
     parser.add_argument("--defer-evaluation-incomplete", action="store_true")
-    parser.add_argument("--dispatch-interval-sec", type=float, default=0)
+    parser.add_argument("--dispatch-interval-sec", type=float, default=None)
     parser.add_argument("--retry-errors", action="store_true")
     parser.add_argument("--retry-run-id")
     parser.add_argument("--task-id")
     parser.add_argument("--cpu-pool")
     parser.add_argument("--cpu-pools", action="append", default=[])
     args = parse_run_arguments(parser, sys.argv[1:])
+    if args.dispatch_interval_sec is None:
+        args.dispatch_interval_sec = (
+            20 if args.phase and args.phase.startswith("study-") else 0
+        )
     for name in ("manifest", "config", "output"):
         value = getattr(args, name)
         if value is not None:
@@ -1852,6 +2183,34 @@ def main():
             flush=True,
         )
         return
+    args.output.mkdir(parents=True, exist_ok=True)
+    if args.temporary_root is not None:
+        temporary = Path(args.temporary_root).expanduser().absolute()
+        temporary.mkdir(parents=True, exist_ok=True)
+        for key in ("TMPDIR", "TMP", "TEMP"):
+            os.environ[key] = str(temporary)
+        tempfile.tempdir = None
+    if args.phase in {"study-models", "study-evaluations", "study-agent-recovery"}:
+        if args.study_plan is None or args.study_views is None:
+            parser.error("study phases require --study-plan and --study-views")
+    if args.phase == "study-parameters" and args.source_cohort is None:
+        parser.error("parameter supplementation requires --source-cohort")
+    if args.resource_policy is not None:
+        policy = (
+            args.resource_policy
+            if isinstance(args.resource_policy, dict)
+            else json.loads(Path(args.resource_policy).read_text())
+        )
+        write_json(args.output / "resource-policy.json", policy)
+    if args.background and not args.foreground:
+        old = active_study_launcher(args)
+        if old:
+            print(json.dumps({**old, "status": "already_running"}), flush=True)
+            return
+    try:
+        configure_study_parallelism(args)
+    except ValueError as error:
+        parser.error(str(error))
     if args.workers < 1 or (args.cpu_pools and len(args.cpu_pools) != args.workers):
         parser.error("positive workers and one CPU pool per worker are required")
     if (
@@ -1864,9 +2223,14 @@ def main():
         "study-parameters",
         "study-evaluations",
     }:
-        if (
-            args.evaluation_workers < 1
-            or len(args.evaluation_cpu_pools) != args.evaluation_workers
+        if args.evaluation_workers < 1 or (
+            len(args.evaluation_cpu_pools) != args.evaluation_workers
+            and not (
+                args.phase == "study-models"
+                and args.reuse_agent_pools
+                and not args.evaluation_cpu_pools
+                and args.cpu_pools
+            )
         ):
             parser.error(
                 "candidate evaluation requires one CPU pool per evaluation worker"

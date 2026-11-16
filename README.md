@@ -633,8 +633,8 @@ For scalable open-opportunity qualification, the evaluator can run the full
 hidden ID instance panel at one seed selected before outcomes, using only the
 pinned base image. This establishes baseline validity and remaining gap without
 claiming a human PR effect; final Agent judging still uses the task's full
-declared seed and budget grid. `scripts/calibrate_release_controls.py` and
-`scripts/analyze_release_controls.py --baseline-only` retain the raw run ledger,
+declared seed and budget grid. `scripts/collect.py controls` and
+`scripts/report.py controls --baseline-only` retain the raw run ledger,
 failures, independent checks, and baseline analysis.
 On #966, this mode completed 38/38 independent base checks with a 1.200% mean
 normalized gap; its more expensive two-order human comparison remains a
@@ -1187,7 +1187,7 @@ The shared instance generators can materialize a configurable grid of
 distributions and problem sizes without running a solver:
 
 ```bash
-uv run python -m scripts.generate_instances \
+uv run python -m scripts.prepare instances \
   --config configs/experiments/instance_generation.yaml \
   --output-dir gushengda/data/generation/instance-generation/cvrp
 ```
@@ -1273,10 +1273,10 @@ probability preserves density while expected vertex degree grows with size.
 Generate and search the multi-family example with:
 
 ```bash
-uv run python -m scripts.generate_instances \
+uv run python -m scripts.prepare instances \
   --config configs/experiments/problem_generation.yaml \
   --output-dir gushengda/data/generation/problem-generation/instances
-uv run python -m scripts.collect_reference_solutions \
+uv run python -m scripts.collect reference \
   --manifest gushengda/data/generation/problem-generation/instances/suite.json \
   --output-dir gushengda/data/generation/problem-generation/references \
   --seconds 1 --max-exact-customers 12
@@ -1323,10 +1323,10 @@ newly generated instances need their own reference search.
 Long reference searches use the same collection process runner and CPU scheduler:
 
 ```bash
-uv run python -m scripts.collect_reference_solutions \
+uv run python -m scripts.collect reference \
   --campaign-config configs/experiments/reference_campaign_long.yaml \
   --output-dir gushengda/data/references/reference-campaign-20261025-long
-uv run python -m scripts.collect_reference_solutions \
+uv run python -m scripts.collect reference \
   --status --output-dir gushengda/data/references/reference-campaign-20261025-long
 ```
 
@@ -1371,10 +1371,10 @@ verification. Each remote host runs an independent shard through the same
 `ReferenceCollection` process runner, scheduler and problem verifiers.
 
 ```bash
-.pitbench/reference-env/bin/python -m scripts.collect_reference_solutions \
+.pitbench/reference-env/bin/python -m scripts.collect reference \
   --remote-config configs/experiments/reference_remote.yaml \
   --output-dir gushengda/data/references/reference-distributed-20261025 --deploy
-.pitbench/reference-env/bin/python -m scripts.collect_reference_solutions \
+.pitbench/reference-env/bin/python -m scripts.collect reference \
   --remote-config configs/experiments/reference_remote.yaml \
   --output-dir gushengda/data/references/reference-distributed-20261025 --sync-loop
 ```
@@ -1490,10 +1490,10 @@ export. The checked-in plan records the local pilot paths; neither those
 generated exports nor private Judge assets are part of the Git checkout.
 
 ```bash
-python -m scripts.prepare_research_cases construct \
+python -m scripts.prepare research construct \
   --plan configs/research/pilot.json --root . --output-dir gushengda/experiments/agent-diagnostics/research-cases
 
-python -m scripts.prepare_research_cases generate \
+python -m scripts.prepare research generate \
   --agent-view gushengda/experiments/agent-diagnostics/research-cases/cvrp_research_001/agent/open_ended/case.json \
   --generator-config PUBLIC_GENERATOR.json --output-dir gushengda/experiments/agent-diagnostics/development-experiment
 ```
@@ -1632,7 +1632,7 @@ hashes. Unknown source formats remain candidates for review.
 
 For this snapshot, the curation project's full suite passed 41 tests. PitBench's
 PR curation, source cache, and repository plugin suites passed 71 tests. The
-expanded `tests/unit/pitbench` plus exact runner check passed 446, skipped 17,
+expanded `tests/unit` plus exact runner check passed 446, skipped 17,
 and failed 6 because the local private oracle/seed assets were absent. No
 solver qualification or new `task_ready` is claimed by these checks.
 
@@ -1643,7 +1643,7 @@ modules. To generate empirical BKS anchors, run inside the appropriate solver
 judge environment with a clean source snapshot:
 
 ```bash
-python -m scripts.generate_shift_bks \
+python -m scripts.collect anchors \
   --task-config configs/tasks/<task_id>.yaml --repository /input/base \
   --instance-set-config /private/hidden_instances/<panel>.yaml \
   --private-root /private --output-dir /private/oracles/<panel> \
@@ -1678,10 +1678,10 @@ installed binding). Source-based execution reuses the normal repository judge;
 installed execution reuses the parameter-search worker and scheduler.
 
 ```bash
-python -m scripts.collect_nuisance_results prepare \
+python -m scripts.collect nuisance prepare \
   --config configs/experiments/nuisance_robustness.yaml --panel routing \
   --repository /path/to/source --output gushengda/experiments/robustness/nuisance-routing
-python -m scripts.collect_nuisance_results run \
+python -m scripts.collect nuisance run \
   --output gushengda/experiments/robustness/nuisance-routing --cpus <available-cpu-ids>
 ```
 
@@ -1693,7 +1693,7 @@ Previously retained experiment formats remain readable by the same report comman
 
 
 ```bash
-python -m scripts.report_nuisance_results --source /path/to/experiment --output /path/to/report
+python -m scripts.report nuisance --source /path/to/experiment --output /path/to/report
 ```
 
 The report reads a job manifest with per-run results, or judge checkpoints with
@@ -1709,17 +1709,17 @@ selects the collection backends, parameter domains, instance sources and seed li
 task files supply solver releases and per-run budgets.
 
 ```bash
-uv run --extra configuration python -m scripts.collect_configuration_results prepare \
+uv run --extra configuration python -m scripts.collect configuration prepare \
   --config configs/experiments/configuration_robustness.yaml \
   --output gushengda/experiments/robustness/configuration-robustness \
   --solver-python pyvrp=/path/to/routing-environment/bin/python \
   --solver-python highs=/path/to/exact-environment/bin/python \
   --cpus <available-cpu-ids> --search-seed <searcher-seed>
 
-uv run --extra configuration python -m scripts.collect_configuration_results run \
+uv run --extra configuration python -m scripts.collect configuration run \
   --output gushengda/experiments/robustness/configuration-robustness
 
-uv run python -m scripts.collect_configuration_results report \
+uv run python -m scripts.collect configuration report \
   --output gushengda/experiments/robustness/configuration-robustness
 ```
 
@@ -1771,12 +1771,12 @@ PitBench/
 │   ├── problem_families/ # Problem semantics and independent verification
 │   ├── instances/       # CO instance generation and materialization tooling
 │   └── cli/             # Unified CLI (`run/evaluate/judge/report/tasks`)
-├── scripts/             # Optional external scheduling and maintenance scripts
+├── scripts/             # Grouped prepare/collect/report/check and campaign commands
 ├── configs/tasks/        # Public task configs
 ├── configs/instance_sets/ # Public instance-set configs
 ├── adapters/pitbench/    # Prepared PyVRP Docker adapter
 ├── private/              # Maintainer-provisioned hidden evaluation assets
-└── tests/unit/           # Unit test suite
+└── tests/                # Flat functional suites and shared sample builders
 ```
 
 ---

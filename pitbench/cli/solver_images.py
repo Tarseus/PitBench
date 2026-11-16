@@ -73,12 +73,20 @@ def build_solver_image(
     *,
     config: SolverImageBuildConfig,
     image_tag: str | None = None,
+    task_config_path: Path | None = None,
     progress: Callable[[str], None] = print,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> BuiltSolverImage:
     """Build one task's source image using optional machine-local network settings."""
     root = repository_root.resolve()
-    record = TaskCatalog(root).validate_one(task_id)
+    catalog = TaskCatalog(root)
+    record = (
+        catalog.validate_file(task_config_path)
+        if task_config_path is not None
+        else catalog.validate_one(task_id)
+    )
+    if record.task.task_id != task_id:
+        raise ValueError("configured task ID differs from requested task")
     plugin = RepositoryPluginRegistry.load(record.task.repository.plugin)
     dockerfile = root / "docker" / "solver-images" / plugin.name / "Dockerfile"
     if not dockerfile.is_file():

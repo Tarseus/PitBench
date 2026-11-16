@@ -33,9 +33,9 @@ class TaskRecord:
 class TaskCatalog:
     """Loads and validates the public, agent-safe portion of task definitions."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, task_config_dir: Path | None = None) -> None:
         self.root = root.resolve()
-        self.task_config_dir = self.root / "configs" / "tasks"
+        self.task_config_dir = self.root / (task_config_dir or Path("configs/tasks"))
 
     @staticmethod
     def _load_record(path: Path) -> TaskRecord:
@@ -76,7 +76,8 @@ class TaskCatalog:
                 if self.root not in path.parents or not path.is_file():
                     raise TaskValidationError(
                         f"{task.task_id}: missing visible instance set "
-                        f"{instance_set.instance_set_config}"
+                        f"{instance_set.instance_set_config}; provision public inputs "
+                        "first (pitbench tasks prepare-inputs --help)"
                     )
                 payload = yaml.safe_load(path.read_text())
                 if (

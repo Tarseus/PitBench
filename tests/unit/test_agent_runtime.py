@@ -46,8 +46,6 @@ from pitbench.harness.utils.agent_trace import (
 )
 from pitbench.harness.utils.trace_validation import inspect_trace
 
-# Tests consolidated from tests/unit/utils/test_agent_trace.py
-
 
 def events(root):
     rows = []
@@ -600,11 +598,9 @@ def test_timeout_racing_with_trace_close_stays_an_agent_timeout(
             )
         )
 
-    trace_path, = (logdir.parent / "agent-trace").glob("*/events.jsonl")
+    (trace_path,) = (logdir.parent / "agent-trace").glob("*/events.jsonl")
     rows = list(read_trace(trace_path))
-    assert any(
-        row["event"] == "custom.finished_before_deadline_signal" for row in rows
-    )
+    assert any(row["event"] == "custom.finished_before_deadline_signal" for row in rows)
 
 
 @pytest.mark.parametrize("close_during_call", [False, True])
@@ -736,7 +732,10 @@ def test_relay_passes_schema_objects_in_streamed_response(schema_type):
 def test_relay_still_blocks_shell_escalation_in_actual_tool_calls(call_type):
     event = {
         "type": "response.output_item.added",
-        "item": {"type": call_type, "arguments": '{"sandbox_permissions":"require_escalated"}'},
+        "item": {
+            "type": call_type,
+            "arguments": '{"sandbox_permissions":"require_escalated"}',
+        },
     }
     assert _RelayHandler._event_requests_shell_escalation(
         ("data: " + json.dumps(event)).encode()
@@ -836,9 +835,6 @@ def test_relay_without_token_cap_does_not_exhaust_token_budget():
     assert budget.reserve() is None
     budget.finish(10_000_001)
     assert budget.reserve() is None
-
-
-# Tests consolidated from tests/unit/utils/test_recording.py
 
 
 def test_native_hooks_keep_tool_payloads_without_copying_workspace_files(tmp_path):
@@ -1161,9 +1157,6 @@ def test_filesystem_journal_records_fast_create_delete_between_snapshots(tmp_pat
         (spool / "stop-watcher").touch()
         process.communicate(timeout=5)
     assert process.returncode == 0
-
-
-# Tests consolidated from tests/unit/pitbench/test_auth.py
 
 
 CODEX_TOKEN = {

@@ -1,5 +1,108 @@
 # Running a pinned benchmark release
 
+See [project maintenance](project-maintenance.md) for the shared execution,
+reference recovery, all-condition export and diagnostics interfaces and the
+independent Agent package boundary.
+
+The maintained study launcher is `python -m scripts.run_benchmark_release`.
+Copy `config/study.example.yaml` to the ignored `config/study.local.yaml` and
+set its study plan, task views and machine configuration. No experiment-specific
+Python launcher or shell environment variables are required. The study plan
+selects task definitions (solver and problem), model matrix and method arms.
+
+Study worker counts default to automatic (`workers: 0`, `evaluation_workers: 0`).
+The launcher uses one thread per available physical core, skips cores leased by
+another manager, distributes allocations across CPU sockets, and limits the count
+using configured memory limits and the machine's memory reserve. A worker count
+without explicit CPU pools caps automatic allocation; provided pools retain
+their configured counts. With `evaluate_candidates: true`,
+the initial allocation keeps an evaluation slot when capacity permits. Once all
+Agents finish, `reuse_agent_pools: true` transfers eligible Agent CPU pools to
+evaluation, subject to Judge CPU and memory requirements. It does not change
+per-Agent or per-solve budgets.
+
+Both stages honor STOP, dispatch spacing and the campaign's admission policy.
+Set `temporary_root` and inline `resource_policy` in the profile (or pass a JSON
+policy path with `--resource-policy`). The policy is saved in the campaign;
+worker allocations and the post-Agent allocation are also recorded there.
+The last evaluator writes the final report after all conditions are terminal.
+
+To process an existing queue from the same project entry point, select
+`phase: study-evaluations` in a second profile and point `output` at the original
+cohort. Pending candidates are selected by default; explicitly set
+`retry_evaluation_statuses: [evaluation_pending, evaluation_failed]` when retrying
+retained failures. This phase starts no Agents. Background process receipts and
+logs are separate for the Agent manager and standalone evaluation manager.
+
+Experimental task definitions and their public instances are stored separately
+from Git. The e8 package is `e8-task-bundle-v1.tar.gz`, containing 40 task YAMLs,
+440 public input files and an `evaluate.yaml` task-path configuration. Import it
+into the ignored `dataset/` directory:
+
+```bash
+pitbench tasks prepare-inputs --source /path/to/e8-task-bundle-v1.tar.gz --output dataset/task-bundles/e8
+pitbench tasks validate --task-dir dataset/task-bundles/e8/tasks
+pitbench tasks fixture --task-dir dataset/task-bundles/e8/tasks
+# The default catalog remains independent of installed experiment packages.
+pitbench tasks validate
+```
+
+`--source` also accepts a direct HTTP(S) download URL from a drive or object
+store. An interactive sharing page must be downloaded first. Keep the archive
+in external storage or `dataset/archives/`. The package is extracted as
+`dataset/task-bundles/e8/{tasks,inputs,evaluate.yaml}`; use this output path so
+its task references resolve. The default `configs/tasks/` catalog keeps the
+maintained task definitions, and Git keeps shared templates, generators and
+scoring protocols. Experiment packages are loaded explicitly and never scanned
+into the default catalog.
+
+`tasks materialize --task-config dataset/task-bundles/e8/tasks/TASK_ID.yaml`
+loads one packaged task directly. For `evaluate`, `judge`, `images build` and
+`dry-run`, copy the package's `tasks` mapping from `evaluate.yaml` into your
+machine-local evaluation config. It specifies `task_config_path` for each task;
+continue using your machine's solver images, private storage and agent settings.
+Neither the archive nor its extracted tasks and inputs belong in a commit.
+The bundle contains agent-visible development files and task definitions with
+private asset references; private Judge inputs and credentials stay separate.
+A hosted download URL has not yet been assigned.
+
+For a first local trial with a **real coding Agent**, use:
+
+```bash
+uv run pitbench run vroom_v1_15_0 --agent codex --model gpt-6-luna --smoke-test --no-configuration-robustness --livestream
+```
+
+Replace the task/model with one configured on your machine. This runs one Agent
+attempt with a five-minute wall limit, then evaluates one instance per set and at
+most two seeds using `dry_run.solver_budget_sec` (default 0.1 seconds per solve).
+It makes real model calls; an unfinished Agent may still return an empty patch.
+Builds and verification take additional time. These results check the pipeline
+and do not measure solver improvement. The command prints workspace and log paths.
+Add `--check-only` to inspect prerequisites first. Machine defaults come from
+`config/evaluate.local.yaml`; no environment variables or study plan are needed.
+Existing prerequisite checks apply, including available host memory.
+
+Use `pitbench dry-run TASK_ID --run-id NAME` to check the real evaluation
+pipeline with an empty candidate patch and no Agent/model calls. It runs one
+instance per instance set by default, retaining the task's seed lists and
+validation, independent verification and reporting stages. Configure the solver
+time in `config/evaluate.local.yaml`:
+
+```yaml
+dry_run:
+  solver_budget_sec: 0.1
+```
+
+The default is 0.1 seconds per solve, including supplemental panels, reliability,
+representation and enabled scenario/configuration evaluations. Builds, input
+preparation and verification take additional time. Tasks are copied into the
+dry-run output with short budgets; formal task files stay unchanged. Saved
+`dry-run.json`, task YAML, grids and observations record the effective budgets.
+These results check the pipeline and do not measure formal Agent performance.
+Use `--no-configuration-robustness` to omit parameter search when checking only
+the native evaluation pipeline. Existing private inputs and solver images are
+still required.
+
 `configs/benchmarks/0.0.1.json` binds the sixteen release tasks to eight solver
 repositories, two official releases per repository, with their source commit and
 tree hashes. Each task records its historical design template. Budgets, seeds,
@@ -145,7 +248,7 @@ A repository without an approved parameter panel or native parameter
 driver is reported as unavailable, rather than passed or silently disabled.
 
 The standalone release-only collector remains available through `scope: release`,
-the original experiment config and `scripts.collect_configuration_results`. It now reuses one container per
+the original experiment config and `scripts.collect configuration`. It now reuses one container per
 image/environment/CPU, while starting a fresh process for every solver run.
 Temporary paths follow the data-disk output directory. Candidate evaluation
 launches one native Judge per new panel, rather than one Docker container per
@@ -240,7 +343,11 @@ in the retained logs. These caches do not reuse candidate solve observations.
 The Judge records its launch identity before starting. Re-running an interrupted
 candidate automatically resumes only missing instance/state/seed/budget cells,
 including representation runs. Existing solver failures remain terminal records;
-identity mismatches preserve the old output and require a separate directory.
+Changed candidate/resource identities automatically select a new attempt directory
+while retaining the previous output. The evaluator records the actual captured
+patch identity; callers do not have to maintain matching hash arguments. Result
+artifact references point to the selected attempt, including when aggregation is
+resumed through the original output directory.
 The study launcher creates a fresh `evaluations/<run_id>/attempt-*` directory
 for each candidate evaluation invocation. It copies and verifies the captured
 patch, archives the previous condition status, and records `evaluation_output`
@@ -293,7 +400,7 @@ seed selection or scoring threshold is inferred from scheduling.
 To prepare reduced evaluation views for an existing frozen study:
 
 ```bash
-python -m scripts.prepare_research_cases balance-views \
+python -m scripts.prepare research balance-views \
   --views /path/to/cohort/frozen-seed-views/task-views.json \
   --private-root /path/to/private \
   --output-dir /path/to/new-evaluation-views --target-runs 100000 \

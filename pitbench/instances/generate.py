@@ -307,7 +307,9 @@ def _cvrp(config: dict[str, Any], index: int, destination: Path) -> None:
         ),
         cluster_count=int(config.get("cluster_count", 4)),
         cluster_spread=float(_choice_value(config.get("cluster_spread", 9.0), index)),
-        uniform_fraction=float(_choice_value(config.get("uniform_fraction", 0.5), index)),
+        uniform_fraction=float(
+            _choice_value(config.get("uniform_fraction", 0.5), index)
+        ),
         depot_mode=_choice_value(config.get("depot_mode", "center"), index),
         demand_distribution=_choice_value(
             config.get("demand_distribution", "uniform_integer"), index
@@ -459,9 +461,7 @@ def _routing_variant_instance(config: dict[str, Any], index: int) -> dict[str, A
         structure = f"{type_count}_vehicle_types"
     elif kind == "multi_depot_vrp":
         depot_count = int(_choice_value(config.get("depots", 2), index))
-        balance = _choice_value(
-            config.get("customer_depot_balance", "balanced"), index
-        )
+        balance = _choice_value(config.get("customer_depot_balance", "balanced"), index)
         if depot_count not in {2, 4} or balance not in {"balanced", "imbalanced"}:
             raise ValueError("invalid multi-depot structure")
         rng = random.Random(f"multi-depot-coordinates:{seed}")
@@ -678,13 +678,17 @@ def _single_machine_weighted_tardiness_mps(
     """Pairwise-disjunctive single-machine weighted tardiness with setups."""
     rng = random.Random(_instance_seed(config, index))
     count = int(_choice(config["jobs"], index))
-    processing_parameters = config.get(
-        "processing_parameters", {"low": 1, "high": 99}
+    processing_parameters = config.get("processing_parameters", {"low": 1, "high": 99})
+    low, high = (
+        processing_parameters.get("low", 1),
+        processing_parameters.get("high", 99),
     )
-    low, high = processing_parameters.get("low", 1), processing_parameters.get(
-        "high", 99
-    )
-    if count < 2 or type(low) is not int or type(high) is not int or not 1 <= low <= high:
+    if (
+        count < 2
+        or type(low) is not int
+        or type(high) is not int
+        or not 1 <= low <= high
+    ):
         raise ValueError("invalid weighted-tardiness dimensions or processing range")
     processing = _integer_samples(
         rng,
@@ -706,9 +710,7 @@ def _single_machine_weighted_tardiness_mps(
     releases = [rng.randint(0, release_max) for _ in range(count)]
     mean_processing = max(1, round(total / count))
     due_dates = [
-        releases[j]
-        + processing[j]
-        + round(mean_processing * due_tightness)
+        releases[j] + processing[j] + round(mean_processing * due_tightness)
         for j in range(count)
     ]
     weights = [rng.randint(1, 10) for _ in range(count)]
@@ -1295,7 +1297,11 @@ def _graph_coloring_mps(config: dict[str, Any], index: int, destination: Path) -
     )
     color_count = int(_choice(config.get("colors", [4]), index))
     columns = [
-        *(f"x{vertex}_{color}" for vertex in range(vertex_count) for color in range(color_count)),
+        *(
+            f"x{vertex}_{color}"
+            for vertex in range(vertex_count)
+            for color in range(color_count)
+        ),
         *(f"y{color}" for color in range(color_count)),
     ]
     rows = []
@@ -1303,9 +1309,7 @@ def _graph_coloring_mps(config: dict[str, Any], index: int, destination: Path) -
     for vertex in range(vertex_count):
         row = f"v{vertex}"
         rows.append((row, "E", 1))
-        coefficients[row] = {
-            f"x{vertex}_{color}": 1 for color in range(color_count)
-        }
+        coefficients[row] = {f"x{vertex}_{color}": 1 for color in range(color_count)}
     for edge_index, (first, second) in enumerate(edges):
         for color in range(color_count):
             row = f"e{edge_index}_{color}"
@@ -1630,7 +1634,9 @@ def balanced_subset_sum_instance(config: dict[str, Any], index: int) -> dict[str
     if "cardinality_fraction" in config:
         fraction = float(_choice_value(config["cardinality_fraction"], index))
         if not 0 < fraction < 1:
-            raise ValueError("balanced subset-sum cardinality fraction must be in (0, 1)")
+            raise ValueError(
+                "balanced subset-sum cardinality fraction must be in (0, 1)"
+            )
         cardinality = max(1, min(item_count - 1, round(item_count * fraction)))
     else:
         cardinality = int(config.get("cardinality", item_count // 2))
@@ -1798,9 +1804,7 @@ def resource_constrained_project_instance(
         raise ValueError("invalid RCPSP generation parameters")
 
     durations = [rng.randint(low, high) for _ in range(count)]
-    demands = [
-        [rng.randint(1, 4) for _ in range(resources)] for _ in range(count)
-    ]
+    demands = [[rng.randint(1, 4) for _ in range(resources)] for _ in range(count)]
     if shape == "layered_dag":
         layer_count = max(2, min(count, int(math.sqrt(count))))
         layer = [min(layer_count - 1, i * layer_count // count) for i in range(count)]
@@ -1809,10 +1813,7 @@ def resource_constrained_project_instance(
             for i in range(count)
             for j in range(i + 1, count)
             if layer[i] < layer[j]
-            and (
-                layer[j] == layer[i] + 1
-                or rng.random() < density
-            )
+            and (layer[j] == layer[i] + 1 or rng.random() < density)
         }
     else:
         arcs = {
@@ -1831,7 +1832,9 @@ def resource_constrained_project_instance(
     for resource in range(resources):
         maximum = max(row[resource] for row in demands)
         average = sum(row[resource] for row in demands) / count
-        capacities.append(max(maximum, math.ceil(average * math.sqrt(count) * tightness)))
+        capacities.append(
+            max(maximum, math.ceil(average * math.sqrt(count) * tightness))
+        )
     ordered_arcs = [list(arc) for arc in sorted(arcs)]
     return {
         "name": f"rcpsp_{index:04d}",
@@ -1954,8 +1957,8 @@ def _cvrp_instance_features(path: Path) -> dict[str, Any]:
 
 def _knapsack_instance_features(path):
     from pitbench.problem_families.verification import (
-        _read_mps_numeric_model,
         _public_multidimensional_knapsack_model,
+        _read_mps_numeric_model,
     )
 
     model = _public_multidimensional_knapsack_model(path)
@@ -2136,7 +2139,9 @@ def _routing_variant_instance_features(path: Path) -> dict[str, Any]:
     witness = {"routes": routes, "vehicle_type_ids": type_ids}
     checked = check_routing_variant(instance, witness)
     if not checked["feasible"]:
-        raise ValueError(f"generated routing variant is infeasible: {checked['detail']}")
+        raise ValueError(
+            f"generated routing variant is infeasible: {checked['detail']}"
+        )
     return {
         "customers": len(instance["customers"]),
         "depots": len(instance["depots"]),

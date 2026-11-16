@@ -20,12 +20,45 @@ def main() -> None:
     for name in ("deduplicate", "archive-traces", "archive", "restore"):
         command = commands.add_parser(name)
         command.add_argument("paths", nargs="+", type=Path)
+    for name in ("export", "diagnose"):
+        command = commands.add_parser(name)
+        command.add_argument("--project", type=Path, required=True)
+        command.add_argument("--campaign", required=True)
+        command.add_argument("--runs-directory", type=Path, required=True)
+        command.add_argument("--campaign-directory", type=Path, required=True)
+        command.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
     def report(value):
         print(json.dumps(value, ensure_ascii=False), flush=True)
 
-    if args.command == "deduplicate":
+    if args.command in {"export", "diagnose"}:
+        if args.command == "export":
+            from pitbench.harness.utils.artifact_storage import export_campaign_records
+
+            result = export_campaign_records(
+                args.project,
+                args.campaign,
+                args.runs_directory,
+                args.campaign_directory,
+                args.output,
+            )
+        else:
+            from pitbench.metrics.campaign_report import collect_campaign_diagnostics
+
+            result = collect_campaign_diagnostics(
+                args.project,
+                args.campaign,
+                args.runs_directory,
+                args.campaign_directory,
+                args.output,
+            )
+            result = {
+                "conditions": len(result["conditions"]),
+                "output": str(args.output / "release-diagnostics.json"),
+            }
+        report(result)
+    elif args.command == "deduplicate":
         report(deduplicate_objects(trace_directories(args.paths), progress=report))
     elif args.command == "archive-traces":
         for trace in trace_directories(args.paths):

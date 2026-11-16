@@ -50,8 +50,8 @@ from pitbench.problem_families.verification import (
     _mip_weighted_tardiness_source_check,
     _mps_metadata_payload,
     _public_multidimensional_knapsack_model,
-    _read_mps_numeric_model,
     _public_scheduling_processing_times,
+    _read_mps_numeric_model,
 )
 
 
@@ -96,7 +96,12 @@ def generated_reference_instances(manifest_path: Path) -> list[dict]:
 
 
 def verify_reference_file(instance: Path, solution: Path, kind: str) -> dict:
-    if kind in {"euclidean_cvrp", "heterogeneous_fleet_vrp", "multi_depot_vrp", "open_vrp"}:
+    if kind in {
+        "euclidean_cvrp",
+        "heterogeneous_fleet_vrp",
+        "multi_depot_vrp",
+        "open_vrp",
+    }:
         checked = CVRPFamily().verify(instance, solution)
     elif kind in {"bin_packing", "graph_coloring", "balanced_subset_sum"}:
         checked = CPFamily().verify(instance, solution)
@@ -441,8 +446,7 @@ def _weighted_tardiness_schedule_reference(path: Path) -> ReferenceResult:
         finish = starts[job] + processing[job]
         previous = job
     tardiness = [
-        max(0, starts[job] + processing[job] - dues[job])
-        for job in range(count)
+        max(0, starts[job] + processing[job] - dues[job]) for job in range(count)
     ]
     values = {f"s{job}": starts[job] for job in range(count)}
     values.update({f"t{job}": tardiness[job] for job in range(count)})
@@ -522,8 +526,7 @@ def _constructive_mps_reference(
     else:
         raise ValueError(f"no constructive MPS witness for {kind}")
     objective = sum(
-        coefficient * values[column]
-        for column, coefficient in model["cost"].items()
+        coefficient * values[column] for column, coefficient in model["cost"].items()
     )
     return ReferenceResult(
         {"values": values, "objective": objective},
@@ -850,9 +853,7 @@ def solve_reference(
             False,
             {"kind": "serial_feasible_schedule"},
         )
-        checked = check_resource_constrained_project_schedule(
-            instance, result.solution
-        )
+        checked = check_resource_constrained_project_schedule(instance, result.solution)
         checked = VerificationResult.model_validate(checked).model_dump()
     elif kind == "single_machine_scheduling_mip":
         processing = _public_scheduling_processing_times(path)
@@ -1368,7 +1369,9 @@ def _solve_highs_docker_reference(
     solution_path = directory / "native.solution"
     raw_solution = solution_path.read_text() if solution_path.is_file() else None
     status_match = re.search(r"^\s*Status\s+(.+)$", completed.stdout, re.MULTILINE)
-    dual_match = re.search(r"^\s*Dual bound\s+(-?[0-9.eE+]+)", completed.stdout, re.MULTILINE)
+    dual_match = re.search(
+        r"^\s*Dual bound\s+(-?[0-9.eE+]+)", completed.stdout, re.MULTILINE
+    )
     nodes_match = re.search(r"^\s*Nodes\s+([0-9]+)", completed.stdout, re.MULTILINE)
     solver_status = status_match.group(1).strip() if status_match else "unknown"
     objective_match = (
@@ -1551,7 +1554,9 @@ def _solve_cp_backend(
         instance = json.loads(path.read_text())
         weights = instance["weights"]
         capacity = int(instance["capacity"])
-        if not weights or any(type(weight) is not int or not 0 < weight <= capacity for weight in weights):
+        if not weights or any(
+            type(weight) is not int or not 0 < weight <= capacity for weight in weights
+        ):
             raise ValueError("invalid bin-packing weights or capacity")
         total = sum(weights)
         lower_bound = math.ceil(total / capacity)
@@ -1565,7 +1570,9 @@ def _solve_cp_backend(
                 if load + weights[item] <= capacity
             ]
             if choices:
-                bin_index = min(choices, key=lambda index: (capacity - initial_loads[index], index))
+                bin_index = min(
+                    choices, key=lambda index: (capacity - initial_loads[index], index)
+                )
                 initial_bins[bin_index].append(item)
                 initial_loads[bin_index] += weights[item]
             else:
@@ -1574,15 +1581,23 @@ def _solve_cp_backend(
         emit({"bins": initial_bins})
         bin_count = len(initial_bins)
         assignments = [
-            [model.new_bool_var(f"item_{item}_bin_{bin_index}") for bin_index in range(bin_count)]
+            [
+                model.new_bool_var(f"item_{item}_bin_{bin_index}")
+                for bin_index in range(bin_count)
+            ]
             for item in range(len(weights))
         ]
-        used = [model.new_bool_var(f"used_{bin_index}") for bin_index in range(bin_count)]
+        used = [
+            model.new_bool_var(f"used_{bin_index}") for bin_index in range(bin_count)
+        ]
         for item in range(len(weights)):
             model.add_exactly_one(assignments[item])
         for bin_index in range(bin_count):
             model.add(
-                sum(weights[item] * assignments[item][bin_index] for item in range(len(weights)))
+                sum(
+                    weights[item] * assignments[item][bin_index]
+                    for item in range(len(weights))
+                )
                 <= capacity * used[bin_index]
             )
             model.add(
@@ -1597,7 +1612,11 @@ def _solve_cp_backend(
         def decode(value):
             return {
                 "bins": [
-                    [item for item in range(len(weights)) if value(assignments[item][bin_index])]
+                    [
+                        item
+                        for item in range(len(weights))
+                        if value(assignments[item][bin_index])
+                    ]
                     for bin_index in range(bin_count)
                     if value(used[bin_index])
                 ]
@@ -1605,7 +1624,11 @@ def _solve_cp_backend(
 
         if warm:
             warm_bins = warm.get("bins", [])
-            bin_of = {item: bin_index for bin_index, items in enumerate(warm_bins) for item in items}
+            bin_of = {
+                item: bin_index
+                for bin_index, items in enumerate(warm_bins)
+                for item in items
+            }
             if len(bin_of) == len(weights):
                 for item, bin_index in bin_of.items():
                     if bin_index < bin_count:
@@ -1644,9 +1667,7 @@ def _solve_cp_backend(
         instance = json.loads(path.read_text())
         activities = instance["activities"]
         horizon = sum(int(activity["duration"]) for activity in activities)
-        starts, by_resource = [], [
-            ([], []) for _ in instance["resource_capacities"]
-        ]
+        starts, by_resource = [], [([], []) for _ in instance["resource_capacities"]]
         serial_starts, elapsed = [], 0
         for activity in activities:
             serial_starts.append(elapsed)
@@ -1666,8 +1687,7 @@ def _solve_cp_backend(
         for predecessor, successor in instance["precedence_arcs"]:
             model.add(
                 starts[successor]
-                >= starts[predecessor]
-                + int(activities[predecessor]["duration"])
+                >= starts[predecessor] + int(activities[predecessor]["duration"])
             )
         for resource, (resource_intervals, demands) in enumerate(by_resource):
             if resource_intervals:
@@ -1779,14 +1799,10 @@ def _solve_cp_backend(
     if status == cp_model.UNKNOWN:
         incumbent_path = directory / "incumbent.json"
         incumbent = (
-            json.loads(incumbent_path.read_text())
-            if incumbent_path.exists()
-            else None
+            json.loads(incumbent_path.read_text()) if incumbent_path.exists() else None
         )
         return ReferenceResult(
-            json.loads(Path(incumbent["solution"]).read_text())
-            if incumbent
-            else None,
+            json.loads(Path(incumbent["solution"]).read_text()) if incumbent else None,
             False,
             {
                 "kind": "cp_sat_search",

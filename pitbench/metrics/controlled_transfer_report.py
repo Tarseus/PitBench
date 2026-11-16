@@ -119,7 +119,9 @@ def _percentile(values: Sequence[float], probability: float) -> float:
     return lower_value + (upper_value - lower_value) * (position - lower_index)
 
 
-def _run_key(run: ExpectedRun | RunObservation) -> tuple[str, str, CodeState, int, float]:
+def _run_key(
+    run: ExpectedRun | RunObservation,
+) -> tuple[str, str, CodeState, int, float]:
     return (
         run.instance_set,
         run.instance_id,
@@ -168,10 +170,8 @@ def _group_expected_runs(
     grouped: dict[str, list[ExpectedRun]] = defaultdict(list)
     for run in expected_run_grid.runs:
         condition_id = _condition_id(run, config_conditions)
-        if (
-            condition_id is not None
-            and run.budget_sec
-            == (config_conditions[condition_id].budget_sec or primary_budget_sec)
+        if condition_id is not None and run.budget_sec == (
+            config_conditions[condition_id].budget_sec or primary_budget_sec
         ):
             grouped[condition_id].append(run)
     return grouped
@@ -205,15 +205,17 @@ def _instance_templates(
             template_id = observation.template_id
         previous = templates.setdefault(instance, template_id)
         if previous != template_id:
-            raise ValueError("controlled transfer instance has inconsistent template IDs")
+            raise ValueError(
+                "controlled transfer instance has inconsistent template IDs"
+            )
     return templates
 
 
 def _expected_pairs(
     expected_runs: Sequence[ExpectedRun],
 ) -> dict[tuple[str, str, int, float], dict[CodeState, ExpectedRun]]:
-    pairs: dict[tuple[str, str, int, float], dict[CodeState, ExpectedRun]] = defaultdict(
-        dict
+    pairs: dict[tuple[str, str, int, float], dict[CodeState, ExpectedRun]] = (
+        defaultdict(dict)
     )
     for run in expected_runs:
         pair = pairs[_pair_key(run)]
@@ -221,7 +223,9 @@ def _expected_pairs(
             raise ValueError("duplicate controlled transfer expected run")
         pair[run.code_state] = run
     if any(set(pair) != set(CodeState) for pair in pairs.values()):
-        raise ValueError("controlled transfer expected run grid does not pair Base and Agent")
+        raise ValueError(
+            "controlled transfer expected run grid does not pair Base and Agent"
+        )
     return pairs
 
 
@@ -324,10 +328,7 @@ def _exact_evidence(
         base_solved_by_instance[instance].append(float(base_outcome.solved))
         agent_solved_by_instance[instance].append(float(agent_outcome.solved))
         values_by_instance[instance].append(
-            (
-                base_outcome.penalized_runtime_sec
-                - agent_outcome.penalized_runtime_sec
-            )
+            (base_outcome.penalized_runtime_sec - agent_outcome.penalized_runtime_sec)
             / pair[CodeState.BASE].budget_sec
         )
     templates = _instance_templates(expected_runs, observations_by_key)
@@ -344,18 +345,21 @@ def _exact_evidence(
         for instance, values in values_by_instance.items()
     }
     base_coverage = (
-        statistics.fmean(statistics.fmean(values) for values in base_solved_by_instance.values())
+        statistics.fmean(
+            statistics.fmean(values) for values in base_solved_by_instance.values()
+        )
         if base_solved_by_instance
         else None
     )
     agent_coverage = (
-        statistics.fmean(statistics.fmean(values) for values in agent_solved_by_instance.values())
+        statistics.fmean(
+            statistics.fmean(values) for values in agent_solved_by_instance.values()
+        )
         if agent_solved_by_instance
         else None
     )
-    if (
-        status is ControlledTransferConditionStatus.COMPLETE
-        and (base_coverage is None or agent_coverage is None)
+    if status is ControlledTransferConditionStatus.COMPLETE and (
+        base_coverage is None or agent_coverage is None
     ):
         status = ControlledTransferConditionStatus.INCOMPLETE
     return _ConditionEvidence(
@@ -379,7 +383,9 @@ def _cluster_values(evidence: _ConditionEvidence) -> list[float]:
     values_by_cluster: dict[str, list[float]] = defaultdict(list)
     for instance, value in evidence.instance_values.items():
         template_id = evidence.instance_templates.get(instance)
-        cluster_id = template_id if template_id is not None else f"{instance[0]}:{instance[1]}"
+        cluster_id = (
+            template_id if template_id is not None else f"{instance[0]}:{instance[1]}"
+        )
         values_by_cluster[cluster_id].append(value)
     return [statistics.fmean(values) for values in values_by_cluster.values()]
 
@@ -387,7 +393,10 @@ def _cluster_values(evidence: _ConditionEvidence) -> list[float]:
 def _bootstrap_draws(
     evidences: dict[str, _ConditionEvidence],
 ) -> dict[str, list[float]]:
-    clusters = {condition_id: _cluster_values(evidence) for condition_id, evidence in evidences.items()}
+    clusters = {
+        condition_id: _cluster_values(evidence)
+        for condition_id, evidence in evidences.items()
+    }
     if any(not values for values in clusters.values()):
         return {condition_id: [] for condition_id in evidences}
     random_generator = random.Random(BOOTSTRAP_SEED)
@@ -401,7 +410,9 @@ def _bootstrap_draws(
     return draws
 
 
-def _interval(draws: Sequence[float], *, tail_probability: float) -> ControlledTransferConfidenceInterval | None:
+def _interval(
+    draws: Sequence[float], *, tail_probability: float
+) -> ControlledTransferConfidenceInterval | None:
     if not draws:
         return None
     return ControlledTransferConfidenceInterval(
@@ -432,11 +443,18 @@ def compute_controlled_transfer_report(
     if task.problem_variant is None or task.formulation_id is None:
         raise ValueError("controlled transfer requires task problem metadata")
     if expected_run_grid.task_id != task.task_id:
-        raise ValueError("controlled transfer expected run grid belongs to another task")
+        raise ValueError(
+            "controlled transfer expected run grid belongs to another task"
+        )
     conditions = {condition.condition_id: condition for condition in config.conditions}
     for observation in observations:
-        if observation.condition_id is not None and observation.condition_id not in conditions:
-            raise ValueError("controlled transfer observation has an unknown condition ID")
+        if (
+            observation.condition_id is not None
+            and observation.condition_id not in conditions
+        ):
+            raise ValueError(
+                "controlled transfer observation has an unknown condition ID"
+            )
     expected_by_condition = _group_expected_runs(
         expected_run_grid,
         conditions,
@@ -461,7 +479,10 @@ def compute_controlled_transfer_report(
                 status=ControlledTransferConditionStatus.INCOMPLETE,
                 incomplete_run_count=1,
             )
-        elif task.evaluation.performance_protocol is PerformanceProtocol.EXACT_VERIFIED_SOLVE:
+        elif (
+            task.evaluation.performance_protocol
+            is PerformanceProtocol.EXACT_VERIFIED_SOLVE
+        ):
             evidences[condition_id] = _exact_evidence(
                 expected_runs,
                 observations_by_key,
@@ -487,7 +508,8 @@ def compute_controlled_transfer_report(
                 for condition_id, evidence in complete_evidences.items()
             }
         )
-        if task.evaluation.performance_protocol is PerformanceProtocol.EXACT_VERIFIED_SOLVE
+        if task.evaluation.performance_protocol
+        is PerformanceProtocol.EXACT_VERIFIED_SOLVE
         else {}
     )
     reports: dict[str, ControlledTransferConditionReport] = {}
@@ -543,7 +565,9 @@ def compute_controlled_transfer_report(
     targets_by_reference: dict[str, list[str]] = defaultdict(list)
     for condition in conditions.values():
         if condition.reference_condition_id is not None:
-            targets_by_reference[condition.reference_condition_id].append(condition.condition_id)
+            targets_by_reference[condition.reference_condition_id].append(
+                condition.condition_id
+            )
     for reference_id, target_ids in targets_by_reference.items():
         reference = reports[reference_id]
         reference_draws = draws.get(reference_id, [])
@@ -567,12 +591,16 @@ def compute_controlled_transfer_report(
                 continue
             target.reference_improvement_established = True
             target.retention_ratio = target.benefit / reference.benefit
-            target.retention_margin = target.benefit - RETENTION_FRACTION * reference.benefit
+            target.retention_margin = (
+                target.benefit - RETENTION_FRACTION * reference.benefit
+            )
             target_draws = draws.get(target_id, [])
             if target_draws and reference_draws:
                 margin_draws = [
                     target_value - RETENTION_FRACTION * reference_value
-                    for target_value, reference_value in zip(target_draws, reference_draws)
+                    for target_value, reference_value in zip(
+                        target_draws, reference_draws
+                    )
                 ]
                 target.retention_margin_lower_simultaneous = _percentile(
                     margin_draws,
@@ -591,7 +619,8 @@ def compute_controlled_transfer_report(
     scale_conditions: dict[str, list[ControlledTransferCondition]] = defaultdict(list)
     for condition in config.conditions:
         if (
-            condition.view in {ControlledTransferView.SCALE, ControlledTransferView.JOINT}
+            condition.view
+            in {ControlledTransferView.SCALE, ControlledTransferView.JOINT}
             and condition.scale_path_id is not None
         ):
             scale_conditions[condition.scale_path_id].append(condition)
@@ -603,7 +632,9 @@ def compute_controlled_transfer_report(
         for condition in path_conditions:
             report = reports[condition.condition_id]
             if report.supports_retention:
-                path.largest_continuously_supported_condition_id = condition.condition_id
+                path.largest_continuously_supported_condition_id = (
+                    condition.condition_id
+                )
             else:
                 # Config order declares the ordered path. A later condition cannot bridge a failure.
                 break
@@ -624,7 +655,11 @@ def format_controlled_transfer_report(report: ControlledTransferReport) -> str:
     ]
     for condition in report.condition_reports.values():
         benefit = "-" if condition.benefit is None else f"{condition.benefit:.6g}"
-        ratio = "-" if condition.retention_ratio is None else f"{condition.retention_ratio:.6g}"
+        ratio = (
+            "-"
+            if condition.retention_ratio is None
+            else f"{condition.retention_ratio:.6g}"
+        )
         native = (
             condition.native_classification.value
             if condition.native_classification is not None

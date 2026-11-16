@@ -3,6 +3,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -38,6 +39,15 @@ IMAGE_REVISION_LABEL = "org.pitbench.image-revision"
 IMAGE_SOURCE_LABEL = "org.pitbench.image-source"
 IMAGE_TOOLS_LABEL = "org.pitbench.agent-tools"
 IMAGE_CONTEXT_LABEL = "org.pitbench.image-context-sha256"
+
+
+def dockerfile_base_reference(image: str) -> str:
+    """Give BuildKit a named local reference for a Docker image ID."""
+    return (
+        "pitbench-local-base:" + image.removeprefix("sha256:")
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", image)
+        else image
+    )
 
 
 def image_context_digest(task_dir: Path) -> str:
@@ -373,6 +383,18 @@ class PitBenchAdapter:
                 "instance, and seed; compare normalized gaps only where a public "
                 "anchor exists."
             )
+        elif protocol is PerformanceProtocol.BUDGET_TRUNCATED_QUALITY:
+            metric = (
+                "- Primary Performance Metric: paired reduction in normalized gap "
+                "to the fixed optimum/BKS anchor at the primary fixed time budget; "
+                "lower gap is better. Feasible incumbents count even without an optimality proof."
+            )
+            comparison = (
+                "Compare independently verified incumbent objectives at the same instance, "
+                "seed, and time budget. A time-limit termination with a feasible incumbent "
+                "can improve budget-truncated quality; optimal termination is not required. "
+                "Do not replace this metric with solved coverage or PAR-2 runtime."
+            )
         elif protocol is PerformanceProtocol.EXACT_VERIFIED_SOLVE:
             metric = (
                 "- Primary Performance Metric: independently verified solved "
@@ -668,7 +690,7 @@ CMD ["sh", "-c", "sleep infinity"]
         clean_checkout += (
             '    && test -z "$(git -C /workspace/repo status --porcelain)"\n'
         )
-        return f"""FROM {image}
+        return f"""FROM {dockerfile_base_reference(image)}
 USER root
 RUN mkdir -p /logs /agent-logs
 {submodule_copy}{clean_checkout}{tooling_layers}{development_copy}{workspace_permissions}LABEL {IMAGE_REVISION_LABEL}="{IMAGE_REVISION}" \
@@ -818,7 +840,8 @@ USER pitbench-agent
         )
         runs_volume = (
             "      - ${T_BENCH_TASK_AGENT_LOGS_PATH}/development-runs:/workspace/repo/.pitbench/runs\n"
-            if needs_run_directory(agent_tools) else ""
+            if needs_run_directory(agent_tools)
+            else ""
         )
         return f"""services:
   client:

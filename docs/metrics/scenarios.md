@@ -63,12 +63,12 @@ patch hash identifies Base. Agent must bind the actual selected patch. Probe the
 built binding before filling its fingerprint:
 
 ```bash
-python -m scripts.collect_metric_scenarios probe \
+python -m scripts.collect scenarios probe \
   --session-plugin pitbench.solver_drivers.run:HighsScenarioSession
-python -m scripts.collect_metric_scenarios prepare \
+python -m scripts.collect scenarios prepare \
   --config /path/to/frozen-experiment.yaml --output /path/to/experiment
-python -m scripts.collect_metric_scenarios run --output /path/to/experiment
-python -m scripts.collect_metric_scenarios report --output /path/to/experiment
+python -m scripts.collect scenarios run --output /path/to/experiment
+python -m scripts.collect scenarios report --output /path/to/experiment
 ```
 
 Each scenario selects an existing input-representation plugin and independent
@@ -122,7 +122,7 @@ For diagnostic comparisons, existing native bound logs can also supply a
 separately labelled **solver-reported** integral:
 
 ```bash
-python -m scripts.collect_metric_scenarios report --output /path/to/experiment \
+python -m scripts.collect scenarios report --output /path/to/experiment \
   --scaling-time-policy budget_capped_v1 --dual-bound-source solver_reported
 ```
 
@@ -160,7 +160,7 @@ Existing campaigns can also be rescored with the explicit
 `budget_capped_v1` reporting policy:
 
 ```bash
-python -m scripts.collect_metric_scenarios report --output /path/to/experiment \
+python -m scripts.collect scenarios report --output /path/to/experiment \
   --scaling-time-policy budget_capped_v1
 ```
 
