@@ -1176,3 +1176,49 @@ def test_historical_pyvrp_validation_keeps_sanitizers_without_debug_logging() ->
     assert validation[1].argv[3:5] == ["--build_type", "debugoptimized"]
     assert "-Db_sanitize=address,undefined" in validation[1].argv
     assert current[1].argv[3:5] == ["--build_type", "debug"]
+
+
+def test_ortools_json_input_is_converted_before_java_execution(monkeypatch, tmp_path, capsys):
+    from adapters.jvm import runner
+    from pitbench.solver_drivers import reference
+
+    instance = tmp_path / "job.json"
+    instance.write_text(json.dumps({"problem_kind": "job_shop_scheduling"}))
+    class Model:
+        def export_to_file(self, path):
+            Path(path).write_bytes(b"model-proto")
+            return True
+    monkeypatch.setattr(reference, "_solve_cp_backend", lambda *a, **kw: {"model": Model(), "decode": lambda value: {"start_times": [value(SimpleNamespace(index=0))]}})
+    monkeypatch.setattr(runner, "_adapter_output", lambda *a: tmp_path)
+    monkeypatch.setattr(runner, "_ortools_java_command", lambda *a: ["java"])
+    def invoke(command, **kwargs):
+        model = Path(command[2])
+        assert model.suffix == ".pb" and model.read_bytes() == b"model-proto"
+        return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps({"has_solution": True, "solution": {"values": [7]}}))
+    monkeypatch.setattr(runner.subprocess, "run", invoke)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"instance_path": str(instance), "solver_seed": 0, "budget_sec": 10, "threads": 1})))
+    runner.run_ortools_cp_sat(tmp_path)
+    assert json.loads(capsys.readouterr().out)["solution"] == {"start_times": [7]}
+
+
+def test_ortools_malformed_native_output_is_retained_in_diagnostics(monkeypatch, tmp_path, capsys):
+    from adapters.jvm import runner
+
+    monkeypatch.setattr(runner, "_adapter_output", lambda *a: tmp_path)
+    monkeypatch.setattr(runner, "_ortools_java_command", lambda *a: ["java"])
+    monkeypatch.setattr(runner.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stderr="", stdout='{"bad":broken}'))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"instance_path": "/tmp/model.pb", "solver_seed": 0, "budget_sec": 10, "threads": 1})))
+    with pytest.raises(json.JSONDecodeError):
+        runner.run_ortools_cp_sat(tmp_path)
+    assert '{"bad":broken}' in capsys.readouterr().err
+
+
+def test_ortools_native_diagnostics_do_not_hide_a_unique_json_response(capsys):
+    from adapters.jvm.runner import _decode_native_response
+
+    response = {"valid": True, "has_solution": True, "solver_termination": "optimal", "solution": {"values": [1]}}
+    raw = "[0.02s] LP diagnostic\n" + json.dumps(response) + "\n"
+    assert _decode_native_response(raw) == response
+    assert raw.strip() in capsys.readouterr().err
+    with pytest.raises(json.JSONDecodeError):
+        _decode_native_response("diagnostic\n" + json.dumps(response) + "\n" + json.dumps(response))

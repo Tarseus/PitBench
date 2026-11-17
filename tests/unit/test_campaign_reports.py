@@ -29,7 +29,12 @@ from pitbench.metrics.performance_report import (
     PerformanceConfirmation,
     PerformanceReport,
 )
-from pitbench.schema.observation import ExpectedRun, ExpectedRunGrid, RunObservation
+from pitbench.schema.observation import (
+    ExpectedRun,
+    ExpectedRunGrid,
+    RunObservation,
+    RunStatus,
+)
 from pitbench.tasks import TaskCatalog
 from tests.support import ROOT
 
@@ -737,3 +742,65 @@ def test_failed_model_campaign_still_generates_the_automatic_report(
     assert report["summary"]["missing_or_failed"] == 1
     assert report["conditions"][0]["error"] == "retained command failure"
     assert report["figures"] == []
+
+
+def test_exact_campaign_includes_quality_generalization_panels(tmp_path):
+    from pitbench.metrics.campaign_report import _inventory
+    from pitbench.schema.task import InstanceSetSpec, PitBenchTask
+
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/release_choco_v6_0_2.yaml")
+    panel = InstanceSetSpec(name="unseen_scale", kind="judge_shift", instance_set_config="private://scale.yaml",
+        size=1, performance_protocol="heuristic_fixed_budget", budgets_sec=[5], primary_budget_sec=5, solver_seed_count=1)
+    task.instance_sets.append(panel)
+    task_path = tmp_path / (task.task_id + ".yaml")
+    task_path.write_text(yaml.safe_dump(task.model_dump(mode="json")))
+    rows = [RunObservation(task_id=task.task_id, code_state=state, instance_set=panel.name,
+        instance_set_kind="judge_shift", instance_id="case", solver_seed=0, budget_sec=5,
+        status="completed", valid=True, objective=objective, normalized_gap=gap, optimal_or_bks=10)
+        for state, objective, gap in [("base", 15, 0.5), ("agent", 12.5, 0.25)]]
+    ObservationStore.write(tmp_path / "trials.parquet", rows)
+    grid = ExpectedRunGrid(task_id=task.task_id, runs=[ExpectedRun(
+        task_id=task.task_id, code_state=r.code_state, instance_set=panel.name, instance_set_kind="judge_shift",
+        instance_id=r.instance_id, solver_seed=0, budget_sec=5) for r in rows])
+    (tmp_path / "expected-run-grid.json").write_text(grid.model_dump_json())
+    row = {"task_id": task.task_id, "issues": [], "native_summary": {"observation_count": 2, "valid_observation_count": 2}}
+    _inventory(row, {"evaluation": {"payload": {"artifacts": {}}}}, tmp_path, task_path)
+    assert "unseen_scale" in row["supplementary_panel_performance"]
+    report = row["supplementary_panel_performance"]["unseen_scale"]
+    assert report["primary"]["paired"]["mean_gap_reduction"] == pytest.approx(0.25)
+    rows[1] = rows[1].model_copy(update={"status": RunStatus.NO_SOLUTION, "valid": False, "normalized_gap": None})
+    ObservationStore.write(tmp_path / "trials.parquet", rows)
+    unavailable = {"task_id": task.task_id, "issues": [], "native_summary": {"observation_count": 2, "valid_observation_count": 1}}
+    _inventory(unavailable, {"evaluation": {"payload": {"artifacts": {}}}}, tmp_path, task_path)
+    diagnostic = unavailable["supplementary_panel_diagnostics"]["unseen_scale"]
+    assert diagnostic["observed_runs"] == diagnostic["expected_runs"] == 2
+    assert diagnostic["unavailable_by_state_and_status"] == [{"code_state": "agent", "status": "no_solution", "count": 1}]
+    assert "observed grid is complete" in unavailable["issues"][0]
+    assert not unavailable.get("supplementary_panel_performance")
+
+
+def test_exact_campaign_reports_generalization_with_native_protocol(tmp_path):
+    from pitbench.metrics.campaign_report import _inventory
+    from pitbench.schema.task import InstanceSetSpec, PitBenchTask
+
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/release_choco_v6_0_2.yaml")
+    panel = InstanceSetSpec(name="unseen_scale", kind="judge_shift", instance_set_config="private://scale.yaml",
+        size=1, budgets_sec=[5], primary_budget_sec=5, solver_seed_count=1)
+    task.instance_sets.append(panel)
+    task_path = tmp_path / (task.task_id + ".yaml")
+    task_path.write_text(yaml.safe_dump(task.model_dump(mode="json")))
+    rows = [RunObservation(task_id=task.task_id, code_state=state, instance_set=panel.name,
+        instance_set_kind="judge_shift", instance_id="case", solver_seed=0, budget_sec=5,
+        status="completed", valid=True, objective=10, reported_objective=10, optimal_or_bks=10,
+        solver_termination=termination, cpu_time_sec=1, wall_time_sec=1)
+        for state, termination in [("base", "time_limit"), ("agent", "optimal")]]
+    ObservationStore.write(tmp_path / "trials.parquet", rows)
+    grid = ExpectedRunGrid(task_id=task.task_id, runs=[ExpectedRun(
+        task_id=task.task_id, code_state=r.code_state, instance_set=panel.name, instance_set_kind="judge_shift",
+        instance_id=r.instance_id, solver_seed=0, budget_sec=5) for r in rows])
+    (tmp_path / "expected-run-grid.json").write_text(grid.model_dump_json())
+    row = {"task_id": task.task_id, "issues": [], "native_summary": {"observation_count": 2, "valid_observation_count": 2}}
+    _inventory(row, {"evaluation": {"payload": {"artifacts": {}}}}, tmp_path, task_path)
+    report = row["supplementary_panel_performance"]["unseen_scale"]
+    assert report["primary"]["base"]["verified_solved_coverage"] == 0
+    assert report["primary"]["agent"]["verified_solved_coverage"] == 1

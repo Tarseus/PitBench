@@ -304,15 +304,35 @@ def _effects(row: dict, summary: dict) -> list[dict]:
         "supplementary_panel_performance", {}
     ).items():
         pair = panel_performance["primary"]["paired"]
+        if "time_basis" in panel_performance:
+            coverage = pair["mean_verified_solved_coverage_reduction"]
+            if coverage == 0:
+                metric, title, unit, scale = (
+                    "exact_penalized_runtime_sec", "PAR-2 runtime reduction", "seconds", 1
+                )
+                value = pair["mean_penalized_runtime_reduction_sec"]
+                interval = pair["mean_penalized_runtime_reduction_ci95"]
+            else:
+                metric, title, unit, scale = (
+                    "exact_solved_coverage", "Verified solved coverage gain", "percentage points", 100
+                )
+                value = coverage
+                interval = pair["mean_verified_solved_coverage_reduction_ci95"]
+        else:
+            metric, title, unit, scale = (
+                "supplementary_shift_gap", "Hidden-shift gap reduction (supplementary)", "percentage points", 100
+            )
+            value = pair["mean_gap_reduction"]
+            interval = pair["mean_gap_reduction_ci95"]
         points.append(
             _point(
                 row,
-                metric="supplementary_shift_gap",
-                title="Hidden-shift gap reduction (supplementary)",
-                unit="percentage points",
-                estimate=pair["mean_gap_reduction"],
-                interval=pair["mean_gap_reduction_ci95"],
-                scale=100,
+                metric=metric,
+                title=title,
+                unit=unit,
+                estimate=value,
+                interval=interval,
+                scale=scale,
                 panel=panel,
                 budget_sec=panel_performance["primary_budget_sec"],
                 reference=f"supplementary_panel_performance.{panel}.primary.paired",
@@ -494,12 +514,12 @@ def _inventory(row: dict, trial: dict, evaluation_dir: Path, task_path: Path) ->
     if (
         observations is not None
         and grid_path.is_file()
-        and task.evaluation.performance_protocol.value == "heuristic_fixed_budget"
     ):
         grid = ExpectedRunGrid.model_validate_json(grid_path.read_text())
         for panel in task.instance_sets:
             if panel.kind.value != "judge_shift":
                 continue
+            protocol = panel.performance_protocol or task.evaluation.performance_protocol
             expected = [
                 r
                 for r in grid.runs
@@ -533,16 +553,29 @@ def _inventory(row: dict, trial: dict, evaluation_dir: Path, task_path: Path) ->
                 or len(selected) != len(expected)
                 or len({_run_key(r) for r in expected}) != len(expected)
                 or {_run_key(r) for r in selected} != {_run_key(r) for r in expected}
-                or any(
-                    not r.valid
-                    or r.status.value != "completed"
-                    or r.normalized_gap is None
-                    or not math.isfinite(r.normalized_gap)
-                    for r in selected
-                )
             ):
                 row["issues"].append(
                     f"{panel.name}: incomplete supplemental panel grid; no interval inferred"
+                )
+                continue
+            unavailable = [
+                r for r in selected
+                if not r.valid or r.status.value != "completed"
+                or r.normalized_gap is None or not math.isfinite(r.normalized_gap)
+            ] if protocol.value != "exact_verified_solve" else []
+            if unavailable:
+                counts = Counter((r.code_state.value, r.status.value) for r in unavailable)
+                row.setdefault("supplementary_panel_diagnostics", {})[panel.name] = {
+                    "expected_runs": len(expected),
+                    "observed_runs": len(selected),
+                    "unavailable_gap_runs": len(unavailable),
+                    "unavailable_by_state_and_status": [
+                        {"code_state": state, "status": status, "count": count}
+                        for (state, status), count in sorted(counts.items())
+                    ],
+                }
+                row["issues"].append(
+                    f"{panel.name}: observed grid is complete, but {len(unavailable)} runs lack a valid gap; no interval inferred"
                 )
                 continue
             row.setdefault("supplementary_panel_performance", {}).update(
@@ -553,7 +586,8 @@ def _inventory(row: dict, trial: dict, evaluation_dir: Path, task_path: Path) ->
                     ).items()
                 }
             )
-            _observed_scale_slices(row, task, grid, selected)
+            if protocol.value != "exact_verified_solve":
+                _observed_scale_slices(row, task, grid, selected)
     representation_ref = artifacts.get("representation_robustness_details")
     representation_path = (
         evaluation_dir / representation_ref["path"]

@@ -7,6 +7,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
+from pitbench.evaluator.artifacts import write_json
 from pitbench.harness.evaluation import EvaluationRequest, EvaluatorFactory
 from pitbench.harness.handlers.trial_handler import TrialHandler
 from pitbench.harness.harness.models import TrialResults
@@ -114,6 +115,17 @@ class CandidateEvaluator:
         payload = capture_repository_patch(container, workdir=working_dir)
         candidate_patch_sha256 = hashlib.sha256(payload).hexdigest()
         candidate_patch.write_bytes(payload)
+        write_json(output_dir / "candidate.json", {
+            "schema_version": "1.0",
+            "task_id": trial_handler.task_id,
+            "trial_name": trial_handler.trial_name,
+            "candidate_patch": candidate_patch.name,
+            "candidate_patch_sha256": candidate_patch_sha256,
+            "source_commit": expected_repository_head,
+            "agent_name": agent_label,
+            "model_name": model_name,
+            "evaluator_config": trial_handler.task.evaluator_config,
+        })
 
         if self.defer_evaluation:
             self.trace(

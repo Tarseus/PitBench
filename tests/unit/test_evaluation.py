@@ -4144,3 +4144,150 @@ def test_run_cli_owns_inputs_separately_from_real_harness_initialization(
     assert result.exit_code == 0, f"{result.output}\n{result.exception!r}"
     assert observed == [output / "first"]
     assert (output / "first/pitbench.lock").is_file()
+
+
+@pytest.mark.parametrize("smoke", [False, True])
+def test_judge_saved_run_uses_snapshot_without_manual_hash_or_agent(tmp_path, monkeypatch, smoke):
+    from typer.testing import CliRunner
+
+    from pitbench.cli import main as cli
+    from pitbench.evaluator.artifacts import write_json
+    from pitbench.harness.evaluation import EvaluationEnvelope
+
+    saved = tmp_path / "saved"
+    write_json(saved / "results.json", {"results": [{"task_id": "vroom_v1_15_0", "trial_name": "trial"}]})
+    patch = saved / "vroom_v1_15_0/trial/evaluation/candidate.patch"
+    patch.parent.mkdir(parents=True)
+    patch.write_bytes(b"")
+    before = (saved / "results.json").read_bytes()
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump({"paths": {"output_path": str(tmp_path / "outputs")}}))
+    monkeypatch.setattr(cli.PitBenchAdapter, "ensure_source_cache", lambda *a: tmp_path / "base")
+    requests = []
+    def evaluate(self, request):
+        requests.append(request)
+        return EvaluationEnvelope(evaluator="pitbench", evaluator_version="test", completed=False, error="test only")
+    monkeypatch.setattr(cli.PitBenchEvaluator, "envelope", evaluate)
+    args = [
+        "judge", "vroom_v1_15_0", "--from-run", str(saved), "--config", str(config),
+        "--root", str(ROOT), "--no-configuration-robustness",
+    ]
+    if smoke:
+        args.append("--smoke-test")
+    result = CliRunner().invoke(cli.app, args)
+    assert requests, f"{result.output}\n{result.exception}"
+    assert requests[0].candidate_patch_path == patch
+    assert requests[0].candidate_patch_sha256 == hashlib.sha256(b"").hexdigest()
+    assert not requests[0].output_dir.is_relative_to(saved)
+    assert (requests[0].output_dir / "replay.json").is_file()
+    assert (saved / "results.json").read_bytes() == before
+    if smoke:
+        settings = requests[0].evaluator_config
+        assert settings["instances_per_instance_set"] == 1
+        assert settings["solver_seed_limit"] == 2
+        task = yaml.safe_load(Path(settings["task_config_path"]).read_text())
+        assert task["evaluation"]["budgets_sec"] == [0.1]
+
+
+
+def test_smoke_seed_limit_caps_supplemental_seed_counts_only_in_short_view():
+    from pitbench.cli.evaluate_config import DryRunConfig
+    from pitbench.schema.task import InstanceSetSpec, PitBenchTask
+
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/release_gecode_v6_4_0.yaml")
+    task.instance_sets.append(InstanceSetSpec(
+        name="shift", kind="judge_shift", instance_set_config="private://shift.yaml",
+        size=1, solver_seed_count=5,
+    ))
+    short = DryRunConfig().task_view(task, solver_seed_limit=2)
+    assert short.instance_sets[-1].solver_seed_count == 2
+    assert task.instance_sets[-1].solver_seed_count == 5
+    assert short.evaluation.solver_seeds == task.evaluation.solver_seeds
+
+
+def test_report_reconstruction_uses_complete_retained_grid_without_solver(tmp_path, monkeypatch):
+    from pitbench.evaluator.storage import ObservationStore
+    from pitbench.harness.evaluation import EvaluationRequest
+
+    source = tmp_path / "measured"
+    source.mkdir()
+    patch = source / "candidate.patch"
+    patch.write_bytes(b"")
+    request = EvaluationRequest(task_id="vroom_v1_15_0", task_path=ROOT,
+        candidate_patch_path=patch, output_dir=source, agent_name="fixture", model_name=None,
+        evaluator_config={"task_config_path": str(ROOT / "configs/tasks/vroom_v1_15_0.yaml"), "fixture_mode": True})
+    evaluator = PitBenchEvaluator()
+    original = evaluator.evaluate(request)
+    rows = ObservationStore.read(source / "trials.parquet")
+    ObservationStore.write_jsonl(source / "judge-observations.jsonl", rows)
+    before = {p.name: p.read_bytes() for p in source.iterdir() if p.is_file()}
+    monkeypatch.setattr("pitbench.evaluator.evaluator.DockerJudge", lambda **kw: pytest.fail("report recovery invoked Docker"))
+    target = tmp_path / "reports"
+    rebuilt = evaluator.rebuild_reports(request.model_copy(update={"output_dir": target}), source)
+    assert rebuilt.summary.observation_count == len(rows)
+    assert rebuilt.summary.performance == original.summary.performance
+    assert {p.name: p.read_bytes() for p in source.iterdir() if p.is_file()} == before
+    receipt = json.loads((target / "report-rebuild.json").read_text())
+    assert receipt["new_solver_runs"] == receipt["new_agent_starts"] == 0
+    ObservationStore.write_jsonl(source / "judge-observations.jsonl", rows[:-1])
+    with pytest.raises(ValueError, match="retained run grid incomplete"):
+        evaluator.rebuild_reports(request.model_copy(update={"output_dir": tmp_path / "partial"}), source)
+
+
+def test_docker_judge_uses_project_owned_jvm_adapter(tmp_path, monkeypatch):
+    task_path = ROOT / "configs/tasks/release_ortools_cp_sat_v9_15.yaml"
+    patch = tmp_path / "candidate.patch"
+    patch.touch()
+    captured = {}
+    class FailedProcess:
+        stdout = []
+        def wait(self):
+            return 1
+    monkeypatch.setattr("pitbench.evaluator.docker_judge.subprocess.Popen", lambda command, **kw: captured.update(command=command) or FailedProcess())
+    judge = DockerJudge(image="sha256:" + "a" * 64, task_config_path=task_path,
+        base_repository=tmp_path, private_root=tmp_path, candidate_patch=patch, output_dir=tmp_path / "output")
+    with pytest.raises(RuntimeError):
+        judge.run()
+    assert f"{ROOT / 'adapters/jvm/runner.py'}:/opt/pitbench-jvm/runner.py:ro" in captured["command"]
+
+
+def test_limited_seed_report_uses_planned_subset_for_native_and_shift(tmp_path):
+    from pitbench.evaluator.artifacts import write_json
+    from pitbench.harness.evaluation import EvaluationRequest
+    from pitbench.schema.observation import ExpectedRun, ExpectedRunGrid
+    from pitbench.schema.task import InstanceSetSpec, PitBenchTask
+
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/release_choco_v6_0_2.yaml")
+    task.evaluation.budgets_sec = [0.1]
+    task.evaluation.primary_budget_sec = 0.1
+    task.instance_sets.append(InstanceSetSpec(name="shift", kind="judge_shift", instance_set_config="private://shift.yaml", size=1,
+        performance_protocol="heuristic_fixed_budget", budgets_sec=[0.1], primary_budget_sec=0.1, solver_seed_count=2))
+    private = tmp_path / "private"
+    private.mkdir()
+    seed_file = private / "seeds.yaml"
+    seed_file.write_text(yaml.safe_dump({"task_id": task.task_id, "evaluation_seeds": list(range(100, 130))}))
+    task.evaluation.seed_robustness.evaluation_seeds_file = "private://seeds.yaml"
+    task.evaluation.seed_robustness.evaluation_seeds_file_sha256 = hashlib.sha256(seed_file.read_bytes()).hexdigest()
+    task_path = tmp_path / (task.task_id + ".yaml")
+    task_path.write_text(yaml.safe_dump(task.model_dump(mode="json")))
+    rows = []
+    for panel, kind, seeds in [("agent_dev", "agent_dev", [0, 1]), ("judge_id", "judge_id", [100, 101]), ("shift", "judge_shift", [100, 101])]:
+        for state in CodeState:
+            for seed in seeds:
+                rows.append(RunObservation(task_id=task.task_id, code_state=state, instance_set=panel,
+                    instance_set_kind=kind, instance_id="case", solver_seed=seed, budget_sec=0.1,
+                    status="completed", valid=True, objective=1, reported_objective=1, optimal_or_bks=1,
+                    normalized_gap=0, cpu_time_sec=0.01, wall_time_sec=0.01, solver_termination="optimal"))
+    grid = ExpectedRunGrid(task_id=task.task_id, runs=[ExpectedRun(task_id=r.task_id, code_state=r.code_state,
+        instance_set=r.instance_set, instance_set_kind=r.instance_set_kind, instance_id=r.instance_id,
+        solver_seed=r.solver_seed, budget_sec=r.budget_sec) for r in rows])
+    output = tmp_path / "output"
+    write_json(output / "expected-run-grid.json", grid.model_dump(mode="json"))
+    patch = tmp_path / "candidate.patch"
+    patch.touch()
+    request = EvaluationRequest(task_id=task.task_id, task_path=ROOT, candidate_patch_path=patch,
+        output_dir=output, agent_name="test", evaluator_config={"private_root": str(private), "solver_seed_limit": 2})
+    result = PitBenchEvaluator()._aggregate_reports(request, task, rows)
+    assert result.summary.nuisance_robustness.seed_selection.seed_count == 2
+    assert result.summary.nuisance_robustness.supplemental_by_instance_set["shift"]["seed_selection"]["seed_count"] == 2
+    assert task.evaluation.seed_robustness.seed_selection.seed_count == 30

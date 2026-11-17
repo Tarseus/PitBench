@@ -84,3 +84,43 @@ def artifact_ref(
         media_type=media_type,
         private=private,
     )
+
+
+def resolve_saved_candidate(
+    source: Path, *, task_id: str, trial_name: str | None = None
+) -> tuple[Path, dict[str, Any]]:
+    """Select a captured candidate from a run or trial without executing an Agent."""
+    source = source.expanduser().resolve()
+    manifest = source / "candidate.json"
+    if manifest.is_file():
+        metadata = json.loads(manifest.read_text())
+        if metadata["task_id"] != task_id:
+            raise ValueError("saved candidate belongs to another task")
+        patch = source / metadata["candidate_patch"]
+    elif (source / "results.json").is_file():
+        payload = json.loads((source / "results.json").read_text())
+        trials = payload.get("results", [payload])
+        trials = [row for row in trials if row.get("task_id") == task_id
+                  and (trial_name is None or row.get("trial_name") == trial_name)]
+        if len(trials) != 1:
+            raise ValueError("select exactly one saved attempt with --trial-name")
+        trial = trials[0]
+        name = trial["trial_name"]
+        directory = source / task_id / name / "evaluation"
+        if not directory.is_dir():
+            directory = source / "evaluation"
+        if (directory / "candidate.json").is_file():
+            return resolve_saved_candidate(directory, task_id=task_id)
+        patch = directory / "candidate.patch"
+        metadata = {"task_id": task_id, "trial_name": name, "source_run": str(source)}
+        workspace = source.parent.parent / "workspaces" / source.name / task_id / "task.yaml"
+        if workspace.is_file():
+            import yaml
+
+            metadata["evaluator_config"] = yaml.safe_load(workspace.read_text())["evaluator_config"]
+    else:
+        raise ValueError("saved run has no results.json or candidate.json")
+    patch = patch.resolve()
+    if not patch.is_relative_to(source) or not patch.is_file():
+        raise ValueError("saved candidate patch is missing or outside the run")
+    return patch, metadata

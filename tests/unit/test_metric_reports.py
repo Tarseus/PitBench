@@ -2503,3 +2503,16 @@ def test_report_recomputes_seed_outcomes_from_raw_data_instead_of_cached_counts(
         ]
         == 4
     )
+
+
+def test_planned_metric_coverage_lists_all_catalog_metrics_and_marks_gaps():
+    from pitbench.metrics.objective_report import planned_metric_coverage
+    from pitbench.schema.objectives import objective_catalog
+    from pitbench.schema.task import PitBenchTask
+
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/release_gecode_v6_4_0.yaml")
+    plan = planned_metric_coverage(task)
+    assert set(plan) == set(objective_catalog()["metrics"])
+    assert plan["exact_solved_coverage"]["status"] == "planned"
+    assert plan["thread_scaling_curve"]["status"] == "unavailable"
+    assert plan["controlled_retention"]["status"] == "unavailable"

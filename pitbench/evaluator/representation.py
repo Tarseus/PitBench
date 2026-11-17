@@ -204,16 +204,30 @@ def prepare_cases(
     transformations = {}
     for original_case in originals:
         assert original_case.path is not None
-        prepared = prepare_transformations(
-            original_case.path,
-            original_case.instance_id,
-            original_case.anchor,
-            output_dir,
-            config.kind,
-            config.relabelings_per_instance,
-            generator,
-            tolerance=config.verification_tolerance,
-        )
+        if config.precomputed_manifest is not None:
+            reference = config.precomputed_manifest
+            manifest_path = (
+                PrivateAssetResolver(private_root).resolve(reference)
+                if reference.startswith("private://")
+                else public_root / reference
+            )
+            prepared = prepare_precomputed_transformations(
+                original_case.path, original_case.instance_id, original_case.anchor,
+                output_dir, config.kind, manifest_path, config.relabelings_per_instance,
+                generation_seed=config.relabeling_generation_seed,
+                solver_commit=task.release.base_commit,
+            )
+        else:
+            prepared = prepare_transformations(
+                original_case.path,
+                original_case.instance_id,
+                original_case.anchor,
+                output_dir,
+                config.kind,
+                config.relabelings_per_instance,
+                generator,
+                tolerance=config.verification_tolerance,
+            )
         for instance_id, transformation in prepared.items():
             transformations[instance_id] = transformation
             transformed_path = output_dir / transformation["transformed_instance_path"]
@@ -329,6 +343,12 @@ def run_with_representation(
             else None
         ),
         "configuration": config.model_dump(mode="json"),
+        "task_configuration": {
+            "evaluation": {
+                "performance_protocol": task.evaluation.performance_protocol.value,
+                "exact_time_basis": task.evaluation.exact_time_basis.value,
+            },
+        },
         "budgets_sec": task.evaluation.budgets_sec,
         "threads": task.evaluation.threads,
         "code_states": sorted(state.value for state in states),

@@ -137,6 +137,7 @@ class RepositoryPlugin(ABC):
     collection_backend: str | None = None
     representations: dict[str, tuple[str, ...]] = {}
     collector_environment: dict[str, str] = {}
+    judge_support_files: dict[str, str] = {}
     judge_environment_requirements: dict[str, str] = {}
     supports_fixed_solver_parameters = False
     scenario_binding_package: str | None = None

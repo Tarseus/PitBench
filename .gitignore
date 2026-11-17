@@ -59,3 +59,6 @@ private/*
 /.ruff_cache
 /.venv
 /.vscode
+
+# Local Python wheel build output.
+/build/

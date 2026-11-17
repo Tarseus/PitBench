@@ -1491,7 +1491,7 @@ def measure_population_headroom(
         TrustedOptimumRecord,
     )
     from pitbench.schema.observation import ExpectedRunGrid
-    from pitbench.schema.task import InstanceSetSpec
+    from pitbench.schema.task import InstanceSetSpec, PerformanceProtocol
 
     if destination.exists():
         raise FileExistsError(destination)
@@ -1546,6 +1546,18 @@ def measure_population_headroom(
         entries.sort(key=lambda entry: entry["replicate_index"])
         name = "judge_id" if entries[0]["axes"].get("axis") == "baseline" else condition
         panel_config = private_inputs / f"{condition}.yaml"
+        if (
+            task.evaluation.performance_protocol == PerformanceProtocol.EXACT_VERIFIED_SOLVE
+            and any(
+                references["records"][entry["id"]]["target_kind"] == "best_found"
+                for entry in entries
+            )
+        ):
+            raise ValueError(
+                f"{task.task_id} panel {name} requires independently verified "
+                "optimal references for exact_verified_solve; best-found "
+                "solutions cannot establish optimality"
+            )
         panel = InstanceSetSpec(
             name=name,
             kind=InstanceSetKind.JUDGE_ID
@@ -1554,15 +1566,6 @@ def measure_population_headroom(
             instance_set_config="private://"
             + panel_config.relative_to(private_root.resolve()).as_posix(),
             size=len(entries),
-            performance_protocol=(
-                "heuristic_fixed_budget"
-                if exact
-                and any(
-                    references["records"][entry["id"]]["target_kind"] == "best_found"
-                    for entry in entries
-                )
-                else None
-            ),
         )
         panels.append(panel)
         panel_rows = []
@@ -1743,6 +1746,7 @@ def materialize_generalization_views(
     private_root: Path,
     destination: Path,
     difficulty_path: Path | None = None,
+    retain_primary_panels: bool = False,
 ) -> dict:
     """Keep a common evaluator task while varying only public development views."""
     import copy
@@ -1834,11 +1838,12 @@ def materialize_generalization_views(
             )
         # The study owns its hidden populations. Keep only the public
         # development panel from the source task before adding v4 panels.
-        task.instance_sets = [
-            panel
-            for panel in task.instance_sets
-            if panel.kind == InstanceSetKind.AGENT_DEV or panel.scenario_only
-        ]
+        if not retain_primary_panels:
+            task.instance_sets = [
+                panel
+                for panel in task.instance_sets
+                if panel.kind == InstanceSetKind.AGENT_DEV or panel.scenario_only
+            ]
 
         def relevant(entry):
             if entry["generator"]["kind"] not in expected_generators:
@@ -1907,20 +1912,23 @@ def materialize_generalization_views(
                 )
                 panel_kind = (
                     InstanceSetKind.JUDGE_ID
-                    if role == "unseen_id"
+                    if role == "unseen_id" and not retain_primary_panels
                     else InstanceSetKind.JUDGE_SHIFT
                 )
-                panel_protocol = (
-                    "heuristic_fixed_budget"
-                    if exact
-                    and task.evaluation.performance_protocol
-                    != PerformanceProtocol.BUDGET_TRUNCATED_QUALITY
+                if (
+                    task.evaluation.performance_protocol == PerformanceProtocol.EXACT_VERIFIED_SOLVE
                     and any(
-                        targets[entry["id"]]["target_kind"] == "best_found"
+                        targets[entry["id"]].get("record", {}).get(
+                            "target_kind", targets[entry["id"]]["target_kind"]
+                        ) == "best_found"
                         for entry in entries
                     )
-                    else None
-                )
+                ):
+                    raise ValueError(
+                        f"{task.task_id} panel {panel_name} requires independently "
+                        "verified optimal references for exact_verified_solve; "
+                        "best-found solutions cannot establish optimality"
+                    )
                 task.instance_sets.append(
                     InstanceSetSpec(
                         name=panel_name,
@@ -1929,7 +1937,6 @@ def materialize_generalization_views(
                         + config_path.relative_to(private_root).as_posix(),
                         instance_set_config_sha256=_sha(config_path),
                         size=len(rows),
-                        performance_protocol=panel_protocol,
                     )
                 )
                 if difficulty is not None:
@@ -1977,6 +1984,23 @@ def materialize_generalization_views(
             for item in original.instance_sets
             if item.kind == InstanceSetKind.AGENT_DEV
         )
+        if retain_primary_panels:
+            result["tasks"][task.task_id] = {
+                "evaluator_task_config": str(evaluator_path),
+                "evaluator_sha256": _sha(evaluator_path),
+                "scientific_panels": metadata,
+                "original_primary_panels": "retained unchanged; new distributions are reported separately",
+                "development_original_size": original_dev.size,
+                "development_diverse_size": original_dev.size,
+            }
+            TaskCatalog(root).validate_file(evaluator_path)
+            for arm in plan.arms:
+                result["arms"].setdefault(arm.id, {})[task.task_id] = {
+                    "agent_task_config_path": str((root / task_relative).resolve()),
+                    "task_config_path": str(evaluator_path),
+                    "candidate_hypotheses_required": arm.require_candidate_hypotheses,
+                }
+            continue
         public_folder = destination / "public-development" / task.task_id
         public_folder.mkdir(parents=True)
         materialize_instance_set(
@@ -2055,7 +2079,10 @@ def materialize_generalization_views(
             "evaluator_task_config": str(evaluator_path),
             "evaluator_sha256": _sha(evaluator_path),
             "scientific_panels": metadata,
-            "original_primary_panels": "retained unchanged; new distributions are reported separately",
+            "original_primary_panels": (
+                "retained unchanged; new distributions are reported separately"
+                if retain_primary_panels else "replaced by study-owned populations"
+            ),
             "development_original_size": original_dev.size,
             "development_diverse_size": diverse.size,
         }
@@ -3154,3 +3181,136 @@ def materialize_research_experiment(
     }
     _write(output_dir / "experiment.json", record)
     return record
+
+
+def prepare_saved_patch_suite(specification_path: Path) -> dict:
+    """Prepare all configured supplementary tests without generating a new patch."""
+    from pitbench.cli.evaluate_config import EvaluationConfig
+    from pitbench.evaluator.private_assets import PrivateAssetResolver
+    from pitbench.repositories.base import RepositoryPluginRegistry
+    from pitbench.schema.research import SavedPatchSuiteSpecification
+    from pitbench.schema.task import RepresentationRobustnessConfig
+
+    spec = SavedPatchSuiteSpecification.model_validate(yaml.safe_load(specification_path.read_text()))
+    root, output = spec.root.resolve(), spec.output.resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    source = spec.source_cohort.resolve()
+    if output.is_relative_to(source) or source.is_relative_to(output):
+        raise ValueError("saved-patch suite needs a separate output directory")
+    cohort = json.loads((source / "cohort.json").read_text())
+    config = EvaluationConfig.from_yaml(spec.evaluation_config)
+    private = PrivateAssetResolver(config.paths.private_root if config.paths.private_root.is_absolute() else root / config.paths.private_root).root
+    plan = GeneralizationStudyPlan.model_validate_json(spec.study_plan.read_text())
+    stage = root / "dataset/saved-patch-suites" / output.name
+    stage.mkdir(parents=True, exist_ok=False)
+    source_tasks = {}
+    for job in cohort["jobs"]:
+        task_id = job["task_id"]
+        if task_id in source_tasks:
+            continue
+        status = json.loads((source / "agent-status" / job["run_id"] / "status.json").read_text())
+        execution = status.get("execution_run_id") or job["run_id"]
+        context = yaml.safe_load((source / "workspaces" / execution / task_id / "task.yaml").read_text())["evaluator_config"]
+        task = PitBenchTask.from_yaml(Path(context["task_config_path"]))
+        path = stage / "sources" / (task_id + ".yaml")
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False))
+        source_tasks[task_id] = path
+    plan.task_configs = [path.relative_to(root).as_posix() for path in source_tasks.values()]
+    plan.task_targets = {key: value for key, value in plan.task_targets.items() if key in source_tasks}
+    original_population = json.loads((spec.population_root / "population-construction.json").read_text())
+    population = {**original_population, "splits": {}, "source_population": str(spec.population_root), "selected_generator_kinds": spec.generator_kinds}
+    scoped = output / "population-scope"
+    scoped.mkdir()
+    for role, metadata in original_population["splits"].items():
+        payload = json.loads(Path(metadata["manifest"]).read_text())
+        entries = [entry for entry in payload["instances"] if entry["generator"]["kind"] in spec.generator_kinds]
+        if not entries:
+            continue
+        path = scoped / (role + ".json")
+        _write(path, {**payload, "instances": entries})
+        population["splits"][role] = {"manifest": str(path), "instances": len(entries), "sha256": _sha(path)}
+    _write(scoped / "population-construction.json", population)
+    references_dir = private / "research/saved-patch-suites" / output.name / "references"
+    references_dir.parent.mkdir(parents=True, exist_ok=True)
+    references = import_population_references(
+        population_root=scoped, result_roots=spec.reference_roots,
+        private_root=private, destination=references_dir,
+    )
+    if references["missing"]:
+        raise ValueError("selected population has missing verified references; see references.json")
+    views_dir = stage / (output.name + "-full-views")
+    views = materialize_generalization_views(
+        plan=plan, root=root, population_root=scoped,
+        references_path=references_dir / "references.json", private_root=private,
+        destination=views_dir, retain_primary_panels=True,
+    )
+    from pitbench.metrics.objective_report import planned_metric_coverage
+
+    coverage = {}
+    metric_plan = {}
+    for task_id, metadata in views["tasks"].items():
+        task_path = Path(metadata["evaluator_task_config"])
+        task = PitBenchTask.from_yaml(task_path)
+        original = PitBenchTask.from_yaml(source_tasks[task_id])
+        plugin = RepositoryPluginRegistry.load(task.repository.plugin)
+        task.evaluation.operational_reliability = spec.operational_reliability
+        if task_id in spec.representation_configs:
+            task.evaluation.representation_robustness = RepresentationRobustnessConfig.model_validate(spec.representation_configs[task_id])
+        for panel in task.instance_sets:
+            if panel.name in metadata["scientific_panels"]:
+                panel.budgets_sec = list(original.evaluation.budgets_sec)
+                panel.primary_budget_sec = original.evaluation.primary_budget_sec
+        task = PitBenchTask.model_validate(task.model_dump())
+        task_path.write_text(yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False))
+        metadata["evaluator_sha256"] = _sha(task_path)
+        metric_plan[task_id] = planned_metric_coverage(task)
+        coverage[task_id] = {
+            "native_performance": "enabled",
+            "generalization_panels": metadata["scientific_panels"],
+            "resources": "enabled",
+            "seed_robustness": "enabled" if task.evaluation.seed_robustness else "not_declared_by_task",
+            "representation_robustness": "enabled" if task.evaluation.representation_robustness else "not_supported_by_repository" if not plugin.representations else "not_configured",
+            "operational_reliability": "task_development_suite" if spec.operational_reliability else "disabled",
+            "api_scenarios": "configured" if task.metric_scenarios else "repository_has_no_scenario_binding" if plugin.scenario_session_plugin is None else "missing_frozen_scenario_inputs",
+            "parameter_robustness": str(spec.parameter_supplementation) if spec.parameter_supplementation else "enabled",
+        }
+    _write(views_dir / "task-views.json", views)
+    balanced = (
+        prepare_generalization_run_views(
+            views_path=views_dir / "task-views.json", private_root=private,
+            destination=stage / "evaluation-views",
+            target_runs=plan.evaluation_run_target,
+            supplemental_seed_count=plan.supplemental_seed_count,
+            supplemental_primary_budget_only=plan.supplemental_primary_budget_only,
+        ) if plan.evaluation_run_target is not None else views_dir / "task-views.json"
+    )
+    prepared = json.loads(balanced.read_text())
+    for task_id, metadata in prepared["tasks"].items():
+        resources = config.resources_for(task_id).model_copy()
+        resources.task_config_path = Path(metadata["evaluator_task_config"])
+        config.tasks[task_id] = resources
+    config.paths.output_path = output / "cohort/runs"
+    config.paths.workspace_path = output / "cohort/workspaces"
+    config.paths.base_cache_path = output / "cohort/shared-cache/base"
+    # Existing parameter evidence is linked, rather than spending the same search twice.
+    config.configuration_robustness.enabled = spec.parameter_supplementation is None
+    config_path = output / "evaluation.local.yaml"
+    config_path.write_text(yaml.safe_dump(config.model_dump(mode="json"), sort_keys=False))
+    plan_path = output / "study-plan.json"
+    _write(plan_path, plan.model_dump(mode="json"))
+    profile = {
+        "phase": "study-evaluations", "background": True,
+        "manifest": str(root / plan.release_manifest), "config": str(config_path),
+        "source_cohort": str(source), "output": str(output / "cohort"),
+        "study_plan": str(plan_path), "study_views": str(balanced),
+        "workers": 0, "evaluation_workers": 0, "evaluation_cpu_pools": [],
+        "dispatch_interval_sec": 0, "temporary_root": str(output.parent / "tmp/full-replay"),
+        "resource_policy": spec.resource_policy,
+    }
+    profile_path = output / "evaluate-patches.local.yaml"
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False))
+    result = {"source_cohort": str(source), "new_agent_starts": 0, "saved_candidates": len(cohort["jobs"]), "coverage": coverage, "profile": str(profile_path)}
+    _write(output / "metric-plan.json", {"metrics": metric_plan, "parameter_supplementation": str(spec.parameter_supplementation) if spec.parameter_supplementation else None})
+    _write(output / "suite.json", result)
+    return result

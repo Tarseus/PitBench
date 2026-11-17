@@ -53,7 +53,7 @@ workspace paths; retired directory names remain documented in the migration log.
 
 ## 🎯 Why Combinatorial Optimization (CO)?
 
-**Combinatorial Optimization (CO)** is the algorithmic backbone of modern logistics, supply chains, manufacturing, and scheduling. Developing and accelerating high-performance solvers requires mathematical insight, intricate search heuristics, and low-level systems programming. The 0.0.1 release manifest selects sixteen tasks across eight solver repositories, with two official releases per solver. Historical task configurations, including thirty-eight validated PR starting snapshots, remain available separately. See [the release manifest](configs/benchmarks/0.0.1.json) and [the release execution guide](docs/running-release.md). It asks whether coding agents, given a solver repository and an improvement goal but no prescribed code change, can investigate the solver, develop and test an optimization idea, and deliver correct, repeatable gains on unseen instances under fixed computational budgets.
+**Combinatorial Optimization (CO)** is the algorithmic backbone of modern logistics, supply chains, manufacturing, and scheduling. Developing and accelerating high-performance solvers requires mathematical insight, intricate search heuristics, and low-level systems programming. The 0.0.1 release manifest selects sixteen tasks across eight solver repositories, with two official releases per solver. Historical task configurations, including thirty-eight validated PR starting snapshots, remain available separately. See [the release manifest](configs/benchmarks/0.0.1.json). It asks whether coding agents, given a solver repository and an improvement goal but no prescribed code change, can investigate the solver, develop and test an optimization idea, and deliver correct, repeatable gains on unseen instances under fixed computational budgets.
 
 Unlike general repository-level coding benchmarks, solver optimization must preserve problem semantics while evaluating a randomized quality-time process:
 
@@ -188,8 +188,7 @@ Solver behavior diagnostics are also included as `behavior_geometry` in the
 evaluation summary and `pitbench report --json`. They describe finite empirical
 distances in conditional quality, termination/validity, and wall-budget usage;
 distance alone does not establish an improvement. Their
-[mathematical definitions](docs/solver-behavior-metric-definition.md) and the
-[bounded CVRP geometry and certificate API](docs/cvrp-problem-metric-definition.md)
+mathematical definitions and the bounded CVRP geometry and certificate API
 are research tools. Existing performance and robustness decisions keep their
 frozen estimators, budgets, seed panels, and validity rules.
 
@@ -204,7 +203,7 @@ resource optimizations. This protocol remains frozen. The opt-in
 adds adapters for all twenty extended measurements through explicit trajectory,
 lifecycle, thread-grid, sequence, numerical-stress and replay scenarios, plus
 native robustness/reliability adapters. Search-work counts remain diagnostic.
-See the [collection and scoring contract](docs/metrics/scenarios.md).
+The collection and scoring contract is implemented in the scenario and metric modules.
 Existing seed (99% paired seed bootstrap) and simultaneous controlled-transfer
 statistics retain their definitions. Availability requires complete declared
 experiments and a source-bound solver API with the necessary capabilities;
@@ -253,12 +252,12 @@ For each indexed PR with a pinned task configuration, use the existing curator:
 
 ```bash
 # First freeze the profile, primary metric, panels and per-task guardrails in YAML.
-python scripts/curate_solver_prs.py objective-register \
+uv run python scripts/curate_solver_prs.py objective-register \
   --catalog configs/pr_curation/repositories.json --registry REGISTRY.jsonl \
   --repository OWNER/REPO --pr-number N --output gushengda/curation/registration/REGISTRATION.json
 
 # Run the normal full Judge, then recompute from its original artifacts.
-python scripts/curate_solver_prs.py objective-qualify \
+uv run python scripts/curate_solver_prs.py objective-qualify \
   --catalog configs/pr_curation/repositories.json --registry REGISTRY.jsonl \
   --repository OWNER/REPO --pr-number N --run-directory gushengda/curation/qualification/JUDGE_RUN \
   --output gushengda/curation/qualification/QUALIFICATION.json
@@ -1125,7 +1124,7 @@ so Base/Agent comparisons expose stale builds. Set `agent_tools: []` explicitly
 in the local config to omit these tools and instances.
 
 External Agent strategies can use the existing `--agent-import-path` extension
-and the [versioned public benchmark result interface](docs/development-results.md).
+and the versioned public benchmark result interface.
 Algorithm-Space Agent is maintained as an independent Python project;
 PitBench provides execution, independent verification and public evidence export.
 
@@ -1333,7 +1332,7 @@ uv run python -m scripts.collect reference \
 Run these commands with a Python environment containing the backends declared
 in the plan. The example expects the materialized source manifests listed in
 that plan; `reference_generation.yaml` describes the additional difficulty probes.
-The local experiment uses `.pitbench/reference-env/bin/python`, with optional
+The local experiment uses `uv run`, with optional
 solver dependencies isolated from the benchmark environment.
 
 Campaigns retain a code snapshot, backend/package identities, input hashes,
@@ -1371,10 +1370,10 @@ verification. Each remote host runs an independent shard through the same
 `ReferenceCollection` process runner, scheduler and problem verifiers.
 
 ```bash
-.pitbench/reference-env/bin/python -m scripts.collect reference \
+uv run python -m scripts.collect reference \
   --remote-config configs/experiments/reference_remote.yaml \
   --output-dir gushengda/data/references/reference-distributed-20261025 --deploy
-.pitbench/reference-env/bin/python -m scripts.collect reference \
+uv run python -m scripts.collect reference \
   --remote-config configs/experiments/reference_remote.yaml \
   --output-dir gushengda/data/references/reference-distributed-20261025 --sync-loop
 ```
@@ -1490,10 +1489,10 @@ export. The checked-in plan records the local pilot paths; neither those
 generated exports nor private Judge assets are part of the Git checkout.
 
 ```bash
-python -m scripts.prepare research construct \
+uv run python -m scripts.prepare research construct \
   --plan configs/research/pilot.json --root . --output-dir gushengda/experiments/agent-diagnostics/research-cases
 
-python -m scripts.prepare research generate \
+uv run python -m scripts.prepare research generate \
   --agent-view gushengda/experiments/agent-diagnostics/research-cases/cvrp_research_001/agent/open_ended/case.json \
   --generator-config PUBLIC_GENERATOR.json --output-dir gushengda/experiments/agent-diagnostics/development-experiment
 ```
@@ -1505,7 +1504,7 @@ and size choices. The existing scheduling generator supports job counts and
 seeds, not deadline/window-tightness interventions. Generated instances do not
 automatically acquire a trusted optimum or BKS.
 
-The [construction record](docs/research/records/pilot-construction.json) records two real
+The [construction record](configs/research/records/pilot-construction.json) records two real
 source-bound cases, four public projections, and five public generator exercises
 producing 15 instances. Artifact hashes, visibility checks, invalid-input
 rejections, Ruff and compilation were checked. No new test suite, solver run or
@@ -1643,7 +1642,7 @@ modules. To generate empirical BKS anchors, run inside the appropriate solver
 judge environment with a clean source snapshot:
 
 ```bash
-python -m scripts.collect anchors \
+uv run python -m scripts.collect anchors \
   --task-config configs/tasks/<task_id>.yaml --repository /input/base \
   --instance-set-config /private/hidden_instances/<panel>.yaml \
   --private-root /private --output-dir /private/oracles/<panel> \
@@ -1678,10 +1677,10 @@ installed binding). Source-based execution reuses the normal repository judge;
 installed execution reuses the parameter-search worker and scheduler.
 
 ```bash
-python -m scripts.collect nuisance prepare \
+uv run python -m scripts.collect nuisance prepare \
   --config configs/experiments/nuisance_robustness.yaml --panel routing \
   --repository /path/to/source --output gushengda/experiments/robustness/nuisance-routing
-python -m scripts.collect nuisance run \
+uv run python -m scripts.collect nuisance run \
   --output gushengda/experiments/robustness/nuisance-routing --cpus <available-cpu-ids>
 ```
 
@@ -1693,7 +1692,7 @@ Previously retained experiment formats remain readable by the same report comman
 
 
 ```bash
-python -m scripts.report nuisance --source /path/to/experiment --output /path/to/report
+uv run python -m scripts.report nuisance --source /path/to/experiment --output /path/to/report
 ```
 
 The report reads a job manifest with per-run results, or judge checkpoints with
@@ -1800,6 +1799,47 @@ If you use PitBench in your research, please cite our work:
   howpublished={\url{https://github.com/Tarseus/PitBench}}
 }
 ```
+
+### Re-evaluating saved patches
+
+Each Agent run retains its candidate patch. Evaluate it again without starting an
+Agent, or re-evaluate an existing cohort with automatic worker allocation:
+
+```bash
+uv run pitbench judge TASK_ID --from-run /path/to/saved-run --config config/evaluate.local.yaml
+uv run pitbench evaluate-patches --config config/patch-evaluation.local.yaml
+uv run pitbench evaluate-patches --config config/patch-evaluation.local.yaml --status
+```
+
+To prepare a new multi-dimensional saved-patch suite, use
+`uv run python -m scripts.prepare research saved-patch-suite --specification CONFIG`
+and the template in `config/saved-patch-suite.example.yaml`. Rebuild reports from
+retained measurements using `uv run pitbench evaluate-patches --config CONFIG --reports-only --report-output OUTPUT`. Original runs and failures remain intact.
+
+Codex receives the task instruction, primary metric and editable scope. Live web
+search is requested through the model provider; availability depends on the
+provider. The workspace shell continues to use the model-relay network.
+
+Grouped source-checkout commands are available through `uv run python -m scripts.prepare`, `scripts.collect`, `scripts.report`, and `scripts.check`; each
+command supports `--help`. The campaign compatibility entry point delegates to
+the shared controller, and saved patches are evaluated through `pitbench judge`
+or `pitbench evaluate-patches`.
+
+
+### Additional solver images
+
+HiGHS 1.16.0 and Gecode 6.6.0 task images can be built with:
+
+```bash
+uv run pitbench images build release_highs_v1_16_0 release_gecode_v6_6_0
+```
+
+The prior task versions and frozen release manifest are retained. The new tasks
+need their task-specific private oracle files. LKH, Concorde and RouteOpt source
+image definitions are available under `docker/solver-images/`; they are not yet
+connected to task drivers or evaluators. LKH and Concorde have academic-use
+restrictions; RouteOpt is GPLv3 and needs a separate Gurobi license at runtime.
+
 
 ---
 

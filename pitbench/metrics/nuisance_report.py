@@ -20,9 +20,10 @@ from pitbench.metrics.seed_robustness_report import (
     _exact_verified_optimal,
 )
 from pitbench.schema.observation import RunObservation
-from pitbench.schema.task import ExactTimeBasis
+from pitbench.schema.task import ExactTimeBasis, PerformanceProtocol, PitBenchTask
 
 REPRESENTATION_PROTOCOL_VERSION = "0.0.1"
+EXACT_REPRESENTATION_PROTOCOL_VERSION = "0.0.2"
 REPRESENTATION_STATISTICS_NAME = "type_7_iqr_equal_instance_mean"
 REPRESENTATION_SOLVER_SEED = 0
 REPRESENTATION_RELABELINGS_PER_INSTANCE = 30
@@ -278,7 +279,7 @@ def compute_exact_representation_robustness_report(
     protocol_version: str,
 ) -> ExactRepresentationRobustnessReport:
     if (
-        protocol_version != "0.0.2"
+        protocol_version != EXACT_REPRESENTATION_PROTOCOL_VERSION
         or solver_seed != 0
         or relabelings_per_instance != 30
     ):
@@ -525,6 +526,7 @@ class JudgeRunResults:
                 records.append(
                     {
                         "task_id": observation.task_id,
+                        "instance_id": observation.instance_id,
                         **by_transform[observation.instance_id],
                         "budget_sec": observation.budget_sec,
                         "code_state": observation.code_state.value,
@@ -582,8 +584,19 @@ def _group(record: dict) -> tuple:
 
 def _representation_configuration(manifest: dict) -> dict:
     configuration = manifest.get("config") or manifest.get("configuration") or {}
-    if "representation" in configuration:
-        return configuration["representation"]
+    nested = "representation" in configuration
+    if nested:
+        configuration = configuration["representation"]
+    evaluation = (manifest.get("task_configuration") or {}).get("evaluation", {})
+    if evaluation.get("performance_protocol") == PerformanceProtocol.EXACT_VERIFIED_SOLVE.value:
+        return {
+            **configuration,
+            "outcome": "capped_optimal_time",
+            "count": configuration.get("count", configuration.get("relabelings_per_instance")),
+            "protocol_version": configuration.get("protocol_version", EXACT_REPRESENTATION_PROTOCOL_VERSION),
+        }
+    if nested:
+        return configuration
     if {
         "relabeling_generation_seed",
         "relabelings_per_instance",
@@ -606,12 +619,23 @@ def _representation_instance_ids(manifest: dict) -> list[str]:
     return instance_ids
 
 
-def report_nuisance_results(source: Path, output: Path) -> dict:
+def report_nuisance_results(
+    source: Path, output: Path, *, task: PitBenchTask | None = None
+) -> dict:
     source, output = source.resolve(), output.resolve()
     manifest_path = source / "experiment.json"
     if not manifest_path.exists():
         manifest_path = source / "details.json"
     manifest = json.loads(manifest_path.read_text())
+    if task is not None:
+        if manifest["task_id"] != task.task_id or manifest["budgets_sec"] != task.evaluation.budgets_sec:
+            raise ValueError("report task or budgets differ from retained representation inputs")
+        manifest = {**manifest, "task_configuration": manifest.get("task_configuration") or {
+            "evaluation": {
+                "performance_protocol": task.evaluation.performance_protocol.value,
+                "exact_time_basis": task.evaluation.exact_time_basis.value,
+            },
+        }}
     reader = DirectoryRunResults if "jobs" in manifest else JudgeRunResults
     manifest, records = reader.load(source, output, manifest)
     expected = {_identity(job) for job in manifest["jobs"]}

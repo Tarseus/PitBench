@@ -254,6 +254,7 @@ class RepresentationRobustnessConfig(BaseModel):
     solver_seed: int = Field(default=0, ge=0, le=4294967295)
     relabeling_generation_seed: int = 20260907
     relabelings_per_instance: int = Field(default=30, gt=0)
+    precomputed_manifest: str | None = None
 
 
 class ControlledTransferCondition(BaseModel):

@@ -149,6 +149,7 @@ class CodexWorkspaceRuntime(AbstractContextManager["CodexWorkspaceRuntime"]):
             "codex_binary": str(self.codex_binary),
             "network_internal": True,
             "shell_network": "relay-only",
+            "web_search": "live",
             "relay_ip": self.relay_ip,
             "permission_profile": self.permission_profile_name,
             "unified_exec": True,

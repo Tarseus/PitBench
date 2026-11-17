@@ -3,7 +3,7 @@
   "design_id": "eight_solvers_five_targets_generation_v1",
   "status": "selected_design_pending_generator_and_solver_qualification",
   "source_inventory": "configs/research/eight_solvers_five_targets_v1.json",
-  "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+  "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
   "description": "Shared target populations for 40 solver-target tasks; task-specific views bind these populations without changing the frozen source task seeds or Agent budget.",
   "roles": {
     "protocol_calibration": {

@@ -350,6 +350,7 @@ def _research():
         "views", help="Materialize shared evaluator and arm-specific development tasks"
     )
     views.add_argument("--difficulty", type=Path)
+    views.add_argument("--retain-primary-panels", action="store_true")
     for flag in (
         "plan",
         "root",
@@ -368,8 +369,14 @@ def _research():
     balanced.add_argument("--target-runs", type=int, required=True)
     balanced.add_argument("--supplemental-seed-count", type=int)
     balanced.add_argument("--supplemental-primary-budget-only", action="store_true")
+    replay = sub.add_parser("saved-patch-suite", help="Prepare supplemental measurements of existing Agent patches")
+    replay.add_argument("--specification", type=Path, required=True)
     args = parser.parse_args()
-    if args.command == "balance-views":
+    if args.command == "saved-patch-suite":
+        from pitbench.research import prepare_saved_patch_suite
+
+        print(json.dumps(prepare_saved_patch_suite(args.specification)))
+    elif args.command == "balance-views":
         result = prepare_generalization_run_views(
             views_path=args.views,
             private_root=args.private_root,
@@ -457,6 +464,7 @@ def _research():
             references_path=args.references,
             destination=args.output_dir,
             difficulty_path=args.difficulty,
+            retain_primary_panels=args.retain_primary_panels,
         )
         print(
             json.dumps(

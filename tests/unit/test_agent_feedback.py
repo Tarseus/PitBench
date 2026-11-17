@@ -291,64 +291,21 @@ def test_feedback_arm_configs_must_match_except_feedback_mode(tmp_path: Path) ->
         compare_feedback_arms(outcome, behavior)
 
 
-def test_budget_truncated_quality_instruction_does_not_depend_on_experiment_tasks():
-    task = PitBenchTask.from_yaml(
-        ROOT / "configs/tasks/highs_multidimensional_knapsack_v1_15_1.yaml"
-    )
-    payload = task.model_dump(mode="json")
-    payload["evaluation"]["performance_protocol"] = "budget_truncated_quality"
-    payload["evaluation"]["verifier"] = "exact_target"
-    payload["oracle"]["kind"] = "best_known_solution"
-    task = PitBenchTask.model_validate(payload)
-    instruction = PitBenchAdapter._format_instruction(task, DEFAULT_TOOLS)
-    assert "paired reduction in normalized gap" in instruction
-    assert "Feasible incumbents count even without an optimality proof" in instruction
-    assert (
-        "Do not replace this metric with solved coverage or PAR-2 runtime"
-        in instruction
-    )
-
-
 @pytest.mark.parametrize(
     "task_config",
     sorted((ROOT / "configs" / "tasks").glob("*.yaml")),
     ids=lambda path: path.stem,
 )
-def test_instruction_matches_protocol_and_visible_files(
-    task_config: Path,
-) -> None:
+def test_instruction_preserves_task_and_editable_scope(task_config: Path) -> None:
     task = PitBenchTask.from_yaml(task_config)
     instruction = PitBenchAdapter._format_instruction(task, DEFAULT_TOOLS)
-    assert "Optimization Scope" not in instruction
-    assert task.optimization_scope not in instruction
-    assert instruction.isascii()
-    assert f"{task.evaluation.primary_budget_sec:.1f}s" in instruction
-    assert "/pitbench/dev_instances" in instruction
-    assert "pitbench bench --label base" in instruction
-    assert "pitbench bench --label agent --build" in instruction
-    assert "pitbench diagnose" in instruction
-    assert "incumbent or bound progress" in instruction
-    assert "git diff HEAD" in instruction
-    assert "If no source changes are retained" in instruction
-    if task.evaluation.performance_protocol.value == "budget_truncated_quality":
-        assert "paired reduction in normalized gap" in instruction
-        assert (
-            "Feasible incumbents count even without an optimality proof" in instruction
-        )
-        assert (
-            "Do not replace this metric with solved coverage or PAR-2 runtime"
-            in instruction
-        )
-    elif task.task_type.value == "exact_solver":
-        assert "independently verified solved coverage" in instruction
-        assert "paired PAR-2 runtime" in instruction
-        assert "normalized gap" not in instruction
-    else:
-        assert "paired reduction in normalized gap" in instruction
-
-    without_tools = PitBenchAdapter._format_instruction(task)
-    assert "No PitBench development instances are mounted" in without_tools
-    assert "pitbench bench" not in without_tools
+    assert task.instruction in instruction
+    assert all(path in instruction for path in task.repository.editable_paths)
+    assert "Do not modify tests" in instruction
+    assert "PitBench" not in instruction
+    assert "pitbench bench" not in instruction
+    assert "Recommended Performance Engineering" not in instruction
+    assert PitBenchAdapter._format_instruction(task) == instruction
 
 
 @pytest.mark.parametrize(

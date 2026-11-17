@@ -28,6 +28,7 @@ from pitbench.cli.evaluate_config import (
 from pitbench.cli.profiles import profiles_app
 from pitbench.cli.solver_images import build_solver_image
 from pitbench.cli.task_image import prepare_task_image
+from pitbench.evaluator.artifacts import resolve_saved_candidate, write_json
 from pitbench.evaluator.evaluator import PitBenchEvaluator
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.harness.agents import AgentName
@@ -149,7 +150,7 @@ def _prepare_smoke_inputs(
         )
         if record.task.task_id != task_id:
             raise ValueError("configured task ID differs from requested task")
-        task = config.dry_run.task_view(record.task)
+        task = config.dry_run.task_view(record.task, solver_seed_limit=2)
         destination = output_dir / "task-config" / task_id
         destination.mkdir(parents=True, exist_ok=True)
         path = destination / f"{task_id}.yaml"
@@ -162,7 +163,7 @@ def _prepare_smoke_inputs(
             agent_path = destination / "agent" / f"{task_id}.yaml"
             agent_path.parent.mkdir(parents=True, exist_ok=True)
             agent_path.write_text(yaml.safe_dump(
-                config.dry_run.task_view(agent_record.task).model_dump(mode="json"),
+                config.dry_run.task_view(agent_record.task, solver_seed_limit=2).model_dump(mode="json"),
                 sort_keys=False,
             ))
             resources.agent_task_config_path = agent_path
@@ -1241,19 +1242,52 @@ def run_task(
         raise typer.Exit(1)
 
 
+@app.command("evaluate-patches")
+def evaluate_saved_patches(
+    config_path: Annotated[Path, typer.Option("--config", exists=True, dir_okay=False, help="Saved-patch batch evaluation YAML")],
+    source_cohort: Annotated[Path | None, typer.Option("--from-cohort", help="Original cohort containing saved candidates")] = None,
+    output: Annotated[Path | None, typer.Option(help="Separate directory for new measurements")] = None,
+    workers: Annotated[int | None, typer.Option(min=0, help="Evaluation slots; 0 selects automatically")] = None,
+    prepare_only: Annotated[bool, typer.Option(help="Prepare the saved-candidate queue without executing it")] = False,
+    reports_only: Annotated[bool, typer.Option(help="Rebuild reports from saved observations without any solver runs")] = False,
+    report_output: Annotated[Path | None, typer.Option(help="Separate destination for rebuilt reports")] = None,
+    status: Annotated[bool, typer.Option(help="Show the retained evaluation queue status")] = False,
+    foreground: Annotated[bool, typer.Option(help="Wait for evaluation; default starts it in background")] = False,
+    root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
+) -> None:
+    """Load saved Agent patches and evaluate them without starting an Agent."""
+    from pitbench.harness.harness.campaign import evaluate_saved_patch_cohort
+
+    try:
+        evaluate_saved_patch_cohort(
+            config_path, source_cohort=source_cohort, output=output, workers=workers,
+            prepare_only=prepare_only, status=status, foreground=foreground,
+            reports_only=reports_only, report_output=report_output,
+            root=_root(root),
+        )
+    except (OSError, ValueError) as error:
+        raise typer.BadParameter(str(error)) from error
+
+
 @app.command("judge")
 def judge_candidate(
     task_id: Annotated[str, typer.Argument(help="PitBench task ID")],
     candidate_patch: Annotated[
-        Path, typer.Argument(help="Previously captured candidate.patch")
-    ],
+        Path | None, typer.Argument(help="Previously captured candidate.patch")
+    ] = None,
     expected_patch_sha256: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--expected-patch-sha256",
-            help="SHA256 recorded when the agent candidate was captured",
+            help="Optional explicitly expected patch identity; normally recorded automatically",
         ),
-    ],
+    ] = None,
+    from_run: Annotated[
+        Path | None, typer.Option(help="Select the saved candidate from a run or evaluation directory")
+    ] = None,
+    trial_name: Annotated[
+        str | None, typer.Option(help="Saved trial to select when a run contains multiple attempts")
+    ] = None,
     configuration_only: Annotated[
         bool,
         typer.Option(
@@ -1300,6 +1334,9 @@ def judge_candidate(
     reliability_only: Annotated[
         bool, typer.Option(help="Run only the configured boundary reliability suite")
     ] = False,
+    smoke_test: Annotated[
+        bool, typer.Option(help="Check this saved patch with limited instances and configured short solve budgets")
+    ] = False,
     base_cache: Annotated[
         bool | None,
         typer.Option(
@@ -1327,6 +1364,18 @@ def judge_candidate(
     root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
 ) -> None:
     """Run only the evaluator-owned judge on a previously captured patch."""
+    if (candidate_patch is None) == (from_run is None):
+        raise typer.BadParameter("provide a patch path or --from-run")
+    if trial_name is not None and from_run is None:
+        raise typer.BadParameter("--trial-name requires --from-run")
+    metadata: dict[str, Any] = {}
+    if from_run is not None:
+        try:
+            candidate_patch, metadata = resolve_saved_candidate(
+                from_run, task_id=task_id, trial_name=trial_name
+            )
+        except (OSError, ValueError, KeyError) as error:
+            raise typer.BadParameter(str(error), param_hint="--from-run") from error
     repository_root = _root(root)
     resolved_config_path = resolve_config_path(repository_root, config_path)
     evaluation_config = (
@@ -1362,7 +1411,7 @@ def judge_candidate(
             f"Candidate patch does not exist: {patch_path}",
             param_hint="CANDIDATE_PATCH",
         )
-    normalized_patch_sha256 = expected_patch_sha256.lower()
+    normalized_patch_sha256 = (expected_patch_sha256 or hashlib.sha256(patch_path.read_bytes()).hexdigest()).lower()
     if len(normalized_patch_sha256) != 64 or any(
         character not in "0123456789abcdef" for character in normalized_patch_sha256
     ):
@@ -1379,9 +1428,14 @@ def judge_candidate(
         repository_root, private_root or configured_paths.private_root
     )
     try:
-        cached_repository = PitBenchAdapter(
-            repository_root, resolved_private_root
-        ).ensure_source_cache(record.task)
+        saved_repository = metadata.get("evaluator_config", {}).get("base_repository")
+        if saved_repository and Path(saved_repository).is_dir():
+            cached_repository = Path(saved_repository)
+            PitBenchAdapter.validate_repository(record.task, cached_repository)
+        else:
+            cached_repository = PitBenchAdapter(
+                repository_root, resolved_private_root
+            ).ensure_source_cache(record.task)
     except (GitSnapshotError, OSError, ValueError) as error:
         raise typer.BadParameter(
             f"Could not prepare the pinned repository source: {error}",
@@ -1407,8 +1461,12 @@ def judge_candidate(
     resolved_output_dir = (
         resolve_repository_path(repository_root, output_dir).resolve()
         if output_dir is not None
-        else patch_path.parent
+        else resolve_repository_path(
+            repository_root, configured_paths.output_path
+        ) / "patch-evaluations" / datetime.now().strftime("%Y-%m-%d__%H-%M-%S-%f")
     )
+    if resolved_output_dir == patch_path.parent:
+        raise typer.BadParameter("choose an output directory separate from the saved patch")
     resolved_output_dir.mkdir(parents=True, exist_ok=True)
     active_base_cache = (
         base_cache if base_cache is not None else evaluation_config.base_cache
@@ -1460,6 +1518,33 @@ def judge_candidate(
             )
         )
 
+    if smoke_test:
+        short_task = evaluation_config.dry_run.task_view(record.task, solver_seed_limit=2)
+        short_path = resolved_output_dir / "task-config" / f"{task_id}.yaml"
+        short_path.parent.mkdir(parents=True)
+        short_path.write_text(yaml.safe_dump(short_task.model_dump(mode="json"), sort_keys=False))
+        judge_evaluator_config.update(
+            task_config_path=str(short_path), instances_per_instance_set=1,
+            solver_seed_limit=2, smoke_test=True, use_base_cache=False,
+        )
+        if task_id in evaluation_config.metric_scenario_configs:
+            judge_evaluator_config["metric_scenario_config"] = str(_short_scenario_config(
+                resolve_repository_path(repository_root, evaluation_config.metric_scenario_configs[task_id]),
+                short_task, short_path, resolved_output_dir, resolved_private_root,
+            ))
+    source_commit = metadata.get("source_commit")
+    if source_commit and source_commit != record.task.release.base_commit:
+        raise typer.BadParameter("saved patch and configured task use different source commits")
+    write_json(resolved_output_dir / "replay.json", {
+        "source_patch": str(patch_path),
+        "source_run": str(from_run.resolve()) if from_run is not None else None,
+        "candidate_patch_sha256": normalized_patch_sha256,
+        "task_config_path": str(record.task_config_path),
+        "source_commit": record.task.release.base_commit,
+        "new_agent_starts": 0,
+        "smoke_test": smoke_test,
+    })
+    typer.echo(f"Evaluating saved patch; no Agent calls. Results: {resolved_output_dir}")
     request = EvaluationRequest(
         task_id=task_id,
         task_path=repository_root,
@@ -1531,7 +1616,7 @@ def judge_candidate(
     )
     typer.echo(f"Artifacts: {resolved_output_dir}")
     typer.echo(
-        f"Report: pitbench report {resolved_output_dir} --task-config {record.task_config_path}"
+        f"Report: uv run pitbench report {resolved_output_dir} --task-config {judge_evaluator_config['task_config_path']}"
     )
 
 

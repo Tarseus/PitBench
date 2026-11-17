@@ -214,3 +214,33 @@ def test_full_export_includes_failure_trajectories_infra_attempts_and_missing_me
     assert originals == {
         p.relative_to(data): p.read_bytes() for p in data.rglob("*") if p.is_file()
     }
+
+
+def test_saved_candidate_selects_legacy_attempt_and_requires_explicit_trial(tmp_path):
+    from pitbench.evaluator.artifacts import resolve_saved_candidate, write_json
+
+    trials = [{"task_id": "task", "trial_name": "one"}, {"task_id": "task", "trial_name": "two"}]
+    write_json(tmp_path / "results.json", {"results": trials})
+    patch = tmp_path / "task/one/evaluation/candidate.patch"
+    patch.parent.mkdir(parents=True)
+    patch.write_bytes(b"")
+    with pytest.raises(ValueError, match="--trial-name"):
+        resolve_saved_candidate(tmp_path, task_id="task")
+    selected, metadata = resolve_saved_candidate(tmp_path, task_id="task", trial_name="one")
+    assert selected == patch
+    assert metadata["trial_name"] == "one"
+
+
+def test_saved_candidate_manifest_and_task_identity(tmp_path):
+    from pitbench.evaluator.artifacts import resolve_saved_candidate, write_json
+
+    patch = tmp_path / "candidate.patch"
+    patch.write_text("retained patch")
+    write_json(tmp_path / "candidate.json", {
+        "task_id": "task", "candidate_patch": "candidate.patch", "source_commit": "abc"
+    })
+    selected, metadata = resolve_saved_candidate(tmp_path, task_id="task")
+    assert selected == patch
+    assert metadata["source_commit"] == "abc"
+    with pytest.raises(ValueError, match="another task"):
+        resolve_saved_candidate(tmp_path, task_id="different")

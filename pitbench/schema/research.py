@@ -266,3 +266,21 @@ class GeneralizationStudyPlan(BaseModel):
         ):
             raise ValueError("task-specific study settings refer to an unselected task")
         return self
+
+
+class SavedPatchSuiteSpecification(BaseModel):
+    """Inputs for supplemental measurements of a fixed saved Agent cohort."""
+
+    model_config = ConfigDict(extra="forbid")
+    source_cohort: Path
+    study_plan: Path
+    evaluation_config: Path
+    population_root: Path
+    reference_roots: list[Path] = Field(min_length=1)
+    generator_kinds: list[str] = Field(min_length=1)
+    root: Path
+    output: Path
+    representation_configs: dict[str, dict] = Field(default_factory=dict)
+    operational_reliability: bool = True
+    parameter_supplementation: Path | None = None
+    resource_policy: dict[str, float] = Field(default_factory=dict)

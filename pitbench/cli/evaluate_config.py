@@ -73,12 +73,14 @@ class DryRunConfig(BaseModel):
 
     solver_budget_sec: float = Field(default=0.1, gt=0, allow_inf_nan=False)
 
-    def task_view(self, task: PitBenchTask) -> PitBenchTask:
+    def task_view(self, task: PitBenchTask, *, solver_seed_limit: int | None = None) -> PitBenchTask:
         payload = task.model_dump(mode="json")
         evaluation = payload["evaluation"]
         evaluation["budgets_sec"] = [self.solver_budget_sec]
         evaluation["primary_budget_sec"] = self.solver_budget_sec
         for panel in payload["instance_sets"]:
+            if solver_seed_limit is not None and panel.get("solver_seed_count") is not None:
+                panel["solver_seed_count"] = min(panel["solver_seed_count"], solver_seed_limit)
             if panel.get("budgets_sec") is not None:
                 panel["budgets_sec"] = [self.solver_budget_sec]
                 panel["primary_budget_sec"] = self.solver_budget_sec

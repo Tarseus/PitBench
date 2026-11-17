@@ -743,3 +743,30 @@ def test_agent_timeout_progress_explains_retained_candidate():
     row = progress.progress.tasks[progress.rows["trial"].row]
     assert row.fields["phase"] == "Coding agent timed out"
     assert "retained patch" in row.fields["detail"]
+
+
+def test_deferred_candidate_capture_keeps_replay_metadata(tmp_path, monkeypatch):
+    from pitbench.evaluator.artifacts import resolve_saved_candidate
+
+    evaluator = CandidateEvaluator(
+        defer_evaluation=True, remote_build=False, snapshot_bucket=None,
+        logger=MagicMock(), trace=lambda **kw: None,
+        progress_stage=lambda **kw: None, progress_detail=lambda *a: None,
+    )
+    terminal = SimpleNamespace(container=SimpleNamespace(attrs={"Config": {"WorkingDir": "/workspace/repo"}}))
+    monkeypatch.setattr(evaluator, "repository_head", lambda terminal: "a" * 40)
+    monkeypatch.setattr("pitbench.harness.harness.candidate_evaluation.capture_repository_patch", lambda *a, **kw: b"patch")
+    handler = SimpleNamespace(
+        task_id="task", trial_name="trial",
+        task=SimpleNamespace(evaluator_config={"task_config_path": "/task.yaml"}),
+        trial_paths=SimpleNamespace(task_output_path=tmp_path),
+    )
+    evaluator.evaluate(
+        terminal=terminal, trial_handler=handler,
+        results=TrialResults(task_id="task", trial_name="trial", instruction=""),
+        expected_repository_head="a" * 40, agent_label="codex", model_name="model",
+    )
+    patch, metadata = resolve_saved_candidate(tmp_path / "evaluation", task_id="task")
+    assert patch.read_bytes() == b"patch"
+    assert metadata["source_commit"] == "a" * 40
+    assert metadata["model_name"] == "model"

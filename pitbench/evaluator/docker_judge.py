@@ -8,6 +8,8 @@ from collections import deque
 from pathlib import Path
 from typing import Callable
 
+import yaml
+
 from pitbench.evaluator.artifacts import (
     FreshEvaluationRequired,
     new_output_attempt,
@@ -231,6 +233,20 @@ class DockerJudge:
             "--observations",
             "/output/judge-observations.jsonl",
         ]
+        payload = yaml.safe_load(self.task_config_path.read_text()) or {}
+        repository = payload.get("repository") if isinstance(payload, dict) else None
+        plugin_path = repository.get("plugin") if isinstance(repository, dict) else None
+        if plugin_path:
+            from pitbench.repositories.base import RepositoryPluginRegistry
+
+            plugin = RepositoryPluginRegistry.load(plugin_path)
+            position = command.index(self.docker_image)
+            for target, relative in plugin.judge_support_files.items():
+                source = package_root / relative
+                if not source.is_file():
+                    raise ValueError(f"Judge support file is missing: {source}")
+                command[position:position] = ["--volume", f"{source}:{target}:ro"]
+                position += 2
         if self.configuration_panel is not None:
             position = command.index(self.docker_image)
             command[position:position] = [

@@ -115,7 +115,7 @@ def test_parameter_supplementation_keeps_original_cohort_and_never_runs_an_agent
             source_cohort=source,
             output=output,
             config=config,
-            evaluation_cpu_pools=["48-55"],
+            evaluation_cpu_pools=[",".join(map(str, sorted(campaign.os.sched_getaffinity(0))[:8]))],
             evaluation_workers=1,
             task_id=None,
         )
@@ -1637,3 +1637,317 @@ def test_restarting_an_active_background_profile_does_not_reallocate_its_cpus(
     )
     campaign.main()
     assert not (cohort / "parallelism.json").exists()
+
+
+def test_saved_cohort_replay_preserves_source_and_creates_only_evaluation_queue(tmp_path):
+    from types import SimpleNamespace
+
+    from pitbench.evaluator.artifacts import write_json
+    from scripts import run_benchmark_release as campaign
+
+    source = tmp_path / "original"
+    output = tmp_path / "replay"
+    job = {"run_id": "run", "task_id": "task", "model": {"agent": "codex", "model": "model"}}
+    write_json(source / "cohort.json", {"jobs": [job]})
+    patch = source / "runs/run/task/trial/evaluation/candidate.patch"
+    patch.parent.mkdir(parents=True)
+    patch.write_text("captured patch")
+    write_json(source / "agent-status/run/status.json", {
+        "status": "evaluation_completed", "audit": {"candidate_patch": str(patch)}
+    })
+    write_json(source / "runs/run/results.json", {
+        "results": [{"task_id": "task", "trial_name": "trial", "evaluation": {"completed": True}}]
+    })
+    task = source / "workspaces/run/task/task.yaml"
+    task.parent.mkdir(parents=True)
+    task.write_text(yaml.safe_dump({"evaluator_config": {"base_repository": "original-base", "task_config_path": "original-task"}}))
+    original = {str(p.relative_to(source)): p.read_bytes() for p in source.rglob("*") if p.is_file()}
+    config = tmp_path / "config.yaml"
+    config.write_text("{}")
+    args = SimpleNamespace(source_cohort=source, output=output, config=config)
+    campaign.prepare_study_replay(args)
+    campaign.prepare_study_replay(args)
+    status = json.loads((output / "agent-status/run/status.json").read_text())
+    assert status["status"] == "evaluation_pending"
+    assert status["new_agent_starts"] == 0
+    assert status["audit"]["candidate_patch"] == str(patch)
+    assert json.loads((output / "runs/run/results.json").read_text())["results"][0]["evaluation"] is None
+    assert original == {str(p.relative_to(source)): p.read_bytes() for p in source.rglob("*") if p.is_file()}
+
+
+def test_native_patch_evaluation_status_uses_packaged_controller(tmp_path):
+    from typer.testing import CliRunner
+
+    from pitbench.cli.main import app
+    from pitbench.evaluator.artifacts import write_json
+
+    output = tmp_path / "cohort"
+    write_json(output / "cohort.json", {"jobs": []})
+    config = tmp_path / "patch-evaluation.yaml"
+    config.write_text(yaml.safe_dump({"phase": "study-evaluations", "output": str(output)}))
+    result = CliRunner().invoke(app, ["evaluate-patches", "--config", str(config), "--status"])
+    assert result.exit_code == 0, f"{result.output}\n{result.exception!r}"
+    assert '"total": 0' in result.output
+
+
+def test_native_patch_evaluation_rejects_agent_launch_profile(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from pitbench.cli.main import app
+    from pitbench.harness.harness import campaign
+
+    config = tmp_path / "agents.yaml"
+    config.write_text("phase: study-models\n")
+    monkeypatch.setattr(campaign, "main", lambda *a, **kw: pytest.fail("must not launch Agent study"))
+    result = CliRunner().invoke(app, ["evaluate-patches", "--config", str(config)])
+    assert result.exit_code == 2
+    assert "study-evaluations" in result.output
+    assert "study-parameters" in result.output
+
+
+def test_patch_cohort_python_api_forwards_without_changing_process_arguments(tmp_path, monkeypatch):
+    import sys
+
+    from pitbench.harness.harness import campaign
+
+    config = tmp_path / "evaluation.yaml"
+    config.write_text("phase: study-evaluations\n")
+    calls = []
+    monkeypatch.setattr(campaign, "main", lambda argv, **kw: calls.append((argv, kw)))
+    before = list(sys.argv)
+    campaign.evaluate_saved_patch_cohort(config, source_cohort=tmp_path / "source", output=tmp_path / "output", workers=0, prepare_only=True, root=tmp_path)
+    assert sys.argv == before
+    argv, options = calls[0]
+    assert argv[argv.index("--source-cohort") + 1] == str(tmp_path / "source")
+    assert "--prepare-only" in argv
+    assert options["root"] == tmp_path
+
+
+def test_dynamic_evaluation_grows_when_peer_cores_become_free(tmp_path, monkeypatch):
+    import threading
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from pitbench.cli.evaluate_config import EvaluationConfig
+    from pitbench.harness.harness import campaign
+
+    config = tmp_path / "config.json"
+    config.write_text(EvaluationConfig().model_dump_json())
+    campaign.write_json(tmp_path / "resource-policy.json", {"check_every_sec": 0.01})
+    args = SimpleNamespace(output=tmp_path, config=config, dynamic_evaluation_workers=True, dynamic_evaluation_limit=0, dispatch_interval_sec=0)
+    leased = set()
+    inspections = []
+    second_started = threading.Event()
+
+    @contextmanager
+    def lease(pools):
+        pool = pools[0]
+        assert pool not in leased
+        leased.add(pool)
+        try:
+            yield
+        finally:
+            leased.remove(pool)
+
+    def sockets():
+        inspections.append(True)
+        available = [0] if len(inspections) == 1 else [0, 1]
+        return [[cpu for cpu in available if str(cpu) not in leased]]
+
+    def worker(job, settings, pool):
+        if job["id"] == 1:
+            assert second_started.wait(2), "newly free core was never admitted"
+        else:
+            assert "0" in leased, "first job must remain running during expansion"
+            second_started.set()
+        return job
+
+    monkeypatch.setattr(campaign, "study_cpu_lease", lease)
+    monkeypatch.setattr(campaign, "available_study_sockets", sockets)
+    monkeypatch.setattr(campaign, "study_judge_resources", lambda *a: (1, 1))
+    monkeypatch.setattr(campaign, "host_snapshot", lambda: {"available_memory_gib": 100, "load_1min": 0, "cpu_temperature_c": None})
+    records = campaign.run_evaluation_jobs(args, [{"task_id": "task", "id": 1}, {"task_id": "task", "id": 2}], worker)
+    assert len(records) == 2 and not leased
+    allocation = json.loads((tmp_path / "parallelism.json").read_text())
+    assert allocation["peak_evaluation_workers"] == 2
+    assert allocation["evaluation_workers"] == 0
+
+
+def test_dynamic_evaluation_releases_finished_slot_while_peer_still_runs(tmp_path, monkeypatch):
+    import threading
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from pitbench.cli.evaluate_config import EvaluationConfig
+    from pitbench.harness.harness import campaign
+
+    config = tmp_path / "config.json"
+    config.write_text(EvaluationConfig().model_dump_json())
+    campaign.write_json(tmp_path / "resource-policy.json", {"check_every_sec": 0.01})
+    args = SimpleNamespace(output=tmp_path, config=config, dynamic_evaluation_workers=True, dynamic_evaluation_limit=2, dispatch_interval_sec=0)
+    held, releases = set(), []
+    last_started = threading.Event()
+
+    @contextmanager
+    def lease(pools):
+        pool = pools[0]
+        assert pool not in held
+        held.add(pool)
+        try:
+            yield
+        finally:
+            held.remove(pool)
+            releases.append(pool)
+
+    def worker(job, settings, pool):
+        if job["id"] == 2:
+            assert last_started.wait(2)
+        if job["id"] == 3:
+            assert releases, "completed job did not return its CPU lease"
+            last_started.set()
+        return job
+
+    monkeypatch.setattr(campaign, "study_cpu_lease", lease)
+    monkeypatch.setattr(campaign, "available_study_sockets", lambda: [[cpu for cpu in [0, 1] if str(cpu) not in held]])
+    monkeypatch.setattr(campaign, "study_judge_resources", lambda *a: (1, 1))
+    monkeypatch.setattr(campaign, "host_snapshot", lambda: {"available_memory_gib": 100, "load_1min": 0, "cpu_temperature_c": None})
+    jobs = [{"task_id": "task", "id": i} for i in [1, 2, 3]]
+    assert len(campaign.run_evaluation_jobs(args, jobs, worker)) == 3
+    assert not held
+
+
+def test_dynamic_evaluation_honors_stop_without_dispatching_pending_jobs(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from pitbench.cli.evaluate_config import EvaluationConfig
+    from pitbench.harness.harness import campaign
+
+    config = tmp_path / "config.json"
+    config.write_text(EvaluationConfig().model_dump_json())
+    args = SimpleNamespace(output=tmp_path, config=config, dynamic_evaluation_workers=True, dynamic_evaluation_limit=1, dispatch_interval_sec=0)
+    calls = []
+    def worker(job, settings, pool):
+        calls.append(job)
+        (tmp_path / "STOP").touch()
+        return job
+    monkeypatch.setattr(campaign, "study_cpu_lease", lambda *a: nullcontext())
+    monkeypatch.setattr(campaign, "available_study_sockets", lambda: [[0]])
+    monkeypatch.setattr(campaign, "study_judge_resources", lambda *a: (1, 1))
+    monkeypatch.setattr(campaign, "host_snapshot", lambda: {"available_memory_gib": 100, "load_1min": 0, "cpu_temperature_c": None})
+    campaign.run_evaluation_jobs(args, [{"task_id": "task"}] * 3, worker)
+    assert len(calls) == 1
+
+
+def test_automatic_evaluation_can_wait_for_capacity_at_startup(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from pitbench.cli.evaluate_config import EvaluationConfig
+    from pitbench.harness.harness import campaign
+
+    config = tmp_path / "config.json"
+    config.write_text(EvaluationConfig().model_dump_json())
+    campaign.write_json(tmp_path / "cohort.json", {"jobs": [{"task_id": "task"}]})
+    args = SimpleNamespace(phase="study-evaluations", workers=0, evaluation_workers=0,
+        cpu_pools=[], evaluation_cpu_pools=[], config=config, study_plan=None,
+        source_cohort=None, output=tmp_path, reuse_agent_pools=True)
+    monkeypatch.setattr(campaign, "available_study_sockets", lambda **kw: [])
+    monkeypatch.setattr(campaign, "host_snapshot", lambda: {"available_memory_gib": 100})
+    campaign.configure_study_parallelism(args)
+    assert args.dynamic_evaluation_workers
+    assert args.evaluation_cpu_pools == []
+    assert args.evaluation_workers == 0
+
+
+def test_prepare_only_never_executes_an_existing_evaluation_queue(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from pitbench.harness.harness import campaign
+
+    monkeypatch.setattr(campaign, "_study_evaluations", lambda *a: pytest.fail("prepare-only dispatched evaluation"))
+    campaign.study_evaluations(SimpleNamespace(source_cohort=None, prepare_only=True))
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_auto_launcher_joins_only_a_legacy_static_manager(tmp_path, monkeypatch, legacy):
+    from pitbench.harness.harness import campaign
+
+    profile = tmp_path / "profile.yaml"
+    profile.write_text(yaml.safe_dump({
+        "phase": "study-evaluations", "background": True,
+        "manifest": str(tmp_path / "manifest.json"), "config": str(tmp_path / "evaluation.yaml"),
+        "output": str(tmp_path / "output"), "source_cohort": str(tmp_path / "source"),
+        "study_plan": str(tmp_path / "plan.json"), "study_views": str(tmp_path / "views.json"),
+    }))
+    calls = []
+    def existing(args):
+        return {"pid": 1, "dynamic_evaluation_workers": not legacy} if not args.worker_group else None
+    def configure(args):
+        args.workers = args.evaluation_workers = 1
+        args.dynamic_evaluation_workers = True
+        args.evaluation_cpu_pools = ["0"]
+    monkeypatch.setattr(campaign, "active_study_launcher", existing)
+    monkeypatch.setattr(campaign, "configure_study_parallelism", configure)
+    monkeypatch.setattr(campaign, "launch_background", lambda args, argv: calls.append((args.worker_group, list(argv))))
+    campaign.main(["--profile", str(profile)])
+    if legacy:
+        assert calls[0][0] == "elastic"
+        assert "--worker-group" in calls[0][1]
+    else:
+        assert not calls
+
+
+def test_native_reports_only_bypasses_all_resource_and_solver_dispatch(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from pitbench.cli.main import app
+    from pitbench.harness.harness import campaign
+
+    output = tmp_path / "source"
+    campaign.write_json(output / "cohort.json", {"jobs": []})
+    profile = tmp_path / "evaluation.yaml"
+    profile.write_text(yaml.safe_dump({"phase": "study-evaluations", "output": str(output),
+        "manifest": str(tmp_path / "manifest.json"), "config": str(tmp_path / "config.yaml")}))
+    calls = []
+    monkeypatch.setattr(campaign, "configure_study_parallelism", lambda *a: pytest.fail("report-only started evaluation scheduling"))
+    monkeypatch.setattr(campaign, "rebuild_study_reports", lambda args: calls.append(args))
+    result = CliRunner().invoke(app, ["evaluate-patches", "--config", str(profile), "--reports-only", "--foreground", "--report-output", str(tmp_path / "reports")])
+    assert result.exit_code == 0, f"{result.output}\n{result.exception}"
+    assert calls[0].phase == "study-reports"
+    assert calls[0].report_output == tmp_path / "reports"
+
+
+def test_report_worker_is_process_picklable_and_uses_only_retained_data(tmp_path, monkeypatch):
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    from pitbench.evaluator.evaluator import PitBenchEvaluator
+    from pitbench.evaluator.storage import ObservationStore
+    from pitbench.harness.evaluation import EvaluationRequest
+    from pitbench.harness.harness.campaign import rebuild_study_condition_reports
+
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "1")
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    source, target = tmp_path / "source", tmp_path / "reports"
+    measured = source / "measurements"
+    measured.mkdir(parents=True)
+    patch = measured / "candidate.patch"
+    patch.write_bytes(b"")
+    task_id = "vroom_v1_15_0"
+    context = {"task_config_path": str(ROOT / "configs/tasks/vroom_v1_15_0.yaml"), "fixture_mode": True}
+    request = EvaluationRequest(task_id=task_id, task_path=ROOT, candidate_patch_path=patch,
+        output_dir=measured, agent_name="fixture", evaluator_config=context)
+    PitBenchEvaluator().evaluate(request)
+    ObservationStore.write_jsonl(measured / "judge-observations.jsonl", ObservationStore.read(measured / "trials.parquet"))
+    from pitbench.evaluator.artifacts import write_json
+    write_json(source / "agent-status/run/status.json", {"status": "evaluation_failed", "evaluation_output": str(measured)})
+    write_json(source / "runs/run/results.json", {"results": [{"task_id": task_id, "trial_name": "trial"}]})
+    manifest = source / "workspaces/run" / task_id / "task.yaml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(yaml.safe_dump({"evaluator_config": context}))
+    job = {"run_id": "run", "task_id": task_id, "model": {"agent": "fixture", "model": "fixture"}}
+    with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn")) as executor:
+        result = executor.submit(rebuild_study_condition_reports, job, source, target, None).result(timeout=30)
+    assert result["status"] in {"evaluation_completed", "evaluation_incomplete"}
+    receipt = json.loads((target / "evaluations/run/report-rebuild.json").read_text())
+    assert receipt["new_solver_runs"] == receipt["new_agent_starts"] == 0

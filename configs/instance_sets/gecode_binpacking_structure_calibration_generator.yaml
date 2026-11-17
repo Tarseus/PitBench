@@ -1,0 +1,15 @@
+schema_version: '1.0'
+visibility: agent
+format: json
+generator:
+  kind: bin_packing
+  count: 10
+  items: [300]
+  capacity: 150
+  weight_distribution: bimodal
+  weight_parameters:
+    low: [35, 65]
+    high: [70, 100]
+    high_probability: 0.5
+  randomness:
+    instance_seed: 88101

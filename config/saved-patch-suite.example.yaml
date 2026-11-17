@@ -1,0 +1,28 @@
+# Prepare: uv run python -m scripts.prepare research saved-patch-suite --specification CONFIG
+# Start: uv run pitbench evaluate-patches --config OUTPUT/evaluate-patches.local.yaml
+root: .
+source_cohort: /path/to/original/cohort
+study_plan: /path/to/original/study-plan.json
+evaluation_config: /path/to/machine/evaluation.local.yaml
+population_root: /path/to/frozen/populations
+reference_roots:
+  - /path/to/verified/reference-campaign
+# Select entire configured families; all split members and missing references are retained.
+generator_kinds: [bin_packing, job_shop_scheduling]
+output: /path/to/new/saved-patch-full-suite
+operational_reliability: true
+representation_configs:
+  release_choco_v6_0_2:
+    kind: item_relabeling
+  release_gecode_v6_4_0:
+    kind: item_relabeling
+  release_ortools_cp_sat_v9_15:
+    kind: job_relabeling
+    precomputed_manifest: configs/instance_sets/ortools_cp_sat_solve_v9_15_dev/representations/manifest.json
+# Existing parameter supplementation can run separately without repeating its search.
+parameter_supplementation: /path/to/existing/parameter-supplementation
+resource_policy:
+  min_available_memory_gib: 64
+  max_cpu_temperature_c: 86
+  max_load_1min: 112
+  check_every_sec: 10

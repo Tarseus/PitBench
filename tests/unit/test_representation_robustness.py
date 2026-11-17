@@ -772,3 +772,110 @@ def test_runner_collects_configured_relabelings_and_preserves_failures(
                 directory / record["artifacts"]["stdout"]
             ).read_text() == "solver output"
     assert json.loads(input_path.read_text()) == original
+
+
+def test_job_relabeling_is_wired_into_real_case_preparation(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from pitbench.evaluator.judge import InstanceCase, JudgePlan
+    from pitbench.evaluator.representation import prepare_cases
+    from pitbench.schema.task import InstanceSetKind, RepresentationRobustnessConfig
+
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/release_ortools_cp_sat_v9_15.yaml")
+    panel = next(p for p in task.instance_sets if p.kind == InstanceSetKind.AGENT_DEV)
+    panel.size = 1
+    task.evaluation.representation_robustness = RepresentationRobustnessConfig(
+        kind="job_relabeling", precomputed_manifest="configs/instance_sets/ortools_cp_sat_solve_v9_15_dev/representations/manifest.json"
+    )
+    original = ROOT / "configs/instance_sets/ortools_cp_sat_solve_v9_15_dev/instances/la01.pb"
+    case = InstanceCase(panel, "la01", original, 666)
+    monkeypatch.setattr(JudgePlan, "from_instance_set_configs", lambda *a, **kw: SimpleNamespace(cases=[case]))
+    cases, transformations = prepare_cases(task, tmp_path / "private", tmp_path / "output", public_root=ROOT)
+    assert len(cases) == len(transformations) == 30
+    assert all(c.equivalence_parent_id == "la01" and c.path.is_file() for c in cases)
+    assert all(t["jobs"] and t["new_to_original"] for t in transformations.values())
+
+
+def _retained_exact_representation(source, *, kind="item_relabeling"):
+    from pitbench.schema.task import RepresentationRobustnessConfig
+
+    task_id = "release_ortools_cp_sat_v9_15" if kind == "job_relabeling" else "release_choco_v6_0_2"
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks" / (task_id + ".yaml"))
+    task.evaluation.representation_robustness = RepresentationRobustnessConfig(kind=kind)
+    task.instance_sets[0].size = 1
+    transformations = {
+        f"case__{kind}_{i:02d}": {"original_instance_id": "case", "transform_id": f"{kind}_{i:02d}"}
+        for i in range(30)
+    }
+    records = []
+    for state in CodeState:
+        factor = 1 if state is CodeState.BASE else 0.5
+        for budget in task.evaluation.budgets_sec:
+            for i, identity in enumerate(transformations):
+                observation = RunObservation(
+                    task_id=task_id, code_state=state, instance_set="agent_dev",
+                    instance_set_kind="agent_dev", instance_id=identity, solver_seed=0,
+                    budget_sec=budget, status=RunStatus.COMPLETED, valid=True,
+                    objective=1, reported_objective=1, optimal_or_bks=1,
+                    solver_termination=SolverTermination.OPTIMAL,
+                    cpu_time_sec=(0.1 + i / 100) * factor,
+                    wall_time_sec=(1 + i / 50) * factor,
+                    equivalence_parent_id="case", equivalence_transform=f"{kind}_{i:02d}",
+                )
+                records.append({"observation": observation.model_dump(mode="json"),
+                    "verification": {"mapped_original": {"feasible": True, "objective": 1}, "objective_preserved": True},
+                    "artifacts": {"solution": "case.solution.json"}})
+    source.mkdir(parents=True)
+    write_json(source / "details.json", {"task_id": task_id,
+        "configuration": task.evaluation.representation_robustness.model_dump(mode="json"),
+        "budgets_sec": task.evaluation.budgets_sec, "code_states": [state.value for state in CodeState]})
+    write_json(source / "transformations.json", transformations)
+    (source / "results.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
+    return task, transformations, records
+
+
+@pytest.mark.parametrize("kind,iqr", [("item_relabeling", 0.145), ("job_relabeling", 0.29)])
+def test_retained_exact_report_rebuilds_from_raw_records_without_mutating_source(tmp_path, kind, iqr):
+    from pitbench.metrics.nuisance_report import report_nuisance_results
+
+    source = tmp_path / "retained"
+    task, _, records = _retained_exact_representation(source, kind=kind)
+    before = {p.name: p.read_bytes() for p in source.iterdir()}
+    summary = report_nuisance_results(source, tmp_path / "report", task=task)
+    formal = summary["representation_robustness"]
+    assert summary["complete"] and summary["completed_runs"] == len(records)
+    assert formal["time_basis"] == task.evaluation.exact_time_basis.value
+    for result in formal["by_budget"].values():
+        assert result["base"]["mean_capped_time_iqr_sec"] == pytest.approx(iqr)
+        assert result["agent"]["mean_capped_time_iqr_sec"] == pytest.approx(iqr / 2)
+    assert {p.name: p.read_bytes() for p in source.iterdir()} == before
+    (source / "results.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records[1:]))
+    partial = report_nuisance_results(source, tmp_path / "partial", task=task)
+    assert partial["missing_runs"] == 1 and not partial["complete"]
+    first = partial["representation_robustness"]["by_budget"][f"{task.evaluation.budgets_sec[0]:g}"]
+    assert first["base"]["mean_capped_time_iqr_sec"] is None
+
+
+def test_exact_representation_runner_supplies_report_protocol_context(tmp_path, monkeypatch):
+    retained = tmp_path / "fixture"
+    task, transformations, records = _retained_exact_representation(retained)
+    case = InstanceCase(task.instance_sets[0], "case", tmp_path / "input.json", 1, equivalence_parent_id="case")
+    cases = [case for _ in transformations]
+    monkeypatch.setattr("pitbench.evaluator.representation.prepare_cases", lambda *a, **kw: (cases, transformations))
+    monkeypatch.setattr(JudgePlan, "from_instance_set_configs", lambda *a, **kw: JudgePlan(task, []))
+    indexed = {(r["observation"]["instance_id"], r["observation"]["code_state"], r["observation"]["budget_sec"]): r for r in records}
+    monkeypatch.setattr("pitbench.evaluator.representation.result_record", lambda row, *a, **kw: indexed[row.instance_id, row.code_state.value, row.budget_sec])
+    def run(cases, *, completed_runs, save_observation):
+        observations = [RunObservation.model_validate(r["observation"]) for r in records]
+        for row in observations:
+            save_observation(row)
+        return observations
+    output = tmp_path / "judge"
+    write_json(output / "representation/transformations.json", transformations)
+    judge = SimpleNamespace(task=task, output_dir=output, public_root=ROOT,
+        resolver=None, evaluation_seeds=(0,), candidate_patch=None,
+        code_states=tuple(CodeState), instances_per_instance_set=None, run=run)
+    assert len(run_with_representation(judge, tmp_path)) == len(records)
+    details = json.loads((output / "representation/details.json").read_text())
+    assert details["task_configuration"]["evaluation"]["exact_time_basis"] == "cpu_time"
+    assert details["representation_robustness"]["outcome"] == "capped_optimal_time"

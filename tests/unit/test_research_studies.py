@@ -926,3 +926,50 @@ def test_headroom_preparation_keeps_budgets_seeds_and_replayable_private_inputs(
             destination=output,
         )
     assert json.loads((output / "headroom.json").read_text())["status"] == "failed"
+
+
+def test_supplemental_views_keep_native_panels_and_mark_bks_as_quality(tmp_path):
+    import hashlib
+    import json
+
+    import yaml
+
+    from pitbench.research import materialize_generalization_views
+    from pitbench.schema.research import GeneralizationStudyPlan
+    from pitbench.schema.task import PitBenchTask
+    from tests.support import ROOT
+
+    root = tmp_path / "root"
+    private = tmp_path / "private"
+    root.mkdir()
+    private.mkdir()
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/release_gecode_v6_4_0.yaml")
+    public = root / task.instance_sets[0].instance_set_config
+    public.parent.mkdir(parents=True)
+    public.write_text(yaml.safe_dump({"schema_version": "1.0", "visibility": "agent", "generator": {"kind": "bin_packing", "count": 5, "items": [4], "capacity": 10, "randomness": {"instance_seed": 12}}}))
+    task.instance_sets[0].instance_set_config_sha256 = hashlib.sha256(public.read_bytes()).hexdigest()
+    oracle = private / "native.yaml"
+    oracle.write_text(yaml.safe_dump({"task_id": task.task_id, "records": []}))
+    task.oracle.source = "private://native.yaml"
+    task.oracle.source_sha256 = hashlib.sha256(oracle.read_bytes()).hexdigest()
+    path = root / (task.task_id + ".yaml")
+    path.write_text(yaml.safe_dump(task.model_dump(mode="json")))
+    model = tmp_path / "model.json"
+    model.write_text(json.dumps({"capacity": 2, "weights": [1, 1]}))
+    entry = {"id": "hidden", "path": str(model), "sha256": hashlib.sha256(model.read_bytes()).hexdigest(), "generator": {"kind": "bin_packing"}, "condition_id": "packing", "family": "packing", "axes": {}}
+    population = tmp_path / "population"
+    population.mkdir()
+    splits = {}
+    for role, visibility, entries in [("development", "agent", []), ("unseen_id", "judge", [entry])]:
+        manifest = population / (role + ".json")
+        manifest.write_text(json.dumps({"visibility": visibility, "instances": entries}))
+        splits[role] = {"manifest": str(manifest)}
+    (population / "population-construction.json").write_text(json.dumps({"splits": splits}))
+    record = {"instance_set": "packing", "instance_id": "hidden", "instance_sha256": entry["sha256"], "target_kind": "best_found", "problem_kind": "bin_packing", "objective_sense": "minimize", "optimal_objective": 1, "reference_solution_uri": "private://reference.json", "reference_solution_sha256": "a" * 64, "optimality_basis": {}, "generation_provenance": {}, "verification_provenance": "test"}
+    references = tmp_path / "references.json"
+    references.write_text(json.dumps({"records": {"hidden": {"target_kind": "feasible_reference", "objective": 1, "record": record}}}))
+    plan_payload = json.loads((ROOT / "configs/research/latest_high_replicates_v3.json").read_text())
+    plan_payload.update(task_configs=[path.name], task_targets={})
+    plan = GeneralizationStudyPlan.model_validate(plan_payload)
+    with pytest.raises(ValueError, match="requires independently verified optimal references"):
+        materialize_generalization_views(plan=plan, root=root, population_root=population, references_path=references, private_root=private, destination=root / "views", retain_primary_panels=True)

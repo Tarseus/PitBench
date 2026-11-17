@@ -386,3 +386,42 @@ def format_objective_report(report: ObjectiveMeasurementReport) -> str:
         "Missing or partial evidence is not a zero gain or automatic rejection. Task readiness also requires the source, build, checker and integration gates."
     )
     return "\n".join(lines)
+
+
+def planned_metric_coverage(task: PitBenchTask) -> dict[str, dict[str, str]]:
+    """List every catalog metric without mistaking a plan for collected evidence."""
+    from pitbench.schema.task import PerformanceProtocol
+
+    protocols = {task.evaluation.performance_protocol} | {
+        panel.performance_protocol for panel in task.instance_sets if panel.performance_protocol
+    }
+    rules = qualification_protocols("1.1")["metrics"]
+    result = {}
+    for metric, definition in objective_catalog()["metrics"].items():
+        kind = rules[metric].get("scenario_kind")
+        status, reason = "planned", "native paired evaluation"
+        if metric in {"exact_solved_coverage", "exact_penalized_runtime_sec"} and PerformanceProtocol.EXACT_VERIFIED_SOLVE not in protocols:
+            status, reason = "not_applicable", "task has no exact verified-solve panel"
+        elif metric == "fixed_budget_normalized_gap" and not protocols & {PerformanceProtocol.HEURISTIC_FIXED_BUDGET, PerformanceProtocol.BUDGET_TRUNCATED_QUALITY}:
+            status, reason = "not_applicable", "task has no fixed-budget quality panel"
+        elif kind:
+            if any(s.kind == kind and metric in s.metrics for s in task.metric_scenarios):
+                reason = f"declared {kind} scenario"
+            else:
+                status, reason = "unavailable", f"no declared {kind} scenario or source-bound adapter"
+        elif metric == "controlled_retention" and task.evaluation.controlled_transfer is None:
+            status, reason = "unavailable", "no frozen controlled-retention conditions; descriptive shift panels do not supply them"
+        elif metric == "seed_dispersion" and task.evaluation.seed_robustness is None:
+            status, reason = "unavailable", "task has no cross-seed dispersion protocol"
+        elif metric == "representation_dispersion" and task.evaluation.representation_robustness is None:
+            status, reason = "unavailable", "task has no equivalent-representation protocol"
+        elif metric in {"boundary_pass_counts", "operational_failure_counts"}:
+            if not task.evaluation.operational_reliability:
+                status = "raw_only" if metric == "operational_failure_counts" else "unavailable"
+                reason = "failure statuses retained without a declared reliability grid"
+            else:
+                reason = "declared operational-reliability grid"
+        elif metric == "search_work":
+            status, reason = "raw_only", "backend node/iteration counters retained as diagnostics"
+        result[metric] = {"label": definition["label"], "status": status, "reason": reason}
+    return result

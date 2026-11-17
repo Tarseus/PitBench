@@ -62,7 +62,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "cvrp",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.cvrp",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -141,7 +141,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "vrptw",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.vrptw",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -218,7 +218,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "heterogeneous_fleet_vrp",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.heterogeneous_fleet_vrp",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -312,7 +312,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "multi_depot_vrp",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.multi_depot_vrp",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -384,7 +384,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "open_vrp",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.open_vrp",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -459,7 +459,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "cvrp",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.cvrp",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -539,7 +539,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "vrptw",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.vrptw",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -617,7 +617,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "heterogeneous_fleet_vrp",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.heterogeneous_fleet_vrp",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -712,7 +712,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "multi_depot_vrp",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.multi_depot_vrp",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -785,7 +785,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "open_vrp",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.open_vrp",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -861,7 +861,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "multidimensional_knapsack",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.multidimensional_knapsack",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -940,7 +940,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "set_covering",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.set_covering",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -1014,7 +1014,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "facility_location",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.facility_location",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -1088,7 +1088,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "graph_coloring_mip",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.graph_coloring_mip",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -1163,7 +1163,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "mip_scheduling",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.mip_scheduling",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -1243,7 +1243,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "bin_packing",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.bin_packing",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -1313,7 +1313,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "graph_coloring_cp",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.graph_coloring_cp",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -1387,7 +1387,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "job_shop_scheduling",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.job_shop_scheduling",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -1472,7 +1472,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "resource_constrained_project_scheduling",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.resource_constrained_project_scheduling",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -1559,7 +1559,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "balanced_subset_sum",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.balanced_subset_sum",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -1640,7 +1640,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "bin_packing",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.bin_packing",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -1710,7 +1710,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "graph_coloring_cp",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.graph_coloring_cp",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -1784,7 +1784,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "job_shop_scheduling",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.job_shop_scheduling",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -1869,7 +1869,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "resource_constrained_project_scheduling",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.resource_constrained_project_scheduling",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -1956,7 +1956,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "balanced_subset_sum",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.balanced_subset_sum",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -2037,7 +2037,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "bin_packing",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.bin_packing",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -2107,7 +2107,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "graph_coloring_cp",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.graph_coloring_cp",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -2181,7 +2181,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "job_shop_scheduling",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.job_shop_scheduling",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -2266,7 +2266,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "resource_constrained_project_scheduling",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.resource_constrained_project_scheduling",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -2353,7 +2353,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "balanced_subset_sum",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.balanced_subset_sum",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -2439,7 +2439,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "multidimensional_knapsack",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.multidimensional_knapsack",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -2523,7 +2523,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "set_covering",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.set_covering",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -2602,7 +2602,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "facility_location",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.facility_location",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -2681,7 +2681,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "graph_coloring_mip",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.graph_coloring_mip",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -2761,7 +2761,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "mip_scheduling",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.mip_scheduling",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -2846,7 +2846,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "multidimensional_knapsack",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.multidimensional_knapsack",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -2930,7 +2930,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "set_covering",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.set_covering",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -3009,7 +3009,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "facility_location",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.facility_location",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -3088,7 +3088,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "graph_coloring_mip",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.graph_coloring_mip",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -3168,7 +3168,7 @@
       "readiness": "requires_model_reference_and_server_baseline_qualification",
       "instance_design_id": "mip_scheduling",
       "instance_design_source": "configs/research/eight_solvers_five_targets_design_v1.json#target_designs.mip_scheduling",
-      "decision_record": "docs/research/eight-solvers-five-targets-decisions.md",
+      "decision_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
       "reference_protocol": "configs/research/generalization_difficulty_v2.yaml",
       "configuration_status": "design_selected_pending_generation_and_reference_qualification",
       "instance_configuration": {
@@ -3356,6 +3356,6 @@
     },
     "qualification": "No final difficulty tier, generalization claim, or independent optimality certificate is established by this initial probe."
   },
-  "instance_design_record": "docs/research/eight-solvers-five-targets-decisions.md",
+  "instance_design_record": "configs/research/records/eight-solvers-five-targets-decisions.md",
   "instance_configuration_status": "selected_for_all_40_tasks; generated_population_and_references_pending"
 }

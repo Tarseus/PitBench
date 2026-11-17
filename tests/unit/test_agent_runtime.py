@@ -837,6 +837,31 @@ def test_relay_without_token_cap_does_not_exhaust_token_budget():
     assert budget.reserve() is None
 
 
+def test_relay_allows_web_search_but_not_other_remote_execution():
+    assert not _RelayHandler._has_disallowed_remote_tool(
+        {"tools": [{"type": "web_search"}]}
+    )
+    assert _RelayHandler._has_disallowed_remote_tool(
+        {"tools": [{"type": "computer"}]}
+    )
+
+
+def test_codex_workspace_requests_live_search_with_short_task_prompt():
+    agent = CodexMCPAgent(model_name="test-model", runner_backend="workspace")
+    runtime = SimpleNamespace(
+        config_profile_name="profile",
+        permission_profile_name="permissions",
+        command_prefix=lambda: ["codex"],
+    )
+    relay = SimpleNamespace(url="http://localhost:1234")
+    command = agent._build_workspace_command(
+        runtime=runtime, relay=relay, instruction="Improve the solver."
+    )
+    assert 'web_search="live"' in command
+    assert command[-1] == "The repository is at /workspace/repo.\n\nImprove the solver.\n"
+    assert "PitBench" not in command[-1]
+
+
 def test_native_hooks_keep_tool_payloads_without_copying_workspace_files(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()

@@ -164,7 +164,7 @@ def paired_panel(
     }
 
 
-def write_configuration_report(output: Path) -> dict:
+def write_configuration_report(output: Path, *, destination: Path | None = None) -> dict:
     """Report search and independent retest separately, including stopped searches."""
     import json
 
@@ -199,5 +199,9 @@ def write_configuration_report(output: Path) -> dict:
     comparison_path = output / "candidate-parameter-comparison.json"
     if comparison_path.is_file():
         report["candidate_comparison"] = json.loads(comparison_path.read_text())
-    write_json(output / "configuration_report.json", report)
+    target = destination or output
+    if destination is not None:
+        write_json(target / "experiment.json", manifest)
+        report["source_directory"] = str(output.resolve())
+    write_json(target / "configuration_report.json", report)
     return report

@@ -832,6 +832,72 @@ class PitBenchEvaluator(Evaluator):
                         base_cache_file, shared_identity, request.output_dir, base_obs
                     )
 
+        return self._aggregate_reports(
+            request, task, observations, fixture_mode=fixture_mode,
+            actual_patch_sha256=actual_patch_sha256, use_base_cache=use_base_cache,
+            build_cache_path=build_cache_path, code_states=code_states,
+            base_observations_path=base_observations_path,
+        )
+
+    def rebuild_reports(self, request: EvaluationRequest, source: Path) -> EvaluationResult:
+        """Aggregate retained measurements without building or invoking any solver."""
+        source, output = source.resolve(), request.output_dir.resolve()
+        if output.is_relative_to(source) or source.is_relative_to(output):
+            raise ValueError("report reconstruction needs a separate output directory")
+        task = PitBenchTask.from_yaml(Path(request.evaluator_config["task_config_path"]))
+        grid = ExpectedRunGrid.model_validate_json((source / "expected-run-grid.json").read_text())
+        observations = ObservationStore.read_jsonl(source / "judge-observations.jsonl")
+        def identity(row):
+            return (row.task_id, row.code_state, row.instance_set, row.instance_id,
+                    row.solver_seed, row.budget_sec, row.test_suite, row.equivalence_parent_id)
+        planned = {identity(row) for row in grid.runs}
+        observed = {identity(row) for row in observations}
+        if task.task_id != request.task_id or grid.task_id != task.task_id:
+            raise ValueError("retained measurements belong to another task")
+        if len(planned) != len(grid.runs) or len(observed) != len(observations) or planned != observed:
+            raise ValueError(f"retained run grid incomplete: missing={len(planned-observed)}, unexpected={len(observed-planned)}; raw failures are retained")
+        output.mkdir(parents=True, exist_ok=True)
+        for name in ("expected-run-grid.json", "judge-observations.jsonl", "candidate.patch", "shared-base.json"):
+            if (source / name).is_file():
+                shutil.copy2(source / name, output / name)
+        for name in ("runs", "build-logs", "metric-scenarios"):
+            if (source / name).is_dir() and not (output / name).exists():
+                (output / name).symlink_to(source / name, target_is_directory=True)
+        if task.evaluation.representation_robustness is not None:
+            from pitbench.metrics.nuisance_report import report_nuisance_results
+
+            original = source / "representation"
+            target = output / "representation"
+            target.mkdir(exist_ok=True)
+            summary = report_nuisance_results(original, target / "report", task=task)
+            details = json.loads((original / "details.json").read_text())
+            details.update(representation_robustness=summary["representation_robustness"], source_directory=str(original))
+            write_json(target / "details.json", details)
+            for name in ("transformations.json", "results.jsonl", "inputs"):
+                if (original / name).exists() and not (target / name).exists():
+                    (target / name).symlink_to(original / name, target_is_directory=(original / name).is_dir())
+        patch = output / "candidate.patch"
+        request = request.model_copy(update={"output_dir": output, "candidate_patch_path": patch})
+        result = self._aggregate_reports(
+            request, task, observations, actual_patch_sha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
+            allow_scenario_execution=False,
+        )
+        write_json(output / "report-rebuild.json", {
+            "measurement_source": str(source), "observation_count": len(observations),
+            "new_agent_starts": 0, "new_solver_runs": 0,
+            "reporter_harness_sha256": judge_harness_sha256(Path(__file__).resolve().parents[2]),
+        })
+        return result
+
+    def _aggregate_reports(
+        self, request, task, observations, *, fixture_mode=False,
+        actual_patch_sha256=None, use_base_cache=False, build_cache_path=None,
+        allow_scenario_execution=True, code_states=None, base_observations_path=None,
+    ) -> EvaluationResult:
+        code_states = tuple(CodeState) if code_states is None else code_states
+        config = request.evaluator_config
+        patch_exists = request.candidate_patch_path.is_file()
+        preflight_validity = evaluator_validity(patch_exists=patch_exists, fixture_mode=fixture_mode)
         parquet_path = request.output_dir / "trials.parquet"
         ObservationStore.write(parquet_path, observations)
         expected_run_grid_path = request.output_dir / "expected-run-grid.json"
@@ -855,6 +921,17 @@ class PitBenchEvaluator(Evaluator):
                 task_id=task.task_id,
                 public_config=seed_robustness,
             )
+            report_task = task
+            report_evaluation_seeds = private_seed_config.evaluation_seeds
+            limit = config.get("solver_seed_limit")
+            if limit is not None:
+                report_task = task.model_copy(deep=True)
+                scoped = report_task.evaluation.seed_robustness
+                scoped.development_seeds = scoped.development_seeds[:limit]
+                report_evaluation_seeds = report_evaluation_seeds[:limit]
+                scoped.seed_selection.seed_count = len(report_evaluation_seeds)
+                scoped.seed_selection.development_seed_count = len(scoped.development_seeds)
+                seed_robustness = scoped
             seed_selection = SeedSelectionMetadata(
                 seed_min=seed_robustness.seed_selection.seed_min,
                 seed_max=seed_robustness.seed_selection.seed_max,
@@ -867,7 +944,7 @@ class PitBenchEvaluator(Evaluator):
                 "primary_budget_sec": task.evaluation.primary_budget_sec,
                 "seed_selection": seed_selection,
                 "development_seeds": seed_robustness.development_seeds,
-                "evaluation_seeds": private_seed_config.evaluation_seeds,
+                "evaluation_seeds": report_evaluation_seeds,
             }
             supplemental_seed_panels = {
                 panel.name
@@ -908,9 +985,9 @@ class PitBenchEvaluator(Evaluator):
             ):
                 nuisance_robustness = compute_task_seed_robustness_report(
                     original_observations,
-                    task=task,
+                    task=report_task,
                     expected_run_grid=expected_run_grid,
-                    evaluation_seeds=private_seed_config.evaluation_seeds,
+                    evaluation_seeds=report_evaluation_seeds,
                 )
                 if (
                     task.evaluation.performance_protocol
@@ -1098,13 +1175,18 @@ class PitBenchEvaluator(Evaluator):
             from pitbench.evaluator.scenarios import collect_for_evaluation
 
             try:
-                scenario_report, scenario_path = collect_for_evaluation(
-                    task,
-                    request.candidate_patch_path,
-                    request.output_dir,
-                    Path(scenario_config),
-                    build_context=scenario_build_context,
-                )
+                if allow_scenario_execution:
+                    scenario_report, scenario_path = collect_for_evaluation(
+                        task, request.candidate_patch_path, request.output_dir,
+                        Path(scenario_config), build_context=scenario_build_context,
+                    )
+                else:
+                    from pitbench.evaluator.scenarios import load_report
+
+                    scenario_path = request.output_dir / "metric-scenarios/campaign.json"
+                    if not scenario_path.is_file():
+                        raise ValueError("no retained scenario measurements; report-only mode cannot collect them")
+                    scenario_report = load_report(scenario_path, task)
                 artifacts.metric_scenario_campaign = artifact_ref(
                     scenario_path,
                     root=request.output_dir,

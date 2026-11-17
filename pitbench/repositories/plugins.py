@@ -522,6 +522,10 @@ class CbcRepositoryPlugin(RepositoryPlugin):
 
 
 class ChocoRepositoryPlugin(RepositoryPlugin):
+    judge_support_files = {
+        "/opt/pitbench-jvm/runner.py": "adapters/jvm/runner.py",
+        "/opt/pitbench-jvm/ExactSolverRunner.java": "adapters/jvm/ExactSolverRunner.java",
+    }
     agent_environment = AgentEnvironment(
         image="maven:3.9-eclipse-temurin-17",
         system_packages="",
@@ -583,6 +587,7 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
 
 
 class OrToolsRepositoryPlugin(RepositoryPlugin):
+    judge_support_files = {"/opt/pitbench-jvm/runner.py": "adapters/jvm/runner.py"}
     supports_fixed_solver_parameters = True
     agent_environment = AgentEnvironment(
         image="maven:3.9-eclipse-temurin-17",
@@ -686,6 +691,7 @@ class GecodeRepositoryPlugin(RepositoryPlugin):
     agent_artifact_globs = ("build/pitbench-exact", "build/libgecode*.so")
     agent_build_paths = ("build",)
     supports_fixed_solver_parameters = True
+    representations = {"item_relabeling": ("judge",)}
     collector_environment = {
         "PITBENCH_GECODE_RUNNER": (
             "python3 /opt/pitbench-adapters/exact_solver_runner.py --engine gecode"

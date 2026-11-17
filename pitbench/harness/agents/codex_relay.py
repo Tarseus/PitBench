@@ -180,7 +180,6 @@ class _RelayHandler(BaseHTTPRequestHandler):
                     "file_search",
                     "image_generation",
                     "mcp",
-                    "web_search",
                 )
             ):
                 return True

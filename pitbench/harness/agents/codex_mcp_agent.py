@@ -23,46 +23,15 @@ class CodexMCPAgent(ManagedProcessAgent):
     """Run Codex through MCP isolation or directly inside the task container."""
 
     credential_environment_keys = ("OPENAI_API_KEY",)
-    _PROMPT = """You are improving a solver in an isolated PitBench task.
+    _PROMPT = """Use the provided MCP tools to work in the task repository.
 
-You MUST use only the pitbench MCP tools for repository inspection, editing,
-building, profiling, and testing. Prefer read_file, list_files, search_files,
-apply_patch, git_status, and git_diff for structured repository work. Use run_command
-for short commands and start_command, poll_command, and cancel_command for long-running
-commands or incremental output. The host working directory is empty and is not the
-task repository. Do not use the host shell or web access. Start with git_status and run
-`pwd` through run_command. Keep all changes inside the task repository and use the
-repository's own build and test commands when helpful.
-
-Treat existing tests as immutable specifications. Never change a test to accommodate
-an implementation change. The repository is read-only outside the editable paths
-stated in the task; keep implementation changes inside those paths. Preserve behavior
-across every supported problem feature. Before finishing, run relevant repository
-tests, inspect git_status, and remove generated output and temporary helper files. The
-final candidate must contain only intentional source changes.
-
-Task:
 {instruction}
 """
     _CONTROL_PLANE_PROMPT = (
         "Reply with exactly PITBENCH_CODEX_CONTROL_PLANE_OK. Do not use tools."
     )
-    _WORKSPACE_PROMPT = """You are improving a solver in an isolated PitBench task.
+    _WORKSPACE_PROMPT = """The repository is at {repository}.
 
-You are running inside the solver container with the repository at {repository}.
-Use the normal Codex shell, file, search, and patch capabilities. The command sandbox
-allows repository writes. The container network can reach only the PitBench model
-relay, not the public internet. Do not use web search. Start with `git status --short`,
-and `pwd`.
-
-Treat existing tests as immutable specifications. Never change a test to accommodate
-an implementation change. The repository is read-only outside the editable paths
-stated in the task; keep implementation changes inside those paths. Preserve behavior
-across every supported problem feature. Before finishing, run relevant repository
-tests, inspect `git status --short`, and remove generated output and temporary helper
-files. The final candidate must contain only intentional source changes.
-
-Task:
 {instruction}
 """
     _WORKSPACE_RELAY_MARKER = "PITBENCH_RELAY_REACHABLE"
@@ -255,6 +224,8 @@ Task:
                 "--skip-git-repo-check",
                 "--model",
                 self._model_name,
+                "-c",
+                'web_search="live"',
             ]
         )
         return command
@@ -354,7 +325,7 @@ Task:
                 "-c",
                 "model_providers.pitbench_relay.supports_websockets=false",
                 "-c",
-                'web_search="disabled"',
+                'web_search="live"',
                 "-c",
                 "features.unified_exec=true",
                 "-c",

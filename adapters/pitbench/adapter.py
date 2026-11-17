@@ -355,136 +355,20 @@ class PitBenchAdapter:
         task: PitBenchTask,
         agent_tools: frozenset[AgentTool] = frozenset(),
     ) -> str:
+        del agent_tools
         editable_paths = ", ".join(task.repository.editable_paths)
-        repository_plugin = RepositoryPluginRegistry.load(task.repository.plugin)
-        build_paths = ", ".join(repository_plugin.agent_build_paths)
-        source_scope = (
-            f"Only change implementation source in these editable paths: {editable_paths}. "
-            + (
-                f"Generated build outputs may be written to: {build_paths}."
-                if build_paths
-                else "Keep all implementation changes inside them."
-            )
+        metric = (
+            "Maximize verified solves; when tied, minimize PAR-2 runtime."
+            if task.evaluation.performance_protocol == PerformanceProtocol.EXACT_VERIFIED_SOLVE
+            else "Minimize the gap to the reference solution."
         )
-        primary_budget = getattr(task.evaluation, "primary_budget_sec", None)
-        budget_info = (
-            f"{primary_budget:.1f}s" if primary_budget else "the evaluation budget"
+        return (
+            f"{task.instruction}\n\n"
+            f"Primary solve budget: {task.evaluation.primary_budget_sec:g} seconds. {metric}\n"
+            f"Modify implementation source only within: {editable_paths}. "
+            "Preserve correctness and existing supported behavior. "
+            "Do not modify tests or hardcode instance-specific behavior."
         )
-
-        protocol = task.evaluation.performance_protocol
-        if protocol is PerformanceProtocol.HEURISTIC_FIXED_BUDGET:
-            metric = (
-                "- Primary Performance Metric: paired reduction in normalized gap "
-                "to the fixed optimum/BKS anchor at the primary fixed time budget; "
-                "lower gap is better."
-            )
-            comparison = (
-                "Compare independently checked objectives at the same budget, "
-                "instance, and seed; compare normalized gaps only where a public "
-                "anchor exists."
-            )
-        elif protocol is PerformanceProtocol.BUDGET_TRUNCATED_QUALITY:
-            metric = (
-                "- Primary Performance Metric: paired reduction in normalized gap "
-                "to the fixed optimum/BKS anchor at the primary fixed time budget; "
-                "lower gap is better. Feasible incumbents count even without an optimality proof."
-            )
-            comparison = (
-                "Compare independently verified incumbent objectives at the same instance, "
-                "seed, and time budget. A time-limit termination with a feasible incumbent "
-                "can improve budget-truncated quality; optimal termination is not required. "
-                "Do not replace this metric with solved coverage or PAR-2 runtime."
-            )
-        elif protocol is PerformanceProtocol.EXACT_VERIFIED_SOLVE:
-            metric = (
-                "- Primary Performance Metric: independently verified solved "
-                "coverage at the primary budget. When coverage ties, compare "
-                f"paired PAR-2 runtime using {task.evaluation.exact_time_basis.value}."
-            )
-            comparison = (
-                "Track termination, objective, and public target where available. "
-                "The formal evaluator compares verified solved coverage first, "
-                "then paired PAR-2 runtime."
-            )
-        else:
-            raise ValueError(f"unsupported performance protocol: {protocol}")
-
-        has_instances = needs_development_instances(agent_tools)
-        development = (
-            "1. Baseline: Before editing, run `pitbench inspect` and "
-            "`pitbench bench --label base` on visible instances at "
-            "`/pitbench/dev_instances`. `pitbench bench` accepts `--instance` "
-            "(visible ID/name or a readable custom file), `--seed`, `--budget`, "
-            "and `--threads`; `--all-seeds` and `--all-budgets` run the declared "
-            "development grid. Use matching values for Base and Agent.\n"
-            if AgentTool.INSPECT in agent_tools and AgentTool.BENCH in agent_tools
-            else "1. Baseline: Record the clean repository's behavior on public "
-            "development cases before editing.\n"
-        )
-        if not has_instances:
-            development = (
-                "1. Baseline: Use repository tests or examples to record the "
-                "clean repository's behavior before editing. No PitBench "
-                "development instances are mounted in this task.\n"
-            )
-        rerun = (
-            "4. Differential Verification: Run "
-            "`pitbench bench --label agent --build` "
-            "on the same development instances, seeds, and budget. "
-            f"{comparison} Public bench output is development feedback; "
-            "the evaluator independently verifies submitted solutions. "
-            "Without `--build`, bench executes the current artifact. Check its "
-            "fingerprint and build warning before trusting a comparison. Run "
-            "`pitbench diagnose` after paired runs to see available per-instance "
-            "effects, missing grid cells, and the next development experiment. "
-            "Inspect regressions before revising the code.\n"
-            if AgentTool.BENCH in agent_tools
-            else "4. Differential Verification: Rebuild the changed solver and "
-            "repeat the baseline cases under the same seed and budget. "
-            f"{comparison}\n"
-        )
-        validation = (
-            " and `pitbench validate`" if AgentTool.VALIDATE in agent_tools else ""
-        )
-        sections = [
-            f"{task.instruction}\n\n" + source_scope,
-            "### Task Context\n"
-            f"- Target Solver: {task.release.repository} v{task.release.version}\n"
-            f"- Problem Family: {task.problem_family.value.upper()}\n"
-            f"- Performance Protocol: {protocol.value}\n"
-            f"- Primary Evaluation Budget: {budget_info} per instance",
-            "### Evaluation & Correctness Requirements\n"
-            "- Feasibility & Validity: 100% solution validity, constraint satisfaction, and format compatibility are mandatory. Confirmed semantic invalidity disqualifies the candidate.\n"
-            "- Operational Failures: Crashes, timeouts, out-of-memory failures, numerical failures, and missing targets are retained and reported under Operational Reliability; they do not by themselves fail the correctness qualification.\n"
-            f"{metric}\n"
-            "- Robustness: The candidate will be evaluated across unseen test instances, multiple random seeds, and perturbed representations. Do not overfit hyperparameters or hardcode behaviors for specific instances.",
-            "### Recommended Performance Engineering SOP\n"
-            + development
-            + "2. Diagnose: Investigate the solver's computational cost and behavior: incumbent or bound progress, search work, time to useful solutions, and the instance structures that stall or regress. Choose the optimization direction yourself.\n"
-            "3. Targeted Optimization: Make a bounded, semantics-preserving change that addresses the diagnosed mechanism. Distinguish implementation throughput from search-policy changes, and do not treat more iterations or lower runtime alone as a solver improvement. Avoid blind parameter guessing or disruptive rewrites.\n"
-            + rerun
-            + "5. Regression & Cleanup: Run existing repository unit/integration tests"
-            f"{validation} to check for regressions. Remove scratch scripts, "
-            "profiling traces, and generated files from the submitted source changes.",
-            "### Final Submission\n"
-            "Your submission is the source diff left in the task repository when "
-            "execution ends. Leave the selected candidate implementation in place "
-            "when cleaning temporary files. Do not create commits or change "
-            "repository HEAD. Before finishing, inspect `git diff HEAD` and "
-            "`git status --short`, and confirm that the retained changes match "
-            "your final report. If no source changes are retained, state that "
-            "explicitly and explain the attempted changes, why they were "
-            "reverted or abandoned, and any unresolved blockers. Distinguish "
-            "completed validation and measured results from untested claims.",
-        ]
-
-        if agent_tools:
-            commands = ", ".join(
-                f"`pitbench {tool}`" for tool in agent_tool_names(agent_tools)
-            )
-            sections.append(f"Optional PitBench helper commands: {commands}.")
-
-        return "\n\n".join(sections)
 
     def _write_task_yaml(
         self,

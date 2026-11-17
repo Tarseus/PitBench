@@ -13,13 +13,13 @@
 - `research/generalization_scenarios_v2.yaml`：轨迹、内存、线程、增量、数值及重放诊断的冻结协议。
 - `research/scenario_qualification.yaml`：API 语义检查用的小型解析病例，不是研究结果。
 
-运行配置模板为 `experiments/generalization_launch.yaml`。在执行机器准备 `config/study.local.yaml` 后，一条 `.venv/bin/python -m scripts.run_benchmark_release` 即可后台启动开发、独立隐藏评测和最终原生报告，无需手动设置环境变量。`--prepare-only` 仅验证和冻结计划，不启动模型。未经优化空间资格化的分布保留待确认标记，详见 [研究说明](../docs/research/generalization-adaptation.md)。
+运行配置模板为 `experiments/generalization_launch.yaml`。在执行机器准备 `config/study.local.yaml` 后，一条 `uv run python -m scripts.run_benchmark_release` 即可后台启动开发、独立隐藏评测和最终原生报告，无需手动设置环境变量。`--prepare-only` 仅验证和冻结计划，不启动模型。未经优化空间资格化的分布保留待确认标记，详见 [研究说明](research/records/generalization-adaptation.md)。
 
 ## 数据准备与通用工具
 
 `experiments/generalization_canonical_v2.yaml` 与 `generalization_canonical_remote_v2.yaml` 是最终问题集的统一参考搜索和难度校准配置。它们包含六个源版本以保留数据校准依据，不会增加当前方案的 Agent 条件数。
 
-其余生成、参考搜索、配置鲁棒性及通用模型矩阵继续供各自命令使用。`research/budgets.json` 是共享开发预算目录；`protocol.json`、`pilot.json` 保留 Research Case 构造接口的定义。构造结果记录在 [pilot-construction.json](../docs/research/records/pilot-construction.json)，不再混放于运行配置中。
+其余生成、参考搜索、配置鲁棒性及通用模型矩阵继续供各自命令使用。`research/budgets.json` 是共享开发预算目录；`protocol.json`、`pilot.json` 保留 Research Case 构造接口的定义。构造结果记录在 [pilot-construction.json](research/records/pilot-construction.json)，不再混放于运行配置中。
 
 ## 历史配置
 

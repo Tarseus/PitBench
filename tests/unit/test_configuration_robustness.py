@@ -1300,3 +1300,17 @@ def test_resume_collection_fault_keeps_the_same_smac_candidate(search, tmp_path)
     assert len(finished["candidates"]) == 1
     assert len(candidate_parameters) == 2
     assert candidate_parameters[0] == candidate_parameters[1]
+
+
+def test_parameter_report_rebuild_preserves_stopped_search_and_source(tmp_path):
+    from pitbench.evaluator.artifacts import write_json
+    from pitbench.metrics.configuration_report import write_configuration_report
+
+    source, target = tmp_path / "source", tmp_path / "reports"
+    write_json(source / "experiment.json", {"searches": [{"id": "agent", "task_id": "task", "budget_sec": 10}]})
+    write_json(source / "agent/state.json", {"status": "stopped_after_unavailable_feedback", "candidates": []})
+    before = {str(p.relative_to(source)): p.read_bytes() for p in source.rglob("*") if p.is_file()}
+    report = write_configuration_report(source, destination=target)
+    assert report["searches"][0]["status"] == "stopped_after_unavailable_feedback"
+    assert {str(p.relative_to(source)): p.read_bytes() for p in source.rglob("*") if p.is_file()} == before
+    assert (target / "configuration_report.json").is_file()

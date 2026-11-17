@@ -999,6 +999,30 @@ def run_choco(repository: Path) -> None:
     print(json.dumps(response, allow_nan=False))
 
 
+def _decode_native_response(stdout: str) -> dict:
+    """Accept a single JSON response even when native diagnostic lines precede it."""
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError as error:
+        responses = []
+        for line in stdout.splitlines():
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (isinstance(item, dict) and isinstance(item.get("has_solution"), bool)
+                    and isinstance(item.get("solver_termination"), str)
+                    and isinstance(item.get("solution"), dict)):
+                responses.append(item)
+        # Preserve the full native text in the trial's private stderr, including
+        # for a recovered response. Never guess between competing responses.
+        print("CP-SAT native stdout (not a single JSON document):", file=sys.stderr)
+        print(stdout, file=sys.stderr)
+        if len(responses) == 1:
+            return responses[0]
+        raise error
+
+
 def run_ortools_cp_sat(repository: Path) -> None:
     request = json.load(sys.stdin)
     if request.get("probe"):
@@ -1063,7 +1087,7 @@ def run_ortools_cp_sat(repository: Path) -> None:
                 completed.stderr.strip()
                 or f"OR-Tools CP-SAT runner exited with {completed.returncode}"
             )
-        response = json.loads(completed.stdout)
+        response = _decode_native_response(completed.stdout)
         if decode is not None and response.get("has_solution"):
             values = response["solution"].get("values")
 

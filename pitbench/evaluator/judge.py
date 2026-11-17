@@ -359,6 +359,13 @@ class JudgePlan:
             trusted_oracle = TrustedOptimumOracle.from_yaml(trusted_oracle_path)
             if trusted_oracle.task_id != task.task_id:
                 raise ValueError("trusted optimum oracle belongs to a different task")
+            # A development/representation view can select one panel from a
+            # larger oracle; unrelated supplemental targets do not gate that view.
+            selected_panels = {panel.name for panel in task.instance_sets}
+            trusted_oracle = trusted_oracle.model_copy(update={
+                "records": [record for record in trusted_oracle.records
+                            if record.instance_set in selected_panels]
+            })
             if any(
                 record.objective_sense != task.oracle.objective_sense
                 for record in trusted_oracle.records
