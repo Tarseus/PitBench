@@ -10,7 +10,7 @@ RUN apt-get update \
        asciinema build-essential git libasio-dev libglpk-dev libssl-dev pkg-config tmux \
        python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
-RUN python3 -m pip install --break-system-packages --no-cache-dir \
+RUN python3 -m pip install --break-system-packages --no-cache-dir --timeout 240 --retries 8 \
     --index-url "$PYPI_INDEX_URL" \
     pydantic==2.13.5 pyyaml==6.0.3
 RUN test -n "$BASE_COMMIT" \

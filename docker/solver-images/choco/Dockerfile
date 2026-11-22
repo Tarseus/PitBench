@@ -17,7 +17,7 @@ RUN sed -i \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
        asciinema git python3 python3-pip tmux \
     && rm -rf /var/lib/apt/lists/*
-RUN python3 -m pip install --break-system-packages --no-cache-dir \
+RUN python3 -m pip install --break-system-packages --no-cache-dir --timeout 240 --retries 8 \
     --index-url "$PYPI_INDEX_URL" \
     pydantic==2.13.5 pyyaml==6.0.3
 

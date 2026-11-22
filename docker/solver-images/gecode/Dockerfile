@@ -51,7 +51,7 @@ RUN cd /workspace/repo \
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-pip \
     && rm -rf /var/lib/apt/lists/*
-RUN python3 -m pip install --break-system-packages --no-cache-dir \
+RUN python3 -m pip install --break-system-packages --no-cache-dir --timeout 240 --retries 8 \
     pydantic==2.13.5 pyyaml==6.0.3
 
 ENV PITBENCH_GECODE_RUNNER="python3 /opt/pitbench-adapters/exact_solver_runner.py --engine gecode"

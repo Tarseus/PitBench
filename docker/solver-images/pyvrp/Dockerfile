@@ -14,7 +14,7 @@ RUN sed -i \
        asciinema build-essential cmake git libspdlog-dev ninja-build python3-dev \
        time tmux \
     && rm -rf /var/lib/apt/lists/*
-RUN python3 -m pip install --break-system-packages --no-cache-dir \
+RUN python3 -m pip install --break-system-packages --no-cache-dir --timeout 240 --retries 8 \
     --index-url "$PYPI_INDEX_URL" \
     docblock matplotlib meson ninja numpy poetry-core pybind11 \
     pydantic pytest pytest-cov pytest-timeout pytest-xdist pyyaml setuptools \
@@ -41,7 +41,7 @@ RUN test -n "$BASE_COMMIT" \
     && git -C /workspace/repo remote remove origin \
     && git -C /workspace/repo reflog expire --expire=now --all \
     && git -C /workspace/repo gc --prune=now
-RUN python3 -m pip install --break-system-packages \
+RUN python3 -m pip install --break-system-packages --timeout 240 --retries 8 \
     --no-build-isolation --no-deps -e /workspace/repo
 RUN python3 -c "import pyvrp._pyvrp; import pyvrp.search._search"
 
