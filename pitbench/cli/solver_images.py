@@ -51,6 +51,8 @@ def docker_build_command(
         f"BASE_COMMIT={base_commit}",
     ]
     network = _docker_network(config)
+    if config.no_cache:
+        command.append("--no-cache")
     if network is not None:
         command.extend(["--network", network])
     if config.proxy_url:

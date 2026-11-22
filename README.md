@@ -1055,6 +1055,24 @@ command checks every task and the selected agent before starting any agent work.
 Add `--check-only` to inspect prerequisites and collection coverage without
 materializing tasks or running agents. Tasks share one run directory and run
 serially by default; `--n-concurrent` controls trial concurrency.
+An evaluation YAML may declare `task_ids: [task_a, task_b]`; command-line task
+IDs override that list. For resource-aware multi-model campaigns, use a
+`phase: study-models` profile with a YAML or JSON study plan, frozen task views,
+and `workers: 0`. Start it with `uv run pitbench evaluate --config
+config/study.local.yaml` and follow concurrent Agent activity with
+`uv run pitbench evaluate --config config/study.local.yaml --status --livestream`.
+The campaign uses its existing CPU and memory scheduler; see
+`config/study.example.yaml`.
+For the 8-solver cross-family cohort, the study plan lists the eight native
+solver tasks, while `eight_solvers_three_models_target_task_matrix.yaml` maps
+each candidate to its five existing target tasks (40 task configurations in
+total). The three-model matrix and one-attempt setting produce one Agent run per
+solver/model pair; candidate evaluation then covers all five mapped tasks.
+Start it on G49 with
+`uv run pitbench evaluate --config configs/research/eight_solvers_three_models_launch.example.yaml`.
+The profile sets `workers: 0`, so the Agent and evaluation queues size their
+parallelism from currently available CPU and memory resources. Monitor with
+`uv run pitbench evaluate --config configs/research/eight_solvers_three_models_launch.example.yaml --status --livestream`.
 When Configuration Robustness is enabled, the check also probes each configured
 collector image and rejects stale compiled JVM adapters before agent work.
 
@@ -1807,14 +1825,39 @@ Agent, or re-evaluate an existing cohort with automatic worker allocation:
 
 ```bash
 uv run pitbench judge TASK_ID --from-run /path/to/saved-run --config config/evaluate.local.yaml
-uv run pitbench evaluate-patches --config config/patch-evaluation.local.yaml
-uv run pitbench evaluate-patches --config config/patch-evaluation.local.yaml --status
+uv run pitbench evaluate --config config/patch-evaluation.local.yaml
+uv run pitbench evaluate --config config/patch-evaluation.local.yaml --status
 ```
+
+For a study evaluation profile, the frozen cohort supplies the complete task/solver
+and model matrix. One invocation evaluates every retained candidate in that cohort;
+the `evaluate-patches` command remains available as a compatibility alias. For
+ordinary Agent runs, `pitbench evaluate TASK_ID ...` remains available; `pitbench run`
+is the explicit task harness command.
+
+Evaluation records and campaign reports distinguish primary metric coverage from
+extension metric coverage. The primary evaluation uses the Base/Agent solver
+grid and its performance report. Scenario metrics, resource diagnostics, and
+robustness suites are extensions. Their gaps are reported separately and do not
+prevent the primary evaluation from completing. Solver-specific unsupported
+scenarios remain visible in the scenario evidence.
+
+Budget-truncated quality remains the result for the full judge panel. When a
+subset has trusted optimum references, the same observations also produce a
+separate exact result at the primary budget using the existing verified coverage
+and penalized runtime rules.
+
+CP-SAT builds JSON bin-packing models with a verified Best Fit Decreasing
+solution hint. Base and Agent receive the same hint. To backfill the
+`initial-solutions/` files for an existing dataset, run
+`uv run python -m scripts.prepare initial-solutions INSTANCE.json ...`.
+Each file records the original instance SHA-256. Treat results from this
+protocol as warm-start measurements when comparing against older runs.
 
 To prepare a new multi-dimensional saved-patch suite, use
 `uv run python -m scripts.prepare research saved-patch-suite --specification CONFIG`
 and the template in `config/saved-patch-suite.example.yaml`. Rebuild reports from
-retained measurements using `uv run pitbench evaluate-patches --config CONFIG --reports-only --report-output OUTPUT`. Original runs and failures remain intact.
+retained measurements using `uv run pitbench evaluate --config CONFIG --reports-only --report-output OUTPUT`. Original runs and failures remain intact.
 
 Codex receives the task instruction, primary metric and editable scope. Live web
 search is requested through the model provider; availability depends on the
@@ -1823,7 +1866,7 @@ provider. The workspace shell continues to use the model-relay network.
 Grouped source-checkout commands are available through `uv run python -m scripts.prepare`, `scripts.collect`, `scripts.report`, and `scripts.check`; each
 command supports `--help`. The campaign compatibility entry point delegates to
 the shared controller, and saved patches are evaluated through `pitbench judge`
-or `pitbench evaluate-patches`.
+or `pitbench evaluate`.
 
 
 ### Additional solver images

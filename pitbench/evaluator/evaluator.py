@@ -18,7 +18,11 @@ from pitbench.evaluator.artifacts import (
     selected_output_attempt,
     write_json,
 )
-from pitbench.evaluator.docker_judge import DockerJudge, judge_harness_sha256
+from pitbench.evaluator.docker_judge import (
+    DockerJudge,
+    judge_harness_sha256,
+    retained_judge_snapshot,
+)
 from pitbench.evaluator.judge import FixtureJudge, JudgePlan, _evaluation_seeds
 from pitbench.evaluator.private_assets import (
     PrivateAssetResolver,
@@ -35,8 +39,11 @@ from pitbench.metrics.objective_report import compute_objective_report
 from pitbench.metrics.performance_report import (
     ExactPerformanceReport,
     ExactRunOutcomeKind,
+    compute_exact_performance_report,
     compute_task_performance_report,
 )
+from pitbench.problem_families.base import objectives_equal
+from pitbench.problem_families.verification import TrustedOptimumOracle
 from pitbench.metrics.reliability_report import compute_reliability_reports
 from pitbench.metrics.resource_report import compute_resource_reports
 from pitbench.metrics.seed_robustness_report import (
@@ -56,6 +63,7 @@ from pitbench.schema.observation import (
     ExpectedRun,
     ExpectedRunGrid,
     RunObservation,
+    RunStatus,
 )
 from pitbench.schema.task import (
     ControlledTransferConfig,
@@ -79,6 +87,56 @@ def _default_judge_cpus(parallel_runs: int, task: PitBenchTask) -> float:
     return max(float(parallel_runs * threads), 8.0)
 
 
+def trusted_optimum_performance(
+    task: PitBenchTask,
+    observations: list[RunObservation],
+    grid: ExpectedRunGrid,
+    resolver: PrivateAssetResolver,
+) -> ExactPerformanceReport | None:
+    """Report exact performance on the trusted subset of a quality evaluation."""
+    if task.evaluation.performance_protocol != PerformanceProtocol.BUDGET_TRUNCATED_QUALITY:
+        return None
+    oracle = TrustedOptimumOracle.from_yaml(
+        resolver.resolve(task.oracle.source, task.oracle.source_sha256)
+    )
+    if oracle.task_id != task.task_id or grid.task_id != task.task_id:
+        raise ValueError("trusted optimum oracle or run grid belongs to another task")
+    targets = {
+        (item.instance_set, item.instance_id): item.optimal_objective
+        for item in oracle.records if item.target_kind == "trusted_optimum"
+    }
+    budget = task.evaluation.primary_budget_sec
+
+    def selected(item):
+        return (
+            item.budget_sec == budget
+            and item.instance_set_kind == "judge_id"
+            and item.test_suite is None
+            and item.equivalence_parent_id is None
+            and (item.instance_set, item.instance_id) in targets
+        )
+
+    expected = [item for item in grid.runs if selected(item)]
+    if not expected:
+        return None
+    scoped = []
+    for item in observations:
+        if not selected(item):
+            continue
+        target = targets[item.instance_set, item.instance_id]
+        if item.optimal_or_bks is not None and not objectives_equal(item.optimal_or_bks, target):
+            raise ValueError(f"observed reference differs from trusted optimum for {item.instance_id}")
+        changes = {"optimal_or_bks": target}
+        if item.status is RunStatus.CRASHED and (item.error or "").startswith("taskset: "):
+            changes["status"] = RunStatus.INFRASTRUCTURE_ERROR
+        scoped.append(item.model_copy(update=changes))
+    return compute_exact_performance_report(
+        scoped, primary_budget_sec=budget, budgets_sec=[budget],
+        expected_run_grid=grid.model_copy(update={"runs": expected}),
+        time_basis=task.evaluation.exact_time_basis,
+    )
+
+
 def _base_cache_is_complete(
     task: PitBenchTask,
     observations: list[RunObservation],
@@ -87,6 +145,8 @@ def _base_cache_is_complete(
     """Reject reduced-panel BASE caches before they contaminate reports."""
     if any(
         item.code_state != CodeState.BASE
+        or item.status is RunStatus.INFRASTRUCTURE_ERROR
+        or (item.status is RunStatus.CRASHED and (item.error or "").startswith("taskset: "))
         or item.test_suite is not None
         or item.threads != task.evaluation.threads
         for item in observations
@@ -601,6 +661,8 @@ class PitBenchEvaluator(Evaluator):
                             "cpuset_cpus": config.get("judge_cpuset_cpus"),
                             "parallel_runs": parallel_runs,
                         }
+                        if retained_judge_snapshot(request.output_dir, prior.get("harness_sha256")):
+                            current["harness_sha256"] = prior["harness_sha256"]
                         if any(
                             prior.get(key) != value for key, value in current.items()
                         ):
@@ -871,7 +933,9 @@ class PitBenchEvaluator(Evaluator):
             target.mkdir(exist_ok=True)
             summary = report_nuisance_results(original, target / "report", task=task)
             details = json.loads((original / "details.json").read_text())
-            details.update(representation_robustness=summary["representation_robustness"], source_directory=str(original))
+            if "representation_robustness" in summary:
+                details["representation_robustness"] = summary["representation_robustness"]
+            details["source_directory"] = str(original)
             write_json(target / "details.json", details)
             for name in ("transformations.json", "results.jsonl", "inputs"):
                 if (original / name).exists() and not (target / name).exists():
@@ -1156,6 +1220,16 @@ class PitBenchEvaluator(Evaluator):
             )
             else None
         )
+        exact_subset = (
+            trusted_optimum_performance(
+                task, original_observations, expected_run_grid,
+                PrivateAssetResolver(Path(config["private_root"])),
+            )
+            if performance is not None
+            and expected_run_grid is not None
+            and task.evaluation.performance_protocol == PerformanceProtocol.BUDGET_TRUNCATED_QUALITY
+            else None
+        )
         scenario_report = None
         scenario_error = None
         scenario_config = config.get("metric_scenario_config")
@@ -1259,6 +1333,7 @@ class PitBenchEvaluator(Evaluator):
                 valid_observation_count=sum(item.valid for item in observations),
                 counts_by_state=dict(counts),
                 performance=performance,
+                trusted_optimum_performance=exact_subset,
                 controlled_transfer=controlled_transfer,
                 nuisance_robustness=nuisance_robustness,
                 resource_usage=resource_usage,
@@ -1274,7 +1349,7 @@ class PitBenchEvaluator(Evaluator):
                     transfer=controlled_transfer,
                     reliability=reliability,
                     observations=observations,
-                    validity_accepted=validity.accepted,
+                    validity_accepted=validity.primary_accepted,
                     expected_run_grid=expected_run_grid,
                     scenario_report=scenario_report,
                     candidate_sha256=actual_patch_sha256,

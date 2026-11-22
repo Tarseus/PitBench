@@ -974,6 +974,22 @@ def test_performance_report_pairs_seeds_and_bootstraps_instances() -> None:
     }
 
 
+def test_performance_report_retains_paired_missing_solution_counts():
+    outcomes = [(True, True), (True, False), (False, True), (False, False)]
+    observations = []
+    for index, (base_valid, agent_valid) in enumerate(outcomes):
+        for state, valid in ((CodeState.BASE, base_valid), (CodeState.AGENT, agent_valid)):
+            observations.append(performance_observation(
+                state, "judge_id", str(index), 0 if valid else None,
+                valid=valid, status=RunStatus.COMPLETED if valid else RunStatus.NO_SOLUTION,
+            ))
+    report = compute_performance_report(observations, primary_budget_sec=5)
+    availability = report.primary.paired_availability
+    assert (availability.paired_runs, availability.both_valid, availability.base_only_valid,
+            availability.agent_only_valid, availability.neither_valid) == (4, 1, 1, 1, 1)
+    assert report.primary.paired.paired_instances == 1
+
+
 def test_independent_performance_confirmation_requires_same_direction() -> None:
     initial = compute_performance_report(
         performance_paired_panel(), primary_budget_sec=5
@@ -1026,7 +1042,11 @@ def test_invalid_runs_do_not_change_performance_estimates() -> None:
         )
     )
 
-    assert compute_performance_report(observations, primary_budget_sec=5) == original
+    updated = compute_performance_report(observations, primary_budget_sec=5)
+    assert updated.primary.base == original.primary.base
+    assert updated.primary.agent == original.primary.agent
+    assert updated.primary.paired == original.primary.paired
+    assert updated.primary.paired_availability.base_observation_missing == 1
 
 
 def test_performance_report_excludes_generalization_observations() -> None:
@@ -1219,7 +1239,7 @@ def test_format_performance_report_is_performance_only() -> None:
     assert "Paired instances" in rendered
     assert "instance bootstrap over per-instance seed means" in rendered
     assert "95% CI" in rendered
-    assert "valid" not in rendered.lower()
+    assert "paired valid solutions" in rendered.lower()
     assert "hidden" not in rendered.lower()
     assert "repeatability" not in rendered.lower()
 

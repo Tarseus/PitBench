@@ -142,10 +142,18 @@ class RepositoryPlugin(ABC):
     supports_fixed_solver_parameters = False
     scenario_binding_package: str | None = None
     scenario_session_plugin: str | None = None
+    scenario_pythonpath: str | None = None
+    scenario_process_binding = False
+    scenario_supported_kinds: tuple[str, ...] | None = None
+    scenario_unavailable_metrics: tuple[str, ...] = ()
+    scenario_artifact_globs: tuple[str, ...] = ()
+    scenario_representations: tuple[str, ...] = ()
 
     def scenario_build_commands(
         self, *, adapter_source: Path, source_commit: str
     ) -> list[CommandSpec]:
+        if self.scenario_process_binding:
+            return self.build_commands(BuildKind.PERFORMANCE)
         raise NotImplementedError(
             "source-bound scenario builds are unavailable for this repository"
         )

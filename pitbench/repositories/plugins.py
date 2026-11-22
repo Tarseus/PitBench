@@ -205,6 +205,13 @@ class PyVRPDebugOptimizedRepositoryPlugin(PyVRPRepositoryPlugin):
 
 class VroomRepositoryPlugin(RepositoryPlugin):
     supports_fixed_solver_parameters = True
+    judge_support_files = {
+        "/opt/pitbench-adapters/ProcessSession.cpp": "adapters/cpp/ProcessSession.cpp",
+    }
+    scenario_process_binding = True
+    scenario_session_plugin = "pitbench.solver_drivers.run:VroomScenarioSession"
+    scenario_supported_kinds = ("replay", "numerical", "lifecycle")
+    scenario_representations = ("customer_relabeling",)
     agent_environment = AgentEnvironment(
         image="ubuntu:24.04",
         system_packages=(
@@ -221,7 +228,7 @@ class VroomRepositoryPlugin(RepositoryPlugin):
     driver_python = "python3"
     name = "vroom"
     agent_requirement = "file:bin/vroom"
-    agent_artifact_globs = ("bin/vroom",)
+    agent_artifact_globs = ("bin/vroom", "bin/pitbench-session")
     agent_build_paths = ("bin", "lib", "obj")
     collector_environment = {"PITBENCH_VROOM_SOLVER": "/workspace/repo/bin/vroom"}
     representations = {"customer_relabeling": ("judge",)}
@@ -250,9 +257,29 @@ class VroomRepositoryPlugin(RepositoryPlugin):
             ),
         ]
 
+    def scenario_build_commands(self, *, adapter_source: Path, source_commit: str) -> list[CommandSpec]:
+        del adapter_source, source_commit
+        return self.build_commands(BuildKind.PERFORMANCE) + [CommandSpec(argv=[
+            "sh", "-lc", "g++ -include vector -include array -Isrc -std=c++20 -O3 "
+            "-DASIO_STANDALONE -DUSE_ROUTING=true -DNDEBUG -DUSE_LIBGLPK=true "
+            "-DBOOST_LOG_DYN_LINK /opt/pitbench-adapters/ProcessSession.cpp "
+            "-o bin/pitbench-session -Llib -lvroom -lpthread -lssl -lcrypto -lglpk",
+        ])]
+
 
 class HighsRepositoryPlugin(RepositoryPlugin):
     supports_fixed_solver_parameters = True
+    scenario_binding_package = "highspy"
+    scenario_session_plugin = "pitbench.solver_drivers.run:HighsScenarioSession"
+    scenario_pythonpath = "build/scenario/python"
+
+    def scenario_build_commands(self, *, adapter_source, source_commit):
+        del adapter_source, source_commit
+        return [
+            CommandSpec(argv=["sh", "-c", "cmake -S . -B build/scenario -DCMAKE_BUILD_TYPE=Release -DHIPO_PYTHON=ON -DBUILD_TESTING=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -Dpybind11_DIR=$(python3 -m pybind11 --cmakedir)"]),
+            CommandSpec(argv=["cmake", "--build", "build/scenario", "--target", "_core", "-j2"]),
+            CommandSpec(argv=["sh", "-c", "mkdir -p build/scenario/python/highspy && cp -a highspy/highspy/. build/scenario/python/highspy/ && cp build/scenario/lib/_core*.so build/scenario/python/highspy/ && cp -a build/scenario/lib/libhighs.so* build/scenario/python/highspy/"]),
+        ]
     agent_environment = AgentEnvironment(
         image="ubuntu:24.04",
         system_packages="build-essential cmake",
@@ -268,7 +295,7 @@ class HighsRepositoryPlugin(RepositoryPlugin):
     agent_requirement = "file:build/bin/highs"
     agent_build_paths = ("build",)
     collection_backend = "pitbench.evaluator.collection:HighsCollectionBackend"
-    representations = {"row_column_permutation": ("isolated",)}
+    representations = {"row_column_permutation": ("isolated",), "mps_row_permutation": ("judge",)}
     driver_name = "highs"
     driver_python = "python3"
     driver_solver = "./build/bin/highs"
@@ -317,6 +344,7 @@ class HighsRepositoryPlugin(RepositoryPlugin):
 
 class ScipRepositoryPlugin(RepositoryPlugin):
     supports_fixed_solver_parameters = True
+    representations = {"mps_row_permutation": ("judge",)}
     scenario_session_plugin = "pitbench.solver_drivers.run:ScipScenarioSession"
 
     def scenario_build_commands(self, *, adapter_source, source_commit):
@@ -448,6 +476,7 @@ class ScipRepositoryPlugin(RepositoryPlugin):
 
 class CbcRepositoryPlugin(RepositoryPlugin):
     supports_fixed_solver_parameters = True
+    representations = {"mps_row_permutation": ("judge",)}
     scenario_session_plugin = "pitbench.solver_drivers.run:CbcScenarioSession"
 
     def scenario_build_commands(self, *, adapter_source, source_commit):
@@ -522,6 +551,15 @@ class CbcRepositoryPlugin(RepositoryPlugin):
 
 
 class ChocoRepositoryPlugin(RepositoryPlugin):
+    scenario_process_binding = True
+    scenario_session_plugin = "pitbench.solver_drivers.run:ChocoScenarioSession"
+    scenario_supported_kinds = ("replay", "numerical", "trajectory", "lifecycle")
+    scenario_unavailable_metrics = ("dual_progress_integral",)
+    scenario_artifact_globs = (
+        "solver/target/pitbench-adapter/**/*.class",
+        "target/pitbench-adapter/**/*.class",
+    )
+    scenario_representations = ("native_instance",)
     judge_support_files = {
         "/opt/pitbench-jvm/runner.py": "adapters/jvm/runner.py",
         "/opt/pitbench-jvm/ExactSolverRunner.java": "adapters/jvm/ExactSolverRunner.java",
@@ -552,7 +590,7 @@ class ChocoRepositoryPlugin(RepositoryPlugin):
     collection_backend = "pitbench.evaluator.collection:ChocoCollectionBackend"
     driver_name = "choco"
     supports_fixed_solver_parameters = True
-    representations = {"item_relabeling": ("judge",)}
+    representations = {"item_relabeling": ("judge",), "subset_item_relabeling": ("judge",), "activity_relabeling": ("judge",), "vertex_relabeling": ("judge",), "job_order_relabeling": ("judge",)}
 
     def build_commands(self, kind: BuildKind) -> list[CommandSpec]:
         del kind
@@ -674,6 +712,16 @@ class OrToolsRepositoryPlugin(RepositoryPlugin):
 class GecodeRepositoryPlugin(RepositoryPlugin):
     """Build Gecode and the shared native CP adapter in one solver checkout."""
 
+    judge_support_files = {
+        "/opt/pitbench-adapters/ExactSolverRunner.cpp": "adapters/cpp/ExactSolverRunner.cpp",
+        "/opt/pitbench-adapters/exact_solver_runner.py": "adapters/pitbench/exact_solver_runner.py",
+    }
+    scenario_process_binding = True
+    scenario_session_plugin = "pitbench.solver_drivers.run:GecodeScenarioSession"
+    scenario_supported_kinds = ("replay", "numerical", "trajectory", "lifecycle")
+    scenario_unavailable_metrics = ("dual_progress_integral",)
+    scenario_representations = ("native_instance",)
+
     agent_environment = AgentEnvironment(
         image="ubuntu:24.04",
         system_packages="build-essential cmake",
@@ -691,7 +739,7 @@ class GecodeRepositoryPlugin(RepositoryPlugin):
     agent_artifact_globs = ("build/pitbench-exact", "build/libgecode*.so")
     agent_build_paths = ("build",)
     supports_fixed_solver_parameters = True
-    representations = {"item_relabeling": ("judge",)}
+    representations = {"item_relabeling": ("judge",), "subset_item_relabeling": ("judge",), "activity_relabeling": ("judge",), "vertex_relabeling": ("judge",), "job_order_relabeling": ("judge",)}
     collector_environment = {
         "PITBENCH_GECODE_RUNNER": (
             "python3 /opt/pitbench-adapters/exact_solver_runner.py --engine gecode"
@@ -768,9 +816,23 @@ class GecodeRepositoryPlugin(RepositoryPlugin):
 class OrToolsCpSatExactRepositoryPlugin(OrToolsRepositoryPlugin):
     """Build the OR-Tools Java runtime and fixed-proto CP-SAT solve adapter."""
 
+    scenario_process_binding = True
+    scenario_session_plugin = "pitbench.solver_drivers.run:OrToolsScenarioSession"
+    scenario_supported_kinds = ("replay", "numerical", "trajectory", "lifecycle")
+    scenario_unavailable_metrics = ("dual_progress_integral",)
+    scenario_artifact_globs = ("build/pitbench-adapter/**/*.class",)
+    scenario_representations = ("native_instance",)
+
     driver_name = "ortools_cp_sat_exact"
     collection_backend = "pitbench.evaluator.collection:OrToolsCpSatCollectionBackend"
-    representations = {"job_relabeling": ("judge",)}
+    representations = {
+        "job_relabeling": ("judge",),
+        "item_relabeling": ("judge",),
+        "subset_item_relabeling": ("judge",),
+        "activity_relabeling": ("judge",),
+        "vertex_relabeling": ("judge",),
+        "job_order_relabeling": ("judge",),
+    }
 
     def agent_build_commands(self) -> list[CommandSpec]:
         return [

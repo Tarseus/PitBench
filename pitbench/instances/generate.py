@@ -18,6 +18,7 @@ from typing import Any
 import yaml
 
 from pitbench.problem_families.public_verification import (
+    check_bin_packing,
     check_cvrp,
     edge_cost,
     format_multidimensional_knapsack_lp,
@@ -603,6 +604,7 @@ def _bin_packing(config: dict[str, Any], index: int, destination: Path) -> None:
             indent=2,
         )
     )
+    write_bin_packing_initial_solution(destination)
 
 
 def _ortools(config: dict[str, Any], index: int, destination: Path) -> None:
@@ -2631,6 +2633,43 @@ def first_fit_decreasing_packing(
             bins.append([item_index])
             loads.append(weight)
     return bins
+
+
+def best_fit_decreasing_packing(weights: list[int], capacity: int) -> list[list[int]]:
+    bins: list[list[int]] = []
+    loads: list[int] = []
+    for item in sorted(range(len(weights)), key=lambda i: (-weights[i], i)):
+        fitting = (i for i, load in enumerate(loads) if load + weights[item] <= capacity)
+        index = min(fitting, key=lambda i: (-loads[i], i), default=len(bins))
+        if index == len(bins):
+            bins.append([])
+            loads.append(0)
+        bins[index].append(item)
+        loads[index] += weights[item]
+    return bins
+
+
+def bin_packing_initial_solution_path(instance_path: Path) -> Path:
+    return instance_path.parent / "initial-solutions" / instance_path.name
+
+
+def write_bin_packing_initial_solution(instance_path: Path) -> Path:
+    raw = instance_path.read_bytes()
+    instance = json.loads(raw)
+    weights, capacity = instance["weights"], instance["capacity"]
+    solution = {"bins": best_fit_decreasing_packing(weights, capacity)}
+    checked = check_bin_packing(solution, weights=weights, capacity=capacity)
+    if not checked["feasible"]:
+        raise ValueError(checked["detail"])
+    destination = bin_packing_initial_solution_path(instance_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps({
+        "instance_sha256": hashlib.sha256(raw).hexdigest(),
+        "method": "best_fit_decreasing",
+        "objective": checked["objective"],
+        **solution,
+    }, indent=2) + "\n")
+    return destination
 
 
 def _job_shop_operations(instance_path: Path) -> list[list[list[int]]]:

@@ -2,6 +2,7 @@ import gzip
 import io
 import os
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -154,11 +155,29 @@ class DockerComposeManager:
         # Keep source/build trees outside agent-logs: the trace collector ingests
         # that directory as tool output, not as a second repository snapshot.
         root = agent_logs_path.resolve().parent / "development-storage"
+        continuation = os.environ.get("PITBENCH_CONTINUATION_STORAGE")
+        if continuation and not root.exists():
+            source = Path(continuation).resolve()
+            if not source.is_dir() or source == root.resolve():
+                raise ValueError("continuation development storage is unavailable")
+            def transient_special_files(directory, names):
+                return [name for name in names if (
+                    stat.S_ISSOCK((Path(directory) / name).lstat().st_mode)
+                    or stat.S_ISFIFO((Path(directory) / name).lstat().st_mode)
+                )]
+
+            shutil.copytree(source, root, symlinks=True, ignore=transient_special_files)
         for name in ("workspace", "home", "tmp", "var-tmp"):
             path = root / name
             path.mkdir(parents=True, exist_ok=True)
             if name in {"tmp", "var-tmp"}:
                 path.chmod(0o1777)
+        context = os.environ.get("PITBENCH_CONTINUATION_CONTEXT")
+        if context:
+            destination = root / "tmp/pitbench-continuation.jsonl"
+            if destination.is_symlink():
+                destination.unlink()
+            shutil.copy2(context, destination)
         return root
 
     def get_docker_compose_command(self, command: list[str]) -> list[str]:

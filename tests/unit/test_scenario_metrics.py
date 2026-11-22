@@ -52,6 +52,17 @@ def test_missing_bound_certificates_do_not_hide_verified_primal_metrics(tmp_path
     assert values["primal_integral"].complete
 
 
+def test_unsupported_solver_scenario_is_not_reported_as_zero(tmp_path):
+    data = campaign(tmp_path, "trajectory")
+    for run in data.runs:
+        run.status = "unsupported"
+        run.steps = []
+    report = compute_scenario_report(data)
+    assert not report.complete
+    assert all(result.classification == "unsupported" for result in report.results)
+    assert all(result.base is None and result.agent is None for result in report.results)
+
+
 def test_reported_dual_integral_is_computed_without_claiming_certificates(tmp_path):
     data = campaign(tmp_path, "trajectory")
     for run in data.runs:
@@ -413,6 +424,235 @@ def test_numerical_failures_count_each_stress_solve_without_fabricating_residual
     assert values["numerical_failure_counts"].complete
     assert values["numerical_failure_counts"].base == 2
     assert not values["independent_violation"].complete
+
+
+def test_numerical_solver_error_is_counted_instead_of_losing_the_run(tmp_path):
+    data = campaign(tmp_path, "numerical")
+    p = data.protocols[0]
+    for iid in ("a", "b"):
+        sequence = data.model_sequences[sequence_key("judge_id", iid)]
+        sequence.append(dict(sequence[0]))
+        p.model_sequences_sha256["judge_id"][iid].append(sequence[0]["sha256"])
+    for run in data.runs:
+        run.protocol_sha256 = p.digest()
+        failed = run.steps[0].model_copy(
+            deep=True,
+            update={
+                "termination": "solver_error",
+                "events": [],
+                "final_solution_values": None,
+            },
+        )
+        run.steps.append(failed)
+        run.error = "VROOM rejected an out-of-range integer capacity"
+    values = {
+        r.metric_id: r for r in compute_scenario_report(data).results
+    }
+    assert values["numerical_failure_counts"].complete
+    assert values["numerical_failure_counts"].base == 1
+
+
+def test_vroom_capacity_rejection_becomes_a_numerical_solve_failure(tmp_path, monkeypatch):
+    import os
+
+    from pitbench.evaluator import scenarios
+    from pitbench.evaluator.scenarios import worker
+    from tests.support import protocol
+
+    models = []
+    for i in range(2):
+        path = tmp_path / f"model-{i}.json"
+        path.write_text(json.dumps({"model": i}))
+        models.append({"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+    p = protocol(
+        "numerical",
+        instance_sets=["panel"],
+        target_by_instance={"case": 1},
+        reference_by_instance={"case": 1},
+        reference_solution_by_instance={"case": {"routes": []}},
+        model_sequences_sha256={"panel": {"case": [m["sha256"] for m in models]}},
+    )
+    key = ScenarioRunKey(
+        scenario_id=p.id, task_id="scenario-test", instance_set="panel",
+        instance_id="case", code_state="base", solver_seed=1, threads=1,
+        repeat=0, mode="cold",
+    )
+
+    class FakeRepresentation:
+        @staticmethod
+        def read_input(path):
+            return json.loads(path.read_text())
+
+    class FakeSession:
+        supported_scenario_kinds = ("numerical",)
+        calls = 0
+
+        @classmethod
+        def probe(cls):
+            return {"fixture": True}
+
+        def __init__(self, **kwargs):
+            pass
+
+        def load_model(self, model):
+            self.model = model
+
+        def solve(self, emit):
+            type(self).calls += 1
+            if type(self).calls == 2:
+                raise RuntimeError(
+                    "native session could not solve the model: Invalid capacity value."
+                )
+            return {"termination": "optimal", "solution": {"routes": []}, "solve_time_sec": 0.1}
+
+        def measurement_pid(self):
+            return os.getpid()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(scenarios.ScenarioSession, "load", lambda _: FakeSession)
+    monkeypatch.setattr(scenarios, "representation_type", lambda _: FakeRepresentation)
+    job = {
+        "key": key.model_dump(mode="json"),
+        "protocol": p.model_dump(mode="json"),
+        "models": models,
+        "runtime": {
+            "session_plugin": "fixture:FakeSession",
+            "probe": {"fixture": True},
+        },
+        "cpus": sorted(os.sched_getaffinity(0))[:1],
+        "runtime_identity_sha256": "a" * 64,
+    }
+    job_path = tmp_path / "job" / "job.json"
+    job_path.parent.mkdir()
+    job_path.write_text(json.dumps(job))
+    affinity = os.sched_getaffinity(0)
+    try:
+        result = worker(job_path)
+    finally:
+        os.sched_setaffinity(0, affinity)
+    assert result["execution_status"] == "completed"
+    run = result["run"]
+    assert run["status"] == "returned"
+    assert [step["termination"] for step in run["steps"]] == ["optimal", "solver_error"]
+    assert "Invalid capacity value" in run["error"]
+
+
+def test_vroom_rejects_integer_capacity_as_a_solver_failure(monkeypatch):
+    from pitbench.solver_drivers.run import (
+        PersistentNativeScenarioSession,
+        VroomScenarioSession,
+    )
+
+    def invalid_capacity(self, emit):
+        raise RuntimeError(
+            "native session could not solve the model: Invalid capacity value."
+        )
+
+    monkeypatch.setattr(PersistentNativeScenarioSession, "solve", invalid_capacity)
+    session = object.__new__(VroomScenarioSession)
+    result = session.solve(lambda *args: None)
+    assert result["termination"] == "solver_error"
+    assert result["solution"] is None
+    assert result["error"].endswith("Invalid capacity value.")
+
+
+def test_scenario_worker_records_vroom_capacity_rejection_as_numerical_failure(
+    tmp_path, monkeypatch
+):
+    import os
+
+    from pitbench.evaluator import scenarios
+    from pitbench.evaluator.scenarios import worker
+    from tests.support import protocol
+
+    models = []
+    for index in range(2):
+        path = tmp_path / f"model-{index}.json"
+        path.write_text(json.dumps({"index": index}))
+        models.append(
+            {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+        )
+    declared = protocol(
+        "numerical",
+        instance_sets=["panel"],
+        target_by_instance={"case": 1},
+        reference_by_instance={"case": 1},
+        reference_solution_by_instance={"case": {"routes": []}},
+        model_sequences_sha256={"panel": {"case": [m["sha256"] for m in models]}},
+    )
+    key = ScenarioRunKey(
+        scenario_id=declared.id, task_id="scenario-test", instance_set="panel",
+        instance_id="case", code_state="base", solver_seed=1, threads=1,
+        repeat=0, mode="cold",
+    )
+
+    class FakeRepresentation:
+        @staticmethod
+        def read_input(path):
+            return json.loads(path.read_text())
+
+    class FakeSession:
+        supported_scenario_kinds = ("numerical",)
+        solves = 0
+
+        @classmethod
+        def probe(cls):
+            return {"fixture": True}
+
+        def __init__(self, **kwargs):
+            pass
+
+        def load_model(self, model):
+            self.model = model
+
+        def solve(self, emit):
+            type(self).solves += 1
+            if type(self).solves == 2:
+                raise RuntimeError(
+                    "native session could not solve the model: Invalid capacity value."
+                )
+            return {
+                "termination": "optimal",
+                "solution": {"routes": []},
+                "solve_time_sec": 0.1,
+            }
+
+        def measurement_pid(self):
+            return os.getpid()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(scenarios.ScenarioSession, "load", lambda _: FakeSession)
+    monkeypatch.setattr(scenarios, "representation_type", lambda _: FakeRepresentation)
+    job = {
+        "key": key.model_dump(mode="json"),
+        "protocol": declared.model_dump(mode="json"),
+        "models": models,
+        "runtime": {
+            "session_plugin": "fixture:FakeSession",
+            "probe": {"fixture": True},
+        },
+        "cpus": sorted(os.sched_getaffinity(0))[:1],
+        "runtime_identity_sha256": "a" * 64,
+    }
+    job_path = tmp_path / "worker-job" / "job.json"
+    job_path.parent.mkdir()
+    job_path.write_text(json.dumps(job))
+    affinity = os.sched_getaffinity(0)
+    try:
+        result = worker(job_path)
+    finally:
+        os.sched_setaffinity(0, affinity)
+
+    assert result["execution_status"] == "completed"
+    assert result["run"]["status"] == "returned"
+    assert [step["termination"] for step in result["run"]["steps"]] == [
+        "optimal", "solver_error"
+    ]
+    assert "Invalid capacity value" in result["run"]["error"]
 
 
 @pytest.mark.parametrize(
@@ -1004,3 +1244,245 @@ def test_failed_source_build_is_archived_and_rebuilt_on_resume(tmp_path, monkeyp
     assert len(calls) == 1 and calls[0] != old.parent
     assert old.read_bytes() == before
     assert (old.parent / "process.log").read_text() == "interrupted original build"
+
+
+def test_source_binding_rejects_package_from_outside_workspace(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from pitbench.solver_drivers import common
+
+    source = tmp_path / "source"
+    source.mkdir()
+    foreign = tmp_path / "installed" / "highspy" / "__init__.py"
+    foreign.parent.mkdir(parents=True)
+    foreign.write_text("")
+    monkeypatch.setattr(common.importlib, "import_module", lambda _: SimpleNamespace(__file__=str(foreign)))
+    with pytest.raises(ValueError, match="outside its source workspace"):
+        common.record_source_binding(source=source, package="highspy", repository_plugin="unused:Plugin", version="1", destination=tmp_path / "receipt.json")
+
+
+def test_native_cp_scenario_verifier_checks_json_and_jobshop(tmp_path):
+    from pitbench.evaluator.representations import NativeCPRepresentation
+
+    graph = tmp_path / "graph.json"
+    graph.write_text(json.dumps({"problem_kind": "graph_coloring", "vertex_count": 3,
+        "edge_endpoints": [0, 1, 1, 2]}))
+    colors = tmp_path / "colors.json"
+    colors.write_text(json.dumps({"colors": [0, 1, 0]}))
+    assert NativeCPRepresentation.verifier().verify(graph, colors).objective == 2
+    colors.write_text(json.dumps({"colors": [0, 0, 0]}))
+    assert not NativeCPRepresentation.verifier().verify(graph, colors).feasible
+    jobs = tmp_path / "jobs.txt"
+    jobs.write_text("2 2\n0 2 1 2\n1 2 0 2\n")
+    starts = tmp_path / "starts.json"
+    starts.write_text(json.dumps({"start_times": [0, 2, 0, 2]}))
+    assert NativeCPRepresentation.verifier().verify(jobs, starts).objective == 4
+    assert NativeCPRepresentation.read_input(jobs)["suffix"] == ".txt"
+
+
+def test_native_process_session_returns_structured_solution_without_faking_trace(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from pitbench.repositories.base import RepositoryPluginRegistry
+    from pitbench.solver_drivers.common import SolverTermination
+    from pitbench.solver_drivers.run import NativeProcessScenarioSession
+
+    source = tmp_path / "source"
+    source.mkdir()
+    receipt = tmp_path / "binding.json"
+    receipt.write_text(json.dumps({"source": str(source), "repository_plugin": "test:Plugin"}))
+    monkeypatch.setenv("PITBENCH_SCENARIO_BINDING", str(receipt))
+    script = source / "solver.py"
+    script.write_text("import json,sys\nfrom pathlib import Path\np=Path(sys.argv[1]); p.write_text(json.dumps({'valid': True, 'has_solution': True, 'solver_termination':'optimal'}))\np.with_suffix('.solution.json').write_text(json.dumps({'colors':[0,1]}))\n")
+
+    class Plugin:
+        def run_command(self, run):
+            assert run.threads == 1 and run.solver_seed == 3
+            return SimpleNamespace(argv=[sys.executable, str(script), str(run.output_path)], env={}, timeout_sec=5)
+
+        def parse_output(self, path):
+            return SimpleNamespace(has_solution=True, solver_termination=SolverTermination.OPTIMAL)
+
+    monkeypatch.setattr(RepositoryPluginRegistry, "load", lambda _: Plugin())
+    session = NativeProcessScenarioSession(seed=3, threads=1, budget=1, tolerance=1e-6, options={})
+    session.load_model({"content": '{"vertex_count":2}', "suffix": ".json"})
+    events = []
+    result = session.solve(lambda *event: events.append(event))
+    assert result["termination"] == "optimal"
+    assert result["solution"] == {"colors": [0, 1]}
+    assert events == []
+    assert set(session.supported_scenario_kinds) == {"replay", "numerical"}
+
+
+@pytest.mark.parametrize(("end_depot", "expected_cost"), [(None, 14), (0, 26)])
+def test_pyvrp_routing_variant_uses_declared_route_endpoint(end_depot, expected_cost):
+    from pitbench.problem_families.public_verification import check_routing_variant
+    from pitbench.solver_drivers.run import PyVRPDriver
+
+    pyvrp = pytest.importorskip("pyvrp")
+    instance = {
+        "problem_kind": "open_vrp" if end_depot is None else "multi_depot_vrp",
+        "coordinates": [[0, 0], [3, 4], [0, 12]],
+        "distance_metric": "EUC_2D",
+        "demands": [0, 1, 1],
+        "depots": [0],
+        "customers": [1, 2],
+        "vehicle_types": [
+            {"id": 0, "count": 1, "capacity": 2, "start_depot": 0, "end_depot": end_depot}
+        ],
+    }
+    model, customers = PyVRPDriver._routing_variant_model(pyvrp, instance)
+    native = pyvrp.Solution(model.data(), [[0, 1]])
+    verified = check_routing_variant(instance, {"routes": [customers], "vehicle_type_ids": [0]})
+
+    assert native.is_feasible() and verified["feasible"]
+    assert native.distance() == verified["objective"] == expected_cost
+
+
+def test_pyvrp_scenario_preserves_variant_clients_and_vehicle_types(monkeypatch):
+    from types import SimpleNamespace
+
+    from pitbench.solver_drivers.run import PyVRPDriver, PyVRPScenarioSession
+
+    expected_data = object()
+    fake = SimpleNamespace(data=lambda: expected_data)
+    monkeypatch.setitem(sys.modules, "pyvrp", SimpleNamespace())
+    monkeypatch.setattr(PyVRPDriver, "_routing_variant_model", lambda *_: (fake, [3, 5]))
+    session = object.__new__(PyVRPScenarioSession)
+    session.load_model({"problem_kind": "multi_depot_vrp"})
+    assert session.data is expected_data
+    activities = [SimpleNamespace(idx=1, is_client=lambda: True), SimpleNamespace(idx=0, is_client=lambda: True)]
+    class Route(list):
+        def vehicle_type(self):
+            return 2
+    solution = SimpleNamespace(routes=lambda: [Route(activities)])
+    assert session._solution(solution) == {"routes": [[5, 3]], "vehicle_type_ids": [2]}
+
+
+def test_process_binding_tracks_built_solver_artifacts(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from pitbench.repositories.base import RepositoryPluginRegistry
+    from pitbench.solver_drivers.common import _process_artifacts
+
+    binary = tmp_path / "build" / "solver"
+    binary.parent.mkdir()
+    binary.write_bytes(b"base solver")
+    plugin = SimpleNamespace(agent_artifact_globs=("build/solver",), judge_support_files={})
+    monkeypatch.setattr(RepositoryPluginRegistry, "load", lambda _: plugin)
+    base = _process_artifacts(tmp_path, "test:Plugin")
+    binary.write_bytes(b"modified solver")
+    modified = _process_artifacts(tmp_path, "test:Plugin")
+    assert base["binding_sha256"] != modified["binding_sha256"]
+    assert base["package_code_sha256"] == modified["package_code_sha256"]
+
+
+def test_scenario_input_copy_is_owned_by_output_user(tmp_path, monkeypatch):
+    from pitbench.evaluator.scenarios import _copy_scenario_model
+
+    source, destination = tmp_path / "private.npz", tmp_path / "copied.npz"
+    source.write_bytes(b"private model")
+    source.chmod(0o660)
+    owners = []
+    monkeypatch.setattr("pitbench.evaluator.scenarios.os.geteuid", lambda: 0)
+    monkeypatch.setattr("pitbench.evaluator.scenarios.os.chown", lambda *args: owners.append(args))
+    _copy_scenario_model(source, destination, tmp_path)
+    assert destination.read_bytes() == source.read_bytes()
+    assert destination.stat().st_mode & 0o777 == 0o660
+    assert owners == [(destination, tmp_path.stat().st_uid, tmp_path.stat().st_gid)]
+
+
+def test_scenario_import_does_not_require_snapshot_helper_on_old_judge_module():
+    import subprocess
+
+    command = (
+        "import pitbench.evaluator.docker_judge as judge; "
+        "del judge.snapshot_judge_code; "
+        "import pitbench.evaluator.scenarios as scenarios; "
+        "assert callable(scenarios.snapshot_judge_code)"
+    )
+    subprocess.run([sys.executable, "-c", command], check=True, capture_output=True, text=True)
+
+
+def test_legacy_process_binding_accepts_evaluator_code_changes(tmp_path, monkeypatch):
+    from pitbench.solver_drivers.common import ScenarioSession, source_binding_identity
+
+    receipt = tmp_path / "binding.json"
+    receipt.write_text(json.dumps({
+        "source": str(tmp_path), "package": None, "repository_plugin": "test:Plugin",
+        "version": "1", "binding_git_hash": "commit", "source_patch_sha256": hashlib.sha256(b"").hexdigest(),
+        "binding_kind": "process_artifacts", "binding_sha256": "same-solver",
+        "package_code_sha256": "old-evaluator-code",
+    }))
+    monkeypatch.setenv("PITBENCH_SCENARIO_BINDING", str(receipt))
+    monkeypatch.setattr("pitbench.agent_cli._candidate_patch", lambda _: b"")
+    monkeypatch.setattr("subprocess.check_output", lambda *args, **kwargs: "commit\n")
+    monkeypatch.setattr("pitbench.solver_drivers.common._process_artifacts", lambda *args: {
+        "binding_sha256": "same-solver", "package_code_sha256": "current-adapter",
+    })
+    identity = source_binding_identity(
+        ScenarioSession, package=None, repository_plugin="test:Plugin", representations=[]
+    )
+    assert identity["package_code_sha256"] == "current-adapter"
+
+
+def test_unsupported_process_scenarios_do_not_launch_solver(tmp_path, monkeypatch):
+    from pitbench.evaluator.scenarios import run
+
+    data = campaign(tmp_path, "setup")
+    for iid in ("a", "b"):
+        data.model_sequences[sequence_key("judge_id", iid, "setup")] = data.model_sequences[sequence_key("judge_id", iid)]
+    output = tmp_path / "unsupported"
+    output.mkdir()
+    (output / "campaign.json").write_text(data.model_dump_json())
+    runtime = {"python": sys.executable, "probe": {"supported_scenario_kinds": ["replay", "numerical"]}}
+    (output / "runtime.json").write_text(json.dumps({"runtimes": {"base": runtime, "agent": runtime},
+        "cpus": [min(os.sched_getaffinity(0))], "watchdog_grace_sec": 1}))
+    monkeypatch.setattr("pitbench.evaluator.scenarios._hardware_identity", lambda cpus: data.hardware_identity)
+    monkeypatch.setattr("pitbench.evaluator.scenarios.run_collection_process", lambda *a, **k: pytest.fail("unsupported scenario launched a process"))
+    assert not run(output)["complete"]
+    progress = json.loads((output / "collection-status.json").read_text())
+    assert progress["statuses"] == {"unsupported": 4}
+
+
+def test_choco_session_reuses_process_and_closes(tmp_path, monkeypatch):
+    from pitbench.evaluator.scenarios import _rss
+    from pitbench.solver_drivers.run import ChocoScenarioSession
+
+    source = tmp_path / "source"
+    target = source / "target"
+    target.mkdir(parents=True)
+    (target / "choco-solver-test-jar-with-dependencies.jar").write_bytes(b"fixture")
+    receipt = tmp_path / "binding.json"
+    receipt.write_text(json.dumps({
+        "source": str(source),
+        "repository_plugin": "pitbench.repositories.plugins:ChocoRepositoryPlugin",
+    }))
+    java = tmp_path / "java"
+    java.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "for request in sys.stdin:\n"
+        "    with open(os.environ['PITBENCH_SCENARIO_EVENTS'], 'a') as stream:\n"
+        "        stream.write(json.dumps({'time_sec': 0, 'solution': {'bins': [[0]]}}) + '\\n')\n"
+        "    print(json.dumps({'has_solution': True, 'solver_termination': 'optimal', "
+        "'solution': {'bins': [[0]]}}), flush=True)\n"
+    )
+    java.chmod(0o755)
+    monkeypatch.setenv("PITBENCH_SCENARIO_BINDING", str(receipt))
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+    session = ChocoScenarioSession(seed=0, threads=1, budget=1, tolerance=1e-6, options={})
+    pid = session.process.pid
+    try:
+        assert session.measurement_pid() == pid != os.getpid()
+        for _ in range(2):
+            session.load_model({"capacity": 1, "weights": [1]})
+            events = []
+            result = session.solve(lambda *event: events.append(event))
+            assert result["solution"] == {"bins": [[0]]}
+            assert events == [(0, {"bins": [[0]]}, None)]
+            assert session.process.pid == pid
+            assert _rss(session.measurement_pid()) > 0
+    finally:
+        session.close()
+    assert session.process.poll() is not None

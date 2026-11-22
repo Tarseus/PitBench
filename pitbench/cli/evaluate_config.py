@@ -49,6 +49,7 @@ class SolverImageBuildConfig(BaseModel):
     docker_network: str | None = None
     no_proxy: str | None = None
     base_images: dict[str, str] = Field(default_factory=dict)
+    no_cache: bool = False
 
 
 class ConfigurationRobustnessConfig(BaseModel):
@@ -116,6 +117,7 @@ class EvaluationConfig(BaseModel):
     agent_feedback_mode: Literal["outcome_only", "solver_behavior"] = "solver_behavior"
     candidate_hypotheses_required: bool = False
     agent_cpuset_cpus: str | None = None
+    task_ids: list[str] = Field(default_factory=list)
     tasks: dict[str, TaskResources] = Field(default_factory=dict)
     agents: dict[str, dict[str, ConfigValue]] = Field(default_factory=dict)
     judge_cpus: float | None = None

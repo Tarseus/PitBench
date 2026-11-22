@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "study_id": "eight_solvers_three_models_single_attempt",
+  "claim_scope": "diagnostic_single_attempt",
+  "release_manifest": "/data3/gushengda/PitBench/.pitbench-runs/eight-solver-populations-v4/study-release-manifest.json",
+  "task_configs": [
+    "configs/research/tasks/e8_pyvrp_cvrp.yaml",
+    "configs/research/tasks/e8_vroom_cvrp.yaml",
+    "configs/research/tasks/e8_highs_scheduling.yaml",
+    "configs/research/tasks/e8_choco_bin_packing.yaml",
+    "configs/research/tasks/e8_gecode_bin_packing.yaml",
+    "configs/research/tasks/e8_ortools_cp_sat_job_shop_scheduling.yaml",
+    "configs/research/tasks/e8_scip_multidimensional_knapsack.yaml",
+    "configs/research/tasks/e8_cbc_multidimensional_knapsack.yaml"
+  ],
+  "model_matrix": "configs/research/eight_solvers_three_models_matrix.yaml",
+  "population_plan": "/data3/gushengda/PitBench/.pitbench-runs/eight-solver-populations-v4/study-population-plan.json",
+  "research_budget": {
+    "track": "custom",
+    "wall_time_sec": 14400.0,
+    "cpu_time_sec": null,
+    "development_cpu_time_sec": null,
+    "cpus": 8.0,
+    "memory_gib": 32.0,
+    "max_parallel_runs": null,
+    "development_parallel_runs": 4,
+    "model_token_limit": null,
+    "checkpoints_sec": []
+  },
+  "agent_attempts_per_condition": 1,
+  "comparison_mode": "model_repeats",
+  "arms": [
+    {
+      "id": "standard",
+      "development_view": "complete_visible_task_development",
+      "require_candidate_hypotheses": false,
+      "instruction": "Improve the selected solver while preserving correctness.",
+      "agent_import_path": null,
+      "agent_provenance": {}
+    }
+  ],
+  "shared_agent_tools": [
+    "inspect",
+    "workspace",
+    "bench"
+  ],
+  "required_scenario_kinds": [
+    "trajectory"
+  ],
+  "inference_scope": "One ordinary Agent attempt per native solver task and model; each captured patch is evaluated on its five mapped target tasks. Preserve every failure and missing metric.",
+  "evaluation_seed_policy": null,
+  "task_evaluation_seed_policies": {},
+  "task_targets": {},
+  "evaluation_run_target": null,
+  "supplemental_seed_count": null,
+  "supplemental_primary_budget_only": false
+}

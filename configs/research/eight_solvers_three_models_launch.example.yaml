@@ -1,0 +1,22 @@
+phase: study-models
+background: true
+manifest: /data3/gushengda/PitBench/.pitbench-runs/eight-solver-populations-v4/study-release-manifest.json
+config: config/cross-family-codex-20261118/evaluate.local.yaml
+study_plan: configs/research/eight_solvers_three_models_study.yaml
+study_views: /data3/gushengda/PitBench-cross-family-20261117/config/cross-family-20261117-v6/task-views.json
+output: /data3/gushengda/pitbench-runs/cross-family-codex-20261118/agents
+target_task_matrix: configs/research/eight_solvers_three_models_target_task_matrix.yaml
+cross_evaluation_output: /data3/gushengda/pitbench-runs/eight-solvers-three-models/evaluations
+workers: 0
+cpu_pools: []
+evaluate_candidates: false
+evaluation_workers: 0
+evaluation_cpu_pools: []
+reuse_agent_pools: true
+dispatch_interval_sec: 20
+temporary_root: /data3/gushengda/tmp/eight-solvers-three-models
+resource_policy:
+  min_available_memory_gib: 64
+  max_cpu_temperature_c: 86
+  max_load_1min: 112
+  check_every_sec: 10

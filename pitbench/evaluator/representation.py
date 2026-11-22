@@ -423,8 +423,9 @@ def run_with_representation(
     from pitbench.metrics.nuisance_report import report_nuisance_results
 
     representation_summary = report_nuisance_results(output_dir, output_dir / "report")
-    details["representation_robustness"] = representation_summary[
-        "representation_robustness"
-    ]
+    if "representation_robustness" in representation_summary:
+        details["representation_robustness"] = representation_summary["representation_robustness"]
+    else:
+        details["report_unavailable"] = "no representation estimator is available for this configuration"
     write_json(output_dir / "details.json", details)
     return observations

@@ -74,6 +74,48 @@ class RepresentationPlugin(ABC):
     ) -> dict: ...
 
 
+class NativeCPRepresentation(RepresentationPlugin):
+    """Identity representation for native CP scenario inputs."""
+
+    name = "native_instance"
+    family = "cp"
+    requires_tolerance = False
+    suffix = ".json"
+    generator = staticmethod(random.Random)
+
+    @staticmethod
+    def verifier(tolerance=None):
+        from pitbench.problem_families.verification import NativeCPFamily
+        return NativeCPFamily()
+
+    @staticmethod
+    def read_input(path: Path) -> dict:
+        if path.suffix.lower() not in {".json", ".txt"}:
+            raise ValueError("native CP scenario requires JSON or job-shop text")
+        return {"content": path.read_text(), "suffix": path.suffix.lower()}
+
+    @staticmethod
+    def write_input(path: Path, model: dict) -> None:
+        path.write_text(model["content"])
+
+    @staticmethod
+    def assert_same(original, restored) -> None:
+        if original != restored:
+            raise ValueError("native CP input changed")
+
+    @staticmethod
+    def mappings(model, count: int, generator) -> list:
+        raise ValueError("native CP identity has no relabeling map")
+
+    @staticmethod
+    def transform(model, mapping):
+        raise ValueError("native CP identity has no relabeling transform")
+
+    @staticmethod
+    def verify_files(original, transformed, solution, mapped_path, mapping, tolerance=None) -> dict:
+        raise ValueError("native CP identity does not define a relabeling")
+
+
 class CustomerRepresentation(RepresentationPlugin):
     """Customer permutations with the depot fixed."""
 
@@ -105,6 +147,38 @@ class CustomerRepresentation(RepresentationPlugin):
 
     @staticmethod
     def mappings(model: dict, count: int, generator) -> list[dict]:
+        if model.get("problem_kind") in {
+            "heterogeneous_fleet_vrp", "multi_depot_vrp", "open_vrp"
+        }:
+            node_count = len(model["coordinates"])
+            depots, customers = model.get("depots"), model.get("customers")
+            if (
+                not isinstance(depots, list)
+                or not depots
+                or not isinstance(customers, list)
+                or len(set(depots)) != len(depots)
+                or len(set(customers)) != len(customers)
+                or set(depots) & set(customers)
+                or set(depots) | set(customers) != set(range(node_count))
+            ):
+                raise ValueError("routing customers and depots must partition the nodes")
+            if count < 1 or math.factorial(len(customers)) - 1 < count:
+                raise ValueError("not enough distinct nonidentity customer permutations")
+            original = tuple(customers)
+            seen = {original}
+            result = []
+            while len(result) < count:
+                permutation = list(customers)
+                generator.shuffle(permutation)
+                key = tuple(permutation)
+                if key in seen:
+                    continue
+                seen.add(key)
+                mapping = list(range(node_count))
+                for position, source in zip(customers, permutation, strict=True):
+                    mapping[position] = source
+                result.append({"new_to_original": mapping})
+            return result
         return [
             {"new_to_original": mapping}
             for mapping in CustomerRepresentation.permutations(
@@ -165,14 +239,17 @@ class CustomerRepresentation(RepresentationPlugin):
     @staticmethod
     def permute(original: dict, new_to_original: list[int]) -> dict:
         node_count = len(original["coordinates"])
+        depots = original.get("depots", [original.get("depot", 0)])
         if (
-            original.get("depot", 0) != 0
+            not isinstance(depots, list)
+            or not depots
+            or any(type(depot) is not int or not 0 <= depot < node_count for depot in depots)
             or original.get("distance_metric") != "EUC_2D"
             or len(original["demands"]) != node_count
         ):
-            raise ValueError("expected a normalized single-depot EUC_2D CVRP instance")
-        if new_to_original[0] != 0 or sorted(new_to_original) != list(
-            range(node_count)
+            raise ValueError("expected a normalized EUC_2D routing instance")
+        if sorted(new_to_original) != list(range(node_count)) or any(
+            new_to_original[depot] != depot for depot in depots
         ):
             raise ValueError("mapping must be a bijection fixing depot zero")
         transformed = dict(original)
@@ -196,12 +273,12 @@ class CustomerRepresentation(RepresentationPlugin):
         routes = []
         for route in solution["routes"]:
             if any(
-                type(node) is not int or not 0 < node < len(new_to_original)
+                type(node) is not int or not 0 <= node < len(new_to_original)
                 for node in route
             ):
                 raise ValueError("solution contains an invalid customer index")
             routes.append([new_to_original[node] for node in route])
-        return {"routes": routes}
+        return {**solution, "routes": routes}
 
 
 class BinPackingItemRepresentation(RepresentationPlugin):
@@ -296,6 +373,279 @@ class BinPackingItemRepresentation(RepresentationPlugin):
                 if checked.objective is not None and mapped.objective is not None
                 else None
             ),
+        }
+
+
+class SubsetSumRepresentation(BinPackingItemRepresentation):
+    """Permute items in a balanced subset-sum model."""
+
+    name = "subset_item_relabeling"
+
+    @staticmethod
+    def transform(model: dict, mapping: dict) -> dict:
+        weights, order = model["weights"], mapping["new_to_original"]
+        if sorted(order) != list(range(len(weights))):
+            raise ValueError("subset item mapping must be a bijection")
+        return {**model, "weights": [weights[index] for index in order]}
+
+    @staticmethod
+    def verify_files(original, transformed, solution, mapped_path, mapping, tolerance=None) -> dict:
+        from pitbench.problem_families.verification import CPFamily
+
+        family = CPFamily()
+        checked = family.verify(transformed, solution)
+        payload = json.loads(solution.read_text())
+        order, selected = mapping["new_to_original"], payload.get("selected_items")
+        if not isinstance(selected, list) or any(type(i) is not int or not 0 <= i < len(order) for i in selected):
+            raise ValueError("subset solution contains invalid item indices")
+        mapped_path.write_text(json.dumps({"selected_items": [order[i] for i in selected]}) + "\n")
+        mapped = family.verify(original, mapped_path)
+        return {
+            "transformed": checked.model_dump(), "mapped_original": mapped.model_dump(),
+            "objective_preserved": checked.objective == mapped.objective
+            if checked.objective is not None and mapped.objective is not None else None,
+        }
+
+
+class ProjectActivityRepresentation(BinPackingItemRepresentation):
+    """Relabel activities using a topological permutation of the project DAG."""
+
+    name = "activity_relabeling"
+
+    @staticmethod
+    def mappings(model: dict, count: int, generator: random.Random) -> list[dict]:
+        activities, arcs = model.get("activities"), model.get("precedence_arcs")
+        if not isinstance(activities, list) or not activities or not isinstance(arcs, list) or count < 1:
+            raise ValueError("invalid project activity model")
+        size = len(activities)
+        successors, indegree = [[] for _ in range(size)], [0] * size
+        for arc in arcs:
+            if not isinstance(arc, list) or len(arc) != 2 or any(type(v) is not int or not 0 <= v < size for v in arc):
+                raise ValueError("invalid project precedence arc")
+            successors[arc[0]].append(arc[1])
+            indegree[arc[1]] += 1
+        seen, result = {tuple(range(size))}, []
+        for _ in range(max(1000, count * 100)):
+            remaining = indegree.copy()
+            ready = [i for i, degree in enumerate(remaining) if degree == 0]
+            order = []
+            while ready:
+                index = generator.randrange(len(ready))
+                node = ready.pop(index)
+                order.append(node)
+                for successor in successors[node]:
+                    remaining[successor] -= 1
+                    if remaining[successor] == 0:
+                        ready.append(successor)
+            if len(order) != size:
+                raise ValueError("project precedence graph has a cycle")
+            if tuple(order) not in seen:
+                seen.add(tuple(order))
+                result.append({"new_to_original": order})
+                if len(result) == count:
+                    return result
+        raise ValueError("not enough distinct topological activity permutations")
+
+    @staticmethod
+    def transform(model: dict, mapping: dict) -> dict:
+        activities, order = model["activities"], mapping["new_to_original"]
+        if sorted(order) != list(range(len(activities))):
+            raise ValueError("activity mapping must be a bijection")
+        inverse = {old: new for new, old in enumerate(order)}
+        arcs = sorted([inverse[a], inverse[b]] for a, b in model["precedence_arcs"])
+        if any(a >= b for a, b in arcs):
+            raise ValueError("activity mapping must preserve topological order")
+        reordered = [{**activities[old], "id": new} for new, old in enumerate(order)]
+        return {
+            **model,
+            "activities": reordered,
+            "precedence_arcs": arcs,
+            "durations": [x["duration"] for x in reordered],
+            "resource_demands_flat": [v for x in reordered for v in x["resource_demands"]],
+            "precedence_endpoints": [v for arc in arcs for v in arc],
+        }
+
+    @staticmethod
+    def verify_files(original, transformed, solution, mapped_path, mapping, tolerance=None) -> dict:
+        from pitbench.problem_families.verification import CPFamily
+
+        family = CPFamily()
+        checked = family.verify(transformed, solution)
+        order = mapping["new_to_original"]
+        starts = json.loads(solution.read_text()).get("start_times")
+        if not isinstance(starts, list) or len(starts) != len(order):
+            raise ValueError("project solution has incomplete start times")
+        restored = [None] * len(order)
+        for new, old in enumerate(order):
+            restored[old] = starts[new]
+        mapped_path.write_text(json.dumps({"start_times": restored}) + "\n")
+        mapped = family.verify(original, mapped_path)
+        return {
+            "transformed": checked.model_dump(), "mapped_original": mapped.model_dump(),
+            "objective_preserved": checked.objective == mapped.objective
+            if checked.objective is not None and mapped.objective is not None else None,
+        }
+
+
+class GraphColoringRepresentation(RepresentationPlugin):
+    """Permute graph vertices and map color assignments back to the source."""
+
+    name = "vertex_relabeling"
+    family = "cp"
+    requires_tolerance = False
+    suffix = ".json"
+    generator = staticmethod(random.Random)
+
+    @staticmethod
+    def verifier(tolerance=None):
+        from pitbench.problem_families.verification import CPFamily
+        return CPFamily()
+
+    @staticmethod
+    def assert_same(original, restored) -> None:
+        if original != restored:
+            raise ValueError("graph input changed")
+
+    @staticmethod
+    def read_input(path: Path) -> dict:
+        return json.loads(path.read_text())
+
+    @staticmethod
+    def write_input(path: Path, model: dict) -> None:
+        path.write_text(json.dumps(model, indent=2, allow_nan=False) + "\n")
+
+    @staticmethod
+    def mappings(model: dict, count: int, generator: random.Random) -> list[dict]:
+        size = model.get("vertex_count")
+        if type(size) is not int or size < 2 or count < 1 or math.factorial(size) - 1 < count:
+            raise ValueError("not enough distinct graph vertex permutations")
+        seen = {tuple(range(size))}
+        result = []
+        while len(result) < count:
+            order = list(range(size))
+            generator.shuffle(order)
+            if tuple(order) not in seen:
+                seen.add(tuple(order))
+                result.append({"new_to_original": order})
+        return result
+
+    @staticmethod
+    def transform(model: dict, mapping: dict) -> dict:
+        size, order = model["vertex_count"], mapping["new_to_original"]
+        endpoints = model["edge_endpoints"]
+        if sorted(order) != list(range(size)) or len(endpoints) % 2:
+            raise ValueError("invalid graph or vertex permutation")
+        inverse = {old: new for new, old in enumerate(order)}
+        edges = []
+        for first, second in zip(endpoints[::2], endpoints[1::2], strict=True):
+            if type(first) is not int or type(second) is not int or not 0 <= first < second < size:
+                raise ValueError("invalid graph edge")
+            edges.append(tuple(sorted((inverse[first], inverse[second]))))
+        return {**model, "edge_endpoints": [v for edge in sorted(edges) for v in edge]}
+
+    @staticmethod
+    def verify_files(original, transformed, solution, mapped_path, mapping, tolerance=None) -> dict:
+        from pitbench.problem_families.verification import CPFamily
+
+        family = CPFamily()
+        checked = family.verify(transformed, solution)
+        payload = json.loads(solution.read_text())
+        order = mapping["new_to_original"]
+        colors = payload.get("colors")
+        if not isinstance(colors, list) or len(colors) != len(order):
+            raise ValueError("color assignment does not cover the graph")
+        restored = [None] * len(order)
+        for new, old in enumerate(order):
+            restored[old] = colors[new]
+        mapped_path.write_text(json.dumps({"colors": restored}) + "\n")
+        mapped = family.verify(original, mapped_path)
+        return {
+            "transformed": checked.model_dump(),
+            "mapped_original": mapped.model_dump(),
+            "objective_preserved": checked.objective == mapped.objective
+            if checked.objective is not None and mapped.objective is not None else None,
+        }
+
+
+class JobOrderRepresentation(RepresentationPlugin):
+    """Reorder jobs in a native text job-shop instance."""
+
+    name = "job_order_relabeling"
+    family = "cp"
+    requires_tolerance = False
+    suffix = ".txt"
+    generator = staticmethod(random.Random)
+
+    @staticmethod
+    def verifier(tolerance=None):
+        return NativeCPRepresentation.verifier(tolerance)
+
+    @staticmethod
+    def assert_same(original, restored) -> None:
+        if original != restored:
+            raise ValueError("job-shop input changed")
+
+    @staticmethod
+    def read_input(path: Path) -> dict:
+        from pitbench.instances.generate import _job_shop_operations
+
+        jobs = _job_shop_operations(path)
+        return {"jobs": jobs, "machines": len(jobs[0])}
+
+    @staticmethod
+    def write_input(path: Path, model: dict) -> None:
+        jobs = model["jobs"]
+        lines = [f"{len(jobs)} {model['machines']}"]
+        lines.extend(" ".join(str(value) for operation in job for value in operation) for job in jobs)
+        path.write_text("\n".join(lines) + "\n")
+
+    @staticmethod
+    def mappings(model: dict, count: int, generator: random.Random) -> list[dict]:
+        size = len(model["jobs"])
+        if size < 2 or count < 1 or math.factorial(size) - 1 < count:
+            raise ValueError("not enough distinct job permutations")
+        seen = {tuple(range(size))}
+        result = []
+        while len(result) < count:
+            order = list(range(size))
+            generator.shuffle(order)
+            if tuple(order) not in seen:
+                seen.add(tuple(order))
+                result.append({"new_to_original": order})
+        return result
+
+    @staticmethod
+    def transform(model: dict, mapping: dict) -> dict:
+        jobs, order = model["jobs"], mapping["new_to_original"]
+        if sorted(order) != list(range(len(jobs))):
+            raise ValueError("job mapping must be a bijection")
+        return {**model, "jobs": [jobs[index] for index in order]}
+
+    @staticmethod
+    def verify_files(original, transformed, solution, mapped_path, mapping, tolerance=None) -> dict:
+        from pitbench.problem_families.verification import _check_job_shop_start_times
+
+        original_jobs = JobOrderRepresentation.read_input(original)["jobs"]
+        transformed_jobs = JobOrderRepresentation.read_input(transformed)["jobs"]
+        values = json.loads(solution.read_text()).get("start_times")
+        if not isinstance(values, list):
+            raise ValueError("job-shop solution has no start times")
+        checked = _check_job_shop_start_times(values, transformed_jobs)
+        order = mapping["new_to_original"]
+        if sorted(order) != list(range(len(original_jobs))):
+            raise ValueError("job mapping must be a bijection")
+        by_job, cursor = [None] * len(order), 0
+        for new, old in enumerate(order):
+            count = len(transformed_jobs[new])
+            by_job[old] = values[cursor:cursor + count]
+            cursor += count
+        mapped_values = [value for job in by_job for value in job]
+        mapped_path.write_text(json.dumps({"start_times": mapped_values}) + "\n")
+        mapped = _check_job_shop_start_times(mapped_values, original_jobs)
+        return {
+            "transformed": checked.model_dump(), "mapped_original": mapped.model_dump(),
+            "objective_preserved": checked.objective == mapped.objective
+            if checked.objective is not None and mapped.objective is not None else None,
         }
 
 
@@ -403,6 +753,93 @@ class JobShopRepresentation(RepresentationPlugin):
 VECTOR_FIELDS = ("cost", "col_lower", "col_upper", "integrality", "col_names")
 
 ROW_FIELDS = ("row_lower", "row_upper", "row_names")
+
+
+class MPSRowRepresentation(RepresentationPlugin):
+    """Reorder MPS constraints while retaining original row and column names."""
+
+    name = "mps_row_permutation"
+    family = "mip"
+    requires_tolerance = False
+    suffix = ".mps"
+    generator = staticmethod(random.Random)
+
+    @staticmethod
+    def verifier(tolerance=None):
+        from pitbench.problem_families.verification import MIPFamily
+        return MIPFamily()
+
+    @staticmethod
+    def assert_same(original, restored) -> None:
+        if original != restored:
+            raise ValueError("MPS input changed")
+
+    @staticmethod
+    def read_input(path: Path) -> str:
+        return path.read_text()
+
+    @staticmethod
+    def write_input(path: Path, model: str) -> None:
+        path.write_text(model)
+
+    @staticmethod
+    def _row_positions(model: str) -> list[int]:
+        lines = model.splitlines()
+        rows = [i for i, line in enumerate(lines) if line.strip().upper() == "ROWS"]
+        columns = [i for i, line in enumerate(lines) if line.strip().upper() == "COLUMNS"]
+        if len(rows) != 1 or len(columns) != 1 or rows[0] >= columns[0]:
+            raise ValueError("MPS must contain one ROWS section before COLUMNS")
+        positions = []
+        for index in range(rows[0] + 1, columns[0]):
+            line = lines[index].strip()
+            if not line or line.startswith("*"):
+                continue
+            fields = line.split()
+            if len(fields) != 2 or fields[0].upper() not in {"N", "L", "G", "E"}:
+                raise ValueError("unsupported MPS row declaration")
+            if fields[0].upper() != "N":
+                positions.append(index)
+        return positions
+
+    @staticmethod
+    def mappings(model: str, count: int, generator: random.Random) -> list[dict]:
+        size = len(MPSRowRepresentation._row_positions(model))
+        if size < 2 or count < 1 or math.factorial(size) - 1 < count:
+            raise ValueError("not enough distinct MPS row permutations")
+        seen, result = {tuple(range(size))}, []
+        while len(result) < count:
+            order = list(range(size))
+            generator.shuffle(order)
+            if tuple(order) not in seen:
+                seen.add(tuple(order))
+                result.append({"new_to_original": order})
+        return result
+
+    @staticmethod
+    def transform(model: str, mapping: dict) -> str:
+        positions = MPSRowRepresentation._row_positions(model)
+        order = mapping["new_to_original"]
+        if sorted(order) != list(range(len(positions))):
+            raise ValueError("MPS row mapping must be a bijection")
+        lines = model.splitlines(keepends=True)
+        rows = [lines[index] for index in positions]
+        for index, old in zip(positions, order, strict=True):
+            lines[index] = rows[old]
+        return "".join(lines)
+
+    @staticmethod
+    def verify_files(original, transformed, solution, mapped_path, mapping, tolerance=None) -> dict:
+        from pitbench.problem_families.verification import MIPFamily
+
+        family = MIPFamily()
+        checked = family.verify(transformed, solution)
+        mapped_path.write_bytes(solution.read_bytes())
+        mapped = family.verify(original, mapped_path)
+        return {
+            "transformed": checked.model_dump(), "mapped_original": mapped.model_dump(),
+            "objective_preserved": checked.objective == mapped.objective
+            if checked.objective is not None and mapped.objective is not None else None,
+        }
 
 
 class LinearModelRepresentation(RepresentationPlugin):

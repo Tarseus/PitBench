@@ -167,12 +167,13 @@ def compute_representation_robustness_report(
     solver_seed: int = REPRESENTATION_SOLVER_SEED,
     relabelings_per_instance: int = REPRESENTATION_RELABELINGS_PER_INSTANCE,
     protocol_version: str = REPRESENTATION_PROTOCOL_VERSION,
+    expected_instance_count: int = 10,
 ) -> RepresentationRobustnessReport:
-    """Compute the formal customer-relabeling Representation Robustness report."""
+    """Compute the frozen representation IQR over the declared instance grid."""
     declared_instances = list(instance_ids)
     declared_budgets = list(budgets_sec)
-    if len(declared_instances) != 10 or len(set(declared_instances)) != 10:
-        raise ValueError("representation protocol requires ten distinct instances")
+    if expected_instance_count < 1 or len(declared_instances) != expected_instance_count or len(set(declared_instances)) != expected_instance_count:
+        raise ValueError("representation instances differ from the declared grid")
     if not declared_budgets or any(
         not _finite_gap(budget) or budget <= 0 for budget in declared_budgets
     ):
@@ -716,7 +717,8 @@ def report_nuisance_results(
     representation_configuration = _representation_configuration(manifest)
     if (
         planned_axes == {"representation"}
-        and representation_configuration.get("kind") == "customer_relabeling"
+        and representation_configuration.get("outcome") != "capped_optimal_time"
+        and representation_configuration.get("kind")
     ):
         formal_representation_report = compute_representation_robustness_report(
             records,
@@ -735,6 +737,7 @@ def report_nuisance_results(
             protocol_version=representation_configuration.get(
                 "protocol_version", REPRESENTATION_PROTOCOL_VERSION
             ),
+            expected_instance_count=manifest.get("instance_count", 10),
         )
         summary["statistics"] = REPRESENTATION_STATISTICS_NAME
         summary["representation_robustness"] = formal_representation_report.model_dump(

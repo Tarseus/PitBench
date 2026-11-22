@@ -269,6 +269,7 @@ def _research():
     package = binding.add_mutually_exclusive_group(required=True)
     package.add_argument("--package")
     package.add_argument("--native-library", type=Path)
+    package.add_argument("--process-artifacts", action="store_true")
     binding.add_argument("--repository-plugin", required=True)
     binding.add_argument("--version", required=True)
     binding.add_argument("--output", type=Path, required=True)
@@ -544,6 +545,7 @@ def _research():
                     version=args.version,
                     destination=args.output,
                     native_library=args.native_library,
+                    process_artifacts=args.process_artifacts,
                 )
             )
         )
@@ -627,6 +629,18 @@ def _research():
         print(json.dumps(result))
 
 
+def _initial_solutions() -> None:
+    from pitbench.instances.generate import write_bin_packing_initial_solution
+
+    parser = argparse.ArgumentParser(description="Prepare verified bin-packing initial solutions.")
+    parser.add_argument("instances", type=Path, nargs="+")
+    args = parser.parse_args()
+    paths = sorted({path.resolve() for path in args.instances})
+    for path in paths:
+        write_bin_packing_initial_solution(path)
+    print(json.dumps({"instances": len(paths), "method": "best_fit_decreasing"}))
+
+
 def main(argv=None):
     if __package__ in (None, ""):
         import sys
@@ -635,7 +649,12 @@ def main(argv=None):
     from scripts import dispatch
 
     return dispatch(
-        {"instances": _instances, "optima": _optima, "research": _research},
+        {
+            "instances": _instances,
+            "optima": _optima,
+            "research": _research,
+            "initial-solutions": _initial_solutions,
+        },
         argv,
         description="Prepare configured instances, trusted optima and research views.",
     )

@@ -752,6 +752,15 @@ def test_normal_metric_coverage_requires_complete_declared_reports(tmp_path: Pat
         {**payload, "summary": {**payload["summary"], "resource_usage": None}},
     ) == ["resource report is missing"]
 
+    extension_run = expected.model_copy(update={"test_suite": "operational_reliability"})
+    (evaluation_dir / "expected-run-grid.json").write_text(
+        ExpectedRunGrid(task_id=task_id, runs=[expected, extension_run]).model_dump_json()
+    )
+    coverage = _normal_metric_coverage(ROOT, tmp_path, "run", [task_id], None)
+    assert coverage["primary_metrics_status"] == "complete"
+    assert coverage["extension_metrics_status"] == "incomplete"
+    assert any("expected solver runs are missing" in gap for gap in coverage["extension_failures"])
+
 
 def test_normal_metric_coverage_retains_configuration_collection_failure(
     tmp_path: Path,
@@ -769,10 +778,12 @@ def test_normal_metric_coverage_retains_configuration_collection_failure(
         "configuration collection failed: collector image unavailable",
     )
 
-    assert coverage["complete"] is False
+    assert coverage["complete"] is True
+    assert coverage["primary_metrics_status"] == "complete"
+    assert coverage["extension_metrics_status"] == "incomplete"
     assert (
         "configuration collection failed: collector image unavailable"
-        in coverage["failures"][-1]
+        in coverage["extension_failures"][-1]
     )
     assert coverage["configuration_robustness"]["output"] == str(
         run_dir / "configuration-robustness"
@@ -3689,10 +3700,23 @@ def test_confirmed_invalid_agent_solution_fails_qualification() -> None:
     )
 
     assert result.accepted is False
+    assert result.primary_accepted is False
     assert [(check.code, check.passed) for check in result.checks] == [
         (ValidityCode.PATCH_APPLY, True),
         (ValidityCode.SOLUTION, False),
     ]
+
+
+def test_extension_invalidity_does_not_disqualify_primary_measurements() -> None:
+    observation = _observation(CodeState.AGENT, RunStatus.INVALID).model_copy(
+        update={"equivalence_parent_id": "original"}
+    )
+    result = evaluator_validity(
+        patch_exists=True, fixture_mode=False, observations=[observation]
+    )
+    assert result.accepted is False
+    assert result.primary_accepted is True
+    assert result.extension_accepted is False
 
 
 def test_semantically_invalid_agent_run_disqualifies_evaluation(
@@ -3980,6 +4004,56 @@ def test_custom_codex_agent_runs_native_preflight_without_registered_agent(
     assert "no agent was started" in response.output
 
 
+@pytest.mark.parametrize("arguments,expected", [([], ["first", "second"]), (["third"], ["third"])])
+def test_evaluate_reads_task_ids_from_yaml_and_cli_overrides(tmp_path, monkeypatch, arguments, expected):
+    from typer.testing import CliRunner
+
+    from pitbench.cli import main as cli
+
+    config = tmp_path / "evaluate.yaml"
+    config.write_text(yaml.safe_dump({"task_ids": ["first", "second"]}))
+    seen = []
+    monkeypatch.setattr(cli, "evaluation_checks", lambda tasks, *args: seen.append(tasks) or [])
+    result = CliRunner().invoke(cli.app, ["evaluate", *arguments, "--config", str(config),
+                                         "--agent", "codex", "--check-only", "--root", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert seen == [expected]
+
+
+def test_evaluate_routes_study_profile_and_livestream(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from pitbench.cli.main import app
+    from pitbench.harness.harness import campaign
+
+    profile = tmp_path / "study.yaml"
+    profile.write_text("phase: study-models\n")
+    seen = []
+    monkeypatch.setattr(campaign, "run_study_cohort", lambda *args, **kwargs: seen.append((args, kwargs)))
+    result = CliRunner().invoke(app, ["evaluate", "--config", str(profile), "--status", "--livestream"])
+    assert result.exit_code == 0, result.output
+    assert seen[0][1]["status"] and seen[0][1]["livestream"]
+
+
+def test_study_yaml_plan_and_resource_aware_launch(tmp_path, monkeypatch):
+    from pitbench.harness.harness import campaign
+
+    plan = campaign.read_study_plan(ROOT / "configs/research/eight_solvers_three_models_study.yaml")
+    assert len(plan.task_configs) == 8
+    assert plan.agent_attempts_per_condition == 1
+    matrix = yaml.safe_load((ROOT / plan.model_matrix).read_text())
+    assert [row["model"] for row in matrix["runs"]] == [
+        "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6.1-terra"
+    ]
+    profile = tmp_path / "study.yaml"
+    profile.write_text("phase: study-models\nworkers: 0\n")
+    seen = []
+    monkeypatch.setattr(campaign, "main", lambda argv, **kwargs: seen.append(argv))
+    campaign.run_study_cohort(profile, prepare_only=True, root=ROOT)
+    assert "--foreground" in seen[0] and "--prepare-only" in seen[0]
+    assert "--workers" not in seen[0]  # the profile's automatic setting is retained
+
+
 @pytest.mark.parametrize(
     "task_override,cli_override,expected",
     [
@@ -4248,7 +4322,55 @@ def test_docker_judge_uses_project_owned_jvm_adapter(tmp_path, monkeypatch):
         base_repository=tmp_path, private_root=tmp_path, candidate_patch=patch, output_dir=tmp_path / "output")
     with pytest.raises(RuntimeError):
         judge.run()
-    assert f"{ROOT / 'adapters/jvm/runner.py'}:/opt/pitbench-jvm/runner.py:ro" in captured["command"]
+    mount = next(value for value in captured["command"] if value.endswith(":/opt/pitbench-jvm/runner.py:ro"))
+    assert Path(mount.split(":", 1)[0]).read_bytes() == (ROOT / "adapters/jvm/runner.py").read_bytes()
+
+
+def test_docker_judge_keeps_running_code_when_checkout_changes(tmp_path, monkeypatch):
+    from pitbench.evaluator.docker_judge import judge_harness_sha256
+
+    source = tmp_path / "source"
+    for name in ("pitbench", "adapters", "scripts"):
+        (source / name).mkdir(parents=True)
+    code = source / "pitbench/module.py"
+    code.write_text("version = 1\n")
+    task_path = ROOT / "configs/tasks/release_cbc_v2_10_13.yaml"
+    patch = tmp_path / "candidate.patch"
+    patch.touch()
+    output = tmp_path / "output"
+
+    class Process:
+        stdout = []
+        def wait(self):
+            code.write_text("version = 2\n")
+            (output / "judge-observations.jsonl").touch()
+            return 0
+
+    monkeypatch.setattr("pitbench.evaluator.docker_judge.subprocess.Popen", lambda *args, **kwargs: Process())
+    judge = DockerJudge(image="sha256:" + "a" * 64, task_config_path=task_path,
+        base_repository=tmp_path, private_root=tmp_path, candidate_patch=patch, output_dir=output)
+    judge.package_root = source
+    judge.harness_sha256 = judge_harness_sha256(source)
+    assert judge.run() == []
+    assert (judge.runtime_package_root / "pitbench/module.py").read_text() == "version = 1\n"
+
+
+def test_interrupted_judge_finds_its_retained_code_after_checkout_changes(tmp_path):
+    from pitbench.evaluator.code_snapshot import snapshot_judge_code
+    from pitbench.evaluator.docker_judge import (
+        judge_harness_sha256,
+        retained_judge_snapshot,
+    )
+
+    source = tmp_path / "source"
+    for name in ("pitbench", "adapters", "scripts"):
+        (source / name).mkdir(parents=True)
+    code = source / "pitbench/module.py"
+    code.write_text("version = 1\n")
+    snapshot = snapshot_judge_code(source, tmp_path / "output/judge-tmp")
+    original = judge_harness_sha256(snapshot)
+    code.write_text("version = 2\n")
+    assert retained_judge_snapshot(tmp_path / "output", original) == snapshot
 
 
 def test_limited_seed_report_uses_planned_subset_for_native_and_shift(tmp_path):

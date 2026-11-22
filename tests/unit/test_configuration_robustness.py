@@ -375,6 +375,13 @@ def test_native_candidate_preparation_binds_source_and_freezes_holdout(
         for stage in search["fidelity_stages"]
     )
     assert all(seed >= 1 for seed in native["searches"][0]["retest_seeds"])
+    native_config["panels"][0]["instance_count"] = 2
+    config.write_text(json.dumps(native_config))
+    unavailable = prepare_candidate_configuration(
+        request, config, tmp_path / "undersized-native-panel", **args
+    )
+    assert unavailable["coverage"] == "unavailable"
+    assert "requires 2 hidden instances but the selected task provides 1" in unavailable["reason"]
     patch.write_text("different patch")
     updated = prepare_candidate_configuration(request, config, output, **args)
     assert (

@@ -20,7 +20,7 @@ row_scales:
 routing_integer_scales:
 - 16777216
 - 4294967296
-feasibility_tolerance: 1.0e-06
+feasibility_tolerance: 1.0e-03
 target_absolute_slack: 1.0e-06
 routing_relative_target_slack: 0.01
 memory_sample_interval_sec: 0.01

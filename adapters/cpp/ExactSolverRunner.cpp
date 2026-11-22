@@ -4,9 +4,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <numeric>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -301,6 +303,41 @@ static std::string json_array(std::vector<int> const& xs) {
   return out + "]";
 }
 
+static std::chrono::steady_clock::time_point request_started;
+
+static void record_solution(std::string const& solution) {
+  char const* path = std::getenv("PITBENCH_SCENARIO_EVENTS");
+  if (!path || !*path) return;
+  double elapsed = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - request_started).count();
+  std::ofstream out(path, std::ios::app);
+  if (!out) throw std::runtime_error("cannot write scenario events");
+  out << "{\"time_sec\":" << elapsed << ",\"solution\":" << solution << "}\n";
+  if (!out) throw std::runtime_error("cannot write scenario event");
+}
+
+static std::string solution_json(BalancedSubsetSumModel const& model) {
+  std::vector<int> selected;
+  for (int i = 0; i < model.picks.size(); ++i)
+    if (model.picks[i].val() == 1) selected.push_back(i);
+  return "{\"selected_items\":" + json_array(selected) + "}";
+}
+
+static std::string solution_json(GraphColoringModel const& model) {
+  std::vector<int> colors;
+  for (int i = 0; i < model.colors.size(); ++i) colors.push_back(model.colors[i].val());
+  return "{\"colors\":" + json_array(colors) + "}";
+}
+
+template <class ModelType>
+static std::string schedule_json(ModelType const& model) {
+  std::vector<int> starts;
+  for (int i = 0; i < model.starts.size(); ++i) starts.push_back(model.starts[i].val());
+  return "{\"start_times\":" + json_array(starts) + "}";
+}
+static std::string solution_json(JobShopModel const& model) { return schedule_json(model); }
+static std::string solution_json(RcpspModel const& model) { return schedule_json(model); }
+
 struct SearchStats {
   unsigned long long nodes = 0;
   unsigned long long failures = 0;
@@ -320,6 +357,8 @@ static ModelType* optimize(double budget_ms, SearchStats& result, Args&&... args
   delete model;
   ModelType* best = nullptr;
   while (ModelType* candidate = engine.next()) {
+    if (std::getenv("PITBENCH_SCENARIO_EVENTS"))
+      record_solution(solution_json(*candidate));
     delete best;
     best = candidate;
   }
@@ -489,7 +528,8 @@ static void run_rcpsp(int argc, char** argv) {
   }
 }
 
-int main(int argc, char** argv) {
+static int run_request(int argc, char** argv) {
+  request_started = std::chrono::steady_clock::now();
   if (argc >= 2) {
     std::string mode = argv[1];
     if (mode == "balanced_subset_sum") return (run_balanced_subset_sum(argc, argv), 0);
@@ -550,6 +590,14 @@ int main(int argc, char** argv) {
       solution_bins.erase(std::remove_if(solution_bins.begin(), solution_bins.end(),
                                          [](auto const& b) { return b.empty(); }),
                           solution_bins.end());
+      if (std::getenv("PITBENCH_SCENARIO_EVENTS")) {
+        std::string solution = "{\"bins\":[";
+        for (size_t i = 0; i < solution_bins.size(); ++i) {
+          if (i) solution += ",";
+          solution += json_array(solution_bins[i]);
+        }
+        record_solution(solution + "]}");
+      }
       optimal = !engine.stopped();
       if (optimal) break;
       timed_out = true;
@@ -587,4 +635,26 @@ int main(int argc, char** argv) {
             << termination << "\",\"trajectory\":[{\"event\":\"final\",\"time_sec\":"
             << used_ms / 1000.0 << ",\"nodes\":" << nodes << "}]}\n";
   return 0;
+}
+
+int main(int argc, char** argv) {
+  if (argc != 2 || std::string(argv[1]) != "--session")
+    return run_request(argc, argv);
+  std::string line;
+  while (std::getline(std::cin, line)) {
+    try {
+      std::istringstream input(line);
+      std::vector<std::string> args{argv[0]};
+      std::string item;
+      while (input >> item) args.push_back(item);
+      std::vector<char*> pointers;
+      for (auto& arg : args) pointers.push_back(arg.data());
+      if (run_request(static_cast<int>(pointers.size()), pointers.data()) != 0)
+        std::cout << "{\"session_error\":true}\n";
+    } catch (std::exception const& error) {
+      std::cerr << error.what() << '\n';
+      std::cout << "{\"session_error\":true}\n";
+    }
+    std::cout.flush();
+  }
 }

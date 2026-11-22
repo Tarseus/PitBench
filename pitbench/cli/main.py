@@ -429,6 +429,8 @@ def _limited_evaluation_failures(
                     "expected_run_count"
                 ):
                     failures.append("representation robustness report is incomplete")
+                elif details.get("representation_robustness") is None:
+                    failures.append("representation robustness statistic is unavailable")
     return failures
 
 
@@ -495,6 +497,7 @@ def _evaluation_metric_failures(
     payload: dict[str, Any],
     *,
     smoke_test: bool = False,
+    extension_failures: list[str] | None = None,
 ) -> list[str]:
     """Validate normal-evaluation metric coverage from final stored observations."""
     artifacts = payload.get("artifacts", {})
@@ -514,14 +517,41 @@ def _evaluation_metric_failures(
     failures: list[str] = []
     expected_grid = ExpectedRunGrid.model_validate_json(expected_grid_path.read_text())
     observations = ObservationStore.read(observations_path)
-    expected_runs = {_run_identity(item) for item in expected_grid.runs}
-    observed_runs = {_run_identity(item) for item in observations}
-    if missing_runs := expected_runs - observed_runs:
-        failures.append(f"{len(missing_runs)} expected solver runs are missing")
-    if unexpected_runs := observed_runs - expected_runs:
-        failures.append(f"{len(unexpected_runs)} unexpected solver runs were recorded")
-    if len(observed_runs) != len(observations):
-        failures.append("duplicate solver runs were recorded")
+    def check_grid(expected, observed, gaps):
+        expected_runs = {_run_identity(item) for item in expected}
+        observed_runs = {_run_identity(item) for item in observed}
+        if missing_runs := expected_runs - observed_runs:
+            gaps.append(f"{len(missing_runs)} expected solver runs are missing")
+        if unexpected_runs := observed_runs - expected_runs:
+            gaps.append(f"{len(unexpected_runs)} unexpected solver runs were recorded")
+        if len(observed_runs) != len(observed):
+            gaps.append("duplicate solver runs were recorded")
+
+    if extension_failures is None or smoke_test:
+        check_grid(expected_grid.runs, observations, failures)
+    else:
+        def is_extension(row):
+            return row.test_suite is not None or row.equivalence_parent_id is not None
+
+        primary_expected = [row for row in expected_grid.runs if not is_extension(row)]
+        primary_observed = [row for row in observations if not is_extension(row)]
+        if not primary_expected:
+            failures.append("expected primary solver grid is empty")
+        check_grid(
+            primary_expected,
+            primary_observed,
+            failures,
+        )
+        infrastructure_errors = sum(
+            row.status is RunStatus.INFRASTRUCTURE_ERROR for row in primary_observed
+        )
+        if infrastructure_errors:
+            failures.append(f"{infrastructure_errors} primary infrastructure-error observations")
+        check_grid(
+            [row for row in expected_grid.runs if is_extension(row)],
+            [row for row in observations if is_extension(row)],
+            extension_failures,
+        )
 
     if smoke_test:
         infrastructure_errors = sum(
@@ -536,42 +566,43 @@ def _evaluation_metric_failures(
         return failures
 
     summary = payload.get("summary", {})
+    extensions = failures if extension_failures is None else extension_failures
     if task.metric_scenarios:
         from pitbench.evaluator.scenarios import scenario_evidence_failures
 
-        failures.extend(scenario_evidence_failures(task, output_dir, payload))
+        extensions.extend(scenario_evidence_failures(task, output_dir, payload))
     performance = summary.get("performance")
     if performance is None:
         failures.append("performance report is missing")
     elif performance.get("classification") == "incomplete":
         failures.append("performance report is incomplete")
     if summary.get("resource_usage") is None:
-        failures.append("resource report is missing")
+        extensions.append("resource report is missing")
     if (
         task.evaluation.seed_robustness is not None
         and summary.get("nuisance_robustness") is None
     ):
-        failures.append("seed robustness report is missing")
+        extensions.append("seed robustness report is missing")
     if task.evaluation.operational_reliability:
         reliability = summary.get("operational_reliability")
         if reliability is None:
-            failures.append("operational reliability report is missing")
+            extensions.append("operational reliability report is missing")
         elif not reliability.get("complete"):
-            failures.append("operational reliability report is incomplete")
+            extensions.append("operational reliability report is incomplete")
     if task.evaluation.representation_robustness is not None:
         representation = artifacts.get("representation_robustness_details")
         if not isinstance(representation, dict) or not representation.get("path"):
-            failures.append("representation robustness report is missing")
+            extensions.append("representation robustness report is missing")
         else:
             details_path = output_dir / representation["path"]
             if not details_path.is_file():
-                failures.append("representation robustness details are missing")
+                extensions.append("representation robustness details are missing")
             else:
                 details = json.loads(details_path.read_text())
                 if details.get("completed_run_count") != details.get(
                     "expected_run_count"
                 ):
-                    failures.append("representation robustness report is incomplete")
+                    extensions.append("representation robustness report is incomplete")
     return failures
 
 
@@ -597,6 +628,7 @@ def _normal_metric_coverage(
         "smoke_test": smoke_test,
     }
     all_failures: list[str] = []
+    all_extensions: list[str] = []
     if not results_path.is_file():
         all_failures.append("harness results are missing")
     else:
@@ -627,6 +659,7 @@ def _normal_metric_coverage(
             for trial in trials:
                 evaluation = trial.get("evaluation")
                 failures = []
+                extensions: list[str] = []
                 if not isinstance(evaluation, dict) or not evaluation.get("completed"):
                     failures.append(
                         "evaluator did not complete: "
@@ -642,6 +675,7 @@ def _normal_metric_coverage(
                             trial_output,
                             evaluation.get("payload", {}),
                             smoke_test=smoke_test,
+                            extension_failures=extensions,
                         )
                     )
                 coverage["tasks"].append(
@@ -649,9 +683,11 @@ def _normal_metric_coverage(
                         "task_id": task_id,
                         "trial_name": trial.get("trial_name"),
                         "failures": failures,
+                        "extension_failures": extensions,
                     }
                 )
                 all_failures.extend(f"{task_id}: {failure}" for failure in failures)
+                all_extensions.extend(f"{task_id}: {failure}" for failure in extensions)
     if configuration_output is not None or configuration_error is not None:
         configuration_failures = []
         if configuration_output is not None:
@@ -671,11 +707,16 @@ def _normal_metric_coverage(
             "output": str(configuration_output) if configuration_output else None,
             "failures": configuration_failures,
         }
-        all_failures.extend(
+        (all_failures if smoke_test else all_extensions).extend(
             f"Configuration Robustness: {failure}" for failure in configuration_failures
         )
     coverage["complete"] = not all_failures
+    coverage["primary_metrics_status"] = "incomplete" if all_failures else "complete"
+    coverage["extension_metrics_status"] = (
+        "incomplete" if all_extensions else "no_gaps_reported"
+    )
     coverage["failures"] = all_failures
+    coverage["extension_failures"] = all_extensions
     return coverage
 
 
@@ -780,9 +821,8 @@ def doctor_command(
     help="Check, materialize, and evaluate tasks together in one harness run.",
 )
 @app.command(
-    "evaluate",
-    hidden=True,
-    help="Alias for 'run' (preserved for backwards compatibility).",
+    "run",
+    help="Check, materialize, and evaluate tasks together in one harness run.",
 )
 def run_task(
     task_ids: Annotated[
@@ -928,10 +968,18 @@ def run_task(
             "agent_import_path must be in format 'module:Class'",
             param_hint="--agent-import-path",
         )
-    task_ids = _normalize_task_ids(task_ids)
+    repository_root = _root(root)
+    resolved_config_path = resolve_config_path(repository_root, config_path)
+    evaluation_config = (
+        EvaluationConfig.from_yaml(resolved_config_path)
+        if resolved_config_path is not None
+        else EvaluationConfig()
+    )
+    task_ids = _normalize_task_ids(task_ids or evaluation_config.task_ids)
     if not task_ids:
         raise typer.BadParameter(
-            "At least one task ID must be provided.", param_hint="TASK_IDS"
+            "Provide task IDs or configure task_ids in the evaluation YAML.",
+            param_hint="TASK_IDS",
         )
     if len(task_ids) != len(set(task_ids)):
         raise typer.BadParameter("task IDs must be unique", param_hint="TASK_IDS")
@@ -941,13 +989,6 @@ def run_task(
         raise typer.BadParameter(
             "For multiple tasks, configure per-task images in --config."
         )
-    repository_root = _root(root)
-    resolved_config_path = resolve_config_path(repository_root, config_path)
-    evaluation_config = (
-        EvaluationConfig.from_yaml(resolved_config_path)
-        if resolved_config_path is not None
-        else EvaluationConfig()
-    )
     if research_track is not None:
         if research_track not in {"lite", "standard", "research"}:
             raise typer.BadParameter(
@@ -1236,10 +1277,118 @@ def run_task(
     coverage_path = resolved_output_path / resolved_run_id / "metric-coverage.json"
     coverage_path.write_text(json.dumps(coverage, indent=2) + "\n")
     typer.echo(f"Metric coverage: {coverage_path}")
+    for failure in coverage.get("extension_failures", []):
+        typer.echo(f"Extension metric gap: {failure}", err=True)
     if not coverage["complete"]:
         for failure in coverage["failures"]:
             typer.echo(f"FAIL metric coverage: {failure}", err=True)
         raise typer.Exit(1)
+
+
+@app.command(
+    "evaluate",
+    help="Evaluate Agent tasks or launch a study or saved-candidate cohort from YAML.",
+)
+def evaluate_command(
+    task_ids: Annotated[
+        list[str] | None,
+        typer.Argument(help="One or more task IDs for Agent evaluation"),
+    ] = None,
+    config_path: Annotated[
+        Path | None,
+        typer.Option("--config", exists=True, dir_okay=False, help="Evaluation or study YAML"),
+    ] = None,
+    agent: Annotated[AgentName | None, typer.Option("--agent", "-a")] = None,
+    model_name: Annotated[str | None, typer.Option("--model", "-m")] = None,
+    agent_import_path: Annotated[str | None, typer.Option("--agent-import-path")] = None,
+    output_path: Annotated[Path | None, typer.Option()] = None,
+    run_id: Annotated[str | None, typer.Option()] = None,
+    workspace_path: Annotated[Path | None, typer.Option()] = None,
+    private_root: Annotated[Path | None, typer.Option()] = None,
+    agent_image: Annotated[str | None, typer.Option()] = None,
+    judge_image: Annotated[str | None, typer.Option()] = None,
+    judge_parallel_runs: Annotated[int | None, typer.Option(min=1)] = None,
+    judge_cpus: Annotated[float | None, typer.Option(min=0.1)] = None,
+    base_cache: Annotated[bool | None, typer.Option("--base-cache/--no-base-cache")] = None,
+    base_observations_path: Annotated[Path | None, typer.Option()] = None,
+    n_concurrent: Annotated[int, typer.Option("--n-concurrent", min=1)] = 1,
+    n_attempts: Annotated[int, typer.Option(min=1)] = 1,
+    agent_kwargs: Annotated[list[str], typer.Option("--agent-kwarg", "-k")] = [],
+    research_track: Annotated[str | None, typer.Option()] = None,
+    rebuild: Annotated[bool, typer.Option()] = False,
+    livestream: Annotated[bool, typer.Option()] = False,
+    check_only: Annotated[bool, typer.Option()] = False,
+    defer_evaluation: Annotated[bool, typer.Option()] = False,
+    configuration_robustness: Annotated[bool, typer.Option("--configuration-robustness/--no-configuration-robustness")] = True,
+    smoke_test: Annotated[bool, typer.Option()] = False,
+    status: Annotated[bool, typer.Option(help="Show study or saved-cohort status")] = False,
+    prepare_only: Annotated[bool, typer.Option(help="Prepare the cohort without starting work")] = False,
+    reports_only: Annotated[bool, typer.Option(help="Rebuild reports from retained measurements")] = False,
+    report_output: Annotated[Path | None, typer.Option(help="Report destination")] = None,
+    workers: Annotated[int | None, typer.Option(min=0, help="Study or evaluation workers; 0 selects automatically")] = None,
+    foreground: Annotated[bool, typer.Option(help="Wait for the study or saved-cohort evaluation")] = False,
+    root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
+) -> None:
+    """Run a saved multi-task/multi-model cohort or a single Agent task."""
+    if config_path is not None:
+        import yaml
+
+        profile = yaml.safe_load(config_path.read_text()) or {}
+        if profile.get("phase") == "study-models":
+            if task_ids or agent is not None or model_name is not None or agent_import_path is not None:
+                raise typer.BadParameter("study tasks and models are selected by the study plan")
+            if reports_only or report_output is not None or check_only or defer_evaluation or smoke_test:
+                raise typer.BadParameter("these options are unavailable for a study-models profile")
+            if status and prepare_only:
+                raise typer.BadParameter("--status and --prepare-only cannot be combined")
+            from pitbench.harness.harness.campaign import run_study_cohort
+
+            try:
+                run_study_cohort(config_path, workers=workers, prepare_only=prepare_only,
+                                 status=status, foreground=foreground, livestream=livestream,
+                                 root=_root(root))
+            except (OSError, ValueError) as error:
+                raise typer.BadParameter(str(error), param_hint="--config") from error
+            return
+        if profile.get("phase") in {
+            "study-evaluations",
+            "study-parameters",
+            "study-reports",
+        }:
+            if task_ids or agent is not None or model_name is not None or agent_import_path is not None:
+                raise typer.BadParameter("saved-cohort evaluation takes its task/model matrix from the YAML profile")
+            from pitbench.harness.harness.campaign import evaluate_saved_patch_cohort
+
+            try:
+                evaluate_saved_patch_cohort(
+                    config_path,
+                    workers=workers,
+                    prepare_only=prepare_only,
+                    status=status,
+                    foreground=foreground,
+                    reports_only=reports_only,
+                    report_output=report_output,
+                    root=_root(root),
+                )
+            except (OSError, ValueError) as error:
+                raise typer.BadParameter(str(error), param_hint="--config") from error
+            return
+    if status or prepare_only or reports_only or report_output is not None or workers is not None:
+        raise typer.BadParameter("cohort-only options require a study evaluation YAML")
+    run_task(
+        task_ids, agent=agent, agent_import_path=agent_import_path,
+        model_name=model_name, output_path=output_path, run_id=run_id,
+        workspace_path=workspace_path, private_root=private_root,
+        agent_image=agent_image, judge_image=judge_image,
+        judge_parallel_runs=judge_parallel_runs, judge_cpus=judge_cpus,
+        base_cache=base_cache, base_observations_path=base_observations_path,
+        n_concurrent=n_concurrent, n_attempts=n_attempts,
+        research_track=research_track, agent_kwargs=agent_kwargs, rebuild=rebuild,
+        livestream=livestream, config_path=config_path, check_only=check_only,
+        defer_evaluation=defer_evaluation,
+        configuration_robustness=configuration_robustness,
+        smoke_test=smoke_test, root=root,
+    )
 
 
 @app.command("evaluate-patches")
@@ -2403,6 +2552,51 @@ def report_campaign_command(
         f"{len(report['figures'])} confidence-interval figures; "
         f"{report['summary']['missing_or_failed']} missing or failed evaluations."
     )
+
+
+@app.command(
+    "baseline",
+    help="Run or live-monitor BASE-only evaluation across a frozen task manifest.",
+)
+def baseline_command(
+    config_path: Annotated[
+        Path,
+        typer.Option("--config", exists=True, dir_okay=False, help="BASE sweep YAML"),
+    ],
+    status: Annotated[bool, typer.Option(help="Print one BASE status snapshot")] = False,
+    watch: Annotated[bool, typer.Option(help="Continuously monitor BASE task status")] = False,
+    live_stream: Annotated[
+        bool, typer.Option("--live-stream", help="Stream live Judge progress lines")
+    ] = False,
+    interval_sec: Annotated[
+        float, typer.Option(min=0.5, help="Live status refresh interval in seconds")
+    ] = 10,
+    workers: Annotated[
+        int | None,
+        typer.Option(min=0, help="Parallel BASE task slots; 0 selects automatically"),
+    ] = None,
+    foreground: Annotated[
+        bool,
+        typer.Option(help="Wait for the BASE sweep instead of launching in the background"),
+    ] = False,
+    root: Annotated[Path | None, typer.Option(help="PitBench repository root")] = None,
+) -> None:
+    """Run BASE only and stream the existing isolated Judge progress."""
+    from pitbench.cli.baseline import run_baseline_profile
+
+    try:
+        run_baseline_profile(
+            config_path,
+            root=_root(root),
+            status=status,
+            watch=watch,
+            live_stream=live_stream,
+            interval_sec=interval_sec,
+            workers=workers,
+            foreground=foreground,
+        )
+    except (OSError, ValueError, KeyError) as error:
+        raise typer.BadParameter(str(error), param_hint="--config") from error
 
 
 if __name__ == "__main__":

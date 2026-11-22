@@ -539,6 +539,11 @@ def compute_scenario_report(
                     observed_runs=sum(k in indexed for k in keys),
                 )
                 result.issues = sorted({issues[k] for k in keys if k in issues})
+                if keys and all(k in indexed and indexed[k].status == "unsupported" for k in keys):
+                    result.classification = "unsupported"
+                    result.issues = ["solver interface does not expose this scenario capability"]
+                    results.append(result)
+                    continue
                 result.quality_qualified = all(
                     k in measured and measured[k].get("__quality_qualified")
                     for k in keys

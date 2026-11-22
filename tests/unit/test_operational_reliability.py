@@ -204,6 +204,16 @@ def test_boundary_references_are_feasible_and_integer_optima_are_independently_k
         assert IntegerBoundaryFamily().verify(instance, solution).feasible
 
 
+def test_boundary_lp_variable_names_use_generated_model(tmp_path):
+    from pitbench.problem_families.verification import expected_mip_variable_names
+
+    for case in LinearBoundarySuite.cases():
+        instance = LinearBoundarySuite.write(case, tmp_path)
+        assert expected_mip_variable_names(instance) == {
+            f"x{index}" for index in range(len(case.data["costs"]))
+        }
+
+
 def test_integer_verifier_checks_feasibility_objective_and_optimality_claims(tmp_path):
     case = LinearBoundarySuite.cases()[2]
     instance = LinearBoundarySuite.write(case, tmp_path)

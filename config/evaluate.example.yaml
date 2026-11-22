@@ -24,6 +24,8 @@ configuration_robustness:
   search_seed: 20260918
 
 # Evaluation execution options (null fills the allocated CPU slots)
+# Optional default task selection; explicit command-line task IDs override it.
+# task_ids: [pyvrp_v0_14_0, highs_v1_15_1]
 # judge_parallel_runs: 10
 # judge_cpus: 10.0
 # Ad-hoc runs opt into Base/build caching; the study launcher enables campaign-local

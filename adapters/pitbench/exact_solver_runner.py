@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 
-def solve(request: dict, *, engine: str) -> dict:
+def command_for_request(request: dict, *, engine: str) -> list[str]:
     if engine != "gecode":
         raise ValueError(f"unsupported exact solver engine: {engine}")
     if request.get("threads") != 1:
@@ -118,6 +118,11 @@ def solve(request: dict, *, engine: str) -> dict:
         ]
     else:
         raise ValueError(f"Gecode adapter does not support {kind}")
+    return argv
+
+
+def solve(request: dict, *, engine: str) -> dict:
+    argv = command_for_request(request, engine=engine)
     completed = subprocess.run(
         argv,
         check=False,

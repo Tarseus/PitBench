@@ -1,0 +1,48 @@
+e8_pyvrp_cvrp:
+- e8_pyvrp_cvrp
+- e8_pyvrp_vrptw
+- e8_pyvrp_heterogeneous_fleet_vrp
+- e8_pyvrp_multi_depot_vrp
+- e8_pyvrp_open_vrp
+e8_vroom_cvrp:
+- e8_vroom_cvrp
+- e8_vroom_vrptw
+- e8_vroom_heterogeneous_fleet_vrp
+- e8_vroom_multi_depot_vrp
+- e8_vroom_open_vrp
+e8_highs_scheduling:
+- e8_highs_multidimensional_knapsack
+- e8_highs_set_covering
+- e8_highs_facility_location
+- e8_highs_graph_coloring
+- e8_highs_scheduling
+e8_choco_bin_packing:
+- e8_choco_bin_packing
+- e8_choco_graph_coloring
+- e8_choco_job_shop_scheduling
+- e8_choco_resource_constrained_project_scheduling
+- e8_choco_balanced_subset_sum
+e8_gecode_bin_packing:
+- e8_gecode_bin_packing
+- e8_gecode_graph_coloring
+- e8_gecode_job_shop_scheduling
+- e8_gecode_resource_constrained_project_scheduling
+- e8_gecode_balanced_subset_sum
+e8_ortools_cp_sat_job_shop_scheduling:
+- e8_ortools_cp_sat_bin_packing
+- e8_ortools_cp_sat_graph_coloring
+- e8_ortools_cp_sat_job_shop_scheduling
+- e8_ortools_cp_sat_resource_constrained_project_scheduling
+- e8_ortools_cp_sat_balanced_subset_sum
+e8_scip_multidimensional_knapsack:
+- e8_scip_multidimensional_knapsack
+- e8_scip_set_covering
+- e8_scip_facility_location
+- e8_scip_graph_coloring
+- e8_scip_scheduling
+e8_cbc_multidimensional_knapsack:
+- e8_cbc_multidimensional_knapsack
+- e8_cbc_set_covering
+- e8_cbc_facility_location
+- e8_cbc_graph_coloring
+- e8_cbc_scheduling

@@ -27,17 +27,25 @@ def evaluator_validity(
                 detail="explicit deterministic fixture mode",
             )
         )
-    invalid_agent_runs = sum(
-        item.code_state == CodeState.AGENT and item.status == RunStatus.INVALID
-        for item in observations or []
-    )
-    if invalid_agent_runs:
+    invalid_agent_runs = 0
+    for scope in ("primary", "extension"):
+        invalid_count = sum(
+            item.code_state == CodeState.AGENT
+            and item.status == RunStatus.INVALID
+            and (item.test_suite is not None or item.equivalence_parent_id is not None)
+            == (scope == "extension")
+            for item in observations or []
+        )
+        if not invalid_count:
+            continue
+        invalid_agent_runs += invalid_count
         checks.append(
             ValidityCheck(
                 code=ValidityCode.SOLUTION,
                 passed=False,
+                scope=scope,
                 detail=(
-                    f"candidate produced {invalid_agent_runs} independently "
+                    f"candidate produced {invalid_count} independently "
                     "verified invalid solution(s)"
                 ),
             )
@@ -47,6 +55,7 @@ def evaluator_validity(
             ValidityCheck(
                 code=ValidityCode.SOLUTION,
                 passed=False,
+                scope="extension",
                 detail=f"candidate produced {scenario_verification_failures} invalid solution(s) in independently checked metric scenarios",
             )
         )

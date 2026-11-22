@@ -1,13 +1,19 @@
 package org.pitbench.adapters;
 
 import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.lang.management.ManagementFactory;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -17,11 +23,35 @@ import org.chocosolver.solver.Solver;
 import org.chocosolver.solver.constraints.Constraint;
 import org.chocosolver.solver.constraints.ternary.PropXplusYeqZ;
 import org.chocosolver.solver.search.strategy.Search;
+import org.chocosolver.solver.search.loop.monitors.IMonitorSolution;
 import org.chocosolver.solver.variables.IntVar;
 import org.chocosolver.solver.variables.Task;
 
 public final class ExactSolverRunner {
     private ExactSolverRunner() {}
+    private static long requestStartedNanos;
+
+    private static void observeSolutions(
+        Model model, Function<Solution, String> encodeSolution
+    ) {
+        String destination = System.getenv("PITBENCH_SCENARIO_EVENTS");
+        if (destination == null || destination.isEmpty()) {
+            return;
+        }
+        Solver solver = model.getSolver();
+        solver.plugMonitor((IMonitorSolution) () -> {
+            Solution solution = new Solution(model).record();
+            double elapsed = (System.nanoTime() - requestStartedNanos) / 1_000_000_000.0;
+            String event = "{\"time_sec\":" + elapsed
+                + ",\"solution\":" + encodeSolution.apply(solution) + "}\n";
+            try {
+                Files.writeString(Path.of(destination), event,
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            } catch (IOException error) {
+                throw new IllegalStateException("cannot record solution event", error);
+            }
+        });
+    }
 
     private static void setSolverSeed(Model model, long solverSeed) {
         try {
@@ -152,6 +182,14 @@ public final class ExactSolverRunner {
         return json.append(']').toString();
     }
 
+    private static String startsJson(Solution solution, IntVar[] starts) {
+        int[] values = new int[starts.length];
+        for (int index = 0; index < starts.length; index++) {
+            values[index] = solution.getIntVal(starts[index]);
+        }
+        return "{\"start_times\":" + jsonIntArray(values) + "}";
+    }
+
     private static void runBalancedSubsetSum(
         String instance,
         long solverSeed,
@@ -219,6 +257,8 @@ public final class ExactSolverRunner {
                 throw new IllegalArgumentException("unsupported search_strategy: " + searchStrategy);
         }
         solver.limitTime((long) Math.ceil(budgetSec * 1000.0));
+        observeSolutions(model, solution ->
+            "{\"selected_items\":" + selectedItemsJson(solution, picks) + "}");
         long cpuStart = processCpuTime();
         Solution solution = solver.findOptimalSolution(deviation, false);
         long cpuEnd = processCpuTime();
@@ -293,6 +333,8 @@ public final class ExactSolverRunner {
                 throw new IllegalArgumentException("unsupported search_strategy: " + searchStrategy);
         }
         solver.limitTime((long) Math.ceil(budgetSec * 1000.0));
+        observeSolutions(model, solution ->
+            "{\"colors\":" + colorsJson(solution, colors) + "}");
         long cpuStart = processCpuTime();
         Solution solution = solver.findOptimalSolution(maximumColor, false);
         long cpuEnd = processCpuTime();
@@ -473,6 +515,7 @@ public final class ExactSolverRunner {
         Solver solver = model.getSolver();
         selectStarts(solver, starts, searchStrategy);
         solver.limitTime((long) Math.ceil(budgetSec * 1000.0));
+        observeSolutions(model, solution -> startsJson(solution, starts));
         long cpuStart = processCpuTime();
         Solution solution = solver.findOptimalSolution(makespan, false);
         long cpuEnd = processCpuTime();
@@ -547,6 +590,7 @@ public final class ExactSolverRunner {
         Solver solver = model.getSolver();
         selectStarts(solver, starts, searchStrategy);
         solver.limitTime((long) Math.ceil(budgetSec * 1000.0));
+        observeSolutions(model, solution -> startsJson(solution, starts));
         long cpuStart = processCpuTime();
         Solution solution = solver.findOptimalSolution(makespan, false);
         long cpuEnd = processCpuTime();
@@ -556,11 +600,40 @@ public final class ExactSolverRunner {
     }
 
     public static void main(String[] args) throws IOException {
+        if (args.length == 1 && args[0].equals("--session")) {
+            BufferedReader requests = new BufferedReader(new InputStreamReader(
+                System.in, StandardCharsets.UTF_8));
+            String line;
+            while ((line = requests.readLine()) != null) {
+                try {
+                    String[] encoded = line.split("\\t", -1);
+                    String[] request = new String[encoded.length];
+                    for (int i = 0; i < encoded.length; i++) {
+                        request[i] = new String(Base64.getDecoder().decode(encoded[i]),
+                            StandardCharsets.UTF_8);
+                    }
+                    if (request.length == 1 && request[0].equals("--gc")) {
+                        System.gc();
+                        System.runFinalization();
+                        System.out.println("{}");
+                        System.out.flush();
+                        continue;
+                    }
+                    main(request);
+                } catch (Exception error) {
+                    error.printStackTrace(System.err);
+                    System.out.println("{\"session_error\":true}");
+                }
+                System.out.flush();
+            }
+            return;
+        }
         if (args.length < 4 || args.length > 5) {
             throw new IllegalArgumentException(
                 "expected instance_path solver_seed budget_sec threads [parameters_json]"
             );
         }
+        requestStartedNanos = System.nanoTime();
         Path instancePath = Path.of(args[0]);
         long solverSeed = Long.parseLong(args[1]);
         double budgetSec = Double.parseDouble(args[2]);
@@ -663,6 +736,9 @@ public final class ExactSolverRunner {
                 throw new IllegalArgumentException("unsupported search_strategy: " + searchStrategy);
         }
         solver.limitTime((long) Math.ceil(budgetSec * 1000.0));
+        observeSolutions(model, solution ->
+            "{\"bins\":" + binsJson(solution, itemBins, originalItemIndices,
+                solution.getIntVal(maximumBin) + 1) + "}");
         long cpuStart = processCpuTime();
         Solution solution = solver.findOptimalSolution(maximumBin, false);
         long cpuEnd = processCpuTime();

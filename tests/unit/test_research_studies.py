@@ -973,3 +973,48 @@ def test_supplemental_views_keep_native_panels_and_mark_bks_as_quality(tmp_path)
     plan = GeneralizationStudyPlan.model_validate(plan_payload)
     with pytest.raises(ValueError, match="requires independently verified optimal references"):
         materialize_generalization_views(plan=plan, root=root, population_root=population, references_path=references, private_root=private, destination=root / "views", retain_primary_panels=True)
+
+
+def test_reference_refresh_validates_candidates_and_preserves_source(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from pitbench.evaluator.judge import JudgePlan
+    from pitbench.research import refresh_task_reference_views
+
+    private = tmp_path / "private"
+    private.mkdir()
+    instance = private / "instance.json"
+    instance.write_text(json.dumps({"coordinates": [[0, 0], [1, 0], [2, 0]],
+        "demands": [0, 1, 1], "capacity": 2, "depot": 0, "distance_metric": "EUC_2D"}))
+    panel_path = private / "panel.yaml"
+    panel_path.write_text(yaml.safe_dump({"visibility": "judge", "instances": [
+        {"id": "good", "uri": "private://instance.json", "optimal_or_bks": 10},
+        {"id": "bad", "uri": "private://instance.json", "optimal_or_bks": 10},
+    ]}))
+    task = PitBenchTask.from_yaml(ROOT / "configs/tasks/release_pyvrp_v0_14_1.yaml")
+    panel = next(x for x in task.instance_sets if x.kind.value == "judge_id")
+    panel.instance_set_config = "private://panel.yaml"
+    panel.instance_set_config_sha256 = None
+    panel.size = 2
+    task_path = tmp_path / (task.task_id + ".yaml")
+    task_path.write_text(yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False))
+    before_task, before_panel = task_path.read_bytes(), panel_path.read_bytes()
+    solution = tmp_path / "solution.json"
+    solution.write_text(json.dumps({"routes": [[1, 2]]}))
+    cases = [SimpleNamespace(instance_set=panel, instance_id=name, test_suite=None,
+        path=instance, anchor=10, verifier=None) for name in ("good", "bad")]
+    monkeypatch.setattr(JudgePlan, "from_instance_set_configs", lambda *a, **k: SimpleNamespace(cases=cases))
+    result = refresh_task_reference_views(
+        task_paths=[task_path], root=ROOT, private_root=private,
+        output=tmp_path / "views", asset_destination=private / "new",
+        candidates=[{"instance": "good", "status": "verified", "objective": 4, "solution": str(solution)},
+                    {"instance": "bad", "status": "verified", "objective": 3, "solution": str(solution)}],
+    )
+    assert [row["instance_id"] for row in result["updated"]] == ["good"]
+    assert [row["instance_id"] for row in result["failures"]] == ["bad"]
+    refreshed = PitBenchTask.from_yaml(Path(result["tasks"][task.task_id]))
+    new_panel = next(x for x in refreshed.instance_sets if x.kind.value == "judge_id")
+    data = yaml.safe_load((private / new_panel.instance_set_config.removeprefix("private://")).read_text())
+    assert [x["optimal_or_bks"] for x in data["instances"]] == [4, 10]
+    assert task_path.read_bytes() == before_task
+    assert panel_path.read_bytes() == before_panel

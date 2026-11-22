@@ -72,6 +72,28 @@ def test_development_storage_resolves_log_symlinks_and_keeps_tmp_writable(tmp_pa
     assert (storage / "workspace" / "retained").read_text() == "candidate"
 
 
+def test_continuation_copies_previous_workspace_without_overwriting_it(tmp_path, monkeypatch):
+    import os
+
+    original = tmp_path / "old/development-storage"
+    (original / "workspace").mkdir(parents=True)
+    (original / "workspace/source.c").write_text("partial work")
+    (original / "tmp").mkdir()
+    (original / "tmp/experiment.py").write_text("research context")
+    os.mkfifo(original / "tmp/old-pipe")
+    monkeypatch.setenv("PITBENCH_CONTINUATION_STORAGE", str(original))
+    context = tmp_path / "recorded-history.jsonl"
+    context.write_text('{"event":"mcp.started"}\n')
+    monkeypatch.setenv("PITBENCH_CONTINUATION_CONTEXT", str(context))
+    restored = DockerComposeManager.prepare_development_storage(tmp_path / "new/agent-logs")
+    assert (restored / "workspace/source.c").read_text() == "partial work"
+    assert (restored / "tmp/experiment.py").read_text() == "research context"
+    assert not (restored / "tmp/old-pipe").exists()
+    assert (restored / "tmp/pitbench-continuation.jsonl").read_text() == context.read_text()
+    (restored / "workspace/source.c").write_text("continued")
+    assert (original / "workspace/source.c").read_text() == "partial work"
+
+
 def test_nested_sandbox_override_avoids_duplicate_security_options(tmp_path: Path):
     compose_path = tmp_path / "docker-compose.yaml"
     compose_path.write_text(

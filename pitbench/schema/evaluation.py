@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field, computed_field
 
@@ -36,6 +37,7 @@ class ValidityCheck(BaseModel):
     code: ValidityCode
     passed: bool
     detail: str
+    scope: Literal["primary", "extension"] = "primary"
 
 
 class ValidityResult(BaseModel):
@@ -45,6 +47,18 @@ class ValidityResult(BaseModel):
     @property
     def accepted(self) -> bool:
         return bool(self.checks) and all(check.passed for check in self.checks)
+
+    @computed_field
+    @property
+    def primary_accepted(self) -> bool:
+        checks = [check for check in self.checks if check.scope == "primary"]
+        return bool(checks) and all(check.passed for check in checks)
+
+    @computed_field
+    @property
+    def extension_accepted(self) -> bool | None:
+        checks = [check for check in self.checks if check.scope == "extension"]
+        return all(check.passed for check in checks) if checks else None
 
 
 class ArtifactRef(BaseModel):
@@ -81,6 +95,7 @@ class EvaluationSummary(BaseModel):
     performance_confirmation_observation_count: int = Field(default=0, ge=0)
     counts_by_state: dict[CodeState, int] = Field(default_factory=dict)
     performance: PerformanceReport | ExactPerformanceReport | None = None
+    trusted_optimum_performance: ExactPerformanceReport | None = None
     controlled_transfer: ControlledTransferReport | None = None
     nuisance_robustness: SeedRobustnessReport | ExactSeedRobustnessReport | None = None
     resource_usage: ResourceReport | None = None

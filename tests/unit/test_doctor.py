@@ -558,3 +558,22 @@ def test_doctor_rejects_judge_without_declared_scenario_dependencies(tmp_path):
     assert result.status is CheckStatus.FAIL
     assert "numpy" in result.detail
     assert run.call_args.kwargs["network_disabled"] is True
+
+
+def test_scenario_preflight_uses_current_solver_session_when_old_hint_is_empty(tmp_path, monkeypatch):
+    import yaml
+
+    from pitbench.cli.doctor import _metric_scenario_checks
+
+    context = doctor_context(tmp_path)
+    task = context.task.task
+    task.repository.plugin = "pitbench.repositories.plugins:ChocoRepositoryPlugin"
+    task.metric_scenarios = [SimpleNamespace()]
+    path = tmp_path / "scenarios.yaml"
+    path.write_text(yaml.safe_dump({"source_build": {"source_commit": "pinned",
+        "repository_plugin": task.repository.plugin, "session_plugin": None,
+        "from_evaluation_repository": True}}))
+    context.config.metric_scenario_configs[task.task_id] = path
+    monkeypatch.setattr("pitbench.evaluator.scenarios.resolve_model_inputs", lambda *a, **k: ({}, []))
+    checks = _metric_scenario_checks(context)
+    assert checks[0].status is CheckStatus.PASS

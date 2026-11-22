@@ -361,9 +361,16 @@ def prepare_candidate_configuration(
     ]
     instance_count = panel.get("instance_count", configuration["instance_count"])
     if len(cases) < instance_count:
-        raise ValueError(
-            "native hidden panel is smaller than the declared parameter panel"
+        manifest.update(
+            coverage="unavailable",
+            reason=(
+                "native parameter panel requires "
+                f"{instance_count} hidden instances but the selected task provides "
+                f"{len(cases)}"
+            ),
         )
+        write_json(manifest_path, manifest)
+        return manifest
     instances = [
         {
             "id": f"{case.instance_set.name}/{case.instance_id}",
@@ -835,11 +842,13 @@ def attach_configuration_report(
         check = {
             "code": "solution",
             "passed": False,
+            "scope": "extension",
             "detail": "independently invalid candidate solutions under declared parameter settings",
         }
         if check not in validity["checks"]:
             validity["checks"].append(check)
         validity["accepted"] = False
+        validity["extension_accepted"] = False
 
 
 def materialize_fidelity_stages(search: dict) -> list[dict]:

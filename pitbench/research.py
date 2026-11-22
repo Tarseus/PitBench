@@ -3200,7 +3200,7 @@ def prepare_saved_patch_suite(specification_path: Path) -> dict:
     cohort = json.loads((source / "cohort.json").read_text())
     config = EvaluationConfig.from_yaml(spec.evaluation_config)
     private = PrivateAssetResolver(config.paths.private_root if config.paths.private_root.is_absolute() else root / config.paths.private_root).root
-    plan = GeneralizationStudyPlan.model_validate_json(spec.study_plan.read_text())
+    plan = GeneralizationStudyPlan.model_validate(yaml.safe_load(spec.study_plan.read_text()))
     stage = root / "dataset/saved-patch-suites" / output.name
     stage.mkdir(parents=True, exist_ok=False)
     source_tasks = {}
@@ -3313,4 +3313,115 @@ def prepare_saved_patch_suite(specification_path: Path) -> dict:
     result = {"source_cohort": str(source), "new_agent_starts": 0, "saved_candidates": len(cohort["jobs"]), "coverage": coverage, "profile": str(profile_path)}
     _write(output / "metric-plan.json", {"metrics": metric_plan, "parameter_supplementation": str(spec.parameter_supplementation) if spec.parameter_supplementation else None})
     _write(output / "suite.json", result)
+    return result
+
+
+def refresh_task_reference_views(
+    *,
+    task_paths: list[Path],
+    candidates: list[dict],
+    root: Path,
+    private_root: Path,
+    output: Path,
+    asset_destination: Path,
+) -> dict:
+    """Create separate task views with independently checked, improved BKS values."""
+    from pitbench.evaluator.judge import JudgePlan
+    from pitbench.evaluator.private_assets import PrivateAssetResolver
+    from pitbench.problem_families.base import ProblemFamilyRegistry, objectives_equal
+    from pitbench.problem_families.verification import TrustedOptimumOracle
+    from pitbench.schema.task import InstanceSetKind
+
+    root = root.resolve()
+    resolver = PrivateAssetResolver(private_root)
+    asset_destination = resolver.destination_path(asset_destination)
+    if output.exists() or asset_destination.exists():
+        raise FileExistsError("reference refresh needs new output and asset directories")
+    selected = {}
+    for row in candidates:
+        if row.get("status") != "verified":
+            continue
+        identity = row["instance"]
+        if identity in selected:
+            raise ValueError(f"duplicate reference candidate: {identity}")
+        selected[identity] = row
+    output.mkdir(parents=True)
+    asset_destination.mkdir(parents=True)
+    updated, failures, paths = [], [], {}
+    with tempfile.TemporaryDirectory(prefix="pitbench-reference-refresh-") as temporary:
+        for task_path in task_paths:
+            task = PitBenchTask.from_yaml(task_path).model_copy(deep=True)
+            plan = JudgePlan.from_instance_set_configs(
+                task, resolver, public_root=root, generated_root=Path(temporary) / task.task_id
+            )
+            family = ProblemFamilyRegistry.load(task.problem_family)
+            accepted = {}
+            for case in plan.cases:
+                if case.instance_set.kind is InstanceSetKind.AGENT_DEV or case.test_suite:
+                    continue
+                candidate = selected.get(case.instance_id)
+                if candidate is None or case.anchor is None or case.path is None:
+                    continue
+                value = candidate["objective"]
+                direction = 1 if task.oracle.objective_sense == "minimize" else -1
+                if direction * (value - case.anchor) >= 0 or objectives_equal(value, case.anchor):
+                    continue
+                try:
+                    checked = (case.verifier or family).verify(case.path, Path(candidate["solution"]))
+                    if not checked.feasible or not objectives_equal(checked.objective, value):
+                        raise ValueError(checked.detail or "candidate objective differs")
+                    record = getattr(case.verifier, "record", None)
+                    if record is not None and record.target_kind != "best_found":
+                        raise ValueError("candidate conflicts with a non-BKS reference")
+                    accepted[(case.instance_set.name, case.instance_id)] = candidate
+                except (OSError, ValueError) as error:
+                    failures.append({"task_id": task.task_id, "instance_id": case.instance_id, "error": str(error)})
+            task_assets = asset_destination / task.task_id
+            for panel in task.instance_sets:
+                if panel.kind is InstanceSetKind.AGENT_DEV or panel.scenario_only:
+                    continue
+                chosen = {identity: row for (name, identity), row in accepted.items() if name == panel.name}
+                if not chosen:
+                    continue
+                payload = yaml.safe_load(resolver.resolve(panel.instance_set_config, panel.instance_set_config_sha256).read_text())
+                for item in payload.get("instances", []):
+                    if item["id"] in chosen:
+                        item["optimal_or_bks"] = chosen[item["id"]]["objective"]
+                path = task_assets / "panels" / (panel.name + ".yaml")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(yaml.safe_dump(payload, sort_keys=False))
+                panel.instance_set_config = "private://" + path.relative_to(resolver.root).as_posix()
+                panel.instance_set_config_sha256 = _sha(path)
+            if task.task_type.value == "exact_solver" and accepted:
+                oracle = TrustedOptimumOracle.from_yaml(resolver.resolve(task.oracle.source, task.oracle.source_sha256))
+                for record in oracle.records:
+                    candidate = accepted.get((record.instance_set, record.instance_id))
+                    if candidate is None:
+                        continue
+                    solution = asset_destination / "solutions" / (record.instance_id + ".json")
+                    solution.parent.mkdir(parents=True, exist_ok=True)
+                    if not solution.exists():
+                        shutil.copy2(candidate["solution"], solution)
+                    previous = record.optimal_objective
+                    record.optimal_objective = candidate["objective"]
+                    record.reference_solution_uri = "private://" + solution.relative_to(resolver.root).as_posix()
+                    record.reference_solution_sha256 = _sha(solution)
+                    record.optimality_basis = {
+                        "kind": "feasible_search_reference",
+                        "reference_refresh": {"previous_objective": previous, "source_host": candidate.get("host"), "solver_reported_optimal": bool(candidate.get("solver_reported_optimal"))},
+                    }
+                oracle_path = task_assets / "oracle.yaml"
+                oracle_path.parent.mkdir(parents=True, exist_ok=True)
+                oracle_path.write_text(yaml.safe_dump(oracle.model_dump(mode="json"), sort_keys=False))
+                task.oracle.source = "private://" + oracle_path.relative_to(resolver.root).as_posix()
+                task.oracle.source_sha256 = _sha(oracle_path)
+            task = PitBenchTask.model_validate(task.model_dump())
+            destination = output / (task.task_id + ".yaml")
+            destination.write_text(yaml.safe_dump(task.model_dump(mode="json"), sort_keys=False))
+            # Verify all changed targets and reference witnesses through the ordinary Judge plan.
+            JudgePlan.from_instance_set_configs(task, resolver, public_root=root, generated_root=Path(temporary) / (task.task_id + "-refreshed"))
+            paths[task.task_id] = str(destination.resolve())
+            updated.extend({"task_id": task.task_id, "panel": panel, "instance_id": identity, "objective": row["objective"], "source_host": row.get("host")} for (panel, identity), row in accepted.items())
+    result = {"tasks": paths, "updated": updated, "failures": failures, "source": "independently_verified_best_found", "scenario_targets": "unchanged"}
+    _write(output / "reference-refresh.json", result)
     return result

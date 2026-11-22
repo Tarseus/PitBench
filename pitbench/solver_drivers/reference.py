@@ -23,6 +23,8 @@ from typing import Any
 from pitbench.instances.generate import (
     _job_shop_operations,
     balanced_subset_sum_data,
+    best_fit_decreasing_packing,
+    bin_packing_initial_solution_path,
     binary_clique_cover_data,
     binary_clique_cover_fme_extensions,
     capacity_partition_routes,
@@ -1551,7 +1553,8 @@ def _solve_cp_backend(
 
     model = cp_model.CpModel()
     if kind == "bin_packing":
-        instance = json.loads(path.read_text())
+        raw = path.read_bytes()
+        instance = json.loads(raw)
         weights = instance["weights"]
         capacity = int(instance["capacity"])
         if not weights or any(
@@ -1560,24 +1563,17 @@ def _solve_cp_backend(
             raise ValueError("invalid bin-packing weights or capacity")
         total = sum(weights)
         lower_bound = math.ceil(total / capacity)
-        order = sorted(range(len(weights)), key=lambda index: (-weights[index], index))
-        initial_bins: list[list[int]] = []
-        initial_loads: list[int] = []
-        for item in order:
-            choices = [
-                index
-                for index, load in enumerate(initial_loads)
-                if load + weights[item] <= capacity
-            ]
-            if choices:
-                bin_index = min(
-                    choices, key=lambda index: (capacity - initial_loads[index], index)
-                )
-                initial_bins[bin_index].append(item)
-                initial_loads[bin_index] += weights[item]
+        initial_bins = best_fit_decreasing_packing(weights, capacity)
+        if build_only and warm is None:
+            initial_path = bin_packing_initial_solution_path(path)
+            if initial_path.is_file():
+                warm = json.loads(initial_path.read_text())
+                if warm.get("instance_sha256") != hashlib.sha256(raw).hexdigest():
+                    raise ValueError("bin-packing initial solution belongs to another instance")
+                if warm.get("method") != "best_fit_decreasing" or warm.get("bins") != initial_bins:
+                    raise ValueError("bin-packing initial solution differs from the declared method")
             else:
-                initial_bins.append([item])
-                initial_loads.append(weights[item])
+                warm = {"bins": initial_bins}
         emit({"bins": initial_bins})
         bin_count = len(initial_bins)
         assignments = [
@@ -1623,18 +1619,18 @@ def _solve_cp_backend(
             }
 
         if warm:
-            warm_bins = warm.get("bins", [])
-            bin_of = {
-                item: bin_index
-                for bin_index, items in enumerate(warm_bins)
-                for item in items
-            }
-            if len(bin_of) == len(weights):
-                for item, bin_index in bin_of.items():
-                    if bin_index < bin_count:
-                        model.add_hint(assignments[item][bin_index], 1)
-                for bin_index in range(min(len(warm_bins), bin_count)):
-                    model.add_hint(used[bin_index], 1)
+            checked = check_bin_packing(warm, weights=weights, capacity=capacity)
+            if not checked["feasible"]:
+                raise ValueError(f"invalid bin-packing initial solution: {checked['detail']}")
+            warm_bins = warm["bins"]
+            if len(warm_bins) <= bin_count:
+                bin_of = {item: j for j, items in enumerate(warm_bins) for item in items}
+                for item, row in enumerate(assignments):
+                    for j, variable in enumerate(row):
+                        model.add_hint(variable, int(bin_of[item] == j))
+                for j, variable in enumerate(used):
+                    model.add_hint(variable, int(j < len(warm_bins)))
+                model.add_hint(objective, len(warm_bins))
     elif kind == "job_shop_scheduling":
         jobs = _job_shop_operations(path)
         horizon = sum(d for job in jobs for _, d in job)

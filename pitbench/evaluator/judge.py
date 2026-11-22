@@ -951,6 +951,8 @@ class LocalProcessJudge:
                         argv.extend(
                             ["--package", self.repository.scenario_binding_package]
                         )
+                    elif self.repository.scenario_process_binding:
+                        argv.append("--process-artifacts")
                     else:
                         argv.extend(
                             [
@@ -958,9 +960,10 @@ class LocalProcessJudge:
                                 str(workspace / "build/scenario/pitbench_binding.so"),
                             ]
                         )
-                    command = CommandSpec(
-                        argv=argv, env={"PYTHONPATH": str(self.public_root)}
-                    )
+                    pythonpath = [str(self.public_root)]
+                    if self.repository.scenario_pythonpath:
+                        pythonpath.insert(0, str(workspace / self.repository.scenario_pythonpath))
+                    command = CommandSpec(argv=argv, env={"PYTHONPATH": os.pathsep.join(pythonpath)})
                     outcome = self._run(command, workspace)
                     log = self.output_dir / "binding-receipts" / state.value
                     log.mkdir(parents=True)
@@ -1596,6 +1599,8 @@ class LocalProcessJudge:
         except (ValueError, OSError, TypeError) as error:
             parse_error = error
         if completed.returncode:
+            if stderr.startswith("taskset: ") and "affinity:" in stderr:
+                return failure(RunStatus.INFRASTRUCTURE_ERROR, stderr, parsed)
             reasons = {
                 "timed_out": RunStatus.TIMED_OUT,
                 "out_of_memory": RunStatus.OUT_OF_MEMORY,

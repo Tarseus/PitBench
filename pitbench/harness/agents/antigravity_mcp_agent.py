@@ -83,6 +83,7 @@ Task:
         quota_retries: int = 1,
         quota_max_wait_sec: float = 7200.0,
         quota_retry_buffer_sec: float = 5.0,
+        continuation_context_available: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -113,6 +114,7 @@ Task:
         self._timeout_sec = timeout_sec
         self._print_timeout = print_timeout
         self._effort = effort
+        self._continuation_context_available = continuation_context_available
         self._proxy_url = proxy_url
         if network_retries not in {0, 1}:
             raise ValueError("network_retries must be 0 or 1")
@@ -454,7 +456,11 @@ Task:
         with LoopbackMCPServer(terminal) as mcp_server:
             if mcp_server.url is None:
                 raise RuntimeError("PitBench MCP server URL is unavailable")
-            attempt_instruction = instruction
+            attempt_instruction = (
+                self._quota_continuation_instruction(instruction)
+                + " Previous tool calls and results are saved at /tmp/pitbench-continuation.jsonl."
+                if self._continuation_context_available else instruction
+            )
             network_attempts = 0
             quota_attempts = 0
             while True:

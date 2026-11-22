@@ -15,6 +15,7 @@ from pitbench.evaluator.artifacts import (
     new_output_attempt,
     selected_output_attempt,
 )
+from pitbench.evaluator.code_snapshot import snapshot_judge_code
 from pitbench.evaluator.private_assets import PrivateAssetResolver
 from pitbench.evaluator.storage import ObservationStore
 from pitbench.schema.observation import CodeState, RunObservation
@@ -34,6 +35,16 @@ def judge_harness_sha256(package_root: Path) -> str:
             digest.update(len(content).to_bytes(8, "big"))
             digest.update(content)
     return digest.hexdigest()
+
+
+def retained_judge_snapshot(output_dir: Path, expected: str | None) -> Path | None:
+    """Find the exact code snapshot used for an interrupted Judge attempt."""
+    if not expected:
+        return None
+    for path in sorted((output_dir / "judge-tmp").glob("judge-code-*")):
+        if path.is_dir() and judge_harness_sha256(path) == expected:
+            return path
+    return None
 
 
 def docker_cli_image(image: str) -> str:
@@ -130,7 +141,18 @@ class DockerJudge:
             else None
         )
         self.package_root = Path(__file__).resolve().parents[2]
+        self.runtime_package_root: Path | None = None
         self.harness_sha256 = judge_harness_sha256(self.package_root)
+        marker = self.output_dir / "judge-launch.json"
+        if (self.output_dir / "judge-observations.jsonl").is_file() and marker.is_file():
+            try:
+                prior = json.loads(marker.read_text())["identity"].get("harness_sha256")
+                snapshot = retained_judge_snapshot(self.output_dir, prior)
+                if snapshot is not None:
+                    self.runtime_package_root = snapshot
+                    self.harness_sha256 = prior
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
         self.candidate_patch_sha256 = hashlib.sha256(
             self.candidate_patch.read_bytes()
         ).hexdigest()
@@ -189,6 +211,9 @@ class DockerJudge:
         self._check_inputs_unchanged("before launch")
         judge_tmp = self.output_dir / "judge-tmp"
         judge_tmp.mkdir(parents=True, exist_ok=True)
+        snapshot = self.runtime_package_root or snapshot_judge_code(package_root, judge_tmp)
+        self.runtime_package_root = snapshot
+        self._check_inputs_unchanged("while preparing the judge")
         observations = self.output_dir / "judge-observations.jsonl"
         command = judge_container_prefix(
             cpus=self.cpus,
@@ -233,6 +258,12 @@ class DockerJudge:
             "--observations",
             "/output/judge-observations.jsonl",
         ]
+        position = command.index(self.docker_image)
+        for name in ("pitbench", "adapters", "scripts"):
+            command[position:position] = [
+                "--volume", f"{snapshot / name}:/opt/pitbench/{name}:ro",
+            ]
+            position += 2
         payload = yaml.safe_load(self.task_config_path.read_text()) or {}
         repository = payload.get("repository") if isinstance(payload, dict) else None
         plugin_path = repository.get("plugin") if isinstance(repository, dict) else None
@@ -242,7 +273,7 @@ class DockerJudge:
             plugin = RepositoryPluginRegistry.load(plugin_path)
             position = command.index(self.docker_image)
             for target, relative in plugin.judge_support_files.items():
-                source = package_root / relative
+                source = snapshot / relative
                 if not source.is_file():
                     raise ValueError(f"Judge support file is missing: {source}")
                 command[position:position] = ["--volume", f"{source}:{target}:ro"]
@@ -364,7 +395,7 @@ class DockerJudge:
     ) -> None:
         checks = {
             "judge harness code": (
-                judge_harness_sha256(self.package_root),
+                judge_harness_sha256(self.runtime_package_root or self.package_root),
                 self.harness_sha256,
             ),
             "task configuration": (

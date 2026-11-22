@@ -1,12 +1,13 @@
 # Copy to config/study.local.yaml, then run:
-#   python -m scripts.run_benchmark_release
+#   uv run pitbench evaluate --config config/study.local.yaml
+#   uv run pitbench evaluate --config config/study.local.yaml --status --livestream
 # Task/solver/problem/model/method selection belongs to the frozen study plan
 # and task package. Keep experiment-specific task files outside Git.
 phase: study-models
 background: true
 manifest: configs/benchmarks/0.0.1.json
 config: config/evaluate.local.yaml
-study_plan: dataset/studies/my-study/study-plan.json
+study_plan: dataset/studies/my-study/study-plan.yaml
 study_views: dataset/studies/my-study/task-views.json
 output: gushengda/experiments/agent-optimization/my-study/cohort
 

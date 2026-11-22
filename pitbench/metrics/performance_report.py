@@ -231,11 +231,22 @@ class PairedGapEvidence(BaseModel):
     mean_gap_reduction_ci95: ConfidenceInterval | None = None
 
 
+class PairedAvailability(BaseModel):
+    paired_runs: int = Field(ge=0)
+    both_valid: int = Field(ge=0)
+    base_only_valid: int = Field(ge=0)
+    agent_only_valid: int = Field(ge=0)
+    neither_valid: int = Field(ge=0)
+    base_observation_missing: int = Field(ge=0)
+    agent_observation_missing: int = Field(ge=0)
+
+
 class BudgetPerformance(BaseModel):
     budget_sec: float = Field(gt=0)
     base: GapEstimate
     agent: GapEstimate
     paired: PairedGapEvidence
+    paired_availability: PairedAvailability | None = None
 
 
 class PerformanceReport(BaseModel):
@@ -686,6 +697,26 @@ def _paired_gap_evidence(
     )
 
 
+def paired_solution_availability(
+    base: Sequence[RunObservation], agent: Sequence[RunObservation],
+) -> PairedAvailability:
+    def key(item):
+        return item.instance_set, item.instance_id, item.solver_seed
+
+    base_by_key = {key(item): item for item in base}
+    agent_by_key = {key(item): item for item in agent}
+    common = set(base_by_key) & set(agent_by_key)
+    return PairedAvailability(
+        paired_runs=len(common),
+        both_valid=sum(base_by_key[k].valid and agent_by_key[k].valid for k in common),
+        base_only_valid=sum(base_by_key[k].valid and not agent_by_key[k].valid for k in common),
+        agent_only_valid=sum(not base_by_key[k].valid and agent_by_key[k].valid for k in common),
+        neither_valid=sum(not base_by_key[k].valid and not agent_by_key[k].valid for k in common),
+        base_observation_missing=len(set(agent_by_key) - set(base_by_key)),
+        agent_observation_missing=len(set(base_by_key) - set(agent_by_key)),
+    )
+
+
 def _budget_performance(
     observations: Sequence[RunObservation],
     budget_sec: float,
@@ -700,6 +731,7 @@ def _budget_performance(
         base=_gap_estimate(base, seed=seed),
         agent=_gap_estimate(agent, seed=seed + 1),
         paired=_paired_gap_evidence(base, agent, seed=seed + 2),
+        paired_availability=paired_solution_availability(base, agent),
     )
 
 
@@ -976,6 +1008,15 @@ def format_performance_report(
             "95% intervals use an instance bootstrap over per-instance seed means.",
         ]
     )
+    for cell in report.by_budget.values():
+        availability = cell.paired_availability
+        if availability is not None:
+            lines.append(
+                f"{cell.budget_sec:g}s paired valid solutions: both {availability.both_valid}; "
+                f"Base only {availability.base_only_valid}; Agent only {availability.agent_only_valid}; "
+                f"neither {availability.neither_valid}; missing observations "
+                f"{availability.base_observation_missing + availability.agent_observation_missing}."
+            )
     return "\n".join(lines)
 
 

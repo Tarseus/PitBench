@@ -243,6 +243,7 @@ def _effects(row: dict, summary: dict) -> list[dict]:
             classification=performance["classification"],
             primary_budget_sec=performance["primary_budget_sec"],
             confirmed=confirmed,
+            paired_availability=primary.get("paired_availability") or row.get("paired_availability"),
         )
         if "time_basis" in performance:
             difference = (
@@ -503,6 +504,10 @@ def _inventory(row: dict, trial: dict, evaluation_dir: Path, task_path: Path) ->
     if task.task_id != row["task_id"]:
         raise ValueError("report task configuration belongs to another task")
     summary = EvaluationSummary.model_validate(row["native_summary"])
+    if summary.trusted_optimum_performance is not None:
+        exact = summary.trusted_optimum_performance
+        row["trusted_optimum_classification"] = exact.classification.value
+        row["trusted_optimum_primary"] = exact.primary.model_dump(mode="json")
     observations_path = evaluation_dir / (artifacts.get("observations") or {}).get(
         "path", "trials.parquet"
     )
@@ -511,6 +516,17 @@ def _inventory(row: dict, trial: dict, evaluation_dir: Path, task_path: Path) ->
         if observations_path.is_file()
         else None
     )
+    if observations is not None and task.evaluation.performance_protocol.value in {"heuristic_fixed_budget", "budget_truncated_quality"}:
+        from pitbench.metrics.performance_report import paired_solution_availability
+
+        selected = [item for item in observations if item.budget_sec == task.evaluation.primary_budget_sec
+                    and (item.instance_set_kind or item.instance_set) == "judge_id"
+                    and item.test_suite is None and item.equivalence_parent_id is None]
+        if selected:
+            row["paired_availability"] = paired_solution_availability(
+                [item for item in selected if item.code_state.value == "base"],
+                [item for item in selected if item.code_state.value == "agent"],
+            ).model_dump(mode="json")
     if (
         observations is not None
         and grid_path.is_file()
@@ -735,6 +751,14 @@ def collect_campaign(
             "setting": record.get("setting", "unspecified"),
             "execution_status": record.get("status", record.get("outcome", "unknown")),
             "evaluation_status": "missing",
+            "primary_metrics_status": record.get("primary_metrics_status"),
+            "extension_metrics_status": record.get("extension_metrics_status"),
+            "primary_metric_gaps": record.get("primary_metric_gaps"),
+            "extension_metric_gaps": record.get("extension_metric_gaps"),
+            "legacy_metric_gaps": (
+                record.get("metric_gaps")
+                if "primary_metrics_status" not in record else None
+            ),
             "classification": None,
             "confirmed": False,
             "error": record.get("evaluation_error")
@@ -798,6 +822,7 @@ def collect_campaign(
                     / "evaluation"
                 )
             summary = (envelope.get("payload") or {}).get("summary") or {}
+            validity = (envelope.get("payload") or {}).get("validity") or {}
             current.update(
                 evaluation_status=(
                     "completed" if envelope.get("completed") else "failed"
@@ -805,9 +830,9 @@ def collect_campaign(
                 if envelope
                 else "missing",
                 native_summary=summary,
-                validity_accepted=(envelope.get("payload") or {})
-                .get("validity", {})
-                .get("accepted"),
+                validity_accepted=validity.get("accepted"),
+                primary_validity_accepted=validity.get("primary_accepted"),
+                extension_validity_accepted=validity.get("extension_accepted"),
                 error=envelope.get("error") or row["error"],
                 failure_mode=trial.get("failure_mode"),
                 agent_started_at=trial.get("agent_started_at"),
@@ -860,14 +885,23 @@ def collect_campaign(
             "native_classifications": dict(
                 Counter(r["classification"] or "unavailable" for r in conditions)
             ),
+            "trusted_optimum_classifications": dict(Counter(
+                r["trusted_optimum_classification"] for r in conditions
+                if "trusted_optimum_classification" in r
+            )),
             "confirmed_improved": sum(
                 r["classification"] == "improved"
                 and r["confirmed"]
-                and r.get("validity_accepted") is True
+                and (r.get("primary_validity_accepted") is True
+                     or (r.get("primary_validity_accepted") is None
+                         and r.get("validity_accepted") is True))
                 for r in conditions
             ),
             "valid_improved": sum(
-                r["classification"] == "improved" and r.get("validity_accepted") is True
+                r["classification"] == "improved"
+                and (r.get("primary_validity_accepted") is True
+                     or (r.get("primary_validity_accepted") is None
+                         and r.get("validity_accepted") is True))
                 for r in conditions
             ),
         },
@@ -1487,10 +1521,19 @@ def write_campaign_report(
         "setting",
         "execution_status",
         "evaluation_status",
+        "primary_metrics_status",
+        "extension_metrics_status",
+        "primary_metric_gaps",
+        "extension_metric_gaps",
+        "legacy_metric_gaps",
         "classification",
         "confirmed",
         "primary_budget_sec",
         "validity_accepted",
+        "primary_validity_accepted",
+        "extension_validity_accepted",
+        "trusted_optimum_classification",
+        "trusted_optimum_primary",
         "error",
         "result_path",
         "results_sha256",
@@ -1508,6 +1551,13 @@ def write_campaign_report(
         "representation_iqr_unit",
         "retention_supported",
         "retention_conditions",
+        "paired_runs",
+        "both_valid",
+        "base_only_valid",
+        "agent_only_valid",
+        "neither_valid",
+        "base_observation_missing",
+        "agent_observation_missing",
     ]
     with (output / "conditions.csv").open(
         "w", encoding="utf-8-sig", newline=""
@@ -1518,6 +1568,11 @@ def write_campaign_report(
         writer.writeheader()
         for row in report["conditions"]:
             flat = dict(row)
+            for field in ("primary_metric_gaps", "extension_metric_gaps", "legacy_metric_gaps",
+                          "trusted_optimum_primary"):
+                if row.get(field) is not None:
+                    flat[field] = json.dumps(row[field], ensure_ascii=False)
+            flat.update(row.get("paired_availability") or {})
             for metric, prefix in (("cpu", "cpu"), ("memory", "rss")):
                 cell = row.get("primary_resources", {}).get(metric, {})
                 flat.update(

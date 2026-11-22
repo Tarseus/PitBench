@@ -131,12 +131,17 @@ def test_parameter_supplementation_keeps_original_cohort_and_never_runs_an_agent
 
 
 @pytest.mark.parametrize(
-    "completed,gaps",
-    [(True, []), (False, []), (True, ["missing scenario observations"])],
+    "completed,gaps,extension_gaps",
+    [
+        (True, [], []),
+        (False, [], []),
+        (True, ["missing primary observations"], []),
+        (True, [], ["missing scenario observations"]),
+    ],
 )
 @pytest.mark.parametrize("parameter_enabled", [False, True])
 def test_captured_patch_queue_uses_native_evaluator_without_new_agent(
-    tmp_path, monkeypatch, completed, gaps, parameter_enabled
+    tmp_path, monkeypatch, completed, gaps, extension_gaps, parameter_enabled
 ):
     import hashlib
     from types import SimpleNamespace
@@ -183,7 +188,11 @@ def test_captured_patch_queue_uses_native_evaluator_without_new_agent(
     monkeypatch.setattr(
         campaign, "PitBenchEvaluator", lambda: SimpleNamespace(envelope=envelope)
     )
-    monkeypatch.setattr(campaign, "_evaluation_metric_failures", lambda *a, **k: gaps)
+    def metric_failures(*args, extension_failures):
+        extension_failures.extend(extension_gaps)
+        return gaps
+
+    monkeypatch.setattr(campaign, "_evaluation_metric_failures", metric_failures)
     monkeypatch.setattr(
         campaign.subprocess, "Popen", lambda *a, **k: pytest.fail("new Agent")
     )
@@ -227,7 +236,12 @@ def test_captured_patch_queue_uses_native_evaluator_without_new_agent(
         if completed
         else "evaluation_failed"
     )
-    assert result["metric_gaps"] == gaps
+    assert result["primary_metric_gaps"] == gaps
+    assert result["extension_metric_gaps"] == extension_gaps
+    assert result["metric_gaps"] == [*gaps, *extension_gaps]
+    if extension_gaps:
+        assert result["primary_metrics_status"] == "complete"
+        assert result["extension_metrics_status"] == "incomplete"
     assert len(calls) == 1
     assert calls[0].candidate_patch_path != patch
     assert calls[0].candidate_patch_path.read_bytes() == patch.read_bytes()
@@ -618,6 +632,32 @@ def test_model_audit_rejects_rate_limited_zero_token_cli_success(tmp_path):
     assert "rate limited" in audit["reason"]
 
 
+def test_model_audit_marks_codex_relay_network_failure_retryable(tmp_path):
+    from scripts import run_benchmark_release as campaign
+
+    run = tmp_path / "run"
+    task_id, trial = "example", "trial"
+    campaign.write_json(run / "results.json", {"results": [{
+        "task_id": task_id, "trial_name": trial,
+        "failure_mode": "unknown_agent_error", "total_input_tokens": 0,
+        "total_output_tokens": 0,
+    }]})
+    trace_dir = run / task_id / trial / "agent-trace" / "execution"
+    detail = "objects/rejection.json"
+    campaign.write_json(trace_dir / detail, {
+        "status": 502,
+        "message": "model relay failed: <urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol>",
+    })
+    campaign.write_json(trace_dir / "events.jsonl", {})
+    (trace_dir / "events.jsonl").write_text(json.dumps({
+        "event": "model.rejected", "data": {"path": detail}
+    }) + "\n")
+
+    audit = campaign.audit_model_run(run, task_id, evaluation_required=False)
+    assert audit["retryable"] and audit["tokens"] == 0
+    assert campaign.incomplete_condition_retry_reason("development_failed", audit) == "codex_relay_network_unavailable"
+
+
 @pytest.mark.parametrize("has_patch", [False, True])
 def test_deferred_model_audit_requires_captured_patch_and_model_execution(
     tmp_path, has_patch
@@ -743,6 +783,187 @@ def test_failed_incomplete_condition_recovery_is_limited_to_missing_turns(
     from scripts import run_benchmark_release as campaign
 
     assert campaign.incomplete_condition_retry_reason(status, audit) == expected
+
+
+def test_preflight_recovery_requires_explicit_no_agent_evidence(tmp_path):
+    from scripts import run_benchmark_release as campaign
+
+    log = tmp_path / "controller.log"
+    audit = {"reason": "no terminal harness result", "retryable": True}
+    assert campaign.preflight_retry_reason("development_failed", audit, log) is None
+    log.write_text("NOT READY: no agent was started.\n")
+    assert campaign.preflight_retry_reason("development_failed", audit, log) == "preflight_agent_not_started"
+    assert campaign.preflight_retry_reason("development_failed", {**audit, "retryable": False}, log) is None
+
+
+@pytest.mark.parametrize("tokens, retryable", [(0, True), (5, False)])
+def test_antigravity_quota_audit_preserves_partial_work(tmp_path, tokens, retryable):
+    from scripts import run_benchmark_release as campaign
+
+    run = tmp_path / "run"
+    campaign.write_json(run / "results.json", {"results": [{
+        "task_id": "task", "trial_name": "trial", "failure_mode": "unknown_agent_error",
+        "total_input_tokens": tokens, "total_output_tokens": 0,
+    }]})
+    logs = run / "task/trial/agent-logs"
+    logs.mkdir(parents=True)
+    (logs / "antigravity.stderr.log").write_text("Individual quota reached. Resets in 82h32m9s.")
+    audit = campaign.audit_model_run(run, "task", evaluation_required=False)
+    assert audit["reason"] == "antigravity quota reached"
+    assert audit["retryable"] is retryable
+    assert audit["continuation_required"] is (tokens > 0)
+    assert audit["quota_retry_after"]
+
+
+def test_antigravity_quota_audit_recovers_usage_missing_from_timed_out_harness(tmp_path):
+    from scripts import run_benchmark_release as campaign
+
+    run = tmp_path / "run"
+    campaign.write_json(run / "results.json", {"results": [{"task_id": "task", "trial_name": "trial",
+        "failure_mode": "agent_timeout", "total_input_tokens": 0, "total_output_tokens": 0}]})
+    logs = run / "task/trial/agent-logs"
+    logs.mkdir(parents=True)
+    candidate = run / "task/trial/evaluation/candidate.patch"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text("partial patch")
+    (logs / "antigravity.jsonl").write_text(json.dumps({"event": "result", "result": {
+        "status": "ERROR", "error": "Individual quota reached. Resets in 1h.",
+        "usage": {"input_tokens": 100, "output_tokens": 20}}}) + "\n")
+    audit = campaign.audit_model_run(run, "task", evaluation_required=False)
+    assert audit["tokens"] == 120
+    assert audit["continuation_required"] is True and audit["retryable"] is False
+
+
+def test_timeout_after_quota_retry_counts_later_work_and_not_old_cooldown(tmp_path):
+    from scripts import run_benchmark_release as campaign
+
+    run = tmp_path / "run"
+    campaign.write_json(run / "results.json", {"results": [{"task_id": "task", "trial_name": "trial",
+        "failure_mode": "agent_timeout", "total_input_tokens": 0, "total_output_tokens": 0,
+        "agent_started_at": "2026-01-01T00:00:00+00:00", "agent_ended_at": "2026-01-01T00:01:40+00:00"}]})
+    logs = run / "task/trial/agent-logs"
+    logs.mkdir(parents=True)
+    events = [
+        {"event": "result", "result": {"status": "ERROR", "duration_seconds": 20,
+            "error": "Individual quota reached. Resets in 10s.", "usage": {"input_tokens": 100, "output_tokens": 20}}},
+        {"event": "init"},
+        {"event": "step_update", "step_update": {"step_index": 1, "step_type": "agent_response",
+            "state": "DONE", "usage": {"input_tokens": 30, "output_tokens": 5}}},
+    ]
+    (logs / "antigravity.jsonl").write_text("".join(json.dumps(event) + "\n" for event in events))
+    storage = run / "task/trial/development-storage"
+    storage.mkdir()
+    audit = campaign.audit_model_run(run, "task", evaluation_required=False)
+    assert audit["reason"] == "antigravity interrupted after quota wait"
+    assert audit["tokens"] == 155
+    assert audit["agent_duration_sec"] == 85
+    assert audit["continuation_required"] is True
+
+
+def test_quota_continuation_waits_for_reset_and_requires_retained_workspace():
+    from scripts import run_benchmark_release as campaign
+
+    audit = {"reason": "antigravity quota reached", "retryable": False,
+             "continuation_required": True, "development_storage": "/retained",
+             "quota_retry_after": "2000-01-01T00:00:00+00:00"}
+    assert campaign.incomplete_condition_retry_reason("development_failed", audit) == "quota_workspace_continuation"
+    assert campaign.incomplete_condition_retry_reason("development_failed", {**audit, "development_storage": None}) is None
+    assert campaign.incomplete_condition_retry_reason("development_failed", {**audit, "quota_retry_after": "2999-01-01T00:00:00+00:00"}) is None
+
+
+def test_continuation_context_preserves_recorded_tool_calls(tmp_path):
+    from scripts import run_benchmark_release as campaign
+
+    trace = tmp_path / "run/task/trial/agent-trace/session"
+    campaign.write_json(trace / "objects/call", {"name": "run_command", "inputs": {"command": "make test"}})
+    campaign.write_json(trace / "objects/result", {"result": {"stdout": "passed"}})
+    (trace / "events.jsonl").write_text("\n".join(json.dumps(event) for event in [
+        {"event": "mcp.started", "data": {"path": "objects/call"}},
+        {"event": "mcp.result", "data": {"path": "objects/result"}},
+        {"event": "native.hook", "data": {}},
+    ]) + "\n")
+    output = tmp_path / "context.jsonl"
+    assert campaign.write_continuation_context(tmp_path / "run", output) == 2
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert rows[0]["data"]["inputs"]["command"] == "make test"
+    assert rows[1]["data"]["result"]["stdout"] == "passed"
+
+
+@pytest.mark.parametrize("zero_token_retry", [False, True])
+def test_quota_continuation_restores_workspace_and_remaining_budget(tmp_path, monkeypatch, zero_token_retry):
+    import os
+    import time
+    from types import SimpleNamespace
+
+    from pitbench.schema.research import GeneralizationStudyPlan, ResearchBudget
+    from scripts import run_benchmark_release as campaign
+
+    job = {"run_id": "run", "task_id": "task", "arm": "standard", "hypotheses_required": False,
+           "model": {"agent": "antigravity", "model": "model", "setting": "network_retries=1"}}
+    campaign.write_json(tmp_path / "cohort.json", {"jobs": [job]})
+    campaign.write_json(tmp_path / "agent-status/run/status.json", {**job, "status": "development_failed"})
+    old = tmp_path / "runs/run"
+    campaign.write_json(old / "results.json", {"results": [{"task_id": "task", "trial_name": "trial",
+        "failure_mode": "unknown_agent_error", "total_input_tokens": 5, "total_output_tokens": 0}]})
+    storage = old / "task/trial/development-storage"
+    (storage / "workspace").mkdir(parents=True)
+    (storage / "workspace/work.txt").write_text("previous work")
+    logs = old / "task/trial/agent-logs"
+    logs.mkdir()
+    (logs / "antigravity.jsonl").write_text(json.dumps({"event": "result", "result": {
+        "status": "ERROR", "error": "Individual quota reached. Resets in 1s.",
+        "duration_seconds": 20, "conversation_id": "old"}}) + "\n")
+    stderr = logs / "antigravity.stderr.log"
+    stderr.write_text("Individual quota reached. Resets in 1s.")
+    os.utime(stderr, (time.time() - 30, time.time() - 30))
+    trace = old / "task/trial/agent-trace/session"
+    campaign.write_json(trace / "objects/call", {"name": "run_command", "inputs": {"command": "ls"}})
+    (trace / "events.jsonl").write_text(json.dumps({"event": "mcp.started", "data": {"path": "objects/call"}}) + "\n")
+    if zero_token_retry:
+        previous_run = tmp_path / "runs/run-infra1"
+        campaign.write_json(previous_run / "results.json", {"results": [{"task_id": "task", "trial_name": "trial",
+            "failure_mode": "unknown_agent_error", "total_input_tokens": 0, "total_output_tokens": 0}]})
+        previous_logs = previous_run / "task/trial/agent-logs"
+        previous_logs.mkdir(parents=True)
+        previous_stderr = previous_logs / "antigravity.stderr.log"
+        previous_stderr.write_text("Individual quota reached. Resets in 1s.")
+        os.utime(previous_stderr, (time.time() - 30, time.time() - 30))
+        campaign.write_json(tmp_path / "infrastructure-retries/run/infra1/retry.json",
+                            {"status": "retry_failed", "retry_run_id": "run-infra1"})
+    views = tmp_path / "views.json"
+    views.write_text(json.dumps({"tasks": {"task": {}}, "arms": {"standard": {"task": {
+        "task_config_path": "/task.yaml", "agent_task_config_path": "/agent.yaml"}}}}))
+    plan_file = tmp_path / "plan.json"
+    plan_file.write_text("{}")
+    budget = ResearchBudget(wall_time_sec=100, cpus=1, memory_gib=1)
+    plan = SimpleNamespace(evaluation_run_target=None, research_budget=budget, shared_agent_tools=["inspect"])
+    monkeypatch.setattr(campaign, "read_study_plan", lambda *_: plan)
+    config = tmp_path / "config.yaml"
+    config.write_text("agents: {antigravity: {}}\n")
+
+    def run(command, **kwargs):
+        assert kwargs["env"]["PITBENCH_CONTINUATION_STORAGE"] == str(storage)
+        assert Path(kwargs["env"]["PITBENCH_CONTINUATION_CONTEXT"]).is_file()
+        settings = yaml.safe_load(Path(command[command.index("--config") + 1]).read_text())
+        assert settings["research_budget"]["wall_time_sec"] == 80
+        assert settings["agents"]["antigravity"]["continuation_context_available"] is True
+        rid = command[command.index("--run-id") + 1]
+        campaign.write_json(tmp_path / "runs" / rid / "results.json", {"results": [{"task_id": "task", "trial_name": "trial",
+            "failure_mode": "unset", "total_input_tokens": 3, "total_output_tokens": 0}]})
+        candidate = tmp_path / "runs" / rid / "task/trial/evaluation/candidate.patch"
+        candidate.parent.mkdir(parents=True)
+        candidate.write_text("continued patch")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(campaign.subprocess, "run", run)
+    campaign.retry_unexecuted_condition(SimpleNamespace(
+        study_plan=plan_file, study_views=views, output=tmp_path, retry_run_id="run",
+        config=config, cpu_pool="0",
+    ))
+    status = json.loads((tmp_path / "agent-status/run/status.json").read_text())
+    assert status["status"] == "evaluation_pending"
+    assert status["audit"]["prior_tokens"] == 5
+    assert status["audit"]["continuation_kind"] == "restored_workspace_and_recorded_tool_history"
 
 
 def test_condition_recovery_lock_rejects_concurrent_duplicate(tmp_path):
@@ -1206,6 +1427,30 @@ def test_retry_retains_prior_judge_and_refreshes_live_index(captured_study):
     }
 
 
+@pytest.mark.parametrize("interrupted_by_reboot", [False, True])
+def test_interrupted_evaluation_resume_reuses_checkpoint_and_cpu_pool(
+    captured_study, interrupted_by_reboot
+):
+    campaign, args, state, requests = captured_study
+    source_patch = Path(state["audit"]["candidate_patch"])
+    output = args.output / "evaluations/run/attempt-original"
+    output.mkdir(parents=True)
+    (output / "candidate.patch").write_bytes(source_patch.read_bytes())
+    (output / "judge-observations.jsonl").write_text("retained observations\n")
+    previous = {**state, "status": "evaluating" if interrupted_by_reboot else "evaluation_failed",
+                "evaluation_output": str(output),
+                "evaluation_cpu_pool": "0-7", "evaluation_attempt": 1}
+    campaign.write_json(args.output / "agent-status/run/status.json", previous)
+    args.resume_evaluation = not interrupted_by_reboot
+    result = campaign.evaluate_study_candidate(
+        {**previous, "interrupted_by_reboot": interrupted_by_reboot}, args, "0-7"
+    )
+    assert Path(result["evaluation_output"]) == output
+    assert requests[0].output_dir == output
+    assert (output / "judge-observations.jsonl").read_text() == "retained observations\n"
+    assert list(output.glob("resume-*.json"))
+
+
 def test_competing_manager_cannot_overwrite_active_condition(
     captured_study, monkeypatch
 ):
@@ -1337,6 +1582,58 @@ def test_status_command_reads_live_conditions(captured_study, monkeypatch):
     campaign.main()
     index = json.loads((args.output / "model-runs.json").read_text())
     assert index[0]["status"] == "evaluation_incomplete"
+
+
+def test_live_study_snapshot_includes_recovery_agent_activity(tmp_path):
+    from scripts import run_benchmark_release as campaign
+
+    job = {"run_id": "run", "task_id": "task", "model": {"model": "model", "agent": "antigravity"}, "arm": "standard"}
+    campaign.write_json(tmp_path / "cohort.json", {"jobs": [job]})
+    campaign.write_json(tmp_path / "agent-status/run/status.json", {"status": "development_failed"})
+    campaign.write_json(tmp_path / "infrastructure-retries/run/infra1/retry.json", {"status": "retry_running", "retry_run_id": "run-infra1"})
+    trace = tmp_path / "runs/run-infra1/task/trial/agent-trace/session"
+    campaign.write_json(trace / "objects/detail", {"detail": "Agent: Running tool"})
+    (trace / "events.jsonl").write_text(json.dumps({"event": "agent.progress", "data": {"path": "objects/detail"}}) + "\n")
+    snapshot = campaign.study_live_snapshot(tmp_path)
+    assert snapshot["statuses"] == {"recovery_running": 1}
+    assert snapshot["active_agents"][0]["execution_run_id"] == "run-infra1"
+    assert snapshot["active_agents"][0]["activity"] == "Agent: Running tool"
+    cursors = {}
+    assert campaign.study_live_events(tmp_path, snapshot, cursors) == []
+    campaign.write_json(trace / "objects/command", {"name": "run_command", "inputs": {"command": "make test"}})
+    with (trace / "events.jsonl").open("a") as stream:
+        stream.write(json.dumps({"event": "mcp.started", "data": {"path": "objects/command"}}) + "\n")
+    events = campaign.study_live_events(tmp_path, snapshot, cursors)
+    assert events[0]["data"]["inputs"]["command"] == "make test"
+    assert campaign.study_live_events(tmp_path, snapshot, cursors) == []
+
+
+def test_adopt_running_agent_preserves_process_and_records_completion(tmp_path, monkeypatch):
+    import os
+    import subprocess
+    import sys
+    from functools import partial
+    from types import SimpleNamespace
+
+    from scripts import run_benchmark_release as campaign
+
+    cpu = str(min(os.sched_getaffinity(0)))
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(.2)", "adopted-run"])
+    job = {"run_id": "adopted-run", "task_id": "task", "model": {"agent": "antigravity", "model": "m"}, "arm": "standard"}
+    campaign.write_json(tmp_path / "cohort.json", {"jobs": [job]})
+    campaign.write_json(tmp_path / "agent-status/adopted-run/status.json", {
+        **job, "status": "development_running", "pid": process.pid, "cpu_pool": cpu,
+    })
+    real_lease = campaign.study_cpu_lease
+    monkeypatch.setattr(campaign, "study_cpu_lease", partial(real_lease, lock_root=tmp_path / "locks"))
+    monkeypatch.setattr(campaign, "audit_model_run", lambda *a, **k: {"complete": True, "candidate_patch": "/retained"})
+    try:
+        campaign.adopt_running_study_agents(SimpleNamespace(output=tmp_path))
+    finally:
+        process.wait()
+    state = json.loads((tmp_path / "agent-status/adopted-run/status.json").read_text())
+    assert state["status"] == "evaluation_pending" and state["adopted_dispatcher"] is True
+    assert json.loads((tmp_path / "adoption-ready.json").read_text())["conditions"]["adopted-run"]["pid"] == process.pid
 
 
 def test_automatic_pools_use_memory_limit_and_spread_each_worker_over_sockets():
@@ -1675,6 +1972,157 @@ def test_saved_cohort_replay_preserves_source_and_creates_only_evaluation_queue(
     assert original == {str(p.relative_to(source)): p.read_bytes() for p in source.rglob("*") if p.is_file()}
 
 
+def test_saved_patch_replay_expands_one_candidate_to_multiple_task_configs(tmp_path):
+    from types import SimpleNamespace
+
+    from pitbench.evaluator.artifacts import write_json
+    from pitbench.harness.harness import campaign
+
+    source, output = tmp_path / "original", tmp_path / "replay"
+    base_path = ROOT / "configs/tasks/release_choco_v6_0_2.yaml"
+    base = yaml.safe_load(base_path.read_text())
+    target_paths = {}
+    for task_id in ("target_one", "target_two"):
+        target = {**base, "task_id": task_id}
+        target_paths[task_id] = tmp_path / (task_id + ".yaml")
+        target_paths[task_id].write_text(yaml.safe_dump(target))
+    job = {"run_id": "run", "task_id": base["task_id"], "model": {"agent": "codex", "model": "model"}}
+    write_json(source / "cohort.json", {"jobs": [job]})
+    patch = source / "candidate.patch"
+    patch.write_text("captured patch")
+    write_json(source / "agent-status/run/status.json", {"audit": {"candidate_patch": str(patch)}})
+    write_json(source / "runs/run/results.json", {"results": [{"task_id": base["task_id"], "trial_name": "trial", "evaluation": {"completed": True}}]})
+    task_dir = source / "workspaces/run" / base["task_id"]
+    task_dir.mkdir(parents=True)
+    (task_dir / "task.yaml").write_text(yaml.safe_dump({"evaluator_config": {"task_config_path": str(base_path)}}))
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump({"tasks": {name: {"task_config_path": str(path)} for name, path in target_paths.items()}}))
+    matrix = tmp_path / "matrix.yaml"
+    matrix.write_text(yaml.safe_dump({base["task_id"]: list(target_paths)}))
+    args = SimpleNamespace(source_cohort=source, output=output, config=config, target_task_matrix=matrix)
+    campaign.prepare_study_replay(args)
+    cohort = json.loads((output / "cohort.json").read_text())
+    assert len(cohort["jobs"]) == 2
+    for job in cohort["jobs"]:
+        run_id, task_id = job["run_id"], job["task_id"]
+        status = json.loads((output / "agent-status" / run_id / "status.json").read_text())
+        assert status["audit"]["candidate_patch"] == str(patch)
+        assert status["source_task_id"] == base["task_id"]
+        assert status["new_agent_starts"] == 0
+        result = json.loads((output / "runs" / run_id / "results.json").read_text())
+        assert result["results"][0]["task_id"] == task_id
+        assert result["results"][0]["evaluation"] is None
+
+
+def test_replay_adds_candidates_captured_after_first_snapshot(tmp_path):
+    from types import SimpleNamespace
+
+    from pitbench.evaluator.artifacts import write_json
+    from scripts import run_benchmark_release as campaign
+
+    source, output = tmp_path / "source", tmp_path / "replay"
+    job = {"run_id": "run", "task_id": "task", "model": {"agent": "codex", "model": "model"}}
+    write_json(source / "cohort.json", {"jobs": [job]})
+    config = tmp_path / "config.yaml"
+    config.write_text("{}")
+    args = SimpleNamespace(source_cohort=source, output=output, config=config)
+    campaign.prepare_study_replay(args)
+    status = output / "agent-status/run/status.json"
+    assert json.loads(status.read_text())["status"] == "awaiting_candidate"
+    patch = source / "candidate.patch"
+    patch.write_text("captured patch")
+    write_json(source / "agent-status/run/status.json", {"audit": {"candidate_patch": str(patch)}})
+    write_json(source / "runs/run/results.json", {"results": []})
+    task = source / "workspaces/run/task/task.yaml"
+    task.parent.mkdir(parents=True)
+    task.write_text(yaml.safe_dump({"evaluator_config": {"task_config_path": "original-task"}}))
+    campaign.prepare_study_replay(args)
+    assert json.loads(status.read_text())["status"] == "evaluation_pending"
+    write_json(status, {"status": "evaluation_completed"})
+    campaign.prepare_study_replay(args)
+    assert json.loads(status.read_text())["status"] == "evaluation_completed"
+
+
+def test_replay_does_not_evaluate_patch_from_interrupted_agent(tmp_path):
+    from types import SimpleNamespace
+
+    from scripts import run_benchmark_release as campaign
+
+    source, output = tmp_path / "source", tmp_path / "replay"
+    job = {"run_id": "run", "task_id": "task", "model": {"agent": "antigravity", "model": "model"}}
+    campaign.write_json(source / "cohort.json", {"jobs": [job]})
+    patch = source / "candidate.patch"
+    patch.write_text("partial work")
+    status = source / "agent-status/run/status.json"
+    campaign.write_json(status, {"status": "development_failed", "audit": {"complete": False, "candidate_patch": str(patch)}})
+    config = tmp_path / "config.yaml"
+    config.write_text("{}")
+    args = SimpleNamespace(source_cohort=source, output=output, config=config)
+    campaign.prepare_study_replay(args)
+    target = output / "agent-status/run/status.json"
+    assert json.loads(target.read_text())["status"] == "awaiting_candidate"
+    campaign.write_json(target, {"status": "evaluation_pending", "audit": {"candidate_patch": str(patch)}})
+    campaign.prepare_study_replay(args)
+    assert json.loads(target.read_text())["status"] == "awaiting_candidate"
+    campaign.write_json(status, {"status": "evaluation_pending", "audit": {"complete": True, "candidate_patch": str(patch)}})
+    campaign.write_json(source / "runs/run/results.json", {"results": []})
+    task = source / "workspaces/run/task/task.yaml"
+    task.parent.mkdir(parents=True)
+    task.write_text(yaml.safe_dump({"evaluator_config": {"task_config_path": "task.yaml"}}))
+    campaign.prepare_study_replay(args)
+    assert json.loads(target.read_text())["status"] == "evaluation_pending"
+
+
+def test_repair_replaces_only_complete_matching_boundary_grid():
+    from types import SimpleNamespace
+
+    from scripts import run_benchmark_release as campaign
+
+    def row(instance, suite, status):
+        return SimpleNamespace(task_id="task", code_state="base", instance_set="panel",
+            instance_id=instance, solver_seed=0, budget_sec=1, test_suite=suite,
+            equivalence_parent_id=None, status=status)
+
+    performance = row("normal", None, "completed")
+    broken = row("boundary", "operational_reliability", "crashed")
+    repaired = row("boundary", "operational_reliability", "completed")
+    assert campaign.replace_study_observation_suite([performance, broken], [repaired], "operational_reliability") == [performance, repaired]
+    with pytest.raises(ValueError, match="grid differs"):
+        campaign.replace_study_observation_suite([performance, broken], [], "operational_reliability")
+
+
+def test_provisional_performance_waits_for_complete_grid(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from pitbench.evaluator.storage import ObservationStore
+    from pitbench.schema.observation import ExpectedRun, ExpectedRunGrid, RunObservation
+    from scripts import run_benchmark_release as campaign
+
+    source = tmp_path / "measurement"
+    source.mkdir()
+    row = RunObservation(task_id="task", code_state="base", instance_set="judge_id",
+        instance_id="case", solver_seed=0, budget_sec=1, status="completed", valid=True)
+    expected = ExpectedRun(task_id="task", code_state="base", instance_set="judge_id",
+        instance_set_kind="judge_id", instance_id="case", solver_seed=0, budget_sec=1)
+    (source / "expected-run-grid.json").write_text(ExpectedRunGrid(task_id="task", runs=[expected]).model_dump_json())
+    ObservationStore.write_jsonl(source / "judge-observations.jsonl", [])
+    campaign.write_json(tmp_path / "agent-status/run/status.json", {"run_id": "run", "task_id": "task",
+        "status": "evaluating", "evaluation_output": str(source)})
+    task = tmp_path / "workspaces/run/task/task.yaml"
+    task.parent.mkdir(parents=True)
+    task.write_text(yaml.safe_dump({"evaluator_config": {"task_config_path": "/task.yaml"}}))
+    monkeypatch.setattr(campaign.PitBenchTask, "from_yaml", lambda _: object())
+    monkeypatch.setattr("pitbench.metrics.performance_report.compute_task_performance_report",
+                        lambda *a, **k: SimpleNamespace(model_dump=lambda **kw: {"classification": "inconclusive"}))
+    args = SimpleNamespace(output=tmp_path, follow_source=False)
+    campaign.watch_study_primary_results(args)
+    assert not (tmp_path / "early-performance/run.json").exists()
+    ObservationStore.write_jsonl(source / "judge-observations.jsonl", [row])
+    campaign.watch_study_primary_results(args)
+    result = json.loads((tmp_path / "early-performance/run.json").read_text())
+    assert result["provisional"] and result["performance"]["classification"] == "inconclusive"
+
+
 def test_native_patch_evaluation_status_uses_packaged_controller(tmp_path):
     from typer.testing import CliRunner
 
@@ -1857,6 +2305,48 @@ def test_automatic_evaluation_can_wait_for_capacity_at_startup(tmp_path, monkeyp
     assert args.dynamic_evaluation_workers
     assert args.evaluation_cpu_pools == []
     assert args.evaluation_workers == 0
+
+
+def test_following_source_does_not_rebuild_unchanged_provisional_report(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from scripts import run_benchmark_release as campaign
+
+    rows = [{"condition_id": "one", "status": "evaluation_completed"},
+            {"condition_id": "two", "status": "development_failed", "evaluation_error": "source has no captured candidate"}]
+    monkeypatch.setattr(campaign, "_study_evaluations", lambda args: None)
+    monkeypatch.setattr(campaign, "refresh_study_index", lambda output: rows)
+    calls = []
+    monkeypatch.setattr(campaign, "finalize_study_report", lambda args: calls.append(True))
+    sleep_count = iter([None, None, KeyboardInterrupt()])
+    def sleep(_):
+        value = next(sleep_count)
+        if value:
+            raise value
+    monkeypatch.setattr(campaign.time, "sleep", sleep)
+    args = SimpleNamespace(output=tmp_path, source_cohort=None, dynamic_evaluation_workers=True,
+                           follow_source=True, follow_interval_sec=1)
+    with pytest.raises(KeyboardInterrupt):
+        campaign.study_evaluations(args)
+    assert len(calls) == 1
+
+
+def test_agent_priority_pause_resumes_evaluation_after_recovery_is_scheduled(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from scripts import run_benchmark_release as campaign
+
+    output, source = tmp_path / "evaluation", tmp_path / "source"
+    campaign.write_json(output / "agent-priority-pause.json", {"owner": "automatic resource balancer"})
+    (output / "STOP").touch()
+    campaign.write_json(source / "recovery-status.json", {"eligible_waiting": 0, "recovery_errors": {}})
+    calls = []
+    monkeypatch.setattr(campaign.subprocess, "run", lambda command, **kwargs:
+                        calls.append(command) or SimpleNamespace(returncode=0, stdout="started", stderr=""))
+    campaign.rebalance_study_agents(SimpleNamespace(output=output, source_cohort=source, profile=tmp_path / "profile.yaml"))
+    assert not (output / "STOP").exists()
+    assert not (output / "agent-priority-pause.json").exists()
+    assert "--follow-source" in calls[0]
 
 
 def test_prepare_only_never_executes_an_existing_evaluation_queue(tmp_path, monkeypatch):

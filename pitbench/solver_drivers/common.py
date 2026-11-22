@@ -64,6 +64,15 @@ class ScenarioSession:
     def reset_search(self) -> None:
         raise ScenarioUnsupported("search reset is unavailable for this session")
 
+    def close(self) -> None:
+        """Release resources held by a scenario session."""
+
+    def collect_garbage(self) -> None:
+        """Release language-managed temporary objects when supported."""
+
+    def measurement_pid(self) -> int:
+        return os.getpid()
+
 
 def _package_artifacts(package_name: str) -> dict:
     package = Path(importlib.import_module(package_name).__file__).resolve().parent
@@ -82,6 +91,36 @@ def _package_artifacts(package_name: str) -> dict:
     return {"binding_sha256": digest(native), "package_code_sha256": digest(files)}
 
 
+def _process_artifacts(source: Path, repository_plugin: str) -> dict:
+    """Bind an executable-based scenario to the actual built solver artifacts."""
+    from pitbench.repositories.base import RepositoryPluginRegistry
+
+    plugin = RepositoryPluginRegistry.load(repository_plugin)
+    artifacts = {}
+    for pattern in plugin.agent_artifact_globs:
+        for path in sorted(source.glob(pattern)):
+            if path.is_file():
+                resolved = path.resolve()
+                if not resolved.is_relative_to(source.resolve()):
+                    raise ValueError("scenario artifact is outside its source workspace")
+                artifacts[path.relative_to(source).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if not artifacts:
+        raise ValueError("source-bound process has no built solver artifacts")
+    support = {}
+    adapter_globs = getattr(plugin, "scenario_artifact_globs", ())
+    for pattern in adapter_globs:
+        for path in sorted(source.glob(pattern)):
+            if path.is_file():
+                if not path.resolve().is_relative_to(source.resolve()):
+                    raise ValueError("scenario adapter is outside its source workspace")
+                support[path.relative_to(source).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if adapter_globs and not support:
+        raise ValueError("source-bound scenario adapter has not been built")
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+    return {"binding_sha256": digest(artifacts), "package_code_sha256": digest(support)}
+
+
 def record_source_binding(
     *,
     source: Path,
@@ -90,6 +129,7 @@ def record_source_binding(
     version: str,
     destination: Path,
     native_library: Path | None = None,
+    process_artifacts: bool = False,
 ) -> dict:
     """Called by the evaluator after its source build, never by an Agent claim."""
     from pitbench.agent_cli import _candidate_patch
@@ -99,6 +139,10 @@ def record_source_binding(
     )
 
     source = source.resolve()
+    if package is not None:
+        module_path = Path(importlib.import_module(package).__file__).resolve()
+        if not module_path.is_relative_to(source):
+            raise ValueError("scenario package is outside its source workspace")
     ignore_generated_outputs(
         source, RepositoryPluginRegistry.load(repository_plugin).agent_build_paths
     )
@@ -111,12 +155,13 @@ def record_source_binding(
             ["git", "rev-parse", "HEAD"], cwd=source, text=True
         ).strip(),
         "source_patch_sha256": hashlib.sha256(_candidate_patch(source)).hexdigest(),
-        **(
-            _package_artifacts(package)
-            if package is not None
-            else _native_artifacts(native_library, source)
-        ),
+        **(_package_artifacts(package) if package is not None else
+           _process_artifacts(source, repository_plugin) if process_artifacts else
+           _native_artifacts(native_library, source)),
     }
+    if process_artifacts:
+        record["binding_kind"] = "process_artifacts"
+        record["artifact_version"] = 2
     if native_library is not None:
         record["native_library"] = str(native_library.resolve())
         if record["native_version"] != version:
@@ -140,6 +185,10 @@ def source_binding_identity(
     if record["package"] != package or record["repository_plugin"] != repository_plugin:
         raise ValueError("binding receipt belongs to another solver")
     source = Path(record["source"])
+    if package is not None:
+        module_path = Path(importlib.import_module(package).__file__).resolve()
+        if not module_path.is_relative_to(source.resolve()):
+            raise ValueError("scenario package is outside its source workspace")
     commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=source, text=True
     ).strip()
@@ -150,11 +199,17 @@ def source_binding_identity(
     ):
         raise ValueError("source changed after the binding build")
     artifacts = (
-        _package_artifacts(package)
-        if package is not None
-        else _native_artifacts(Path(record["native_library"]), source)
+        _package_artifacts(package) if package is not None else
+        _process_artifacts(source, repository_plugin) if record.get("binding_kind") == "process_artifacts" else
+        _native_artifacts(Path(record["native_library"]), source)
     )
-    if any(artifacts[key] != record[key] for key in artifacts):
+    checked_artifacts = artifacts
+    if record.get("binding_kind") == "process_artifacts" and record.get("artifact_version", 1) < 2:
+        # Older receipts included the evaluator's Python files. Their changes
+        # do not alter the already-built solver, so retain the solver check and
+        # report the current compiled adapter identity without rejecting it.
+        checked_artifacts = {"binding_sha256": artifacts["binding_sha256"]}
+    if any(checked_artifacts[key] != record[key] for key in checked_artifacts):
         raise ValueError("solver package changed after its source build")
     return {
         "plugin": f"{cls.__module__}:{cls.__name__}",

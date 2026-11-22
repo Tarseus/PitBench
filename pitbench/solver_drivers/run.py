@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import inspect
 import json
 import math
 import os
 import re
+import selectors
 import subprocess
 import sys
 import tempfile
@@ -184,6 +186,15 @@ class PyVRPDriver(SolverDriver):
             depot: model.add_depot(locations[depot], name=f"depot_{depot}")
             for depot in instance["depots"]
         }
+        open_end = None
+        if any(vehicle.get("end_depot") is None for vehicle in instance["vehicle_types"]):
+            # PyVRP interprets an omitted end depot as its first real depot.
+            # A separate terminal makes the last leg free without changing
+            # the costs of departures from, or returns to, real depots.
+            terminal = model.add_location(0.0, 0.0, name="open_route_terminal")
+            open_end = model.add_depot(terminal, name="open_route_terminal")
+            for location in locations:
+                model.add_edge(location, terminal, distance=0, duration=0)
         _clients = [
             model.add_client(
                 locations[node],
@@ -197,7 +208,7 @@ class PyVRPDriver(SolverDriver):
             end = (
                 depots[vehicle["end_depot"]]
                 if vehicle.get("end_depot") is not None
-                else None
+                else open_end
             )
             model.add_vehicle_type(
                 num_available=int(vehicle["count"]),
@@ -568,6 +579,26 @@ class VroomDriver(SolverDriver):
         }, type_by_vehicle
 
     @staticmethod
+    def _solution(instance: dict, response: dict) -> dict:
+        if instance.get("problem_kind") not in {
+            "heterogeneous_fleet_vrp", "multi_depot_vrp", "open_vrp",
+        }:
+            return {"routes": VroomDriver._route_jobs(response)}
+        _, type_by_vehicle = VroomDriver._routing_variant_request(instance)
+        routes, vehicle_type_ids = [], []
+        for route in response.get("routes", []):
+            customers = [int(step["id"] if "id" in step else step["job"])
+                         for step in route.get("steps", []) if step.get("type") == "job"]
+            if not customers:
+                continue
+            vehicle = int(route.get("vehicle", route.get("vehicle_id")))
+            if vehicle not in type_by_vehicle:
+                raise ValueError("VROOM returned an unknown vehicle identifier")
+            routes.append(customers)
+            vehicle_type_ids.append(type_by_vehicle[vehicle])
+        return {"routes": routes, "vehicle_type_ids": vehicle_type_ids}
+
+    @staticmethod
     def main(argv: list[str] | None = None) -> None:
         arguments = parser(solver=True)
         arguments.add_argument("--parameters", type=Path)
@@ -650,32 +681,7 @@ class VroomDriver(SolverDriver):
             if response.get("code", 0) != 0:
                 raise RuntimeError(str(response.get("error") or "vroom failed"))
             instance_data = json.loads(args.instance.read_text())
-            if instance_data.get("problem_kind") in {
-                "heterogeneous_fleet_vrp",
-                "multi_depot_vrp",
-                "open_vrp",
-            }:
-                _, type_by_vehicle = VroomDriver._routing_variant_request(instance_data)
-                routes, vehicle_type_ids = [], []
-                for route in response.get("routes", []):
-                    customers = [
-                        int(step["id"] if "id" in step else step["job"])
-                        for step in route.get("steps", [])
-                        if step.get("type") == "job"
-                    ]
-                    if not customers:
-                        continue
-                    vehicle = int(route.get("vehicle", route.get("vehicle_id")))
-                    if vehicle not in type_by_vehicle:
-                        raise ValueError("VROOM returned an unknown vehicle identifier")
-                    routes.append(customers)
-                    vehicle_type_ids.append(type_by_vehicle[vehicle])
-                solution = {
-                    "routes": routes,
-                    "vehicle_type_ids": vehicle_type_ids,
-                }
-            else:
-                solution = {"routes": VroomDriver._route_jobs(response)}
+            solution = VroomDriver._solution(instance_data, response)
             solution_path = write_solution(args.output, solution)
             checked = CVRPFamily().verify(args.instance, solution_path)
             if not checked.feasible or checked.objective is None:
@@ -1479,6 +1485,342 @@ class OrToolsCpSatExactDriver(SolverDriver):
 DRIVERS = SolverDriver._drivers
 
 
+class NativeProcessScenarioSession(ScenarioSession):
+    """Source-bound native CLI runs for replay and numerical failure checks.
+
+    Each solve is a fresh child process. Persistent-process memory, incremental
+    updates, and first-solution trajectories are intentionally unsupported.
+    """
+
+    supported_scenario_kinds = ("replay", "numerical")
+
+    @classmethod
+    def identity(cls):
+        from pitbench.repositories.base import RepositoryPluginRegistry
+        from pitbench.solver_drivers.common import source_binding_identity
+
+        receipt = json.loads(Path(os.environ["PITBENCH_SCENARIO_BINDING"]).read_text())
+        repository = receipt["repository_plugin"]
+        plugin = RepositoryPluginRegistry.load(repository)
+        if not plugin.scenario_process_binding:
+            raise ValueError("repository does not declare a process scenario binding")
+        binding = source_binding_identity(
+            cls, package=None, repository_plugin=repository,
+            representations=list(plugin.scenario_representations),
+        )
+        binding["supported_scenario_kinds"] = list(cls.supported_scenario_kinds)
+        return binding
+
+    def __init__(self, *, seed, threads, budget, tolerance, options):
+        from pitbench.repositories.base import RepositoryPluginRegistry
+
+        del tolerance
+        receipt = json.loads(Path(os.environ["PITBENCH_SCENARIO_BINDING"]).read_text())
+        self.source = Path(receipt["source"])
+        self.plugin = RepositoryPluginRegistry.load(receipt["repository_plugin"])
+        self.seed, self.threads, self.budget = seed, threads, budget
+        self.options = options
+        self.directory = tempfile.TemporaryDirectory(prefix="pitbench-process-scenario-")
+        self.model_path = None
+
+    def load_model(self, model):
+        directory = Path(self.directory.name)
+        if isinstance(model, dict) and set(model) == {"content", "suffix"}:
+            suffix, content = model["suffix"], model["content"]
+            if suffix not in {".json", ".txt"} or not isinstance(content, str):
+                raise ValueError("invalid native CP scenario model")
+            self.model_path = directory / ("instance" + suffix)
+            self.model_path.write_text(content)
+        elif isinstance(model, dict):
+            self.model_path = directory / "instance.json"
+            self.model_path.write_text(json.dumps(model, allow_nan=False))
+        else:
+            raise ValueError("unsupported source-bound process model")
+
+    def update_model(self, previous, model):
+        from pitbench.solver_drivers.common import ScenarioUnsupported
+        raise ScenarioUnsupported("native CLI does not expose in-place model updates")
+
+    def solve(self, emit):
+        from pitbench.repositories.base import SolverRunSpec
+
+        del emit
+        if self.model_path is None:
+            raise ValueError("scenario model has not been loaded")
+        directory = Path(self.directory.name)
+        output = directory / "result.json"
+        parameters = None
+        if self.options:
+            parameters = directory / "parameters.json"
+            parameters.write_text(json.dumps(self.options, allow_nan=False))
+        command = self.plugin.run_command(SolverRunSpec(
+            instance_path=self.model_path, output_path=output,
+            trajectory_path=directory / "trajectory.jsonl", solver_seed=self.seed,
+            budget_sec=self.budget, threads=self.threads, parameters_path=parameters,
+        ))
+        started = time.perf_counter()
+        completed = subprocess.run(
+            command.argv, cwd=self.source, env={**os.environ, **command.env},
+            capture_output=True, text=True, timeout=command.timeout_sec, check=False,
+        )
+        elapsed = time.perf_counter() - started
+        if completed.returncode != 0 or not output.is_file():
+            return {"termination": "solver_error", "solution": None, "solve_time_sec": elapsed}
+        result = self.plugin.parse_output(output)
+        solution_path = output.with_suffix(".solution.json")
+        solution = json.loads(solution_path.read_text()) if result.has_solution and solution_path.is_file() else None
+        termination = result.solver_termination.value if result.solver_termination else "other"
+        return {"termination": termination, "solution": solution, "solve_time_sec": elapsed}
+
+
+class PersistentNativeScenarioSession(NativeProcessScenarioSession):
+    """A source-bound process serving repeated independently built models.
+
+    This does not claim native model updates: each request builds a new model.
+    """
+
+    supported_scenario_kinds = ("replay", "numerical", "trajectory", "lifecycle")
+    reload_for_lifecycle = True
+    managed_gc = False
+
+    def __init__(self, *, seed, threads, budget, tolerance, options):
+        super().__init__(seed=seed, threads=threads, budget=budget,
+                         tolerance=tolerance, options=options)
+        self.validate_threads()
+        self.events_path = Path(self.directory.name) / "events.jsonl"
+        self.stderr = (Path(self.directory.name) / "session.stderr").open("w+")
+        self.process = subprocess.Popen(
+            self.session_command(),
+            cwd=self.source, env={**os.environ, "PITBENCH_SCENARIO_EVENTS": str(self.events_path)},
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.stderr,
+            text=True, bufsize=1,
+        )
+
+    def solve(self, emit):
+        if self.model_path is None:
+            raise ValueError("scenario model has not been loaded")
+        self.events_path.unlink(missing_ok=True)
+        request = self.session_request()
+        if self.process.poll() is not None:
+            raise RuntimeError(self._failure_detail("native session exited before solving"))
+        started = time.perf_counter()
+        self.process.stdin.write(request + "\n")
+        self.process.stdin.flush()
+        with selectors.DefaultSelector() as selector:
+            selector.register(self.process.stdout, selectors.EVENT_READ)
+            if not selector.select(self.budget + 60):
+                self.process.kill()
+                raise TimeoutError("native scenario session exceeded its watchdog")
+            line = self.process.stdout.readline()
+        elapsed = time.perf_counter() - started
+        if not line:
+            raise RuntimeError(self._failure_detail("native session exited without a result"))
+        result = json.loads(line)
+        if result.get("session_error"):
+            raise RuntimeError(self._failure_detail("native session could not solve the model"))
+        if self.events_path.exists():
+            for event_line in self.events_path.read_text().splitlines():
+                event = json.loads(event_line)
+                emit(event["time_sec"], event["solution"], None)
+        return {**self.normalize_response(result), "solve_time_sec": elapsed}
+
+    def validate_threads(self):
+        if self.threads != 1:
+            raise ValueError("native scenario session requires one thread")
+
+    def measurement_pid(self):
+        return self.process.pid
+
+    def collect_garbage(self):
+        if not self.managed_gc:
+            return
+        request = base64.b64encode(b"--gc").decode()
+        self.process.stdin.write(request + "\n")
+        self.process.stdin.flush()
+        with selectors.DefaultSelector() as selector:
+            selector.register(self.process.stdout, selectors.EVENT_READ)
+            if not selector.select(60):
+                self.process.kill()
+                raise TimeoutError("native session garbage collection timed out")
+            if json.loads(self.process.stdout.readline()).get("session_error"):
+                raise RuntimeError(self._failure_detail("native session garbage collection failed"))
+
+    def _failure_detail(self, message):
+        self.stderr.flush()
+        self.stderr.seek(0)
+        detail = self.stderr.read().strip()
+        return f"{message}: {detail}" if detail else message
+
+    def normalize_response(self, result):
+        return {"termination": result.get("solver_termination") or "other",
+                "solution": result.get("solution") if result.get("has_solution") else None}
+
+    def close(self):
+        if not self.process.stdin.closed:
+            self.process.stdin.close()
+        if self.process.poll() is None:
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+        self.process.stdout.close()
+        trace_directory = getattr(self, "trace_directory", None)
+        if trace_directory is not None:
+            import shutil
+
+            self.stderr.flush()
+            if self.stderr.tell():
+                shutil.copyfile(self.stderr.name, Path(trace_directory) / "native-session.stderr")
+            if self.events_path.is_file():
+                step = getattr(self, "trace_step", 0)
+                shutil.copyfile(self.events_path, Path(trace_directory) / f"native-events-{step:04d}.jsonl")
+        self.stderr.close()
+        self.directory.cleanup()
+
+
+class ChocoScenarioSession(PersistentNativeScenarioSession):
+    managed_gc = True
+    def session_command(self):
+        assemblies = {path.resolve() for pattern in self.plugin.agent_artifact_globs
+                      for path in self.source.glob(pattern) if path.is_file()}
+        if len(assemblies) != 1:
+            raise ValueError("expected one source-built Choco assembly")
+        root = self.source / "solver" if (self.source / "solver/pom.xml").is_file() else self.source
+        adapter = root / "target/pitbench-adapter"
+        return ["java", "-cp", os.pathsep.join([str(adapter), str(next(iter(assemblies)))]),
+                "org.pitbench.adapters.ExactSolverRunner", "--session"]
+
+    def session_request(self):
+        args = [str(self.model_path), str(self.seed), str(self.budget), str(self.threads),
+                json.dumps(self.options, separators=(",", ":"), allow_nan=False)]
+        return "\t".join(base64.b64encode(arg.encode()).decode() for arg in args)
+
+
+class GecodeScenarioSession(PersistentNativeScenarioSession):
+    def session_command(self):
+        return [str(self.source / "build/pitbench-exact"), "--session"]
+
+    def session_request(self):
+        import importlib.util
+
+        path = Path("/opt/pitbench-adapters/exact_solver_runner.py")
+        spec = importlib.util.spec_from_file_location("pitbench_native_exact_adapter", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        argv = module.command_for_request({
+            "instance_path": str(self.model_path), "solver_seed": self.seed,
+            "budget_sec": self.budget, "threads": self.threads,
+            "parameters": self.options,
+        }, engine="gecode")
+        if any(any(char.isspace() for char in arg) for arg in argv[1:]):
+            raise ValueError("Gecode session argument contains whitespace")
+        return " ".join(argv[1:])
+
+
+class OrToolsScenarioSession(PersistentNativeScenarioSession):
+    managed_gc = True
+    supported_scenario_kinds = ("replay", "numerical", "trajectory", "lifecycle")
+    def session_command(self):
+        import importlib.util
+
+        path = Path("/opt/pitbench-jvm/runner.py")
+        spec = importlib.util.spec_from_file_location("pitbench_native_jvm_adapter", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        output = module._adapter_output(self.source, "ortools_cp_sat")
+        return [*module._ortools_java_command(self.source, output),
+                "org.pitbench.adapters.OrToolsCpSatRunner", "--session"]
+
+    def load_model(self, model):
+        from pitbench.solver_drivers.reference import _solve_cp_backend
+
+        super().load_model(model)
+        if self.model_path.suffix.lower() == ".txt":
+            kind = "job_shop_scheduling"
+        else:
+            kind = json.loads(self.model_path.read_text()).get("problem_kind", "bin_packing")
+        built = _solve_cp_backend(
+            self.model_path, kind, self.budget, self.seed, self.threads,
+            Path(self.directory.name), lambda *_args, **_kwargs: None, None,
+            build_only=True,
+        )
+        self.proto_path = Path(self.directory.name) / "model.pb"
+        if not built["model"].export_to_file(str(self.proto_path)):
+            raise RuntimeError("OR-Tools failed to export the scenario model")
+        self.decode = built["decode"]
+
+    def session_request(self):
+        args = [str(self.proto_path), str(self.seed), str(self.budget), str(self.threads),
+                json.dumps(self.options, separators=(",", ":"), allow_nan=False)]
+        return "\t".join(base64.b64encode(arg.encode()).decode() for arg in args)
+
+    def _decode(self, solution):
+        values = solution["values"]
+
+        def value(variable):
+            index = getattr(variable, "index", None)
+            return int(values[index if index is not None else variable.Index()])
+
+        return self.decode(value)
+
+    def solve(self, emit):
+        def decoded_emit(timestamp, solution, multipliers):
+            emit(timestamp, self._decode(solution), multipliers)
+
+        result = super().solve(decoded_emit)
+        if result["solution"] is not None:
+            result["solution"] = self._decode(result["solution"])
+        return result
+
+
+class VroomScenarioSession(PersistentNativeScenarioSession):
+    supported_scenario_kinds = ("replay", "numerical", "lifecycle")
+
+    def validate_threads(self):
+        if self.threads < 1:
+            raise ValueError("VROOM requires at least one thread")
+
+    def session_command(self):
+        return [str(self.source / "bin/pitbench-session")]
+
+    def session_request(self):
+        instance = json.loads(self.model_path.read_text())
+        self.request_path = Path(self.directory.name) / "vroom-request.json"
+        self.request_path.write_text(json.dumps(VroomDriver._request(instance), allow_nan=False))
+        if set(self.options) - {"exploration_level"}:
+            raise ValueError("invalid VROOM parameter set")
+        exploration = self.options.get("exploration_level", 5)
+        if type(exploration) is not int or not 0 <= exploration <= 5:
+            raise ValueError("invalid VROOM exploration level")
+        return f"{self.request_path} {self.budget} {self.threads} {exploration}"
+
+    def solve(self, emit):
+        started = time.perf_counter()
+        try:
+            return super().solve(emit)
+        except RuntimeError as error:
+            detail = str(error)
+            if "Invalid capacity value" not in detail:
+                raise
+            # The numerical-range panel deliberately exceeds VROOM's accepted
+            # capacity range. Record the solver rejection as numerical evidence,
+            # not as a collector failure.
+            return {
+                "termination": "solver_error",
+                "solution": None,
+                "solve_time_sec": time.perf_counter() - started,
+                "error": detail,
+            }
+
+    def normalize_response(self, result):
+        if result.get("code", 0) != 0:
+            raise RuntimeError(str(result.get("error") or "VROOM failed"))
+        instance = json.loads(self.model_path.read_text())
+        solution = VroomDriver._solution(instance, result)
+        return {"termination": "other", "solution": solution}
+
+
 class HighsScenarioSession(ScenarioSession):
     """Binding-based trajectories and stateful model updates in a fresh worker."""
 
@@ -1490,6 +1832,16 @@ class HighsScenarioSession(ScenarioSession):
         import highspy._core
 
         solver = highspy.Highs()
+        if os.environ.get("PITBENCH_SCENARIO_BINDING"):
+            from pitbench.solver_drivers.common import source_binding_identity
+
+            receipt = json.loads(Path(os.environ["PITBENCH_SCENARIO_BINDING"]).read_text())
+            if solver.version() != receipt["version"] or not receipt["binding_git_hash"].startswith(solver.githash()):
+                raise ValueError("HiGHS binding differs from the source release")
+            return source_binding_identity(
+                cls, package="highspy", repository_plugin=receipt["repository_plugin"],
+                representations=["row_column_permutation"],
+            )
         package = Path(highspy.__file__).parent
         python_sources = {
             str(path.relative_to(package)): hashlib.sha256(
@@ -1888,6 +2240,13 @@ class PyVRPScenarioSession(ScenarioSession):
         import pyvrp
 
         self.model = json.loads(json.dumps(model))
+        self.variant_clients = None
+        if model.get("problem_kind") in {
+            "heterogeneous_fleet_vrp", "multi_depot_vrp", "open_vrp"
+        }:
+            native, self.variant_clients = PyVRPDriver._routing_variant_model(pyvrp, model)
+            self.data = native.data()
+            return
         with tempfile.TemporaryDirectory(prefix="pitbench-routing-model-") as directory:
             path = Path(directory) / "model.vrp"
             PyVRPDriver._vrplib(model, path)
@@ -1948,10 +2307,14 @@ class PyVRPScenarioSession(ScenarioSession):
             kwargs["rng"] = rng
         self.algorithm = IteratedLocalSearch(**kwargs)
 
-    @staticmethod
-    def _solution(solution):
+    def _solution(self, solution):
         routes = getattr(solution, "routes", None)
         routes = routes() if callable(routes) else solution.get_routes()
+        if self.variant_clients is not None:
+            return {
+                "routes": [[self.variant_clients[int(activity.idx)] for activity in route if activity.is_client()] for route in routes],
+                "vehicle_type_ids": [int(route.vehicle_type() if callable(route.vehicle_type) else route.vehicle_type) for route in routes],
+            }
         return {"routes": [PyVRPDriver._route_visits(route) for route in routes]}
 
     def solve(self, emit):

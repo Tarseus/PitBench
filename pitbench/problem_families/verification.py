@@ -205,6 +205,23 @@ class TrustedOptimumOracle(BaseModel):
         return cls.model_validate(yaml.safe_load(path.read_text()))
 
 
+class NativeCPFamily(ProblemFamilyPlugin):
+    """Check structured CP solutions against their original JSON or job-shop input."""
+
+    name = "native_cp"
+
+    def verify(self, instance_path: Path, solution_path: Path) -> VerificationResult:
+        if instance_path.suffix.lower() != ".txt":
+            return CPFamily().verify(instance_path, solution_path)
+        try:
+            from pitbench.instances.generate import _job_shop_operations
+
+            values = json.loads(solution_path.read_text())["start_times"]
+            return _check_job_shop_start_times(values, _job_shop_operations(instance_path))
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            return VerificationResult(feasible=False, detail=f"invalid job-shop input or solution: {error}")
+
+
 class CVRPFamily(ProblemFamilyPlugin):
     """Independent verifier for PitBench's normalized CVRP JSON format."""
 
@@ -752,7 +769,11 @@ def _mip_graph_coloring_source_check(
         ),
         *(f"s{color}" for color in range(color_count - 1)),
     }
-    if set(model["columns"]) != expected_columns or set(model["rows"]) != expected_rows:
+    if (
+        set(model["columns"]) != expected_columns
+        or set(model["integer_columns"]) != expected_columns
+        or set(model["rows"]) != expected_rows
+    ):
         return VerificationResult(
             feasible=False,
             detail="graph-coloring MPS structure differs from source graph",
@@ -818,10 +839,12 @@ def _mip_graph_coloring_source_check(
                 feasible=False, detail="graph-coloring symmetry row is malformed"
             )
     values, _ = _parse_mip_primal_solution(solution, model["columns"])
+    # The MPS verifier has already checked integrality at the declared tolerance.
+    binary_values = {name: round(float(value)) for name, value in values.items()}
     colors = []
     for vertex in range(vertex_count):
         selected = [
-            color for color in range(color_count) if values[f"x{vertex}_{color}"] == 1
+            color for color in range(color_count) if binary_values[f"x{vertex}_{color}"] == 1
         ]
         if len(selected) != 1:
             return VerificationResult(
@@ -831,8 +854,11 @@ def _mip_graph_coloring_source_check(
     checked = check_graph_coloring(graph, {"colors": colors})
     if (
         not checked["feasible"]
-        or checked["objective"] != result.objective
-        or sum(values[f"y{color}"] for color in range(color_count))
+        or not math.isclose(
+            checked["objective"], result.objective,
+            rel_tol=0, abs_tol=OBJECTIVE_ABSOLUTE_TOLERANCE,
+        )
+        or sum(binary_values[f"y{color}"] for color in range(color_count))
         != checked["objective"]
     ):
         return VerificationResult(
@@ -1091,6 +1117,12 @@ def _check_multidimensional_knapsack_solution(
 
 def expected_mip_variable_names(instance_path: Path) -> set[str]:
     """Return assignment keys from supported original MPS or canonical LP models."""
+    boundary_model = instance_path.with_suffix(".model.json")
+    if instance_path.suffix.lower() == ".lp" and boundary_model.is_file():
+        model = json.loads(boundary_model.read_text())
+        costs = model.get("costs")
+        if isinstance(costs, list) and costs:
+            return {f"x{index}" for index in range(len(costs))}
     if instance_path.suffix.lower() == ".mps":
         model = _read_mps_numeric_model(instance_path)
         if model is not None:
@@ -2048,6 +2080,7 @@ class TrustedOptimumFamily(ProblemFamilyPlugin):
 
 
 class MIPFamily(ExternalVerifierFamily):
+    feasibility_tolerance = 1e-3
     name = "mip"
     fixture_reports_search_nodes = True
 
@@ -2063,7 +2096,7 @@ class MIPFamily(ExternalVerifierFamily):
             values, objective = _parse_mip_primal_solution(solution, variable_names)
             if set(values) != set(variable_names):
                 raise ValueError("MPS primal solution variable set mismatch")
-            tolerance = OBJECTIVE_ABSOLUTE_TOLERANCE
+            tolerance = MIPFamily.feasibility_tolerance
             bound_violation = max(
                 [0.0]
                 + [

@@ -834,6 +834,28 @@ def _retained_exact_representation(source, *, kind="item_relabeling"):
     return task, transformations, records
 
 
+def test_fixed_budget_representation_uses_declared_nonrouting_grid(tmp_path):
+    from pitbench.metrics.nuisance_report import report_nuisance_results
+    from pitbench.schema.task import PerformanceProtocol
+
+    source = tmp_path / "retained"
+    task, _, records = _retained_exact_representation(source, kind="item_relabeling")
+    task.evaluation.performance_protocol = PerformanceProtocol.BUDGET_TRUNCATED_QUALITY
+    task.evaluation.representation_robustness.kind = "mps_row_permutation"
+    details = json.loads((source / "details.json").read_text())
+    details["configuration"]["kind"] = "mps_row_permutation"
+    details["instance_count"] = 1
+    write_json(source / "details.json", details)
+    for index, row in enumerate(records):
+        row["observation"]["normalized_gap"] = (index % 30) / 100
+    (source / "results.jsonl").write_text("".join(json.dumps(row) + "\n" for row in records))
+    result = report_nuisance_results(source, tmp_path / "report", task=task)
+    assert result["complete"]
+    formal = result["representation_robustness"]
+    assert formal["instance_ids"] == ["case"]
+    assert formal["by_budget"][f"{task.evaluation.budgets_sec[0]:g}"]["base"]["mean_iqr"] is not None
+
+
 @pytest.mark.parametrize("kind,iqr", [("item_relabeling", 0.145), ("job_relabeling", 0.29)])
 def test_retained_exact_report_rebuilds_from_raw_records_without_mutating_source(tmp_path, kind, iqr):
     from pitbench.metrics.nuisance_report import report_nuisance_results
@@ -879,3 +901,185 @@ def test_exact_representation_runner_supplies_report_protocol_context(tmp_path, 
     details = json.loads((output / "representation/details.json").read_text())
     assert details["task_configuration"]["evaluation"]["exact_time_basis"] == "cpu_time"
     assert details["representation_robustness"]["outcome"] == "capped_optimal_time"
+
+
+def test_customer_relabeling_preserves_multiple_depots_and_vehicle_types():
+    import random
+
+    from pitbench.evaluator.representations import CustomerRepresentation
+    from pitbench.problem_families.public_verification import check_cvrp
+
+    instance = {
+        "problem_kind": "multi_depot_vrp",
+        "coordinates": [[0, 0], [10, 0], [1, 0], [2, 0], [9, 0]],
+        "demands": [0, 0, 1, 1, 1],
+        "depots": [0, 1],
+        "customers": [2, 3, 4],
+        "vehicle_types": [
+            {"start_depot": 0, "end_depot": 0, "capacity": 3, "count": 1},
+            {"start_depot": 1, "end_depot": 1, "capacity": 3, "count": 1},
+        ],
+        "distance_metric": "EUC_2D",
+    }
+    solution = {"routes": [[2, 3], [4]], "vehicle_type_ids": [0, 1]}
+    original = check_cvrp(instance, solution)
+    assert original["feasible"]
+    for mapping in CustomerRepresentation.mappings(instance, 5, random.Random(7)):
+        permutation = mapping["new_to_original"]
+        assert permutation[0:2] == [0, 1]
+        transformed = CustomerRepresentation.transform(instance, mapping)
+        inverse = {old: new for new, old in enumerate(permutation)}
+        candidate = {
+            "routes": [[inverse[node] for node in route] for route in solution["routes"]],
+            "vehicle_type_ids": [0, 1],
+        }
+        checked = check_cvrp(transformed, candidate)
+        mapped = CustomerRepresentation.map_solution(candidate, permutation)
+        assert checked["feasible"]
+        assert checked["objective"] == original["objective"]
+        assert mapped == solution
+        assert check_cvrp(instance, mapped)["objective"] == original["objective"]
+
+
+def test_graph_vertex_relabeling_preserves_verified_coloring(tmp_path):
+    import json
+    import random
+
+    from pitbench.evaluator.representations import GraphColoringRepresentation
+    from pitbench.problem_families.public_verification import check_graph_coloring
+
+    graph = {"problem_kind": "graph_coloring", "vertex_count": 4,
+        "edge_endpoints": [0, 1, 0, 3, 1, 2, 2, 3]}
+    colors = [0, 1, 0, 1]
+    original = tmp_path / "original.json"
+    original.write_text(json.dumps(graph))
+    for index, mapping in enumerate(GraphColoringRepresentation.mappings(graph, 5, random.Random(4))):
+        transformed = GraphColoringRepresentation.transform(graph, mapping)
+        transformed_path = tmp_path / f"transformed-{index}.json"
+        transformed_path.write_text(json.dumps(transformed))
+        solution = tmp_path / f"solution-{index}.json"
+        solution.write_text(json.dumps({"colors": [colors[i] for i in mapping["new_to_original"]]}))
+        result = GraphColoringRepresentation.verify_files(original, transformed_path, solution, tmp_path / "mapped.json", mapping)
+        assert result["transformed"]["feasible"]
+        assert result["mapped_original"]["feasible"]
+        assert result["objective_preserved"]
+        assert check_graph_coloring(graph, json.loads((tmp_path / "mapped.json").read_text()))["objective"] == 2
+
+
+def test_mip_graph_coloring_verifies_near_integer_assignments(tmp_path, monkeypatch):
+    import json
+
+    from pitbench.instances import generate
+    from pitbench.problem_families.verification import MIPFamily
+
+    graph = {"vertex_count": 2, "edge_endpoints": [0, 1]}
+    monkeypatch.setattr(generate, "graph_coloring_data", lambda *_: (graph, None, None))
+    instance = tmp_path / "graph.mps"
+    generate._graph_coloring_mps({"colors": [2]}, 0, instance)
+    solution = tmp_path / "solution.json"
+    values = {"x0_0": 0.999999999999999, "x0_1": 0, "x1_0": 0, "x1_1": 1,
+              "y0": 0.999999999999999, "y1": 1}
+    solution.write_text(json.dumps({"objective": 2, "values": values}))
+    assert MIPFamily().verify(instance, solution).feasible
+
+    values.update(x0_0=0.9995, y0=1)
+    solution.write_text(json.dumps({"objective": 2, "values": values}))
+    assert MIPFamily().verify(instance, solution).feasible
+
+    values["x0_0"] = 0.99
+    solution.write_text(json.dumps({"objective": 2, "values": values}))
+    assert not MIPFamily().verify(instance, solution).feasible
+
+
+def test_job_order_relabeling_preserves_verified_schedule(tmp_path):
+    import json
+    import random
+
+    from pitbench.evaluator.representations import JobOrderRepresentation
+    from pitbench.problem_families.verification import _check_job_shop_start_times
+
+    original = tmp_path / "jobs.txt"
+    original.write_text("4 2\n0 2 1 2\n1 2 0 2\n0 2 1 2\n1 2 0 2\n")
+    model = JobOrderRepresentation.read_input(original)
+    original_starts = [[0, 2], [4, 6], [8, 10], [12, 14]]
+    assert _check_job_shop_start_times([v for j in original_starts for v in j], model["jobs"]).feasible
+    for index, mapping in enumerate(JobOrderRepresentation.mappings(model, 5, random.Random(3))):
+        transformed = JobOrderRepresentation.transform(model, mapping)
+        path = tmp_path / f"jobs-{index}.txt"
+        JobOrderRepresentation.write_input(path, transformed)
+        solution = tmp_path / f"solution-{index}.json"
+        solution.write_text(json.dumps({"start_times": [v for job in mapping["new_to_original"] for v in original_starts[job]]}))
+        assert JobOrderRepresentation.verifier().verify(path, solution).feasible
+        result = JobOrderRepresentation.verify_files(original, path, solution, tmp_path / "mapped.json", mapping)
+        assert result["transformed"]["feasible"]
+        assert result["mapped_original"]["feasible"]
+        assert result["objective_preserved"]
+
+
+def test_subset_relabeling_preserves_verified_selection(tmp_path):
+    import json
+    import random
+
+    from pitbench.evaluator.representations import SubsetSumRepresentation
+
+    model = {"problem_kind": "balanced_subset_sum", "weights": [1, 3, 4, 7],
+        "cardinality": 2, "target": 7, "domain_mode": "bounded"}
+    original = tmp_path / "subset.json"
+    original.write_text(json.dumps(model))
+    for index, mapping in enumerate(SubsetSumRepresentation.mappings(model, 5, random.Random(2))):
+        transformed = SubsetSumRepresentation.transform(model, mapping)
+        path = tmp_path / f"subset-{index}.json"
+        SubsetSumRepresentation.write_input(path, transformed)
+        inverse = {old: new for new, old in enumerate(mapping["new_to_original"])}
+        solution = tmp_path / f"solution-{index}.json"
+        solution.write_text(json.dumps({"selected_items": [inverse[1], inverse[2]]}))
+        result = SubsetSumRepresentation.verify_files(original, path, solution, tmp_path / "mapped.json", mapping)
+        assert result["transformed"]["feasible"]
+        assert result["mapped_original"]["feasible"]
+        assert result["objective_preserved"]
+
+
+def test_project_activity_relabeling_preserves_verified_schedule(tmp_path):
+    import json
+    import random
+
+    from pitbench.evaluator.representations import ProjectActivityRepresentation
+
+    model = {"problem_kind": "resource_constrained_project_scheduling", "activity_count": 4,
+        "resource_count": 1, "activities": [{"id": i, "duration": 1, "resource_demands": [1]} for i in range(4)],
+        "precedence_arcs": [[0, 2], [1, 3]], "durations": [1, 1, 1, 1],
+        "resource_demands_flat": [1, 1, 1, 1], "precedence_endpoints": [0, 2, 1, 3],
+        "resource_capacities": [2]}
+    original = tmp_path / "project.json"
+    original.write_text(json.dumps(model))
+    starts = [0, 0, 1, 1]
+    for index, mapping in enumerate(ProjectActivityRepresentation.mappings(model, 5, random.Random(5))):
+        transformed = ProjectActivityRepresentation.transform(model, mapping)
+        path = tmp_path / f"project-{index}.json"
+        ProjectActivityRepresentation.write_input(path, transformed)
+        solution = tmp_path / f"solution-{index}.json"
+        solution.write_text(json.dumps({"start_times": [starts[i] for i in mapping["new_to_original"]]}))
+        result = ProjectActivityRepresentation.verify_files(original, path, solution, tmp_path / "mapped.json", mapping)
+        assert result["transformed"]["feasible"]
+        assert result["mapped_original"]["feasible"]
+        assert result["objective_preserved"]
+
+
+def test_mps_row_reordering_preserves_independently_verified_solution(tmp_path):
+    import json
+    import random
+
+    from pitbench.evaluator.representations import MPSRowRepresentation
+
+    model = "NAME TEST\nROWS\n N OBJ\n G C1\n L C2\n L C3\nCOLUMNS\n X OBJ 1 C1 1\n X C2 1 C3 1\nRHS\n RHS1 C1 2 C2 10\n RHS1 C3 10\nBOUNDS\n LO BND X 0\n UP BND X 10\nENDATA\n"
+    original = tmp_path / "original.mps"
+    original.write_text(model)
+    solution = tmp_path / "solution.json"
+    solution.write_text(json.dumps({"values": {"X": 2}, "objective": 2}))
+    for index, mapping in enumerate(MPSRowRepresentation.mappings(model, 5, random.Random(3))):
+        transformed = tmp_path / f"transformed-{index}.mps"
+        transformed.write_text(MPSRowRepresentation.transform(model, mapping))
+        result = MPSRowRepresentation.verify_files(original, transformed, solution, tmp_path / "mapped.json", mapping)
+        assert result["transformed"]["feasible"]
+        assert result["mapped_original"]["feasible"]
+        assert result["objective_preserved"]

@@ -390,8 +390,10 @@ def format_objective_report(report: ObjectiveMeasurementReport) -> str:
 
 def planned_metric_coverage(task: PitBenchTask) -> dict[str, dict[str, str]]:
     """List every catalog metric without mistaking a plan for collected evidence."""
+    from pitbench.repositories.base import RepositoryPluginRegistry
     from pitbench.schema.task import PerformanceProtocol
 
+    repository = RepositoryPluginRegistry.load(task.repository.plugin)
     protocols = {task.evaluation.performance_protocol} | {
         panel.performance_protocol for panel in task.instance_sets if panel.performance_protocol
     }
@@ -405,7 +407,15 @@ def planned_metric_coverage(task: PitBenchTask) -> dict[str, dict[str, str]]:
         elif metric == "fixed_budget_normalized_gap" and not protocols & {PerformanceProtocol.HEURISTIC_FIXED_BUDGET, PerformanceProtocol.BUDGET_TRUNCATED_QUALITY}:
             status, reason = "not_applicable", "task has no fixed-budget quality panel"
         elif kind:
-            if any(s.kind == kind and metric in s.metrics for s in task.metric_scenarios):
+            if not repository.scenario_session_plugin:
+                status, reason = "unavailable", "repository has no source-bound scenario session"
+            elif repository.scenario_supported_kinds is not None and kind not in repository.scenario_supported_kinds:
+                status, reason = "unavailable", "solver interface does not expose this scenario capability"
+            elif metric in repository.scenario_unavailable_metrics:
+                status, reason = "unavailable", "source-bound session does not expose this metric"
+            elif repository.scenario_process_binding and metric == "independent_violation":
+                status, reason = "unavailable", "structured verifier does not report numeric residual magnitudes"
+            elif any(s.kind == kind and metric in s.metrics for s in task.metric_scenarios):
                 reason = f"declared {kind} scenario"
             else:
                 status, reason = "unavailable", f"no declared {kind} scenario or source-bound adapter"

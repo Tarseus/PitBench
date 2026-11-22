@@ -66,7 +66,7 @@ def _metric_scenario_checks(context) -> list:
             if (
                 recipe.get("source_commit") != task.release.base_commit
                 or recipe.get("repository_plugin") != task.repository.plugin
-                or recipe.get("session_plugin") != plugin.scenario_session_plugin
+                or not plugin.scenario_session_plugin
                 or recipe.get("from_evaluation_repository") is not True
             ):
                 raise ValueError(

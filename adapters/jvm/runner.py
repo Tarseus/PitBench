@@ -278,14 +278,20 @@ import com.google.ortools.sat.IntVar;
 import com.google.ortools.sat.IntervalVar;
 import com.google.ortools.sat.SatParameters;
 import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Scanner;
 
 public final class OrToolsCpSatRunner {
   private OrToolsCpSatRunner() {}
+  private static long requestStartedNanos;
 
   private static String jsonLongArray(CpSolverResponse response) {
     StringBuilder result = new StringBuilder("[");
@@ -692,6 +698,31 @@ public final class OrToolsCpSatRunner {
   }
 
   public static void main(String[] args) throws IOException {
+    if (args.length == 1 && args[0].equals("--session")) {
+      BufferedReader requests = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+      String line;
+      while ((line = requests.readLine()) != null) {
+        try {
+          String[] encoded = line.split("\\t", -1);
+          String[] request = new String[encoded.length];
+          for (int i = 0; i < encoded.length; i++)
+            request[i] = new String(Base64.getDecoder().decode(encoded[i]), StandardCharsets.UTF_8);
+          if (request.length == 1 && request[0].equals("--gc")) {
+            System.gc();
+            System.runFinalization();
+            System.out.println("{}");
+            System.out.flush();
+            continue;
+          }
+          main(request);
+        } catch (Exception error) {
+          error.printStackTrace(System.err);
+          System.out.println("{\\\"session_error\\\":true}");
+        }
+        System.out.flush();
+      }
+      return;
+    }
     if (args.length == 2 && args[0].equals("inspect-jssp")) {
       Loader.loadNativeLibraries();
       System.out.println(inspectJobShop(Path.of(args[1])));
@@ -715,6 +746,7 @@ public final class OrToolsCpSatRunner {
       throw new IllegalArgumentException(
           "expected model_proto_path solver_seed budget_sec threads [parameters_json]");
     }
+    requestStartedNanos = System.nanoTime();
     long solverSeed = Long.parseLong(args[1]);
     double budgetSec = Double.parseDouble(args[2]);
     int threads = Integer.parseInt(args[3]);
@@ -767,6 +799,24 @@ public final class OrToolsCpSatRunner {
       @Override
       public void onSolutionCallback() {
         synchronized (trajectory) {
+          String eventPath = System.getenv("PITBENCH_SCENARIO_EVENTS");
+          if (eventPath != null && !eventPath.isEmpty()) {
+            StringBuilder values = new StringBuilder("[");
+            for (int index = 0; index < modelProto.getVariablesCount(); index++) {
+              if (index > 0) values.append(',');
+              values.append(solutionIntegerValue(index));
+            }
+            values.append(']');
+            double elapsed = (System.nanoTime() - requestStartedNanos) / 1_000_000_000.0;
+            String event = "{\\\"time_sec\\\":" + elapsed
+                + ",\\\"solution\\\":{\\\"values\\\":" + values + "}}\\n";
+            try {
+              Files.writeString(Path.of(eventPath), event,
+                  StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            } catch (IOException error) {
+              throw new IllegalStateException("cannot record solution event", error);
+            }
+          }
           trajectory.add("{\\\"event\\\":\\\"solution\\\",\\\"time_sec\\\":"
               + wallTime() + ",\\\"objective\\\":" + objectiveValue()
               + ",\\\"dual_bound\\\":"

@@ -27,6 +27,7 @@ from pitbench.evaluator.artifacts import (
     selected_output_attempt,
     write_json,
 )
+from pitbench.evaluator.code_snapshot import snapshot_judge_code
 from pitbench.evaluator.collection import run_collection_jobs, run_collection_process
 from pitbench.evaluator.docker_judge import docker_cli_image, judge_harness_sha256
 from pitbench.evaluator.private_assets import PrivateAssetResolver
@@ -138,8 +139,32 @@ def resolve_model_inputs(
     return resolved, list(mappings.values())
 
 
-def _rss():
-    fields = Path("/proc/self/statm").read_text().split()
+def _copy_scenario_model(source: Path, destination: Path, owner_directory: Path) -> None:
+    """Retain input permissions while assigning generated copies to the output owner."""
+    shutil.copy2(source, destination)
+    if os.geteuid() == 0:
+        owner = owner_directory.stat()
+        os.chown(destination, owner.st_uid, owner.st_gid)
+
+
+def _expected_solver_error(kind: str, error: Exception, elapsed: float) -> dict | None:
+    """Turn the declared VROOM integer-range rejection into solver evidence."""
+    if (
+        kind == "numerical"
+        and isinstance(error, RuntimeError)
+        and "Invalid capacity value" in str(error)
+    ):
+        return {
+            "termination": "solver_error",
+            "solution": None,
+            "solve_time_sec": max(0.0, elapsed),
+            "error": str(error),
+        }
+    return None
+
+
+def _rss(pid=None):
+    fields = Path(f"/proc/{pid if pid is not None else 'self'}/statm").read_text().split()
     return int(fields[1]) * os.sysconf("SC_PAGE_SIZE")
 
 
@@ -176,24 +201,25 @@ def _hardware_identity(cpus):
 
 
 class _SampledPeak:
-    def __init__(self, interval):
+    def __init__(self, interval, sample_rss=_rss):
         self.interval = interval
+        self.sample_rss = sample_rss
         self.peak = 0
         self.stop = threading.Event()
 
     def __enter__(self):
-        self.peak = _rss()
+        self.peak = self.sample_rss()
 
         def sample():
             while not self.stop.wait(self.interval):
-                self.peak = max(self.peak, _rss())
+                self.peak = max(self.peak, self.sample_rss())
 
         self.thread = threading.Thread(target=sample, daemon=True)
         self.thread.start()
         return self
 
     def __exit__(self, *args):
-        self.peak = max(self.peak, _rss())
+        self.peak = max(self.peak, self.sample_rss())
         self.stop.set()
         self.thread.join()
 
@@ -391,7 +417,7 @@ def prepare(config_path: Path, output: Path) -> dict:
             path = output / "instances" / (item["sha256"] + source.suffix)
             path.parent.mkdir(exist_ok=True)
             if not path.exists():
-                shutil.copy2(source, path)
+                _copy_scenario_model(source, path, output.parent)
             item["path"] = str(path)
     campaign = ScenarioCampaign(
         task_id=task.task_id,
@@ -435,20 +461,36 @@ def worker(job_path: Path) -> dict:
     runtime = job["runtime"]
     implementation = ScenarioSession.load(runtime["session_plugin"])
     steps, error, status = [], None, "returned"
+    solver_errors = []
     completed_steps = 0
+    session = None
     try:
+        supported = getattr(implementation, "supported_scenario_kinds", None)
+        if supported is not None and p.kind not in supported:
+            raise ScenarioUnsupported(f"solver interface does not expose {p.kind} scenarios")
         if implementation.probe() != runtime["probe"]:
             raise ValueError("worker runtime artifact changed after preparation")
-        session, previous = None, None
+        previous = None
         for index, item in enumerate(job["models"]):
             path = Path(item["path"])
             if hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
                 raise ValueError("scenario model changed after preparation")
             model = representation_type(p.representation).read_input(path)
             setup_time, update_time = 0.0, 0.0
-            with _SampledPeak(p.memory_sample_interval_sec) as memory:
+            def measured_rss():
+                if session is None:
+                    return 0
+                try:
+                    return _rss(session.measurement_pid())
+                except FileNotFoundError:
+                    return 0
+
+            with _SampledPeak(p.memory_sample_interval_sec, measured_rss) as memory:
                 started = time.perf_counter()
                 if session is None or key.mode == "cold":
+                    if session is not None:
+                        session.close()
+                        session = None
                     session = implementation(
                         seed=key.solver_seed,
                         threads=key.threads,
@@ -462,7 +504,10 @@ def worker(job_path: Path) -> dict:
                     session.load_model(model)
                     setup_time = time.perf_counter() - started
                 else:
-                    session.update_model(previous, model)
+                    if p.kind == "lifecycle" and getattr(session, "reload_for_lifecycle", False):
+                        session.load_model(model)
+                    else:
+                        session.update_model(previous, model)
                     update_time = time.perf_counter() - started
             events = []
             session.trace_directory = directory
@@ -485,11 +530,21 @@ def worker(job_path: Path) -> dict:
                         + "\n"
                     )
 
-            result = session.solve(emit)
+            solve_started = time.perf_counter()
+            try:
+                result = session.solve(emit)
+            except Exception as exc:
+                result = _expected_solver_error(
+                    p.kind, exc, time.perf_counter() - solve_started
+                )
+                if result is None:
+                    raise
+            if result.get("error"):
+                solver_errors.append(str(result.pop("error")))
             payload = ScenarioStep(
                 instance_path=str(path),
                 instance_sha256=item["sha256"],
-                process_id=os.getpid(),
+                process_id=session.measurement_pid(),
                 process_boot_id=Path("/proc/sys/kernel/random/boot_id")
                 .read_text()
                 .strip(),
@@ -513,15 +568,22 @@ def worker(job_path: Path) -> dict:
                 session.reset_search()
             if p.memory_cleanup == "gc_collect":
                 gc.collect()
+                session.collect_garbage()
             write_json(
                 directory / f"step-{index:04d}.memory.json",
-                {"retained_rss_bytes": _rss()},
+                {"retained_rss_bytes": _rss(session.measurement_pid())},
             )
             completed_steps += 1
     except ScenarioUnsupported as exc:
         status, error = "unsupported", str(exc)
     except Exception as exc:
         status, error = "collector_error", f"{type(exc).__name__}: {exc}"
+    finally:
+        if session is not None:
+            try:
+                session.close()
+            except Exception as exc:
+                status, error = "collector_error", f"session cleanup failed: {type(exc).__name__}: {exc}"
     for index in range(completed_steps):
         payload = json.loads((directory / f"step-{index:04d}.payload.json").read_text())
         payload.update(
@@ -536,7 +598,7 @@ def worker(job_path: Path) -> dict:
         runtime_identity_sha256=job["runtime_identity_sha256"],
         status=status,
         steps=steps,
-        error=error,
+        error=error or ("; ".join(solver_errors) if solver_errors else None),
     )
     payload = {
         "execution_status": "completed" if status == "returned" else "collector_error",
@@ -571,7 +633,14 @@ def run(
         if runtime.get("base_cache_path")
         else None
     )
-    if campaign.hardware_identity != _hardware_identity(runtime["cpus"]):
+    # Linux can reserve a different number of pages at boot on the same host.
+    # Compare the memory allocation through the cgroup limit, not MemTotal.
+    current_hardware = _hardware_identity(runtime["cpus"])
+    resume_fields = ("host_sha256", "architecture", "cpu_model", "cpu_pool", "cgroup_limits")
+    if any(
+        campaign.hardware_identity.get(field) != current_hardware.get(field)
+        for field in resume_fields
+    ):
         raise ValueError(
             "scenario hardware or resource allocation changed after preparation"
         )
@@ -615,6 +684,19 @@ def run(
                 )
             else:
                 retrying_failure = True
+        selected = runtime["runtimes"][key.code_state]
+        supported = selected.get("probe", {}).get("supported_scenario_kinds")
+        if supported is not None and p.kind not in supported:
+            record = ScenarioRun(
+                key=key,
+                protocol_sha256=p.digest(),
+                runtime_identity_sha256=campaign.runtime_identities[key.code_state],
+                status="unsupported",
+                error=f"solver interface does not expose {p.kind} scenarios",
+            )
+            attempt = directory / f"attempt-{len(list(directory.glob('attempt-*'))):04d}"
+            write_json(attempt / "result.json", {"execution_status": "unsupported", "run": record.model_dump(mode="json")})
+            return record
         if p.kind == "setup":
             signature = execution_signature(key)
             # Select by the frozen plan, never by completion time or success.
@@ -651,7 +733,6 @@ def run(
         attempt = directory / f"attempt-{len(list(directory.glob('attempt-*'))):04d}"
         launched.set()
         attempt.mkdir(parents=True)
-        selected = runtime["runtimes"][key.code_state]
         models = campaign.model_sequences[
             sequence_key(key.instance_set, key.instance_id, p.id)
         ]
@@ -826,7 +907,7 @@ def run(
                         artifacts / "models" / (str(index) + Path(model["path"]).suffix)
                     )
                     target.parent.mkdir(exist_ok=True)
-                    shutil.copy2(model["path"], target)
+                    _copy_scenario_model(Path(model["path"]), target, output.parent)
                 saved = {
                     "identity": identity,
                     "run": record.model_dump(mode="json"),
@@ -1244,6 +1325,7 @@ def _collect_source_build(task, candidate_patch, output, config_path, context, r
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     code_root = Path(__file__).resolve().parents[2]
+    snapshot = snapshot_judge_code(code_root, output / "scenario-code")
     source_config = Path(config_path).resolve()
     config, inputs = resolve_model_inputs(
         _read(source_config),
@@ -1299,7 +1381,7 @@ def _collect_source_build(task, candidate_patch, output, config_path, context, r
             + json.dumps(
                 {
                     "judge_image": context["image"],
-                    "harness_sha256": judge_harness_sha256(code_root),
+                    "harness_sha256": judge_harness_sha256(snapshot),
                     "cpus": float(context["cpus"]),
                     "memory": context["memory"],
                 }
@@ -1329,6 +1411,13 @@ def _collect_source_build(task, candidate_patch, output, config_path, context, r
             mounts[str(path)] = "ro"
     for path, mode in mounts.items():
         command += ["--volume", path + ":" + path + ":" + mode]
+    for name in ("pitbench", "adapters", "scripts"):
+        command += ["--volume", str(snapshot / name) + ":" + str(code_root / name) + ":ro"]
+    from pitbench.repositories.base import RepositoryPluginRegistry
+
+    repository = RepositoryPluginRegistry.load(task.repository.plugin)
+    for destination, source in repository.judge_support_files.items():
+        command += ["--volume", str(snapshot / source) + ":" + destination + ":ro"]
     command += [
         docker_cli_image(context["image"]),
         "python3",
@@ -1379,8 +1468,6 @@ def evaluate_source_build(
 
     task = PitBenchTask.from_yaml(task_path)
     config = _read(config_path)
-    for protocol in task.metric_scenarios:
-        representation_type(protocol.representation).check_runtime()
     recipe = config.pop("source_build")
     if (
         recipe["source_commit"] != task.release.base_commit
@@ -1388,6 +1475,12 @@ def evaluate_source_build(
     ):
         raise ValueError("source build recipe differs from the frozen task")
     plugin = RepositoryPluginRegistry.load(task.repository.plugin)
+    if plugin.scenario_session_plugin is None:
+        raise ScenarioUnsupported(
+            "repository has no source-bound scenario session for these metrics"
+        )
+    for protocol in task.metric_scenarios:
+        representation_type(protocol.representation).check_runtime()
     build_root = output / "api-build"
     build_output = selected_output_attempt(build_root)
     manifest_path = build_output / "scenario-build.json"
@@ -1418,6 +1511,10 @@ def evaluate_source_build(
             else sys.executable
         )
         environment = {"PITBENCH_SCENARIO_BINDING": str(receipt)}
+        if plugin.scenario_pythonpath:
+            environment["PYTHONPATH"] = os.pathsep.join(
+                [str(source / plugin.scenario_pythonpath), os.environ.get("PYTHONPATH", "")]
+            )
         probe = subprocess.run(
             [
                 python,
@@ -1441,6 +1538,7 @@ def evaluate_source_build(
             "patch_sha256": row["binding"]["source_patch_sha256"],
             "expected_binding_sha256": identity["binding_sha256"],
             "environment": environment,
+            **({"options": task.evaluation.fixed_solver_parameters or {}} if plugin.scenario_process_binding else {}),
             "options_by_scenario": config.get("options_by_scenario", {}),
         }
     config["runtimes"] = runtimes
